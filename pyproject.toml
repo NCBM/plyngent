@@ -1,0 +1,115 @@
+[project]
+name = "plyngent"
+version = "0.1.0"
+description = "LLM chat and agent toolkit"
+authors = [
+  { name = "HivertMoZara", email = "worldmozara@163.com" },
+]
+dependencies = [
+  "basedpyright>=1.39.8",
+  "msgspec>=0.21.1",
+  "niquests>=3.19.1",
+  "typing-extensions>=4.15.0"
+]
+requires-python = ">=3.14,<4"
+readme = "README.md"
+license = { text = "MIT" }
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.39.7",
+  "ruff>=0.15.17",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.basedpyright]
+typeCheckingMode = "recommended"
+reportAny = "hint"
+reportExplicitAny = "hint"
+reportImplicitStringConcatenation = "hint"
+reportImportCycles = "hint"
+
+[tool.pdm]
+distribution = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.ruff.lint]
+# For more rules, see https://docs.astral.sh/ruff/rules/.
+select = [
+  "F",  # Pyflakes
+  "W",  # pycodestyle warnings
+  "E",  # pycodestyle errors
+  "I",  # isort
+  "C90",  # mccabe
+  "N",  # pep8-naming
+  "PL",  # pylint
+  "UP",  # pyupgrade
+  "YTT",  # flake8-2020
+  "ANN",  # flake8-annotations
+  "ASYNC",  # flake8-async
+  "BLE",  # flake8-blind-except
+  "FBT",  # flake8-boolean-trap
+  "B",  # flake8-bugbear
+  "A",  # flake8-builtins
+  "COM",  # flake8-commas
+  "C4",  # flake8-comprehensions
+  "DTZ",  # flake8-datetimez
+  "T10",  # flake8-debugger
+  "ICN",  # flake8-import-conventions
+  "PIE",  # flake8-pie
+  "T20",  # flake8-print
+  "PYI",  # flake8-pyi
+  "Q",  # flake8-quotes
+  "RSE",  # flake8-raise
+  "RET",  # flake8-return
+  "SIM",  # flake8-simplify
+  "SLOT",  # flake8-slots
+  "TID",  # flake8-tidy-imports
+  "TC",  # flake8-type-checking
+  "ARG",  # flake8-unused-arguments
+  "PTH",  # flake8-use-pathlib
+  # "ERA",   # eradicate
+  "FAST",  # FastAPI
+  "PERF",  # Perflint
+  "PGH",  # pygrep-hooks
+  "FURB",  # refurb
+  "TRY",  # tryceratops
+  "RUF",  # Ruff-specific rules
+]
+ignore = [
+  "UP037",  # quoted-annotation
+  # "ANN201",  # missing-return-type-undocumented-public-function
+  "ANN202",  # missing-return-type-private-function
+  "ANN401",  # any-type
+  "COM812",  # missing-trailing-comma
+  "PLC0415",  # import-outside-top-level
+  "TID252",
+]
+allowed-confusables = [
+  "，",
+  "。",
+  "“",
+  "”",
+  "：",
+  "；",
+  "？",
+  "！",
+  "【",
+  "】",
+  "《",
+  "》",
+  "…",
+  "—",
+  "（",
+  "）",
+  "、"
+]
