@@ -6,10 +6,11 @@ authors = [
   { name = "HivertMoZara", email = "worldmozara@163.com" },
 ]
 dependencies = [
-  "basedpyright>=1.39.8",
   "msgspec>=0.21.1",
-  "niquests>=3.19.1",
-  "typing-extensions>=4.15.0"
+  "niquests>=3.20",
+  "typing-extensions>=4.15.0",
+  "platformdirs>=4.10.0",
+  "tomlkit>=0.15.0"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
@@ -17,8 +18,9 @@ license = { text = "MIT" }
 
 [dependency-groups]
 dev = [
-  "basedpyright>=1.39.7",
-  "ruff>=0.15.17",
+    "basedpyright>=1.39.7",
+    "ruff>=0.15.17",
+    "pytest>=9.1.1",
 ]
 
 [build-system]
