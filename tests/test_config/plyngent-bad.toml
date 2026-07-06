@@ -1,0 +1,15 @@
+[providers.test1]
+preset = "closeai"
+access_key_or_token = "sk-1145141919810"
+
+[providers.test2]
+preset = "openai-compatible"
+
+[providers.test3]
+preset = "nanthropic"
+access_key_or_token = "sk-1145141919810"
+
+[providers.foo1]
+preset = "deepseek"
+access_key_or_token = "sk-1145141919810"
+convention = "anthropic"

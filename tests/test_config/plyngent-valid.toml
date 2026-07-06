@@ -1,0 +1,22 @@
+[providers.test1]
+preset = "openai"
+access_key_or_token = "sk-1145141919810"
+
+[providers.test2]
+preset = "openai-compatible"
+url = "https://www.example.com/v1"
+access_key_or_token = "sk-1145141919810"
+
+[providers.test2.models]
+"glm-5.2" = { text = true, image_in = false, image_out = false, audio_in = false, audio_out = false, video_in = false, video_out = false, cost_factor = 5 }
+
+[providers.test3]
+preset = "anthropic"
+access_key_or_token = "sk-1145141919810"
+
+[providers.foo1]
+preset = "deepseek"
+access_key_or_token = "sk-1145141919810"
+
+[providers.foo1.extras]
+convention = "anthropic"
