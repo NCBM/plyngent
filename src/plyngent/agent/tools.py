@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import types
 from collections.abc import Awaitable, Callable, Mapping
@@ -11,6 +12,8 @@ from plyngent.lmproto.openai_compatible.model import ToolFunction, ToolFunctionI
 from plyngent.typedef import JSONSchema  # noqa: TC001
 
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
+type DangerClassifier = Callable[[str, Mapping[str, object]], str | None]
+type ToolConfirmHook = Callable[[str, Mapping[str, object], str], bool]
 
 _PRIMITIVE_SCHEMA: dict[type, JSONSchema] = {
     str: {"type": "string"},
@@ -146,9 +149,21 @@ class ToolRegistry:
     """Name → tool definition map with execution helpers."""
 
     _tools: dict[str, ToolDefinition]
+    _danger: DangerClassifier | None
+    _on_confirm: ToolConfirmHook | None
+    _confirm_lock: asyncio.Lock
 
-    def __init__(self, tools: Mapping[str, ToolDefinition] | list[ToolDefinition] | None = None) -> None:
+    def __init__(
+        self,
+        tools: Mapping[str, ToolDefinition] | list[ToolDefinition] | None = None,
+        *,
+        danger: DangerClassifier | None = None,
+        on_confirm: ToolConfirmHook | None = None,
+    ) -> None:
         self._tools = {}
+        self._danger = danger
+        self._on_confirm = on_confirm
+        self._confirm_lock = asyncio.Lock()
         if tools is None:
             return
         if isinstance(tools, list):
@@ -186,6 +201,22 @@ class ToolRegistry:
             return result
         return msgspec.json.encode(result).decode()
 
+    async def _maybe_confirm(self, name: str, args: dict[str, object]) -> str | None:
+        """Return an error string if the user denies a dangerous tool, else None."""
+        if self._danger is None or self._on_confirm is None:
+            return None
+        reason = self._danger(name, args)
+        if reason is None:
+            return None
+        async with self._confirm_lock:
+            # Re-check under the lock so parallel tools do not race the prompt.
+            reason = self._danger(name, args)
+            if reason is None:
+                return None
+            if self._on_confirm(name, args, reason):
+                return None
+        return f"error: user denied tool {name!r} ({reason})"
+
     async def execute(self, name: str, arguments_json: str) -> str:
         """Run a tool by name; returns a string result (errors become error text)."""
         definition = self._tools.get(name)
@@ -198,4 +229,7 @@ class ToolRegistry:
         if not isinstance(raw_args, dict):
             return "error: tool arguments must be a JSON object"
         args = {str(key): value for key, value in cast("dict[object, object]", raw_args).items()}
+        denied = await self._maybe_confirm(name, args)
+        if denied is not None:
+            return denied
         return await self._invoke(definition, args)

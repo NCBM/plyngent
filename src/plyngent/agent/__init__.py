@@ -10,6 +10,8 @@ from .events import ToolCallEvent as ToolCallEvent
 from .events import ToolResultEvent as ToolResultEvent
 from .loop import DEFAULT_MAX_ROUNDS as DEFAULT_MAX_ROUNDS
 from .loop import run_chat_loop as run_chat_loop
+from .tools import DangerClassifier as DangerClassifier
+from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolDefinition as ToolDefinition
 from .tools import ToolRegistry as ToolRegistry
 from .tools import schema_from_callable as schema_from_callable
