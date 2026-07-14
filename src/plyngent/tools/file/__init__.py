@@ -1,3 +1,4 @@
+from .edit_lineno import edit_lineno as edit_lineno
 from .edit_replace import edit_replace as edit_replace
 from .fs_ops import copy_path as copy_path
 from .fs_ops import delete_path as delete_path
@@ -13,6 +14,7 @@ FILE_TOOLS = [
     listdir,
     tree,
     edit_replace,
+    edit_lineno,
     copy_path,
     move_path,
     delete_path,

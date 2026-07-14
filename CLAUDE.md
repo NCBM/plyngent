@@ -54,16 +54,17 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, se
 
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
-- **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + raw-SSE tool-call merge; optional `on_limit`.
-- **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream` flag; `pending_retry_text` + `retry()`.
+- **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; optional `on_limit`.
+- **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error**, **cancelled**.
+- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`.
 
 ### Tools (`tools/`)
 
 Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 - **`workspace`**: path resolve under root; path substring denylist; command basename denylist.
-- **`file`**: `read_file`, `write_file`, `listdir`, `tree` (depth/entry caps, skip VCS + optional hidden dirs), `edit_replace` (first occurrence), `copy_path` / `move_path` / `delete_path` (shutil; dirs supported).
+- **`file`**: `read_file`, `write_file`, `listdir`, `tree`, `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (**Unix only**: `pty`+`fork`).
 - PTY: structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close SIGTERM→SIGKILL.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
