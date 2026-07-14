@@ -193,6 +193,8 @@ class ToolRegistry:
             result = definition.handler(**args)
             if inspect.isawaitable(result):
                 result = await result
+        except asyncio.CancelledError:
+            raise
         except TypeError as exc:
             return f"error: invalid tool arguments: {exc}"
         except Exception as exc:  # noqa: BLE001 — surface tool failures to the model

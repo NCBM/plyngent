@@ -69,6 +69,7 @@ class ReplState:
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,
             parallel_tools=agent_cfg.parallel_tools,
+            max_context_chars=agent_cfg.max_context_chars,
         )
 
     def rebuild_client(self) -> None:

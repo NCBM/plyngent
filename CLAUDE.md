@@ -54,10 +54,10 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, se
 
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
-- **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; optional `on_limit`.
+- **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request; cooperative cancel points; optional `on_limit`.
 - **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
-- Events: text_delta, assistant_message, tool_call/result, max_rounds, **error**, **cancelled**.
-- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`.
+- Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`).
+- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_chars`.
 
 ### Tools (`tools/`)
 

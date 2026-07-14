@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.lmproto.openai_compatible.model import SystemChatMessage, UserChatMessage
 
-from .budget import DEFAULT_TOOL_RESULT_MAX_CHARS
+from .budget import DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_TOOL_RESULT_MAX_CHARS
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ class ChatAgent:
     system_prompt: str | None
     max_tool_result_chars: int
     parallel_tools: bool
+    max_context_chars: int
     messages: list[AnyChatMessage]
     pending_retry_text: str | None
 
@@ -54,6 +55,7 @@ class ChatAgent:
         system_prompt: str | None = None,
         max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
         parallel_tools: bool = True,
+        max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
     ) -> None:
         self.client = client
         self.model = model
@@ -67,6 +69,7 @@ class ChatAgent:
         self.system_prompt = system_prompt
         self.max_tool_result_chars = max_tool_result_chars
         self.parallel_tools = parallel_tools
+        self.max_context_chars = max_context_chars
         self.messages = list(messages) if messages is not None else []
         self.pending_retry_text = None
         self._ensure_system_prompt()
@@ -125,6 +128,7 @@ class ChatAgent:
                 stream=self.stream,
                 max_tool_result_chars=self.max_tool_result_chars,
                 parallel_tools=self.parallel_tools,
+                max_context_chars=self.max_context_chars,
             ):
                 yield event
             completed = True

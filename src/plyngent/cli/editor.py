@@ -28,6 +28,7 @@ _MINIMAL_CONFIG = """\
 # parallel_tools = true
 # confirm_destructive = true
 # path_denylist = ["/secrets/", ".ssh/"]
+# max_context_chars = 200000
 
 # [providers.example]
 # preset = "openai-compatible"
