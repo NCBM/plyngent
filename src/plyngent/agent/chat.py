@@ -45,6 +45,7 @@ class ChatAgent:
         temperature: float | None = None,
         messages: Sequence[AnyChatMessage] | None = None,
         on_limit: LimitContinueHook | None = None,
+        stream: bool = True,
     ) -> None:
         self.client = client
         self.model = model
@@ -54,6 +55,7 @@ class ChatAgent:
         self.max_rounds = max_rounds
         self.temperature = temperature
         self.on_limit = on_limit
+        self.stream = stream
         self.messages = list(messages) if messages is not None else []
         self.pending_retry_text = None
 
@@ -99,6 +101,7 @@ class ChatAgent:
                 max_rounds=self.max_rounds,
                 temperature=self.temperature,
                 on_limit=self.on_limit,
+                stream=self.stream,
             ):
                 yield event
             completed = True
