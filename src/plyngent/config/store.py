@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 import msgspec
 import tomlkit
 
-from .models import DatabaseConfig, Provider
+from .models import AgentConfig, DatabaseConfig, Provider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
@@ -23,6 +23,14 @@ def _parse_database(raw: dict[str, object]) -> DatabaseConfig:
         return msgspec.convert(raw, DatabaseConfig)
     except msgspec.ValidationError:
         return DatabaseConfig()
+
+
+def _parse_agent(raw: dict[str, object]) -> AgentConfig:
+    """Parse the ``[agent]`` section, falling back to defaults."""
+    try:
+        return msgspec.convert(raw, AgentConfig)
+    except msgspec.ValidationError:
+        return AgentConfig()
 
 
 def _parse_providers(
@@ -73,6 +81,7 @@ class ConfigStore:
     _path: Path
     _document: tomlkit.TOMLDocument
     _database: DatabaseConfig
+    _agent: AgentConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
 
@@ -81,6 +90,7 @@ class ConfigStore:
         self._document = document
         raw: dict[str, object] = document.unwrap()
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
+        self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._providers, self._bad_providers = _parse_providers(document)
 
     # -- database (read-only) --
@@ -89,6 +99,18 @@ class ConfigStore:
     def database(self) -> MappingProxyType[str, object]:
         """Read-only mapping view of database configuration."""
         return MappingProxyType(msgspec.structs.asdict(self._database))
+
+    # -- agent (read-only) --
+
+    @property
+    def agent(self) -> MappingProxyType[str, object]:
+        """Read-only mapping view of agent profile configuration."""
+        return MappingProxyType(msgspec.structs.asdict(self._agent))
+
+    @property
+    def agent_config(self) -> AgentConfig:
+        """Typed agent profile (system prompt, tool budgets, etc.)."""
+        return self._agent
 
     # -- providers (read/write) --
 
@@ -128,6 +150,7 @@ class ConfigStore:
             self._document = tomlkit.parse(f.read())
         raw: dict[str, object] = self._document.unwrap()
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
+        self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._providers, self._bad_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --
@@ -138,20 +161,26 @@ class ConfigStore:
             self._document[key] = tomlkit.table()
         return cast("MutableMapping[str, object]", self._document[key])
 
+    def _sync_section(self, key: str, data: object) -> None:
+        raw: dict[str, object] = msgspec.to_builtins(data)
+        if not raw:
+            if key in self._document:
+                del self._document[key]
+            return
+        section = self._toml_table(key)
+        for k in list(section.keys()):
+            if k not in raw:
+                del section[k]
+        for k, v in raw.items():
+            section[k] = v
+
     def _sync_database_section(self) -> None:
         """Sync ``[database]`` to the document."""
-        raw_db: dict[str, object] = msgspec.to_builtins(self._database)
-        if not raw_db:
-            if "database" in self._document:
-                del self._document["database"]
-            return
+        self._sync_section("database", self._database)
 
-        section = self._toml_table("database")
-        for k in list(section.keys()):
-            if k not in raw_db:
-                del section[k]
-        for k, v in raw_db.items():
-            section[k] = v
+    def _sync_agent_section(self) -> None:
+        """Sync ``[agent]`` to the document."""
+        self._sync_section("agent", self._agent)
 
     def _sync_providers_section(self) -> None:
         """Sync ``[providers]`` to the document."""
@@ -174,4 +203,5 @@ class ConfigStore:
     def _sync_to_document(self) -> None:
         """Incrementally sync all sections into the document."""
         self._sync_database_section()
+        self._sync_agent_section()
         self._sync_providers_section()

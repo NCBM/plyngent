@@ -10,6 +10,14 @@ class DatabaseConfig(Struct, omit_defaults=True):
     password: str | None = None
 
 
+class AgentConfig(Struct, omit_defaults=True):
+    """Single-user agent profile defaults."""
+
+    system_prompt: str = ""
+    max_tool_result_chars: int = 32_000
+    parallel_tools: bool = True
+
+
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags for a model within a provider."""
 
