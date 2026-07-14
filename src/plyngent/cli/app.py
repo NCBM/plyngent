@@ -43,7 +43,7 @@ def _database_config(store: ConfigStore) -> DatabaseConfig:
     return msgspec.convert(raw, DatabaseConfig)
 
 
-async def _run_chat(  # noqa: PLR0913
+async def _run_chat(
     *,
     config_path: Path | None,
     provider_name: str | None,
@@ -135,7 +135,7 @@ def main() -> None:
     show_default=True,
     help="Max tool-loop rounds per user turn.",
 )
-def chat_cmd(  # noqa: PLR0913
+def chat_cmd(
     config_path: Path | None,
     provider_name: str | None,
     model: str | None,

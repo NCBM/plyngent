@@ -107,6 +107,7 @@ ignore = [
   "COM812",  # missing-trailing-comma
   "PLC0415",  # import-outside-top-level
   "TID252",
+  "PLR0913",  # too-many-arguments (common on constructors/composed functions)
 ]
 allowed-confusables = [
   "，",

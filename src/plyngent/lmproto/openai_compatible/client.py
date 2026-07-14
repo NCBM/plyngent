@@ -46,19 +46,12 @@ class BaseOpenAIClient:
             if line.startswith(b"data: "):
                 yield self.chunk_decoder.decode(line[6:])
 
-    async def _parse_sse_stream(self, resp: AsyncResponse) -> AsyncIterator[StreamChatCompletionChunk]:
-        """Parse SSE using the tolerant ::class:`StreamChatCompletionChunk` decoder."""
-        lines = resp.iter_lines()
-        async for line in lines:
-            if not line or line == b"data: [DONE]":
-                continue
-            if line.startswith(b"data: "):
-                yield self.stream_decoder.decode(line[6:])
-
     async def chat_completions_raw_lines(self, param: ChatCompletionsParam) -> AsyncIterator[bytes]:
         """Yield raw SSE ``data: `` payload bytes for manual accumulation.
 
         Each yielded bytes object is a complete JSON object (no ``data: `` prefix).
+        The HTTP response is closed when the iterator finishes or is closed early
+        (e.g. task cancellation during streaming).
         """
         data = self.encoder.encode(msgspec.structs.replace(param, stream=True))
         resp = await self.session.post(
@@ -67,11 +60,22 @@ class BaseOpenAIClient:
             headers={"Content-Type": "application/json"},
             stream=True,
         )
-        async for line in resp.iter_lines():
-            if not line or line == b"data: [DONE]":
-                continue
-            if line.startswith(b"data: "):
-                yield line[6:]
+        try:
+            async for line in resp.iter_lines():
+                if not line or line == b"data: [DONE]":
+                    continue
+                if line.startswith(b"data: "):
+                    yield line[6:]
+        finally:
+            # Best-effort abort of the in-flight stream (level-2 cancel toward HTTP).
+            aclose = getattr(resp, "aclose", None)
+            if callable(aclose):
+                await aclose()  # pyright: ignore[reportGeneralTypeIssues]
+            else:
+                close = getattr(resp, "close", None)
+                if callable(close):
+                    _ = close()
+
 
 
 class OpenAIClient(BaseOpenAIClient):

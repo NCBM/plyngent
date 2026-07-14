@@ -46,7 +46,7 @@ def _prepare_dest(source: Path, dest: Path, root: Path, *, overwrite: bool, dst_
     return dest
 
 
-def _copy_or_move_validated(  # noqa: PLR0913
+def _copy_or_move_validated(
     source: Path,
     dest: Path,
     root: Path,

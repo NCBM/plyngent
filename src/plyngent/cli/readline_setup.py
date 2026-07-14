@@ -29,6 +29,7 @@ SLASH_COMMANDS: tuple[str, ...] = (
     "/tools",
     "/rounds",
     "/retry",
+    "/status",
 )
 
 _TOOLS_ARGS: tuple[str, ...] = ("on", "off")

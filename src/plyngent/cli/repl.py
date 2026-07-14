@@ -36,10 +36,11 @@ Commands:
   /tools [on|off]    Show or toggle tools
   /rounds [n]        Show or set max tool-loop rounds
   /retry             Retry the last failed user turn (after errors)
+  /status            Show session/provider/tools/rounds status
 
 On network/API errors or Ctrl+C during a turn, the turn is not saved to
 the DB. Auto-retry waits 10s, 20s, then 30s (Ctrl+C cancels waits or the
-in-flight turn; use /retry later).
+in-flight turn; use /retry later). Streaming is on by default.
 
 Tab completes slash commands and some arguments (provider, model, tools).
 Use --session ID or /resume to continue a prior chat after restart.
@@ -49,6 +50,19 @@ type SlashHandler = Callable[[], None | Awaitable[None]]
 
 _DEFAULT_HISTORY_LINES = 20
 _CONTENT_PREVIEW = 200
+
+
+def _cmd_status(state: ReplState) -> None:
+    pending = state.agent.pending_retry_text
+    pending_disp = "yes" if pending else "no"
+    click.echo(
+        f"provider={state.provider_name}  model={state.model}\n"
+        f"session={state.session_id}  messages={len(state.agent.messages)}  "
+        f"pending_retry={pending_disp}\n"
+        f"tools={'on' if state.tools_enabled else 'off'}  "
+        f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
+        f"workspace={state.workspace}"
+    )
 
 
 async def _cmd_sessions(state: ReplState) -> None:
@@ -230,6 +244,7 @@ async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
         "tools": lambda: _cmd_tools(state, arg),
         "rounds": lambda: _cmd_rounds(state, arg),
         "retry": lambda: _cmd_retry(state),
+        "status": lambda: _cmd_status(state),
     }
     handler = handlers.get(command)
     if handler is None:
@@ -261,7 +276,8 @@ async def run_repl(state: ReplState) -> None:
     click.echo(
         f"plyngent chat  provider={state.provider_name}  model={state.model}  "
         f"session={state.session_id}  tools={'on' if state.tools_enabled else 'off'}  "
-        f"rounds={state.max_rounds}  messages={len(state.agent.messages)}"
+        f"rounds={state.max_rounds}  messages={len(state.agent.messages)}  "
+        f"stream={'on' if state.agent.stream else 'off'}"
     )
     click.echo("Type /help for commands. Empty line is ignored.")
 

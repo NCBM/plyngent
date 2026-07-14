@@ -26,7 +26,7 @@ def _truncate(text: str, label: str) -> str:
     return text[:DEFAULT_MAX_OUTPUT_CHARS] + f"\n...[{label} truncated]"
 
 
-def _format_result(  # noqa: PLR0913
+def _format_result(
     *,
     returncode: int | None,
     workdir_display: str,

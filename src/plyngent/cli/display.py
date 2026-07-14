@@ -19,7 +19,14 @@ if TYPE_CHECKING:
 
     from plyngent.agent import AgentEvent
 
-_TOOL_RESULT_PREVIEW = 200
+_TOOL_RESULT_PREVIEW = 120
+_TOOL_ARGS_PREVIEW = 80
+
+
+def _preview(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
 
 
 async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C901, PLR0912
@@ -35,20 +42,15 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
         elif isinstance(event, ToolCallEvent):
             call = event.tool_call
             if isinstance(call, AssistantFunctionToolCall):
-                click.secho(
-                    f"\n[tool call] {call.function.name}({call.function.arguments})",
-                    fg="yellow",
-                )
+                args = _preview(call.function.arguments, _TOOL_ARGS_PREVIEW)
+                click.secho(f"\n[tool] {call.function.name}({args})", fg="yellow")
             else:
-                click.secho(f"\n[tool call] custom id={call.id}", fg="yellow")
+                click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
         elif isinstance(event, ToolResultEvent):
-            content = event.message.content
-            preview = (
-                content
-                if len(content) <= _TOOL_RESULT_PREVIEW
-                else content[:_TOOL_RESULT_PREVIEW] + "…"
-            )
-            click.secho(f"[tool result] {preview}", fg="magenta")
+            preview = _preview(event.message.content, _TOOL_RESULT_PREVIEW)
+            # Single-line summary; full result stays in the message history for the model.
+            one_line = preview.replace("\n", " ")
+            click.secho(f"[tool ok] {one_line}", fg="magenta")
         elif isinstance(event, ErrorEvent):
             click.secho(f"\n[error] {event.message}", fg="bright_red")
         elif isinstance(event, CancelledEvent):

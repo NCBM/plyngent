@@ -93,6 +93,7 @@ async def run_turn_with_retries(
         try:
             await run_cancellable(render_events(starter()))
         except asyncio.CancelledError:
+            # Do not auto-retry cancelled turns — user intent was stop, not retry.
             click.echo()
             click.secho(
                 "cancelled (turn not saved); use /retry to try again",

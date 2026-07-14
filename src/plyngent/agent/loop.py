@@ -60,61 +60,74 @@ async def _execute_tool_calls(
         yield ToolResultEvent(message=tool_msg)
 
 
-async def _stream_and_build_assistant(  # noqa: C901
+async def _non_stream_assistant(
     client: ChatClient,
     param: ChatCompletionsParam,
 ) -> tuple[AssistantChatMessage, list[TextDeltaEvent]]:
-    """Stream a round, return the assistant message and any text deltas."""
+    response = await client.chat_completions(param, stream=False)
+    if not response.choices:
+        msg = "chat completion response contained no choices"
+        raise RuntimeError(msg)
+    assistant = response.choices[0].message
+    text_events: list[TextDeltaEvent] = []
+    if isinstance(assistant.content, str) and assistant.content:
+        text_events.append(TextDeltaEvent(content=assistant.content))
+    return assistant, text_events
+
+
+async def _stream_and_build_assistant(
+    client: ChatClient,
+    param: ChatCompletionsParam,
+) -> tuple[AssistantChatMessage, list[TextDeltaEvent]]:
+    """Stream a round, return the assistant message and any text deltas.
+
+    Requires ``client.chat_completions_raw_lines`` (async generator of raw SSE
+    payload bytes). Falls back to non-streaming if unavailable.
+    """
     raw_lines_attr = getattr(client, "chat_completions_raw_lines", None)
     if raw_lines_attr is None:
-        response = await client.chat_completions(param, stream=False)
-        if not response.choices:
-            msg = "chat completion response contained no choices"
-            raise RuntimeError(msg)
-        assistant = response.choices[0].message
-        text_events = []
-        if isinstance(assistant.content, str) and assistant.content:
-            text_events.append(TextDeltaEvent(content=assistant.content))
-        return assistant, text_events
+        return await _non_stream_assistant(client, param)
 
-    stream_iter = await raw_lines_attr(param)  # type: ignore[misc]
+    # Async generators are not awaitable — call to get the iterator.
+    stream_iter = raw_lines_attr(param)
     raw_lines: list[bytes] = []
     content_parts: list[str] = []
-    finish_reason: str | None = None
-    text_events = []
+    text_events: list[TextDeltaEvent] = []
     stream_decoder = getattr(client, "stream_decoder", None)
 
     async for raw in stream_iter:
         raw_lines.append(raw)
-        if stream_decoder is not None:
-            try:
-                chunk = stream_decoder.decode(raw)
-            except Exception:  # noqa: BLE001
-                continue
-            if chunk.choices:
-                delta_text = chunk.choices[0].delta.content
-                if isinstance(delta_text, str) and delta_text:
-                    content_parts.append(delta_text)
-                    text_events.append(TextDeltaEvent(content=delta_text))
-                fr = chunk.choices[0].finish_reason
-                if isinstance(fr, str):
-                    finish_reason = fr
+        if stream_decoder is None:
+            continue
+        try:
+            chunk = stream_decoder.decode(raw)
+        except Exception:  # noqa: BLE001 — skip malformed SSE payloads
+            continue
+        if not chunk.choices:
+            continue
+        delta_text = chunk.choices[0].delta.content
+        if isinstance(delta_text, str) and delta_text:
+            content_parts.append(delta_text)
+            text_events.append(TextDeltaEvent(content=delta_text))
 
-    full_content = "".join(content_parts) or ""
+    full_content = "".join(content_parts)
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
+    # Reconstruct tool calls from raw lines whenever present (do not rely solely
+    # on finish_reason — some providers omit it on intermediate chunks).
+    from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
 
-    if finish_reason in ("tool_calls", "function_call"):
-        from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
+    calls = merge_stream_tool_calls(raw_lines)
+    if calls:
+        tool_calls = cast("list[AnyAssistantToolCall]", calls)
 
-        calls = merge_stream_tool_calls(raw_lines)
-        if calls:
-            tool_calls = cast("list[AnyAssistantToolCall]", calls)
-
-    assistant = AssistantChatMessage(content=full_content or None, tool_calls=tool_calls)
+    assistant = AssistantChatMessage(
+        content=full_content or None,
+        tool_calls=tool_calls,
+    )
     return assistant, text_events
 
 
-async def run_chat_loop(  # noqa: PLR0913, C901
+async def run_chat_loop(
     client: ChatClient,
     messages: list[AnyChatMessage],
     *,
@@ -127,8 +140,8 @@ async def run_chat_loop(  # noqa: PLR0913, C901
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
-    When ``stream=True``, text tokens yield as they arrive; for tool-calling
-    rounds, the full response is reconstructed from stream deltas.
+    When ``stream=True``, text tokens yield as they arrive; tool calls are
+    reconstructed from raw SSE payloads when the client supports raw streaming.
 
     Continues until the model returns no tool calls, or ``max_rounds`` is hit.
     """
@@ -151,16 +164,11 @@ async def run_chat_loop(  # noqa: PLR0913, C901
 
             if stream:
                 assistant, text_events = await _stream_and_build_assistant(client, param)
-                for event in text_events:
-                    yield event
             else:
-                response = await client.chat_completions(param, stream=False)
-                if not response.choices:
-                    msg = "chat completion response contained no choices"
-                    raise RuntimeError(msg)
-                assistant = response.choices[0].message
-                if isinstance(assistant.content, str) and assistant.content:
-                    yield TextDeltaEvent(content=assistant.content)
+                assistant, text_events = await _non_stream_assistant(client, param)
+
+            for event in text_events:
+                yield event
 
             messages.append(assistant)
             yield AssistantMessageEvent(message=assistant)
