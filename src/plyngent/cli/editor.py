@@ -17,9 +17,10 @@ _MINIMAL_CONFIG = """\
 # plyngent configuration
 # edit providers below
 
-[database]
-implementation = "sqlite"
-url = ":memory:"
+# Optional: omit [database] to use ~/.local/share/plyngent/chat.db (Linux).
+# [database]
+# implementation = "sqlite"
+# url = "/path/to/chat.db"
 
 # [providers.example]
 # preset = "openai-compatible"

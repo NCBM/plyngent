@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
+from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.runtime import create_client
 from plyngent.tools import DEFAULT_TOOLS
 
@@ -26,6 +27,7 @@ class ReplState:
     provider: Provider
     model: str
     tools_enabled: bool
+    max_rounds: int = DEFAULT_MAX_ROUNDS
     client: ChatClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
@@ -47,6 +49,7 @@ class ReplState:
             tools=self._tool_registry(),
             memory=self.memory,
             session_id=self.session_id,
+            max_rounds=self.max_rounds,
         )
 
     def rebuild_client(self) -> None:
@@ -69,3 +72,13 @@ class ReplState:
         self.session_id = session_id
         self.agent = self._make_agent()
         await self.agent.load_history()
+
+    async def resume_latest_or_new(self, name: str = "chat") -> str:
+        """Resume the most recently updated session, or create one if none exist."""
+        sessions = await self.memory.list_sessions()
+        if not sessions:
+            await self.new_session(name=name)
+            return "new"
+        latest = max(sessions, key=lambda s: (s.updated_at, s.sid))
+        await self.resume_session(latest.sid)
+        return "resume"

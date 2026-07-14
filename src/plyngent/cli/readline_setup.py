@@ -20,12 +20,14 @@ SLASH_COMMANDS: tuple[str, ...] = (
     "/quit",
     "/exit",
     "/clear",
+    "/history",
     "/sessions",
     "/new",
     "/resume",
     "/provider",
     "/model",
     "/tools",
+    "/rounds",
 )
 
 _TOOLS_ARGS: tuple[str, ...] = ("on", "off")
@@ -72,9 +74,22 @@ def _argument_options(state: ReplState, command: str, text: str) -> list[str]:
     if command == "/tools":
         return filter_prefix(text, list(_TOOLS_ARGS))
     if command == "/resume":
-        # Session ids are numeric; no sync list without await — skip.
         return []
     return []
+
+
+def bind_tab_complete(readline_mod: object) -> None:
+    """Bind Tab to completion for GNU readline and libedit/editline."""
+    parse = getattr(readline_mod, "parse_and_bind", None)
+    if not callable(parse):
+        return
+    # GNU readline
+    _ = parse("tab: complete")
+    # libedit (common on macOS / some Linux builds; this host reports backend=editline)
+    _ = parse("bind ^I rl_complete")
+    # Some libedit builds use the python: prefix in .editrc-style binds
+    with contextlib.suppress(Exception):
+        _ = parse("python:bind ^I rl_complete")
 
 
 def setup_readline(state: ReplState) -> None:
@@ -84,7 +99,7 @@ def setup_readline(state: ReplState) -> None:
     except ImportError:
         return
 
-    readline.parse_and_bind("tab: complete")
+    bind_tab_complete(readline)
     # Treat path-like chars as part of a token so /help completes as one word.
     readline.set_completer_delims(" \t\n")
     readline.set_completer(build_completer(state))

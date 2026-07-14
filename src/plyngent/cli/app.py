@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 
 import click
 import msgspec
+from platformdirs import user_data_path
 
+from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.cli.editor import (
     load_config_with_optional_edit,
     open_in_editor,
@@ -23,13 +25,21 @@ from plyngent.tools import set_workspace_root
 if TYPE_CHECKING:
     from plyngent.config.store import ConfigStore
 
+_DEFAULT_DB_FILENAME = "chat.db"
+
 
 def _load_config(config_path: Path | None) -> ConfigStore:
     return load_config_with_optional_edit(config_path)
 
 
 def _database_config(store: ConfigStore) -> DatabaseConfig:
-    return msgspec.convert(dict(store.database), DatabaseConfig)
+    raw = dict(store.database)
+    # Prefer a durable file DB so sessions survive CLI restarts.
+    if raw.get("url") in {None, "", ":memory:"} and raw.get("implementation", "sqlite") == "sqlite":
+        db_path = user_data_path("plyngent", ensure_exists=True) / _DEFAULT_DB_FILENAME
+        raw = {**raw, "implementation": "sqlite", "url": str(db_path)}
+        click.secho(f"using database: {db_path}", fg="bright_black")
+    return msgspec.convert(raw, DatabaseConfig)
 
 
 async def _run_chat(  # noqa: PLR0913
@@ -40,6 +50,8 @@ async def _run_chat(  # noqa: PLR0913
     tools: bool,
     workspace: Path,
     session_id: int | None,
+    max_rounds: int,
+    new_session: bool,
 ) -> None:
     store = _load_config(config_path)
     if store.bad_providers:
@@ -64,11 +76,20 @@ async def _run_chat(  # noqa: PLR0913
             provider=provider,
             model=model_id,
             tools_enabled=tools,
+            max_rounds=max_rounds,
         )
         if session_id is not None:
             await state.resume_session(session_id)
-        else:
+            click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages)")
+        elif new_session:
             await state.new_session()
+        else:
+            mode = await state.resume_latest_or_new()
+            if mode == "resume":
+                click.echo(
+                    f"resumed latest session {state.session_id} "
+                    f"({len(state.agent.messages)} messages); use --new for a fresh chat"
+                )
         await run_repl(state)
     finally:
         await memory.close()
@@ -98,6 +119,20 @@ def main() -> None:
     help="Workspace root for tools (default: cwd).",
 )
 @click.option("--session", "session_id", type=int, default=None, help="Resume session id.")
+@click.option(
+    "--new",
+    "new_session",
+    is_flag=True,
+    default=False,
+    help="Start a new session instead of resuming the latest.",
+)
+@click.option(
+    "--max-rounds",
+    type=int,
+    default=DEFAULT_MAX_ROUNDS,
+    show_default=True,
+    help="Max tool-loop rounds per user turn.",
+)
 def chat_cmd(  # noqa: PLR0913
     config_path: Path | None,
     provider_name: str | None,
@@ -105,8 +140,16 @@ def chat_cmd(  # noqa: PLR0913
     tools: bool,  # noqa: FBT001
     workspace: Path | None,
     session_id: int | None,
+    new_session: bool,  # noqa: FBT001
+    max_rounds: int,
 ) -> None:
     """Interactive chat REPL with optional tools and session memory."""
+    if max_rounds < 1:
+        msg = "--max-rounds must be >= 1"
+        raise click.ClickException(msg)
+    if session_id is not None and new_session:
+        msg = "use either --session or --new, not both"
+        raise click.ClickException(msg)
     root = workspace if workspace is not None else Path.cwd()
     asyncio.run(
         _run_chat(
@@ -116,6 +159,8 @@ def chat_cmd(  # noqa: PLR0913
             tools=tools,
             workspace=root,
             session_id=session_id,
+            max_rounds=max_rounds,
+            new_session=new_session,
         )
     )
 

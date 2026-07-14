@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from .tools import ToolRegistry
 
 
-DEFAULT_MAX_ROUNDS = 8
+DEFAULT_MAX_ROUNDS = 32
 
 
 async def run_chat_loop(  # noqa: PLR0913

@@ -80,6 +80,23 @@ def test_completer_commands(tmp_path: object, monkeypatch: object) -> None:
     assert set(found) <= set(SLASH_COMMANDS)
 
 
+def test_bind_tab_complete_runs() -> None:
+    from plyngent.cli.readline_setup import bind_tab_complete
+
+    class FakeReadline:
+        binds: list[str]
+
+        def __init__(self) -> None:
+            self.binds = []
+
+        def parse_and_bind(self, s: str) -> None:
+            self.binds.append(s)
+
+    fake = FakeReadline()
+    bind_tab_complete(fake)
+    assert any("complete" in b or "rl_complete" in b for b in fake.binds)
+
+
 def test_completer_provider_args(tmp_path: object, monkeypatch: object) -> None:
     import readline
     from pathlib import Path

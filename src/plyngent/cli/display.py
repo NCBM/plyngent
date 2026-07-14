@@ -54,3 +54,5 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:
             _ = event
     if printed_text:
         click.echo()
+    # Blank line before the next readline prompt so log and input are not jammed.
+    click.echo()

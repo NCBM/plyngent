@@ -121,3 +121,22 @@ async def test_resume(state: ReplState) -> None:
     assert sid is not None
     state.agent.messages.clear()
     assert await handle_slash(state, f"/resume {sid}") is True
+
+
+async def test_history(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    from plyngent.lmproto.openai_compatible.model import AssistantChatMessage, UserChatMessage
+
+    state.agent.messages = [
+        UserChatMessage(content="hello"),
+        AssistantChatMessage(content="hi there"),
+    ]
+    assert await handle_slash(state, "/history") is True
+    out = capsys.readouterr().out
+    assert "user: hello" in out
+    assert "assistant: hi there" in out
+
+
+async def test_rounds(state: ReplState) -> None:
+    assert await handle_slash(state, "/rounds 40") is True
+    assert state.max_rounds == 40  # noqa: PLR2004
+    assert state.agent.max_rounds == 40  # noqa: PLR2004

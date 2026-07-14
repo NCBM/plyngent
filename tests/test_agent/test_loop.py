@@ -159,6 +159,12 @@ async def test_max_rounds() -> None:
     assert len(client.calls) == 2  # noqa: PLR2004
 
 
+async def test_default_max_rounds_is_generous() -> None:
+    from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
+
+    assert DEFAULT_MAX_ROUNDS >= 16  # noqa: PLR2004
+
+
 async def test_chat_agent_memory_roundtrip() -> None:
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")
