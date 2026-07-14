@@ -66,6 +66,14 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - **`process`**: `run_command` (argv, no shell, timeout); minimal PTY `open_pty` / `read_pty` / `close_pty`.
 - **`DEFAULT_TOOLS`**: file + process tool list for a `ToolRegistry`.
 
+### CLI (`cli/`)
+
+Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
+
+- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]`, `/help` slash commands.
+- **`plyngent providers`**: list config providers.
+- Tools default on (`--tools` / `--no-tools`); workspace defaults to cwd.
+
 ### Composition utility: `Forward` descriptor
 
 `utils/components.py` — `Forward[T]` / `forward()` for attribute forwarding on composed objects.
