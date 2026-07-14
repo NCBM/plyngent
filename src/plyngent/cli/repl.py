@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import contextlib
 import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import click
 
-with contextlib.suppress(ImportError):
-    import readline as _readline
-
-    _ = _readline
-
 from plyngent.cli.display import render_events
+from plyngent.cli.readline_setup import setup_readline
 from plyngent.cli.selection import select_model, select_provider
 from plyngent.runtime import ProviderNotSupportedError
 
@@ -30,6 +25,8 @@ Commands:
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
+
+Tab completes slash commands and some arguments (provider, model, tools).
 """
 
 type SlashHandler = Callable[[], None | Awaitable[None]]
@@ -154,7 +151,8 @@ def _read_line() -> str:
 
 
 async def run_repl(state: ReplState) -> None:
-    """Interactive chat loop with readline editing."""
+    """Interactive chat loop with readline editing, history, and Tab completion."""
+    setup_readline(state)
     click.echo(
         f"plyngent chat  provider={state.provider_name}  model={state.model}  "
         f"session={state.session_id}  tools={'on' if state.tools_enabled else 'off'}"

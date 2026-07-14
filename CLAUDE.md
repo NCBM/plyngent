@@ -73,6 +73,7 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]`, `/help` slash commands.
 - **`plyngent providers`**: list config providers.
 - Tools default on (`--tools` / `--no-tools`); workspace defaults to cwd.
+- Readline: Tab completion for slash commands/args; history file under platformdirs user data (`repl_history`).
 
 ### Composition utility: `Forward` descriptor
 
