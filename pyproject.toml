@@ -12,11 +12,15 @@ dependencies = [
   "platformdirs>=4.10.0",
   "tomlkit>=0.15.0",
   "sqlalchemy>=2.0.51",
-  "aiosqlite>=0.22.1"
+  "aiosqlite>=0.22.1",
+  "click>=8.4.2"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
 license = { text = "MIT" }
+
+[project.scripts]
+plyngent = "plyngent.cli:main"
 
 [dependency-groups]
 dev = [
