@@ -7,7 +7,7 @@ from plyngent.lmproto.openai_compatible.model import UserChatMessage
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Callable, Sequence
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
     from plyngent.memory import MemoryStore
@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from .client import ChatClient
     from .events import AgentEvent
     from .tools import ToolRegistry
+
+    type LimitContinueHook = Callable[[str], bool]
 
 
 class ChatAgent:
@@ -27,6 +29,7 @@ class ChatAgent:
     session_id: int | None
     max_rounds: int
     temperature: float | None
+    on_limit: LimitContinueHook | None
     messages: list[AnyChatMessage]
 
     def __init__(  # noqa: PLR0913
@@ -40,6 +43,7 @@ class ChatAgent:
         max_rounds: int = DEFAULT_MAX_ROUNDS,
         temperature: float | None = None,
         messages: Sequence[AnyChatMessage] | None = None,
+        on_limit: LimitContinueHook | None = None,
     ) -> None:
         self.client = client
         self.model = model
@@ -48,6 +52,7 @@ class ChatAgent:
         self.session_id = session_id
         self.max_rounds = max_rounds
         self.temperature = temperature
+        self.on_limit = on_limit
         self.messages = list(messages) if messages is not None else []
 
     async def load_history(self) -> None:
@@ -84,6 +89,7 @@ class ChatAgent:
             tools=self.tools,
             max_rounds=self.max_rounds,
             temperature=self.temperature,
+            on_limit=self.on_limit,
         ):
             yield event
 

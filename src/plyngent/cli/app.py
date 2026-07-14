@@ -14,6 +14,7 @@ from plyngent.cli.editor import (
     open_in_editor,
     resolve_config_path,
 )
+from plyngent.cli.limits import install_cli_limit_hooks
 from plyngent.cli.repl import run_repl
 from plyngent.cli.selection import select_model, select_provider
 from plyngent.cli.state import ReplState
@@ -66,6 +67,7 @@ async def _run_chat(  # noqa: PLR0913
         raise click.ClickException(str(exc)) from exc
 
     _ = set_workspace_root(workspace)
+    install_cli_limit_hooks()
     memory = await MemoryStore.open(_database_config(store))
     try:
         state = ReplState(

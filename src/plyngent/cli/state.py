@@ -43,6 +43,8 @@ class ReplState:
         return ToolRegistry(list(DEFAULT_TOOLS))
 
     def _make_agent(self) -> ChatAgent:
+        from plyngent.cli.limits import prompt_continue_limit
+
         return ChatAgent(
             self.client,
             model=self.model,
@@ -50,6 +52,7 @@ class ReplState:
             memory=self.memory,
             session_id=self.session_id,
             max_rounds=self.max_rounds,
+            on_limit=prompt_continue_limit,
         )
 
     def rebuild_client(self) -> None:

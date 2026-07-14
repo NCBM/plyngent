@@ -48,7 +48,13 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:
             )
             click.secho(f"[tool result] {preview}", fg="magenta")
         elif isinstance(event, MaxRoundsEvent):
-            click.secho(f"\n[max rounds reached: {event.rounds}]", fg="red")
+            if event.continued:
+                click.secho(
+                    f"\n[max rounds {event.rounds} reached — continuing with a higher allowance]",
+                    fg="yellow",
+                )
+            else:
+                click.secho(f"\n[max rounds reached: {event.rounds}]", fg="red")
         else:
             # AssistantMessageEvent — text already shown via TextDeltaEvent.
             _ = event

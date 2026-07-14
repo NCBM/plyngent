@@ -54,7 +54,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, se
 
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
-- **`run_chat_loop`**: multi-round tool loop, yields `AgentEvent` stream.
+- **`run_chat_loop`**: multi-round tool loop, yields `AgentEvent` stream; optional `on_limit` to continue past max rounds.
 - **`ChatAgent`**: wrapper with optional `MemoryStore` bind (load/append messages).
 
 ### Tools (`tools/`)
@@ -65,6 +65,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - **`file`**: `read_file`, `write_file`, `listdir`, `edit_replace` (first occurrence).
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (**Unix only**: `pty`+`fork`).
 - PTY: structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close SIGTERM→SIGKILL.
+- CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
 - **`DEFAULT_TOOLS`**: file + process tool list for a `ToolRegistry`.
 
 ### CLI (`cli/`)

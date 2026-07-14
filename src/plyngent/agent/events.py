@@ -25,6 +25,7 @@ class ToolResultEvent(Struct, tag_field="type", tag="tool_result"):
 
 class MaxRoundsEvent(Struct, tag_field="type", tag="max_rounds"):
     rounds: int
+    continued: bool = False
 
 
 type AgentEvent = TextDeltaEvent | AssistantMessageEvent | ToolCallEvent | ToolResultEvent | MaxRoundsEvent

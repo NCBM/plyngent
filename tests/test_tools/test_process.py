@@ -147,6 +147,7 @@ def test_pty_session_limit(workspace: object) -> None:
     del workspace
     previous = PtyManager.max_sessions
     try:
+        PtyManager.set_limit_continue_hook(None)
         PtyManager.configure(max_sessions=1)
         first = call_sync(open_pty, ["sleep", "30"])
         assert "session_id=" in first
@@ -155,6 +156,24 @@ def test_pty_session_limit(workspace: object) -> None:
     finally:
         PtyManager.close_all()
         PtyManager.configure(max_sessions=previous)
+        PtyManager.set_limit_continue_hook(None)
+
+
+def test_pty_session_limit_continue(workspace: object) -> None:
+    del workspace
+    previous = PtyManager.max_sessions
+    try:
+        PtyManager.configure(max_sessions=1)
+        PtyManager.set_limit_continue_hook(lambda _reason: True)
+        first = call_sync(open_pty, ["sleep", "30"])
+        second = call_sync(open_pty, ["sleep", "30"])
+        assert "session_id=" in first
+        assert "session_id=" in second
+        assert PtyManager.max_sessions >= 2  # noqa: PLR2004
+    finally:
+        PtyManager.close_all()
+        PtyManager.configure(max_sessions=previous)
+        PtyManager.set_limit_continue_hook(None)
 
 
 def test_pty_output_budget(workspace: object) -> None:

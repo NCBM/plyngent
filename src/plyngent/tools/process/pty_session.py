@@ -10,9 +10,14 @@ import signal
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from plyngent.tools.workspace import WorkspaceError, check_command_allowed, resolve_path
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    type LimitContinueHook = Callable[[str], bool]
 
 DEFAULT_PTY_READ_BYTES = 8192
 DEFAULT_PTY_POLL_TIMEOUT = 0.2
@@ -20,6 +25,8 @@ DEFAULT_MAX_SESSIONS = 8
 DEFAULT_IDLE_TTL_SECONDS = 600.0
 DEFAULT_SESSION_OUTPUT_BUDGET = 256_000
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
+_SESSION_LIMIT_STEP = 4
+_BUDGET_STEP = 256_000
 _STDERR_FD = 2
 _EXEC_FAIL_MARKER = b"plyngent-pty-exec-failed: "
 
@@ -67,6 +74,7 @@ class PtyManager:
     max_sessions: ClassVar[int] = DEFAULT_MAX_SESSIONS
     idle_ttl_seconds: ClassVar[float] = DEFAULT_IDLE_TTL_SECONDS
     session_output_budget: ClassVar[int] = DEFAULT_SESSION_OUTPUT_BUDGET
+    _limit_continue: ClassVar[LimitContinueHook | None] = None
 
     @classmethod
     def configure(
@@ -82,6 +90,21 @@ class PtyManager:
             cls.idle_ttl_seconds = max(0.0, idle_ttl_seconds)
         if session_output_budget is not None:
             cls.session_output_budget = max(1024, session_output_budget)
+
+    @classmethod
+    def set_limit_continue_hook(cls, hook: LimitContinueHook | None) -> None:
+        """Optional interactive hook: return True to raise a limit and continue."""
+        cls._limit_continue = hook
+
+    @classmethod
+    def _offer_raise(cls, reason: str) -> bool:
+        hook = cls._limit_continue
+        if hook is None:
+            return False
+        try:
+            return bool(hook(reason))
+        except Exception:  # noqa: BLE001 — never break tools on prompt failure
+            return False
 
     @classmethod
     def open(
@@ -100,8 +123,12 @@ class PtyManager:
         with cls._lock:
             alive_count = sum(1 for s in cls._sessions.values() if not s.closed)
             if alive_count >= cls.max_sessions:
-                msg = f"PTY session limit reached ({cls.max_sessions}); close idle sessions"
-                raise WorkspaceError(msg)
+                reason = f"PTY session limit reached ({cls.max_sessions})"
+                if cls._offer_raise(f"{reason}; raise by {_SESSION_LIMIT_STEP}?"):
+                    cls.max_sessions += _SESSION_LIMIT_STEP
+                else:
+                    msg = f"{reason}; close idle sessions or allow a higher limit"
+                    raise WorkspaceError(msg)
 
         master_fd, slave_fd = pty.openpty()
         pid = os.fork()
@@ -255,13 +282,19 @@ class PtyManager:
             raise WorkspaceError(msg)
 
         if (cls.session_output_budget - session.bytes_read) <= 0:
-            return PtyReadResult(
-                session_id=session_id,
-                alive=session.alive,
-                exit_code=session.exit_code,
-                data="",
-                budget_exhausted=True,
-            )
+            if cls._offer_raise(
+                f"PTY output budget exhausted for session {session_id} "
+                f"({cls.session_output_budget} bytes); raise by {_BUDGET_STEP}?"
+            ):
+                cls.session_output_budget += _BUDGET_STEP
+            else:
+                return PtyReadResult(
+                    session_id=session_id,
+                    alive=session.alive,
+                    exit_code=session.exit_code,
+                    data="",
+                    budget_exhausted=True,
+                )
 
         chunks, matched = cls._collect_chunks(
             session, max_bytes=max_bytes, timeout=timeout, until=until
@@ -270,6 +303,13 @@ class PtyManager:
         truncated = len(data) > max_bytes
         if truncated:
             data = data[:max_bytes]
+        budget_exhausted = (cls.session_output_budget - session.bytes_read) <= 0
+        if budget_exhausted and cls._offer_raise(
+            f"PTY output budget exhausted for session {session_id} "
+            f"({cls.session_output_budget} bytes); raise by {_BUDGET_STEP}?"
+        ):
+            cls.session_output_budget += _BUDGET_STEP
+            budget_exhausted = False
         return PtyReadResult(
             session_id=session_id,
             alive=session.alive,
@@ -277,7 +317,7 @@ class PtyManager:
             data=data,
             truncated=truncated,
             matched=matched,
-            budget_exhausted=(cls.session_output_budget - session.bytes_read) <= 0,
+            budget_exhausted=budget_exhausted,
         )
 
     @classmethod
