@@ -74,7 +74,7 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), resumes latest session by default (`--new` / `--session`).
 - Slash: `/history`, `/sessions`, `/resume`, `/rounds`, `/retry`, …
-- Failed turns: not written to DB; auto-retry 10s/20s/30s (Ctrl+C cancels wait); `/retry` manual.
+- Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; auto-retry 10s/20s/30s (Ctrl+C cancels wait); `/retry` manual.
 - **`plyngent providers`**: list config providers.
 - **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
 - If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.

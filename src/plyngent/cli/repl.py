@@ -37,8 +37,9 @@ Commands:
   /rounds [n]        Show or set max tool-loop rounds
   /retry             Retry the last failed user turn (after errors)
 
-On network/API errors, the user turn is not saved to the DB. Auto-retry
-waits 10s, 20s, then 30s (Ctrl+C cancels waits; use /retry later).
+On network/API errors or Ctrl+C during a turn, the turn is not saved to
+the DB. Auto-retry waits 10s, 20s, then 30s (Ctrl+C cancels waits or the
+in-flight turn; use /retry later).
 
 Tab completes slash commands and some arguments (provider, model, tools).
 Use --session ID or /resume to continue a prior chat after restart.

@@ -78,6 +78,10 @@ class ChatAgent:
         if self.memory is not None and self.session_id is not None:
             _ = await self.memory.append_message(self.session_id, message)
 
+    def _rollback_turn(self, pre_len: int, user_text: str) -> None:
+        del self.messages[pre_len:]
+        self.pending_retry_text = user_text
+
     async def _run_from_user_message(self, user_msg: UserChatMessage) -> AsyncIterator[AgentEvent]:
         """Run the tool loop for an already-appended user message; persist only on success."""
         pre_len = len(self.messages) - 1
@@ -85,6 +89,7 @@ class ChatAgent:
             pre_len = len(self.messages)
             self.messages.append(user_msg)
 
+        completed = False
         try:
             async for event in run_chat_loop(
                 self.client,
@@ -96,10 +101,11 @@ class ChatAgent:
                 on_limit=self.on_limit,
             ):
                 yield event
-        except Exception:
-            # Roll back the whole turn so a failed user message is not left half-applied.
-            del self.messages[pre_len:]
-            self.pending_retry_text = user_msg.content
+            completed = True
+        except BaseException:
+            # Includes CancelledError / KeyboardInterrupt paths via task cancel.
+            if not completed:
+                self._rollback_turn(pre_len, user_msg.content)
             raise
 
         for message in self.messages[pre_len:]:

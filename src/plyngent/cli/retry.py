@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import signal
 import time
 from typing import TYPE_CHECKING
 
@@ -9,7 +11,7 @@ import click
 from plyngent.cli.display import render_events
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Coroutine
 
     from plyngent.agent import AgentEvent
     from plyngent.agent.chat import ChatAgent
@@ -34,6 +36,43 @@ async def sleep_cancellable(seconds: float) -> bool:
         return False
 
 
+async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
+    """Await ``coro`` as a task; Ctrl+C / SIGINT cancels the task.
+
+    Raises:
+        asyncio.CancelledError: If the task was cancelled (including via SIGINT).
+    """
+    task = asyncio.create_task(coro)
+    loop = asyncio.get_running_loop()
+    installed = False
+
+    def _on_sigint() -> None:
+        if not task.done():
+            _ = task.cancel()
+
+    try:
+        loop.add_signal_handler(signal.SIGINT, _on_sigint)
+        installed = True
+    except (NotImplementedError, RuntimeError, ValueError):
+        installed = False
+
+    try:
+        return await task
+    except KeyboardInterrupt:
+        if not task.done():
+            _ = task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        raise asyncio.CancelledError from None
+    finally:
+        if installed:
+            _ = loop.remove_signal_handler(signal.SIGINT)
+        if not task.done():
+            _ = task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 async def run_turn_with_retries(
     agent: ChatAgent,
     *,
@@ -44,15 +83,27 @@ async def run_turn_with_retries(
 
     ``starter`` produces the event stream for the current attempt (``agent.run``
     or ``agent.retry``). Returns True if the turn completed successfully.
+
+    Ctrl+C during a model/tool turn cancels the in-flight task (level-1 cancel).
+    The agent rolls back the turn and keeps ``pending_retry_text`` for ``/retry``.
     """
     max_retries = len(delays)
     attempt = 0
     while True:
         try:
-            await render_events(starter())
+            await run_cancellable(render_events(starter()))
+        except asyncio.CancelledError:
+            click.echo()
+            click.secho(
+                "cancelled (turn not saved); use /retry to try again",
+                fg="yellow",
+            )
+            click.echo()
+            return False
         except KeyboardInterrupt:
             click.echo()
             click.secho("interrupted", fg="yellow")
+            click.echo()
             return False
         except Exception as exc:  # noqa: BLE001 — surface and optionally retry
             click.secho(f"error: {exc}", fg="red")

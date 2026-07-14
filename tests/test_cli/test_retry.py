@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, overload
 
+import pytest
+
 from plyngent.agent import ChatAgent
 from plyngent.cli.retry import retry_pending_with_retries, run_turn_with_retries, sleep_cancellable
 from plyngent.config.models import DatabaseConfig
@@ -17,8 +19,6 @@ from plyngent.memory import MemoryStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-    import pytest
 
 
 def _response(message: AssistantChatMessage) -> ChatCompletionResponse:
@@ -102,6 +102,64 @@ async def test_auto_retry_eventually_succeeds(monkeypatch: pytest.MonkeyPatch) -
     assert len(loaded) == 2  # noqa: PLR2004
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "hello"
+    await store.close()
+
+
+async def test_run_cancellable_cancels_task() -> None:
+    import asyncio
+
+    from plyngent.cli.retry import run_cancellable
+
+    started = asyncio.Event()
+
+    async def hang() -> None:
+        started.set()
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(run_cancellable(hang()))
+    _ = await started.wait()
+    _ = task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_cancel_turn_rolls_back_and_sets_pending() -> None:
+    import asyncio
+
+    from plyngent.cli.display import render_events
+    from plyngent.cli.retry import run_cancellable
+
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+
+    class HangClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param, stream
+            await asyncio.sleep(60)
+            return _response(AssistantChatMessage(content="never"))
+
+    agent = ChatAgent(HangClient(), model="m", memory=store, session_id=session.sid)
+    turn = asyncio.create_task(run_cancellable(render_events(agent.run("cancel-me"))))
+    await asyncio.sleep(0.05)
+    _ = turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    assert agent.pending_retry_text == "cancel-me"
+    assert agent.messages == []
+    assert await store.list_messages(session.sid) == []
     await store.close()
 
 
