@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import click
 
 from plyngent.cli.display import render_events
+from plyngent.cli.interrupt import allow_task_cancel, set_sigint_reinstall
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Coroutine
@@ -39,20 +40,30 @@ async def sleep_cancellable(seconds: float) -> bool:
 async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     """Await ``coro`` as a task; Ctrl+C / SIGINT cancels the task.
 
+    Interactive prompts (max-rounds / destructive confirm) temporarily disable
+    task cancel so the user can answer instead of aborting the whole turn.
+
     Raises:
         asyncio.CancelledError: If the task was cancelled (including via SIGINT).
     """
-    task = asyncio.create_task(coro)
+    task: asyncio.Task[T] = asyncio.create_task(coro)
     loop = asyncio.get_running_loop()
     installed = False
 
     def _on_sigint() -> None:
-        if not task.done():
+        if allow_task_cancel() and not task.done():
             _ = task.cancel()
+
+    def _reinstall() -> None:
+        try:
+            loop.add_signal_handler(signal.SIGINT, _on_sigint)
+        except (NotImplementedError, RuntimeError, ValueError):
+            return
 
     try:
         loop.add_signal_handler(signal.SIGINT, _on_sigint)
         installed = True
+        set_sigint_reinstall(_reinstall)
     except (NotImplementedError, RuntimeError, ValueError):
         installed = False
 
@@ -65,6 +76,7 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
                 await task
         raise asyncio.CancelledError from None
     finally:
+        set_sigint_reinstall(None)
         if installed:
             _ = loop.remove_signal_handler(signal.SIGINT)
         if not task.done():
