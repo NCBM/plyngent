@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, overload
 
+import pytest
+
 from plyngent.agent import (
     AssistantMessageEvent,
     ChatAgent,
@@ -224,4 +226,92 @@ async def test_chat_agent_memory_roundtrip() -> None:
     agent2 = ChatAgent(client, model="m", memory=store, session_id=session.sid)
     await agent2.load_history()
     assert len(agent2.messages) == 2  # noqa: PLR2004
+    await store.close()
+
+
+async def test_chat_agent_failed_turn_not_persisted() -> None:
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+
+    class BoomClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param, stream
+            msg = "network down"
+            raise RuntimeError(msg)
+
+    agent = ChatAgent(BoomClient(), model="m", memory=store, session_id=session.sid)
+    with pytest.raises(RuntimeError, match="network down"):
+        _ = [e async for e in agent.run("hello")]
+
+    assert agent.messages == []
+    assert agent.pending_retry_text == "hello"
+    loaded = await store.list_messages(session.sid)
+    assert loaded == []
+    await store.close()
+
+
+async def test_chat_agent_retry_after_failure() -> None:
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+
+    class FlakyClient:
+        calls: int
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param
+            self.calls += 1
+            if self.calls == 1:
+                msg = "temporary"
+                raise RuntimeError(msg)
+            if stream:
+
+                async def empty() -> AsyncIterator[ChatCompletionChunk]:
+                    empty_chunks: list[ChatCompletionChunk] = []
+                    for chunk in empty_chunks:
+                        yield chunk
+
+                return empty()
+            return _response(AssistantChatMessage(content="recovered"))
+
+    client = FlakyClient()
+    agent = ChatAgent(client, model="m", memory=store, session_id=session.sid)
+    with pytest.raises(RuntimeError, match="temporary"):
+        _ = [e async for e in agent.run("ping")]
+    assert agent.pending_retry_text == "ping"
+    assert await store.list_messages(session.sid) == []
+
+    events = [e async for e in agent.retry()]
+    assert any(isinstance(e, TextDeltaEvent) and e.content == "recovered" for e in events)
+    assert agent.pending_retry_text is None
+    loaded = await store.list_messages(session.sid)
+    assert len(loaded) == 2  # noqa: PLR2004
+    assert isinstance(loaded[0], UserChatMessage)
+    assert loaded[0].content == "ping"
     await store.close()

@@ -31,6 +31,7 @@ class ChatAgent:
     temperature: float | None
     on_limit: LimitContinueHook | None
     messages: list[AnyChatMessage]
+    pending_retry_text: str | None
 
     def __init__(  # noqa: PLR0913
         self,
@@ -54,6 +55,7 @@ class ChatAgent:
         self.temperature = temperature
         self.on_limit = on_limit
         self.messages = list(messages) if messages is not None else []
+        self.pending_retry_text = None
 
     async def load_history(self) -> None:
         """Replace in-memory messages from the bound memory session."""
@@ -61,6 +63,7 @@ class ChatAgent:
             msg = "load_history requires memory and session_id"
             raise RuntimeError(msg)
         self.messages = await self.memory.list_messages(self.session_id)
+        self.pending_retry_text = None
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
         """Attach a memory session id; optionally load existing messages."""
@@ -75,24 +78,48 @@ class ChatAgent:
         if self.memory is not None and self.session_id is not None:
             _ = await self.memory.append_message(self.session_id, message)
 
+    async def _run_from_user_message(self, user_msg: UserChatMessage) -> AsyncIterator[AgentEvent]:
+        """Run the tool loop for an already-appended user message; persist only on success."""
+        pre_len = len(self.messages) - 1
+        if pre_len < 0 or self.messages[pre_len] is not user_msg:
+            pre_len = len(self.messages)
+            self.messages.append(user_msg)
+
+        try:
+            async for event in run_chat_loop(
+                self.client,
+                self.messages,
+                model=self.model,
+                tools=self.tools,
+                max_rounds=self.max_rounds,
+                temperature=self.temperature,
+                on_limit=self.on_limit,
+            ):
+                yield event
+        except Exception:
+            # Roll back the whole turn so a failed user message is not left half-applied.
+            del self.messages[pre_len:]
+            self.pending_retry_text = user_msg.content
+            raise
+
+        for message in self.messages[pre_len:]:
+            await self._persist(message)
+        self.pending_retry_text = None
+
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
-        """Append a user message, run the tool loop, yield events, persist new messages."""
+        """Append a user message, run the tool loop, yield events, persist only on success."""
         user_msg = UserChatMessage(content=user_text)
         self.messages.append(user_msg)
-        await self._persist(user_msg)
-
-        start_len = len(self.messages)
-        async for event in run_chat_loop(
-            self.client,
-            self.messages,
-            model=self.model,
-            tools=self.tools,
-            max_rounds=self.max_rounds,
-            temperature=self.temperature,
-            on_limit=self.on_limit,
-        ):
+        async for event in self._run_from_user_message(user_msg):
             yield event
 
-        # Persist messages appended by the loop after the user message.
-        for message in self.messages[start_len:]:
-            await self._persist(message)
+    async def retry(self) -> AsyncIterator[AgentEvent]:
+        """Re-run the last failed user turn (no duplicate user message in history/DB)."""
+        text = self.pending_retry_text
+        if text is None:
+            msg = "nothing to retry"
+            raise RuntimeError(msg)
+        user_msg = UserChatMessage(content=text)
+        self.messages.append(user_msg)
+        async for event in self._run_from_user_message(user_msg):
+            yield event

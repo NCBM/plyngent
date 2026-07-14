@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 import click
 from msgspec import UNSET
 
-from plyngent.cli.display import render_events
 from plyngent.cli.readline_setup import setup_readline
+from plyngent.cli.retry import retry_pending_with_retries, run_user_text_with_retries
 from plyngent.cli.selection import select_model, select_provider
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -35,6 +35,10 @@ Commands:
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
   /rounds [n]        Show or set max tool-loop rounds
+  /retry             Retry the last failed user turn (after errors)
+
+On network/API errors, the user turn is not saved to the DB. Auto-retry
+waits 10s, 20s, then 30s (Ctrl+C cancels waits; use /retry later).
 
 Tab completes slash commands and some arguments (provider, model, tools).
 Use --session ID or /resume to continue a prior chat after restart.
@@ -141,6 +145,7 @@ def _cmd_rounds(state: ReplState, arg: str) -> None:
 
 def _cmd_clear(state: ReplState) -> None:
     state.agent.messages.clear()
+    state.agent.pending_retry_text = None
     click.echo("conversation cleared (in-memory only; DB history kept)")
 
 
@@ -197,6 +202,15 @@ def _cmd_history(state: ReplState, arg: str) -> None:
     click.echo(f"session={state.session_id}  messages={len(messages)}  showing={len(messages) - start}")
     for offset, message in enumerate(messages[start:]):
         click.echo(_format_history_message(start + offset, message))
+    if state.agent.pending_retry_text is not None:
+        click.secho(
+            f"(pending retry) user: {_preview_content(state.agent.pending_retry_text)}",
+            fg="yellow",
+        )
+
+
+async def _cmd_retry(state: ReplState) -> None:
+    _ = await retry_pending_with_retries(state.agent)
 
 
 async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
@@ -214,6 +228,7 @@ async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
         "model": lambda: _cmd_model(state, arg),
         "tools": lambda: _cmd_tools(state, arg),
         "rounds": lambda: _cmd_rounds(state, arg),
+        "retry": lambda: _cmd_retry(state),
     }
     handler = handlers.get(command)
     if handler is None:
@@ -269,8 +284,4 @@ async def run_repl(state: ReplState) -> None:
 
         click.secho("user: ", fg="green", nl=False)
         click.echo(line)
-        try:
-            await render_events(state.agent.run(line))
-        except Exception as exc:  # noqa: BLE001 — show API/runtime errors in REPL
-            click.secho(f"error: {exc}", fg="red")
-            click.echo()  # match render_events spacing before next prompt
+        _ = await run_user_text_with_retries(state.agent, line)

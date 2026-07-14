@@ -55,7 +55,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, se
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop, yields `AgentEvent` stream; optional `on_limit` to continue past max rounds.
-- **`ChatAgent`**: wrapper with optional `MemoryStore` bind (load/append messages).
+- **`ChatAgent`**: wrapper with optional `MemoryStore` bind (load/append messages on success only); `pending_retry_text` + `retry()` after failed turns.
 
 ### Tools (`tools/`)
 
@@ -73,7 +73,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), resumes latest session by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions`, `/resume`, `/rounds`, …
+- Slash: `/history`, `/sessions`, `/resume`, `/rounds`, `/retry`, …
+- Failed turns: not written to DB; auto-retry 10s/20s/30s (Ctrl+C cancels wait); `/retry` manual.
 - **`plyngent providers`**: list config providers.
 - **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
 - If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.

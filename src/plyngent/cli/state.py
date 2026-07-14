@@ -66,6 +66,7 @@ class ReplState:
         session = await self.memory.create_session(name=name)
         self.session_id = session.sid
         self.agent = self._make_agent()
+        self.agent.pending_retry_text = None
 
     async def resume_session(self, session_id: int) -> None:
         row = await self.memory.get_session(session_id)
