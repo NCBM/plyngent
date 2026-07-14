@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 import click
 import msgspec
 
-from plyngent import config as config_mod
+from plyngent.cli.editor import (
+    load_config_with_optional_edit,
+    open_in_editor,
+    resolve_config_path,
+)
 from plyngent.cli.repl import run_repl
 from plyngent.cli.selection import select_model, select_provider
 from plyngent.cli.state import ReplState
@@ -21,7 +25,7 @@ if TYPE_CHECKING:
 
 
 def _load_config(config_path: Path | None) -> ConfigStore:
-    return config_mod.load(config_path)
+    return load_config_with_optional_edit(config_path)
 
 
 def _database_config(store: ConfigStore) -> DatabaseConfig:
@@ -135,6 +139,39 @@ def providers_cmd(config_path: Path | None) -> None:
         click.echo(f"{name}\tpreset={tag}\tmodels={models}")
     if store.bad_providers:
         click.secho(f"bad: {', '.join(sorted(store.bad_providers.keys()))}", fg="yellow")
+
+
+@main.group("config")
+def config_group() -> None:
+    """Manage plyngent configuration."""
+
+
+@config_group.command("path")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Override config path (prints the path that would be used).",
+)
+def config_path_cmd(config_path: Path | None) -> None:
+    """Print the resolved config file path."""
+    click.echo(str(resolve_config_path(config_path)))
+
+
+@config_group.command("edit")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml (default: platform config dir).",
+)
+def config_edit_cmd(config_path: Path | None) -> None:
+    """Open the config file in $EDITOR (supports e.g. ``codium --wait``)."""
+    path = resolve_config_path(config_path)
+    open_in_editor(path)
+    click.echo(f"edited {path}")
 
 
 if __name__ == "__main__":

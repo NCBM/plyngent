@@ -72,6 +72,8 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]`, `/help` slash commands.
 - **`plyngent providers`**: list config providers.
+- **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
+- If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.
 - Tools default on (`--tools` / `--no-tools`); workspace defaults to cwd.
 - Readline: Tab completion for slash commands/args; history file under platformdirs user data (`repl_history`).
 
