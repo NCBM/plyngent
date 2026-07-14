@@ -1,0 +1,60 @@
+from typing import Literal
+
+from msgspec import UNSET, Struct
+
+from plyngent.typedef import Unset  # noqa: TC001
+
+from ...openai_compatible.model import AssistantChatMessage as BaseAssistantChatMessage
+from ...openai_compatible.model import (
+    ChatMessage,
+    ReasoningEffort,
+    ResponseFormat,
+    StreamOptions,
+    ToolChoiceMode,
+    ToolFunctionItem,
+)
+from ...openai_compatible.model import ToolChatMessage as BaseToolChatMessage
+
+type DeepSeekReasoningEffort = ReasoningEffort | Literal["max"]
+
+
+class NamedChatMessage(ChatMessage):
+    role: Literal["system", "user"]
+    name: str | Unset = UNSET
+
+
+class AssistantChatMessage(BaseAssistantChatMessage):
+    prefix: bool | Unset = UNSET
+    reasoning_content: str | Unset = UNSET
+
+
+class ToolChatMessage(BaseToolChatMessage):
+    pass
+
+
+type AnyChatMessage = NamedChatMessage | AssistantChatMessage | ToolChatMessage
+
+
+class ThinkingOptions(Struct):
+    type: Literal["enabled", "disabled"]
+
+
+class ChatCompletionsParam(Struct):
+    messages: list[AnyChatMessage]
+    model: str
+    thinking: ThinkingOptions | Unset = UNSET
+    reasoning_effort: DeepSeekReasoningEffort | Unset = UNSET
+    max_tokens: int | Unset = UNSET
+    response_format: ResponseFormat | Unset = UNSET
+    stop: str | list[str] | Unset = UNSET
+    stream: bool | Unset = UNSET
+    stream_options: StreamOptions | Unset = UNSET
+    temperature: float | Unset = UNSET
+    top_p: int | Unset = UNSET
+    tool_choice: ToolChoiceMode | ToolFunctionItem | Unset = UNSET
+    tools: list[ToolFunctionItem] | Unset = UNSET
+    logprobs: bool | Unset = UNSET
+    top_logprobs: int | Unset = UNSET
+    user_id: str | Unset = UNSET
+    frequency_penalty: float | Unset = UNSET
+    presence_penalty: float | Unset = UNSET
