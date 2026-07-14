@@ -8,6 +8,7 @@ from .process import close_pty as close_pty
 from .process import open_pty as open_pty
 from .process import read_pty as read_pty
 from .process import run_command as run_command
+from .process import write_pty as write_pty
 from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )

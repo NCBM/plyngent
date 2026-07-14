@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from plyngent.tools.process import close_pty, open_pty, read_pty, run_command
+from plyngent.tools.process import close_pty, open_pty, read_pty, run_command, write_pty
 from plyngent.tools.process.pty_session import PtyManager
 from plyngent.tools.workspace import set_command_denylist
 from tests.test_tools.helpers import call_async, call_sync
@@ -35,6 +35,24 @@ async def test_run_command_timeout(workspace: object) -> None:
     del workspace
     out = await call_async(run_command, ["sleep", "5"], timeout_seconds=0.2)
     assert "timed out" in out
+
+
+async def test_run_command_stdin(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_command, ["cat"], stdin="hello-stdin\n")
+    assert "exit_code=0" in out
+    assert "hello-stdin" in out
+
+
+async def test_run_command_env(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command,
+        ["sh", "-c", "printf '%s' \"$PLYNGENT_TEST_VAR\""],
+        env={"PLYNGENT_TEST_VAR": "from-env"},
+    )
+    assert "exit_code=0" in out
+    assert "from-env" in out
 
 
 def test_pty_open_read_close(workspace: object) -> None:
@@ -76,3 +94,30 @@ def test_pty_echo_output(workspace: object) -> None:
         assert "hello-pty" in text
     finally:
         PtyManager.close_all()
+
+
+def test_write_pty(workspace: object) -> None:
+    del workspace
+    try:
+        opened = call_sync(open_pty, ["cat"])
+        session_id = int(opened.split("=", 1)[1])
+        written = call_sync(write_pty, session_id, "pty-input\n")
+        assert "wrote" in written
+        chunks: list[str] = []
+        for _ in range(30):
+            chunk = call_sync(read_pty, session_id, timeout=0.1)
+            if chunk:
+                chunks.append(chunk)
+                if "pty-input" in "".join(chunks):
+                    break
+            time.sleep(0.05)
+        text = "".join(chunks)
+        _ = call_sync(close_pty, session_id)
+        assert "pty-input" in text
+    finally:
+        PtyManager.close_all()
+
+
+def test_write_pty_unknown_session(workspace: object) -> None:
+    del workspace
+    assert "error" in call_sync(write_pty, 999_999, "x")

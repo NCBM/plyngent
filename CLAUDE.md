@@ -63,7 +63,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 - **`workspace`**: path resolve under root; path substring denylist; command basename denylist.
 - **`file`**: `read_file`, `write_file`, `listdir`, `edit_replace` (first occurrence).
-- **`process`**: `run_command` (argv, no shell, timeout); minimal PTY `open_pty` / `read_pty` / `close_pty`.
+- **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty`.
 - **`DEFAULT_TOOLS`**: file + process tool list for a `ToolRegistry`.
 
 ### CLI (`cli/`)

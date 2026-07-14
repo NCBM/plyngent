@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
+from typing import TYPE_CHECKING
 
 from plyngent.agent import tool
 from plyngent.tools.workspace import (
@@ -10,6 +12,9 @@ from plyngent.tools.workspace import (
     get_workspace_root,
     resolve_path,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_MAX_OUTPUT_CHARS = 32_000
@@ -41,16 +46,30 @@ def _format_result(
     return "\n".join(parts)
 
 
+def _merge_env(overrides: dict[str, str] | None) -> dict[str, str] | None:
+    if overrides is None:
+        return None
+    merged = dict(os.environ)
+    for key, value in overrides.items():
+        merged[str(key)] = str(value)
+    return merged
+
+
 async def _run_exec(
     command: list[str],
     *,
     workdir: str,
     timeout_seconds: float,
+    stdin_data: bytes | None,
+    env: dict[str, str] | None,
 ) -> tuple[int | None, str, str] | str:
+    stdin = asyncio.subprocess.PIPE if stdin_data is not None else None
     try:
         proc = await asyncio.create_subprocess_exec(
             *command,
             cwd=workdir,
+            env=env,
+            stdin=stdin,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -60,7 +79,10 @@ async def _run_exec(
         return f"error: failed to start command: {exc}"
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=stdin_data),
+            timeout=timeout_seconds,
+        )
     except TimeoutError:
         proc.kill()
         _ = await proc.communicate()
@@ -71,17 +93,14 @@ async def _run_exec(
     return proc.returncode, stdout, stderr
 
 
-@tool
-async def run_command(
+def _validate_run_args(
     command: list[str],
     *,
-    cwd: str = ".",
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-) -> str:
-    """Run a command without a shell (argv list) under the workspace.
-
-    ``cwd`` is relative to or under the workspace root. Output is truncated.
-    """
+    cwd: str,
+    timeout_seconds: float,
+    env: dict[str, str] | None,
+) -> Path | str:
+    """Return resolved workdir, or an error string."""
     if not command:
         return "error: command must not be empty"
     try:
@@ -93,8 +112,37 @@ async def run_command(
         return f"error: cwd is not a directory: {cwd}"
     if timeout_seconds <= 0:
         return "error: timeout_seconds must be > 0"
+    _ = env  # typed as dict[str, str] | None; runtime JSON already constrained by tool schema
+    return workdir
 
-    result = await _run_exec(command, workdir=str(workdir), timeout_seconds=timeout_seconds)
+
+@tool
+async def run_command(
+    command: list[str],
+    *,
+    cwd: str = ".",
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    stdin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    """Run a command without a shell (argv list) under the workspace.
+
+    ``cwd`` is relative to or under the workspace root. Optional ``stdin`` is
+    written to the process stdin. Optional ``env`` overlays process environment
+    variables (merged with the current environment). Output is truncated.
+    """
+    workdir = _validate_run_args(command, cwd=cwd, timeout_seconds=timeout_seconds, env=env)
+    if isinstance(workdir, str):
+        return workdir
+
+    stdin_data = None if stdin is None else stdin.encode()
+    result = await _run_exec(
+        command,
+        workdir=str(workdir),
+        timeout_seconds=timeout_seconds,
+        stdin_data=stdin_data,
+        env=_merge_env(env),
+    )
     if isinstance(result, str):
         return result
     returncode, stdout, stderr = result
