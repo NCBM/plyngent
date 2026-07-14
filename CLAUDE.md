@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). It is in early development — core protocol clients exist, while agent, CLI, web, memory, and config modules are planned but not yet implemented.
+Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Early development: protocol clients, config, async memory, and a runtime client factory exist. Agent, CLI, web, tools, and router are still planned/stubbed.
 
 ## Commands
 
@@ -15,17 +15,16 @@ pdm sync             # sync after pulling changes
 pdm run basedpyright .   # type checking (basedpyright, "recommended" strictness)
 pdm run ruff check .     # linting
 pdm run ruff format .    # formatting
+pdm run pytest           # tests (pytest-asyncio auto mode)
 ```
-
-There is no test runner configured yet.
 
 ## Architecture
 
 ### Data modeling: `msgspec.Struct`
 
-All protocol models use `msgspec.Struct` — not dataclasses, not Pydantic. This gives type-safe, schema-validated structs with efficient JSON codec support. Use `msgspec.field(default=UNSET)` for optional fields to distinguish "not provided" from `None`.
+All protocol models use `msgspec.Struct` — not dataclasses, not Pydantic. Optional fields use `msgspec.field(default=UNSET)` / `default=UNSET` with type `T | Unset`.
 
-The `Unset` type alias (`typedef.py`) wraps `msgspec.UNSET` as `Literal[UnsetType.UNSET]`. `JSONSchema` is `dict[str, Any]`.
+`typedef.py`: `Unset = UnsetType` (plain assignment so msgspec recognizes it; do **not** use PEP 695 `type Unset = ...`). Multi-struct unions must be **tagged** via `tag_field` / `tag` (e.g. `role`, `type`) for decode. `JSONSchema` is `dict[str, Any]`.
 
 ### Protocol layering (`lmproto/`)
 
@@ -34,18 +33,30 @@ lmproto/openai_compatible/     ← Base: model, config, client
 lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 ```
 
-- **`openai_compatible/model.py`** — chat message models (`SystemChatMessage`, `UserChatMessage`, `AssistantChatMessage`, `ToolChatMessage`), tool definitions, request/response structs, streaming chunks. All `msgspec.Struct` with `rename="snake"` for camelCase JSON interop.
-- **`openai_compatible/client.py`** — `BaseOpenAIClient` using `niquests` for async HTTP with SSE streaming. Two response modes: `ChatCompletionResponse` (non-streaming) and `AsyncIterator[ChatCompletionChunk]` (streaming).
-- **`openai_compatible/config.py`** — `OpenAIConfig` dataclass (base URL, API key, model name, max tokens, temperature).
-- **DeepSeek extension** — `DeepseekOpenAIClient` extends `BaseOpenAIClient`. Models add `reasoning_content`, `prefix`, `ThinkingOptions`, and `DeepSeekReasoningEffort` (including `"max"`).
+- **`openai_compatible/model.py`** — tagged chat messages (`SystemChatMessage`, `UserChatMessage`, …), tools, request/response, streaming chunks.
+- **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAIClient` via `niquests` async + SSE.
+- **`openai_compatible/config.py`** — `OpenAIConfig` (token + base URL).
+- **DeepSeek** — `DeepseekOpenAIClient`; models add `reasoning_content`, `prefix`, `ThinkingOptions`.
+
+### Config (`config/`)
+
+TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]` section. Default path via platformdirs.
+
+### Runtime (`runtime/`)
+
+`create_client(provider)` maps config `Provider` → protocol client. OpenAI / openai-compatible / deepseek(openai convention) supported; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
+
+### Memory (`memory/`)
+
+Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, sessions, messages stored as msgspec chat message JSON.
 
 ### Composition utility: `Forward` descriptor
 
-`utils/components.py` provides a `Forward[T]` descriptor for forwarding attribute access to a composed sub-object — prefer composition over inheritance where appropriate. The `forward()` factory function constructs `Forward` instances with type inference.
+`utils/components.py` — `Forward[T]` / `forward()` for attribute forwarding on composed objects.
 
 ### Type annotations are mandatory
 
-Basedpyright in `recommended` mode (strictest preset). Ruff lint rules include `ANN` (flake8-annotations) — all functions must have type annotations except private functions (`ANN202` suppressed). Use PEP 695 `type X = ...` syntax for type aliases. Python 3.14+ generics syntax is expected.
+Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` ignored). Prefer PEP 695 aliases except where msgspec requires plain assignment (`Unset`).
 
 ## Commit messages
 

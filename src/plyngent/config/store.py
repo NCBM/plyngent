@@ -80,9 +80,7 @@ class ConfigStore:
         self._path = path
         self._document = document
         raw: dict[str, object] = document.unwrap()
-        self._database = _parse_database(
-            cast("dict[str, object]", raw.get("database", {}))
-        )
+        self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._providers, self._bad_providers = _parse_providers(document)
 
     # -- database (read-only) --
@@ -129,9 +127,7 @@ class ConfigStore:
         with self._path.open() as f:
             self._document = tomlkit.parse(f.read())
         raw: dict[str, object] = self._document.unwrap()
-        self._database = _parse_database(
-            cast("dict[str, object]", raw.get("database", {}))
-        )
+        self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._providers, self._bad_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --
