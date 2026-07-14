@@ -111,26 +111,38 @@ class OpenAIClient(BaseOpenAIClient):
         return self.decoder.decode(resp.content)
 
 
+def _dstr(d: dict[str, object], key: str, default: str = "") -> str:
+    """Typed helper: extract a string value from a dict, or return default."""
+    v = d.get(key)
+    return v if isinstance(v, str) else default
+
+
 def _merge_tool_entry(
     merge: dict[int, dict[str, object]],
     tc: dict[str, object],
 ) -> None:
     idx = tc.get("index", 0)
-    if not isinstance(idx, int):
+    if isinstance(idx, int):
+        pass
+    else:
         idx = 0
     if idx not in merge:
         merge[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
     entry = merge[idx]
-    if isinstance(tc.get("id"), str) and tc["id"]:
-        entry["id"] = tc["id"]
-    fn_raw = tc.get("function", {})
+    raw_id: object = tc.get("id")
+    if isinstance(raw_id, str) and raw_id:
+        entry["id"] = raw_id
+    fn_raw: object = tc.get("function", {})
     if isinstance(fn_raw, dict):
         entry_fn = entry["function"]
         if isinstance(entry_fn, dict):
-            if isinstance(fn_raw.get("name"), str) and fn_raw["name"]:
-                entry_fn["name"] = fn_raw["name"]
-            if isinstance(fn_raw.get("arguments"), str) and fn_raw["arguments"]:
-                entry_fn["arguments"] = entry_fn.get("arguments", "") + fn_raw["arguments"]
+            name = _dstr(fn_raw, "name")
+            if name:
+                entry_fn["name"] = name
+            args = _dstr(fn_raw, "arguments")
+            if args:
+                old_args = _dstr(entry_fn, "arguments")
+                entry_fn["arguments"] = old_args + args
 
 
 def _stream_choices(raw_line: bytes) -> list[dict[str, object]]:
@@ -138,15 +150,16 @@ def _stream_choices(raw_line: bytes) -> list[dict[str, object]]:
     import json as _json
 
     try:
-        data: object = _json.loads(raw_line)
+        raw_data: object = _json.loads(raw_line)
     except _json.JSONDecodeError:
         return []
-    if not isinstance(data, dict):
+    if not isinstance(raw_data, dict):
         return []
-    choices = data.get("choices", [])
-    if not isinstance(choices, list):
+    data: dict[str, object] = raw_data  # pyright: ignore[reportUnknownVariableType]
+    raw_choices_raw: object = data.get("choices", [])
+    if not isinstance(raw_choices_raw, list):
         return []
-    return [c for c in choices if isinstance(c, dict)]
+    return [c for c in raw_choices_raw if isinstance(c, dict)]
 
 
 def merge_stream_tool_calls(raw_lines: list[bytes]) -> list[AssistantFunctionToolCall]:
@@ -154,30 +167,32 @@ def merge_stream_tool_calls(raw_lines: list[bytes]) -> list[AssistantFunctionToo
     merge: dict[int, dict[str, object]] = {}
     for raw in raw_lines:
         for choice in _stream_choices(raw):
-            delta = choice.get("delta", {})
-            if not isinstance(delta, dict):
+            delta_raw: object = choice.get("delta", {})
+            if not isinstance(delta_raw, dict):
                 continue
-            for tc in delta.get("tool_calls", []):
+            delta: dict[str, object] = delta_raw  # pyright: ignore[reportUnknownVariableType]
+            raw_calls_raw: object = delta.get("tool_calls", [])
+            if not isinstance(raw_calls_raw, list):
+                continue
+            for tc in raw_calls_raw:
                 if isinstance(tc, dict):
                     _merge_tool_entry(merge, tc)
 
     result: list[AssistantFunctionToolCall] = []
     for idx in sorted(merge):
         entry = merge[idx]
-        if not isinstance(entry, dict):
+        entry_id = _dstr(entry, "id")
+        entry_fn_raw: object = entry.get("function", {})
+        if not isinstance(entry_fn_raw, dict):
             continue
-        entry_id: object = entry.get("id", "")
-        entry_fn: object = entry.get("function", {})
-        if not isinstance(entry_fn, dict):
-            continue
-        fn_name: object = entry_fn.get("name", "")
-        fn_args: object = entry_fn.get("arguments", "")
+        fn_name = _dstr(entry_fn_raw, "name")
+        fn_args = _dstr(entry_fn_raw, "arguments")
         if not entry_id or not fn_name:
             continue
         result.append(
             AssistantFunctionToolCall(
-                id=str(entry_id),
-                function=AssistantFunctionTool(name=str(fn_name), arguments=str(fn_args or "")),
+                id=entry_id,
+                function=AssistantFunctionTool(name=fn_name, arguments=fn_args),
             )
         )
     return result
