@@ -15,6 +15,8 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.system_prompt == ""
     assert store.agent_config.max_tool_result_chars == 32_000  # noqa: PLR2004
     assert store.agent_config.parallel_tools is True
+    assert store.agent_config.confirm_destructive is True
+    assert store.agent_config.path_denylist == []
 
 
 def test_agent_section_parse(tmp_path: Path) -> None:
@@ -25,6 +27,8 @@ def test_agent_section_parse(tmp_path: Path) -> None:
 system_prompt = "Be brief."
 max_tool_result_chars = 100
 parallel_tools = false
+confirm_destructive = false
+path_denylist = ["/secrets/", ".ssh/"]
 """,
         encoding="utf-8",
     )
@@ -32,3 +36,5 @@ parallel_tools = false
     assert store.agent_config.system_prompt == "Be brief."
     assert store.agent_config.max_tool_result_chars == 100  # noqa: PLR2004
     assert store.agent_config.parallel_tools is False
+    assert store.agent_config.confirm_destructive is False
+    assert store.agent_config.path_denylist == ["/secrets/", ".ssh/"]

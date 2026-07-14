@@ -26,6 +26,8 @@ _MINIMAL_CONFIG = """\
 # system_prompt = "You are a careful coding assistant."
 # max_tool_result_chars = 32000
 # parallel_tools = true
+# confirm_destructive = true
+# path_denylist = ["/secrets/", ".ssh/"]
 
 # [providers.example]
 # preset = "openai-compatible"

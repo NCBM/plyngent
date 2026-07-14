@@ -67,6 +67,9 @@ async def _run_chat(
         raise click.ClickException(str(exc)) from exc
 
     _ = set_workspace_root(workspace)
+    from plyngent.tools import set_path_denylist
+
+    set_path_denylist(store.agent_config.path_denylist or None)
     install_cli_limit_hooks()
     memory = await MemoryStore.open(_database_config(store))
     try:

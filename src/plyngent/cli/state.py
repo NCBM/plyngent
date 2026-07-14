@@ -40,6 +40,16 @@ class ReplState:
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
+        from plyngent.cli.limits import prompt_confirm_tool
+        from plyngent.tools.danger import classify_danger
+
+        agent_cfg = self.config.agent_config
+        if agent_cfg.confirm_destructive:
+            return ToolRegistry(
+                list(DEFAULT_TOOLS),
+                danger=classify_danger,
+                on_confirm=prompt_confirm_tool,
+            )
         return ToolRegistry(list(DEFAULT_TOOLS))
 
     def _make_agent(self) -> ChatAgent:

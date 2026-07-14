@@ -16,6 +16,8 @@ class AgentConfig(Struct, omit_defaults=True):
     system_prompt: str = ""
     max_tool_result_chars: int = 32_000
     parallel_tools: bool = True
+    confirm_destructive: bool = True
+    path_denylist: list[str] = field(default_factory=list)
 
 
 class ModelConfig(Struct, omit_defaults=True):
