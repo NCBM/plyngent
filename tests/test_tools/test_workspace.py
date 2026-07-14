@@ -36,14 +36,14 @@ def test_path_denylist(workspace: object) -> None:
     secrets.mkdir()
     _ = (secrets / "key").write_text("k", encoding="utf-8")
     set_path_denylist(["/secrets/"])
-    with pytest.raises(WorkspaceError, match="denied"):
+    with pytest.raises(WorkspaceError, match="matched '/secrets/'"):
         _ = resolve_path("secrets/key")
     set_path_denylist(None)
 
 
 def test_command_denylist(workspace: object) -> None:
     del workspace
-    with pytest.raises(WorkspaceError, match="denied"):
+    with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
         check_command_allowed(["rm", "-rf", "/"])
     check_command_allowed(["echo", "ok"])
     set_command_denylist(None)

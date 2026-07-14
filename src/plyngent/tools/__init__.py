@@ -1,3 +1,4 @@
+from .danger import classify_danger as classify_danger
 from .file import FILE_TOOLS as FILE_TOOLS
 from .file import copy_path as copy_path
 from .file import delete_path as delete_path
@@ -21,6 +22,7 @@ from .workspace import WorkspaceError as WorkspaceError
 from .workspace import check_command_allowed as check_command_allowed
 from .workspace import clear_workspace_root as clear_workspace_root
 from .workspace import get_command_denylist as get_command_denylist
+from .workspace import get_path_denylist as get_path_denylist
 from .workspace import get_workspace_root as get_workspace_root
 from .workspace import resolve_path as resolve_path
 from .workspace import set_command_denylist as set_command_denylist

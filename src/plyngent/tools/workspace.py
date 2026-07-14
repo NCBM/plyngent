@@ -68,6 +68,11 @@ def set_path_denylist(patterns: list[str] | tuple[str, ...] | None) -> None:
     _state.path_denylist = tuple(patterns or ())
 
 
+def get_path_denylist() -> tuple[str, ...]:
+    """Return the current path substring denylist."""
+    return _state.path_denylist
+
+
 def set_command_denylist(names: list[str] | tuple[str, ...] | frozenset[str] | None) -> None:
     """Set denied command basenames (None restores defaults)."""
     _state.command_denylist = DEFAULT_COMMAND_DENYLIST if names is None else frozenset(names)
@@ -87,12 +92,12 @@ def resolve_path(path: str | Path) -> Path:
     try:
         _ = resolved.relative_to(root)
     except ValueError as exc:
-        msg = f"path escapes workspace root: {path}"
+        msg = f"path escapes workspace root ({root}): {path}"
         raise WorkspaceError(msg) from exc
     resolved_str = str(resolved)
     for pattern in _state.path_denylist:
         if pattern and pattern in resolved_str:
-            msg = f"path denied by policy: {path}"
+            msg = f"path denied by policy (matched {pattern!r}): {path}"
             raise WorkspaceError(msg)
     return resolved
 
@@ -104,5 +109,5 @@ def check_command_allowed(argv: list[str]) -> None:
         raise WorkspaceError(msg)
     binary = Path(argv[0]).name
     if binary in _state.command_denylist:
-        msg = f"command denied by policy: {binary}"
+        msg = f"command denied by policy (basename {binary!r} is blocked)"
         raise WorkspaceError(msg)
