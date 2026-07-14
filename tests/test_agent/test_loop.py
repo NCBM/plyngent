@@ -391,3 +391,57 @@ async def test_chat_agent_retry_after_failure() -> None:
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "ping"
     await store.close()
+
+
+async def test_chat_agent_system_prompt_prepended() -> None:
+    from plyngent.lmproto.openai_compatible.model import SystemChatMessage
+
+    client = ScriptedClient([_response(AssistantChatMessage(content="ok"))])
+    agent = ChatAgent(client, model="m", system_prompt="Be brief.", stream=False)
+    _ = [e async for e in agent.run("hi")]
+    assert isinstance(agent.messages[0], SystemChatMessage)
+    assert agent.messages[0].content == "Be brief."
+    assert isinstance(client.calls[0].messages[0], SystemChatMessage)
+
+
+async def test_tool_result_char_budget() -> None:
+    @tool
+    def big() -> str:
+        return "x" * 100
+
+    registry = ToolRegistry([big])
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(
+                    content="",
+                    tool_calls=[
+                        AssistantFunctionToolCall(
+                            id="1",
+                            function=AssistantFunctionTool(name="big", arguments="{}"),
+                        )
+                    ],
+                )
+            ),
+            _response(AssistantChatMessage(content="done")),
+        ]
+    )
+    messages: list[AnyChatMessage] = [UserChatMessage(content="go")]
+    _ = [
+        e
+        async for e in run_chat_loop(
+            client,
+            messages,
+            model="m",
+            tools=registry,
+            stream=False,
+            max_tool_result_chars=20,
+            parallel_tools=False,
+        )
+    ]
+    from plyngent.lmproto.openai_compatible.model import ToolChatMessage
+
+    tool_msgs = [m for m in messages if isinstance(m, ToolChatMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content.startswith("x" * 20)
+    assert "truncated" in tool_msgs[0].content

@@ -22,6 +22,11 @@ _MINIMAL_CONFIG = """\
 # implementation = "sqlite"
 # url = "/path/to/chat.db"
 
+# [agent]
+# system_prompt = "You are a careful coding assistant."
+# max_tool_result_chars = 32000
+# parallel_tools = true
+
 # [providers.example]
 # preset = "openai-compatible"
 # url = "https://api.openai.com/v1"

@@ -45,6 +45,8 @@ class ReplState:
     def _make_agent(self) -> ChatAgent:
         from plyngent.cli.limits import prompt_continue_limit
 
+        agent_cfg = self.config.agent_config
+        system_prompt = agent_cfg.system_prompt or None
         return ChatAgent(
             self.client,
             model=self.model,
@@ -54,6 +56,9 @@ class ReplState:
             max_rounds=self.max_rounds,
             on_limit=prompt_continue_limit,
             stream=True,
+            system_prompt=system_prompt,
+            max_tool_result_chars=agent_cfg.max_tool_result_chars,
+            parallel_tools=agent_cfg.parallel_tools,
         )
 
     def rebuild_client(self) -> None:

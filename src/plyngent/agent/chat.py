@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.lmproto.openai_compatible.model import UserChatMessage
+from plyngent.lmproto.openai_compatible.model import SystemChatMessage, UserChatMessage
 
+from .budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 
 if TYPE_CHECKING:
@@ -31,6 +32,9 @@ class ChatAgent:
     temperature: float | None
     on_limit: LimitContinueHook | None
     stream: bool
+    system_prompt: str | None
+    max_tool_result_chars: int
+    parallel_tools: bool
     messages: list[AnyChatMessage]
     pending_retry_text: str | None
 
@@ -47,6 +51,9 @@ class ChatAgent:
         messages: Sequence[AnyChatMessage] | None = None,
         on_limit: LimitContinueHook | None = None,
         stream: bool = True,
+        system_prompt: str | None = None,
+        max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+        parallel_tools: bool = True,
     ) -> None:
         self.client = client
         self.model = model
@@ -57,8 +64,20 @@ class ChatAgent:
         self.temperature = temperature
         self.on_limit = on_limit
         self.stream = stream
+        self.system_prompt = system_prompt
+        self.max_tool_result_chars = max_tool_result_chars
+        self.parallel_tools = parallel_tools
         self.messages = list(messages) if messages is not None else []
         self.pending_retry_text = None
+        self._ensure_system_prompt()
+
+    def _ensure_system_prompt(self) -> None:
+        """Prepend system prompt once when configured and history has none."""
+        if not self.system_prompt:
+            return
+        if self.messages and isinstance(self.messages[0], SystemChatMessage):
+            return
+        self.messages.insert(0, SystemChatMessage(content=self.system_prompt))
 
     async def load_history(self) -> None:
         """Replace in-memory messages from the bound memory session."""
@@ -67,6 +86,7 @@ class ChatAgent:
             raise RuntimeError(msg)
         self.messages = await self.memory.list_messages(self.session_id)
         self.pending_retry_text = None
+        self._ensure_system_prompt()
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
         """Attach a memory session id; optionally load existing messages."""
@@ -103,11 +123,12 @@ class ChatAgent:
                 temperature=self.temperature,
                 on_limit=self.on_limit,
                 stream=self.stream,
+                max_tool_result_chars=self.max_tool_result_chars,
+                parallel_tools=self.parallel_tools,
             ):
                 yield event
             completed = True
         except BaseException:
-            # Includes CancelledError / KeyboardInterrupt paths via task cancel.
             if not completed:
                 self._rollback_turn(pre_len, user_msg.content)
             raise
@@ -118,6 +139,7 @@ class ChatAgent:
 
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
         """Append a user message, run the tool loop, yield events, persist only on success."""
+        self._ensure_system_prompt()
         user_msg = UserChatMessage(content=user_text)
         self.messages.append(user_msg)
         async for event in self._run_from_user_message(user_msg):
@@ -129,6 +151,7 @@ class ChatAgent:
         if text is None:
             msg = "nothing to retry"
             raise RuntimeError(msg)
+        self._ensure_system_prompt()
         user_msg = UserChatMessage(content=text)
         self.messages.append(user_msg)
         async for event in self._run_from_user_message(user_msg):
