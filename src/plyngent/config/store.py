@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 import msgspec
 import tomlkit
 
-from .models import Provider
+from .models import DatabaseConfig, Provider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -15,6 +15,14 @@ if TYPE_CHECKING:
 
 class ConfigFormatError(ValueError):
     """Raised when the config file contains invalid TOML."""
+
+
+def _parse_database(raw: dict[str, object]) -> DatabaseConfig:
+    """Parse the ``[database]`` section, falling back to defaults."""
+    try:
+        return msgspec.convert(raw, DatabaseConfig)
+    except msgspec.ValidationError:
+        return DatabaseConfig()
 
 
 def _parse_providers(
@@ -64,13 +72,25 @@ class ConfigStore:
 
     _path: Path
     _document: tomlkit.TOMLDocument
+    _database: DatabaseConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
 
     def __init__(self, path: Path, document: tomlkit.TOMLDocument) -> None:
         self._path = path
         self._document = document
+        raw: dict[str, object] = document.unwrap()
+        self._database = _parse_database(
+            cast("dict[str, object]", raw.get("database", {}))
+        )
         self._providers, self._bad_providers = _parse_providers(document)
+
+    # -- database (read-only) --
+
+    @property
+    def database(self) -> MappingProxyType[str, object]:
+        """Read-only mapping view of database configuration."""
+        return MappingProxyType(msgspec.structs.asdict(self._database))
 
     # -- providers (read/write) --
 
@@ -98,43 +118,63 @@ class ConfigStore:
     # -- persistence --
 
     def write(self) -> None:
-        """Serialize current providers to the TOML file."""
+        """Serialize current state to the TOML file."""
         self._sync_to_document()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("w") as f:
             tomlkit.dump(self._document, f)
 
     def reload(self) -> None:
-        """Re-read the TOML file and re-parse providers."""
+        """Re-read the TOML file and re-parse all sections."""
         with self._path.open() as f:
             self._document = tomlkit.parse(f.read())
+        raw: dict[str, object] = self._document.unwrap()
+        self._database = _parse_database(
+            cast("dict[str, object]", raw.get("database", {}))
+        )
         self._providers, self._bad_providers = _parse_providers(self._document)
 
-    # -- internal --
+    # -- internal sync helpers --
 
-    def _sync_to_document(self) -> None:
-        """Incrementally sync ``self._providers`` into the ``[providers]`` section.
+    def _sync_database_section(self) -> None:
+        """Sync ``[database]`` to the document."""
+        raw_db: dict[str, object] = msgspec.to_builtins(self._database)
+        if not raw_db:
+            if "database" in self._document:
+                del self._document["database"]
+            return
 
-        Only adds, updates, or removes individual provider entries — the rest of
-        the document (comments, formatting, other top-level sections) is untouched.
-        """
+        if "database" not in self._document:
+            self._document["database"] = tomlkit.table()
+        section = self._document["database"]
+
+        for k in list(section.keys()):  # type: ignore[union-attr]
+            if k not in raw_db:
+                del section[k]  # type: ignore[union-attr]
+        for k, v in raw_db.items():
+            section[k] = v  # type: ignore[union-attr]
+
+    def _sync_providers_section(self) -> None:
+        """Sync ``[providers]`` to the document."""
         if "providers" not in self._document:
             self._document["providers"] = tomlkit.table()
         section = self._document["providers"]
 
-        # Remove deleted providers
         for name in list(section.keys()):  # type: ignore[union-attr]
             if name not in self._providers:
                 del section[name]  # type: ignore[union-attr]
 
-        # Add / update providers
         for name, provider in self._providers.items():
             raw: dict[str, object] = msgspec.to_builtins(provider)
             if name in section:
                 entry = section[name]  # type: ignore[union-attr]
-                # Clear and rebuild the existing entry to match current state
                 entry.clear()  # type: ignore[union-attr]
                 for k, v in raw.items():
                     entry[k] = v  # type: ignore[union-attr]
             else:
                 section[name] = raw  # type: ignore[union-attr]
+
+    def _sync_to_document(self) -> None:
+        """Incrementally sync all sections into the document."""
+        self._sync_database_section()
+        self._sync_providers_section()

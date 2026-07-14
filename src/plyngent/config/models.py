@@ -1,6 +1,15 @@
 from msgspec import Struct, field
 
 
+class DatabaseConfig(Struct, omit_defaults=True):
+    """Database connection configuration."""
+
+    implementation: str = "sqlite"
+    url: str = ":memory:"
+    username: str | None = None
+    password: str | None = None
+
+
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags for a model within a provider."""
 

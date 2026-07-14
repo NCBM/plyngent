@@ -6,6 +6,7 @@ import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
 from .models import AnthropicProvider as AnthropicProvider
+from .models import DatabaseConfig as DatabaseConfig
 from .models import DeepseekProvider as DeepseekProvider
 from .models import ModelConfig as ModelConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider

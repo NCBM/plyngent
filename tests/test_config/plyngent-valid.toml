@@ -1,3 +1,7 @@
+[database]
+implementation = "sqlite"
+url = ":memory:"
+
 [providers.test1]
 preset = "openai"
 access_key_or_token = "sk-1145141919810"

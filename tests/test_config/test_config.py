@@ -28,6 +28,11 @@ def test_read_default_config(default_config_source: None) -> None:
     assert isinstance(providers["test2"], OpenAICompatibleProvider)
     assert isinstance(providers["test3"], AnthropicProvider)
     assert isinstance(providers["foo1"], DeepseekProvider)
+    db = config.database
+    assert db["implementation"] == "sqlite"
+    assert db["url"] == ":memory:"
+    assert db["username"] is None
+    assert db["password"] is None
 
 
 def test_read_valid_config() -> None:
@@ -38,6 +43,11 @@ def test_read_valid_config() -> None:
     assert isinstance(providers["test2"], OpenAICompatibleProvider)
     assert isinstance(providers["test3"], AnthropicProvider)
     assert isinstance(providers["foo1"], DeepseekProvider)
+    db = config.database
+    assert db["implementation"] == "sqlite"
+    assert db["url"] == ":memory:"
+    assert db["username"] is None
+    assert db["password"] is None
 
 
 def test_read_empty_config() -> None:
