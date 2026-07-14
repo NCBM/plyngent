@@ -36,6 +36,7 @@ build-backend = "pdm.backend"
 
 [tool.basedpyright]
 typeCheckingMode = "recommended"
+strictGenericNarrowing = true
 reportAny = "hint"
 reportExplicitAny = "hint"
 reportImplicitStringConcatenation = "hint"

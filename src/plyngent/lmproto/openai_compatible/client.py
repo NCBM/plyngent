@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING, Literal, overload
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import msgspec
 import niquests
@@ -15,7 +17,7 @@ from .model import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
 
     from niquests.async_session import AsyncSession
     from niquests.models import AsyncResponse
@@ -77,7 +79,6 @@ class BaseOpenAIClient:
                     _ = close()
 
 
-
 class OpenAIClient(BaseOpenAIClient):
     def __init__(self, config: OpenAIConfig) -> None:
         super().__init__(config)
@@ -115,41 +116,44 @@ class OpenAIClient(BaseOpenAIClient):
         return self.decoder.decode(resp.content)
 
 
-def _dstr(d: dict[str, object], key: str, default: str = "") -> str:
-    """Typed helper: extract a string value from a dict, or return default."""
+def _as_mapping(value: object) -> Mapping[str, Any] | None:
+    if isinstance(value, dict):
+        return cast("Mapping[str, Any]", value)
+    return None
+
+
+def _as_list(value: object) -> list[object] | None:
+    if isinstance(value, list):
+        return cast("list[object]", value)
+    return None
+
+
+def _dstr(d: Mapping[str, Any], key: str, default: str = "") -> str:
     v = d.get(key)
     return v if isinstance(v, str) else default
 
 
-def _merge_tool_entry(
-    merge: dict[int, dict[str, object]],
-    tc: dict[str, object],
-) -> None:
-    idx = tc.get("index", 0)
-    if isinstance(idx, int):
-        pass
-    else:
-        idx = 0
+def _merge_tool_entry(merge: dict[int, dict[str, str]], tc: Mapping[str, Any]) -> None:
+    idx_raw = tc.get("index", 0)
+    idx = idx_raw if isinstance(idx_raw, int) else 0
     if idx not in merge:
-        merge[idx] = {"id": "", "function": {"name": "", "arguments": ""}}
+        merge[idx] = {"id": "", "name": "", "arguments": ""}
     entry = merge[idx]
-    raw_id: object = tc.get("id")
+    raw_id = tc.get("id")
     if isinstance(raw_id, str) and raw_id:
         entry["id"] = raw_id
-    fn_raw: object = tc.get("function", {})
-    if isinstance(fn_raw, dict):
-        entry_fn = entry["function"]
-        if isinstance(entry_fn, dict):
-            name = _dstr(fn_raw, "name")
-            if name:
-                entry_fn["name"] = name
-            args = _dstr(fn_raw, "arguments")
-            if args:
-                old_args = _dstr(entry_fn, "arguments")
-                entry_fn["arguments"] = old_args + args
+    fn = _as_mapping(tc.get("function", {}))
+    if fn is None:
+        return
+    name = _dstr(fn, "name")
+    if name:
+        entry["name"] = name
+    args = _dstr(fn, "arguments")
+    if args:
+        entry["arguments"] = entry["arguments"] + args
 
 
-def _stream_choices(raw_line: bytes) -> list[dict[str, object]]:
+def _stream_choices(raw_line: bytes) -> list[Mapping[str, Any]]:
     """Extract ``choices`` list from a raw SSE payload byte string, or empty list."""
     import json as _json
 
@@ -157,46 +161,47 @@ def _stream_choices(raw_line: bytes) -> list[dict[str, object]]:
         raw_data: object = _json.loads(raw_line)
     except _json.JSONDecodeError:
         return []
-    if not isinstance(raw_data, dict):
+    data = _as_mapping(raw_data)
+    if data is None:
         return []
-    data: dict[str, object] = raw_data  # pyright: ignore[reportUnknownVariableType]
-    raw_choices_raw: object = data.get("choices", [])
-    if not isinstance(raw_choices_raw, list):
+    choices = _as_list(data.get("choices", []))
+    if choices is None:
         return []
-    return [c for c in raw_choices_raw if isinstance(c, dict)]
+    result: list[Mapping[str, Any]] = []
+    for item in choices:
+        mapping = _as_mapping(item)
+        if mapping is not None:
+            result.append(mapping)
+    return result
 
 
 def merge_stream_tool_calls(raw_lines: list[bytes]) -> list[AssistantFunctionToolCall]:
     """Accumulate streaming tool-call deltas by index across raw SSE payload bytes."""
-    merge: dict[int, dict[str, object]] = {}
+    merge: dict[int, dict[str, str]] = {}
     for raw in raw_lines:
         for choice in _stream_choices(raw):
-            delta_raw: object = choice.get("delta", {})
-            if not isinstance(delta_raw, dict):
+            delta = _as_mapping(choice.get("delta", {}))
+            if delta is None:
                 continue
-            delta: dict[str, object] = delta_raw  # pyright: ignore[reportUnknownVariableType]
-            raw_calls_raw: object = delta.get("tool_calls", [])
-            if not isinstance(raw_calls_raw, list):
+            calls = _as_list(delta.get("tool_calls", []))
+            if calls is None:
                 continue
-            for tc in raw_calls_raw:
-                if isinstance(tc, dict):
-                    _merge_tool_entry(merge, tc)
+            for tc in calls:
+                mapping = _as_mapping(tc)
+                if mapping is not None:
+                    _merge_tool_entry(merge, mapping)
 
     result: list[AssistantFunctionToolCall] = []
     for idx in sorted(merge):
         entry = merge[idx]
-        entry_id = _dstr(entry, "id")
-        entry_fn_raw: object = entry.get("function", {})
-        if not isinstance(entry_fn_raw, dict):
-            continue
-        fn_name = _dstr(entry_fn_raw, "name")
-        fn_args = _dstr(entry_fn_raw, "arguments")
+        entry_id = entry["id"]
+        fn_name = entry["name"]
         if not entry_id or not fn_name:
             continue
         result.append(
             AssistantFunctionToolCall(
                 id=entry_id,
-                function=AssistantFunctionTool(name=fn_name, arguments=fn_args),
+                function=AssistantFunctionTool(name=fn_name, arguments=entry["arguments"]),
             )
         )
     return result
