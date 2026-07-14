@@ -28,4 +28,20 @@ class MaxRoundsEvent(Struct, tag_field="type", tag="max_rounds"):
     continued: bool = False
 
 
-type AgentEvent = TextDeltaEvent | AssistantMessageEvent | ToolCallEvent | ToolResultEvent | MaxRoundsEvent
+class ErrorEvent(Struct, tag_field="type", tag="error"):
+    message: str
+
+
+class CancelledEvent(Struct, tag_field="type", tag="cancelled"):
+    pass
+
+
+type AgentEvent = (
+    TextDeltaEvent
+    | AssistantMessageEvent
+    | ToolCallEvent
+    | ToolResultEvent
+    | MaxRoundsEvent
+    | ErrorEvent
+    | CancelledEvent
+)

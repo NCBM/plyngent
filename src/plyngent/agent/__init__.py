@@ -2,6 +2,8 @@ from .chat import ChatAgent as ChatAgent
 from .client import ChatClient as ChatClient
 from .events import AgentEvent as AgentEvent
 from .events import AssistantMessageEvent as AssistantMessageEvent
+from .events import CancelledEvent as CancelledEvent
+from .events import ErrorEvent as ErrorEvent
 from .events import MaxRoundsEvent as MaxRoundsEvent
 from .events import TextDeltaEvent as TextDeltaEvent
 from .events import ToolCallEvent as ToolCallEvent
