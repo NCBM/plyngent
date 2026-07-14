@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+from msgspec import UNSET
+
 from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
+from plyngent.lmproto.openai_compatible.model import StreamFunctionDelta, StreamToolCallDelta
 
 
 def test_merge_stream_tool_calls_accumulates_arguments() -> None:
-    lines = [
-        b'{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"add","arguments":""}}]}}]}',
-        b'{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":"}}]}}]}',
-        b'{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}',
+    deltas = [
+        StreamToolCallDelta(
+            index=0,
+            id="c1",
+            type="function",
+            function=StreamFunctionDelta(name="add", arguments=""),
+        ),
+        StreamToolCallDelta(
+            index=0,
+            function=StreamFunctionDelta(name=UNSET, arguments='{"a":'),
+        ),
+        StreamToolCallDelta(
+            index=0,
+            function=StreamFunctionDelta(name=UNSET, arguments="1}"),
+        ),
     ]
-    calls = merge_stream_tool_calls(lines)
+    calls = merge_stream_tool_calls(deltas)
     assert len(calls) == 1
     assert calls[0].id == "c1"
     assert calls[0].function.name == "add"
@@ -17,9 +31,19 @@ def test_merge_stream_tool_calls_accumulates_arguments() -> None:
 
 
 def test_merge_stream_tool_calls_multiple_indices() -> None:
-    lines = [
-        b'{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"f1","arguments":"{}"}}]}}]}',
-        b'{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"f2","arguments":"[]"}}]}}]}',
+    deltas = [
+        StreamToolCallDelta(
+            index=0,
+            id="a",
+            type="function",
+            function=StreamFunctionDelta(name="f1", arguments="{}"),
+        ),
+        StreamToolCallDelta(
+            index=1,
+            id="b",
+            type="function",
+            function=StreamFunctionDelta(name="f2", arguments="[]"),
+        ),
     ]
-    calls = merge_stream_tool_calls(lines)
+    calls = merge_stream_tool_calls(deltas)
     assert {c.function.name for c in calls} == {"f1", "f2"}
