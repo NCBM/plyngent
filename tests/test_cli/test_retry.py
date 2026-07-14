@@ -13,6 +13,8 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ChunkChoice,
+    DeltaMessage,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -37,6 +39,24 @@ def _response(message: AssistantChatMessage) -> ChatCompletionResponse:
         ],
         system_fingerprint="",
         usage={},
+    )
+
+
+async def _as_stream(response: ChatCompletionResponse) -> AsyncIterator[ChatCompletionChunk]:
+    message = response.choices[0].message
+    content = message.content if isinstance(message.content, str) else ""
+    yield ChatCompletionChunk(
+        id=response.id,
+        object="chat.completion.chunk",
+        created=response.created,
+        model=response.model,
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=DeltaMessage(content=content),
+                finish_reason="stop",
+            )
+        ],
     )
 
 
@@ -66,15 +86,10 @@ class FlakyClient:
         if self.calls <= self.fail_times:
             msg = f"fail-{self.calls}"
             raise RuntimeError(msg)
+        response = _response(AssistantChatMessage(content="ok"))
         if stream:
-
-            async def empty() -> AsyncIterator[ChatCompletionChunk]:
-                empty_chunks: list[ChatCompletionChunk] = []
-                for chunk in empty_chunks:
-                    yield chunk
-
-            return empty()
-        return _response(AssistantChatMessage(content="ok"))
+            return _as_stream(response)
+        return response
 
 
 async def test_sleep_cancellable_completes() -> None:

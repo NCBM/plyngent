@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 class ChatClient(Protocol):
     """Structural protocol for OpenAI-compatible chat completion clients.
 
-    ``chat_completions_raw_lines`` is optional (checked dynamically in the loop).
+    When ``stream=True``, implementations may return an async iterator from an
+    async method (``await client.chat_completions(..., stream=True)`` then
+    ``async for chunk in stream``). That library shape is intentional.
     """
 
     @overload

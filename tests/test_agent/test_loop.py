@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, overload
 
 import pytest
+from msgspec import UNSET
 
 from plyngent.agent import (
     AssistantMessageEvent,
@@ -25,6 +26,10 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ChunkChoice,
+    DeltaMessage,
+    StreamFunctionDelta,
+    StreamToolCallDelta,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -33,8 +38,79 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
+def _chunks_from_response(response: ChatCompletionResponse) -> list[ChatCompletionChunk]:
+    """Turn a full response into stream chunks (library-style stream=True path)."""
+    message = response.choices[0].message
+    chunks: list[ChatCompletionChunk] = []
+    if isinstance(message.content, str) and message.content:
+        chunks.append(
+            ChatCompletionChunk(
+                id=response.id,
+                object="chat.completion.chunk",
+                created=response.created,
+                model=response.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(content=message.content),
+                        finish_reason=None,
+                    )
+                ],
+            )
+        )
+    tool_calls = message.tool_calls
+    if tool_calls is not UNSET and tool_calls:
+        deltas: list[StreamToolCallDelta] = []
+        for i, call in enumerate(tool_calls):
+            if isinstance(call, AssistantFunctionToolCall):
+                deltas.append(
+                    StreamToolCallDelta(
+                        index=i,
+                        id=call.id,
+                        type="function",
+                        function=StreamFunctionDelta(
+                            name=call.function.name,
+                            arguments=call.function.arguments,
+                        ),
+                    )
+                )
+        if deltas:
+            chunks.append(
+                ChatCompletionChunk(
+                    id=response.id,
+                    object="chat.completion.chunk",
+                    created=response.created,
+                    model=response.model,
+                    choices=[
+                        ChunkChoice(
+                            index=0,
+                            delta=DeltaMessage(tool_calls=deltas),
+                            finish_reason="tool_calls",
+                        )
+                    ],
+                )
+            )
+    if not chunks:
+        chunks.append(
+            ChatCompletionChunk(
+                id=response.id,
+                object="chat.completion.chunk",
+                created=response.created,
+                model=response.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(),
+                        finish_reason=response.choices[0].finish_reason or "stop",
+                    )
+                ],
+            )
+        )
+    return chunks
+
+
 class ScriptedClient:
-    """Returns scripted non-streaming chat completions in order."""
+    """Scripted chat completions; supports stream=True via chunked responses."""
 
     _responses: list[ChatCompletionResponse]
     calls: list[ChatCompletionsParam]
@@ -57,16 +133,16 @@ class ScriptedClient:
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         self.calls.append(param)
-        if stream:
-            return self._empty_stream()
         if not self._responses:
             msg = "no more scripted responses"
             raise RuntimeError(msg)
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if stream:
+            return self._as_stream(response)
+        return response
 
-    async def _empty_stream(self) -> AsyncIterator[ChatCompletionChunk]:
-        empty: list[ChatCompletionChunk] = []
-        for chunk in empty:
+    async def _as_stream(self, response: ChatCompletionResponse) -> AsyncIterator[ChatCompletionChunk]:
+        for chunk in _chunks_from_response(response):
             yield chunk
 
 
@@ -290,15 +366,15 @@ async def test_chat_agent_retry_after_failure() -> None:
             if self.calls == 1:
                 msg = "temporary"
                 raise RuntimeError(msg)
+            response = _response(AssistantChatMessage(content="recovered"))
             if stream:
 
-                async def empty() -> AsyncIterator[ChatCompletionChunk]:
-                    empty_chunks: list[ChatCompletionChunk] = []
-                    for chunk in empty_chunks:
+                async def as_stream() -> AsyncIterator[ChatCompletionChunk]:
+                    for chunk in _chunks_from_response(response):
                         yield chunk
 
-                return empty()
-            return _response(AssistantChatMessage(content="recovered"))
+                return as_stream()
+            return response
 
     client = FlakyClient()
     agent = ChatAgent(client, model="m", memory=store, session_id=session.sid)

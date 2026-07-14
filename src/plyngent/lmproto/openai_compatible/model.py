@@ -219,10 +219,23 @@ class ChatCompletionResponse(Struct):
     service_tier: ServiceTier | Unset = UNSET
 
 
+# Streaming deltas may be partial (id/name on first chunk, arguments later).
+class StreamFunctionDelta(Struct):
+    name: str | Unset = UNSET
+    arguments: str | Unset = UNSET
+
+
+class StreamToolCallDelta(Struct):
+    index: int = 0
+    id: str | Unset = UNSET
+    type: Literal["function"] | Unset = UNSET
+    function: StreamFunctionDelta | Unset = UNSET
+
+
 class DeltaMessage(Struct):
     role: RoleAssistant | Unset = UNSET
     content: str | Unset = UNSET
-    tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
+    tool_calls: list[StreamToolCallDelta] | Unset = UNSET
 
 
 class ChunkChoice(Struct):
@@ -238,26 +251,4 @@ class ChatCompletionChunk(Struct):
     created: int
     model: str
     choices: list[ChunkChoice]
-    usage: dict[str, Any] | Unset = UNSET
-
-
-# -- Streaming-tolerant models (ignore partial tool calls in stream) --
-
-class StreamDelta(Struct):
-    """Delta that accepts any extra fields (partial tool calls), ignoring them."""
-    content: str | Unset = UNSET
-
-
-class StreamChunkChoice(Struct):
-    index: int
-    delta: StreamDelta
-    finish_reason: FinishReason | None | Unset = UNSET
-
-
-class StreamChatCompletionChunk(Struct):
-    id: str
-    object: Literal["chat.completion.chunk"]
-    created: int
-    model: str
-    choices: list[StreamChunkChoice]
     usage: dict[str, Any] | Unset = UNSET

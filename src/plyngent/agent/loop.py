@@ -4,11 +4,13 @@ from typing import TYPE_CHECKING, cast
 
 from msgspec import UNSET
 
+from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
 from plyngent.lmproto.openai_compatible.model import (
     AnyAssistantToolCall,
     AssistantChatMessage,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    StreamToolCallDelta,
     ToolChatMessage,
 )
 from plyngent.typedef import Unset  # noqa: TC001
@@ -79,46 +81,34 @@ async def _stream_and_build_assistant(
     client: ChatClient,
     param: ChatCompletionsParam,
 ) -> tuple[AssistantChatMessage, list[TextDeltaEvent]]:
-    """Stream a round, return the assistant message and any text deltas.
+    """Stream one completion via the normal client API.
 
-    Requires ``client.chat_completions_raw_lines`` (async generator of raw SSE
-    payload bytes). Falls back to non-streaming if unavailable.
+    Pattern: ``stream = await client.chat_completions(..., stream=True)`` then
+    ``async for chunk in stream``. That return type (async function → async
+    iterator) is accepted as the library interface.
     """
-    raw_lines_attr = getattr(client, "chat_completions_raw_lines", None)
-    if raw_lines_attr is None:
-        return await _non_stream_assistant(client, param)
-
-    # Async generators are not awaitable — call to get the iterator.
-    stream_iter = raw_lines_attr(param)
-    raw_lines: list[bytes] = []
+    stream = await client.chat_completions(param, stream=True)
     content_parts: list[str] = []
     text_events: list[TextDeltaEvent] = []
-    stream_decoder = getattr(client, "stream_decoder", None)
+    tool_deltas: list[StreamToolCallDelta] = []
 
-    async for raw in stream_iter:
-        raw_lines.append(raw)
-        if stream_decoder is None:
-            continue
-        try:
-            chunk = stream_decoder.decode(raw)
-        except Exception:  # noqa: BLE001 — skip malformed SSE payloads
-            continue
+    async for chunk in stream:
         if not chunk.choices:
             continue
-        delta_text = chunk.choices[0].delta.content
-        if isinstance(delta_text, str) and delta_text:
-            content_parts.append(delta_text)
-            text_events.append(TextDeltaEvent(content=delta_text))
+        choice = chunk.choices[0]
+        delta = choice.delta
+        if isinstance(delta.content, str) and delta.content:
+            content_parts.append(delta.content)
+            text_events.append(TextDeltaEvent(content=delta.content))
+        if delta.tool_calls is not UNSET and delta.tool_calls:
+            tool_deltas.extend(delta.tool_calls)
 
     full_content = "".join(content_parts)
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
-    # Reconstruct tool calls from raw lines whenever present (do not rely solely
-    # on finish_reason — some providers omit it on intermediate chunks).
-    from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
-
-    calls = merge_stream_tool_calls(raw_lines)
-    if calls:
-        tool_calls = cast("list[AnyAssistantToolCall]", calls)
+    if tool_deltas:
+        calls = merge_stream_tool_calls(tool_deltas)
+        if calls:
+            tool_calls = cast("list[AnyAssistantToolCall]", calls)
 
     assistant = AssistantChatMessage(
         content=full_content or None,
@@ -140,10 +130,8 @@ async def run_chat_loop(
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
-    When ``stream=True``, text tokens yield as they arrive; tool calls are
-    reconstructed from raw SSE payloads when the client supports raw streaming.
-
-    Continues until the model returns no tool calls, or ``max_rounds`` is hit.
+    When ``stream=True``, uses ``chat_completions(..., stream=True)`` and yields
+    text deltas as chunks arrive; tool calls are merged from stream deltas.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
