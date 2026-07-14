@@ -1,6 +1,9 @@
 from .file import FILE_TOOLS as FILE_TOOLS
+from .file import copy_path as copy_path
+from .file import delete_path as delete_path
 from .file import edit_replace as edit_replace
 from .file import listdir as listdir
+from .file import move_path as move_path
 from .file import read_file as read_file
 from .file import tree as tree
 from .file import write_file as write_file
