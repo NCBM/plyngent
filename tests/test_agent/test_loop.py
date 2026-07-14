@@ -63,9 +63,9 @@ class ScriptedClient:
         return self._responses.pop(0)
 
     async def _empty_stream(self) -> AsyncIterator[ChatCompletionChunk]:
-        if False:  # pyright: ignore[reportUnreachable]
-            yield  # type: ignore[misc]
-        return
+        empty: list[ChatCompletionChunk] = []
+        for chunk in empty:
+            yield chunk
 
 
 def _response(message: AssistantChatMessage) -> ChatCompletionResponse:

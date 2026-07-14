@@ -9,7 +9,7 @@ import tomlkit
 from .models import DatabaseConfig, Provider
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, MutableMapping
     from pathlib import Path
 
 
@@ -132,6 +132,12 @@ class ConfigStore:
 
     # -- internal sync helpers --
 
+    def _toml_table(self, key: str) -> MutableMapping[str, object]:
+        """Return a mutable table for ``key``, creating it if missing."""
+        if key not in self._document:
+            self._document[key] = tomlkit.table()
+        return cast("MutableMapping[str, object]", self._document[key])
+
     def _sync_database_section(self) -> None:
         """Sync ``[database]`` to the document."""
         raw_db: dict[str, object] = msgspec.to_builtins(self._database)
@@ -140,35 +146,30 @@ class ConfigStore:
                 del self._document["database"]
             return
 
-        if "database" not in self._document:
-            self._document["database"] = tomlkit.table()
-        section = self._document["database"]
-
-        for k in list(section.keys()):  # type: ignore[union-attr]
+        section = self._toml_table("database")
+        for k in list(section.keys()):
             if k not in raw_db:
-                del section[k]  # type: ignore[union-attr]
+                del section[k]
         for k, v in raw_db.items():
-            section[k] = v  # type: ignore[union-attr]
+            section[k] = v
 
     def _sync_providers_section(self) -> None:
         """Sync ``[providers]`` to the document."""
-        if "providers" not in self._document:
-            self._document["providers"] = tomlkit.table()
-        section = self._document["providers"]
+        section = self._toml_table("providers")
 
-        for name in list(section.keys()):  # type: ignore[union-attr]
+        for name in list(section.keys()):
             if name not in self._providers:
-                del section[name]  # type: ignore[union-attr]
+                del section[name]
 
         for name, provider in self._providers.items():
             raw: dict[str, object] = msgspec.to_builtins(provider)
             if name in section:
-                entry = section[name]  # type: ignore[union-attr]
-                entry.clear()  # type: ignore[union-attr]
+                entry = cast("MutableMapping[str, object]", section[name])
+                entry.clear()
                 for k, v in raw.items():
-                    entry[k] = v  # type: ignore[union-attr]
+                    entry[k] = v
             else:
-                section[name] = raw  # type: ignore[union-attr]
+                section[name] = raw
 
     def _sync_to_document(self) -> None:
         """Incrementally sync all sections into the document."""
