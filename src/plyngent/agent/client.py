@@ -13,7 +13,10 @@ if TYPE_CHECKING:
 
 
 class ChatClient(Protocol):
-    """Structural protocol for OpenAI-compatible chat completion clients."""
+    """Structural protocol for OpenAI-compatible chat completion clients.
+
+    ``chat_completions_raw_lines`` is optional (checked dynamically in the loop).
+    """
 
     @overload
     async def chat_completions(
