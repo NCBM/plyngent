@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, cast
 
 from msgspec import UNSET
@@ -15,6 +16,7 @@ from plyngent.lmproto.openai_compatible.model import (
 )
 from plyngent.typedef import Unset  # noqa: TC001
 
+from .budget import DEFAULT_TOOL_RESULT_MAX_CHARS, truncate_tool_result
 from .events import (
     AgentEvent,
     AssistantMessageEvent,
@@ -39,25 +41,52 @@ if TYPE_CHECKING:
 DEFAULT_MAX_ROUNDS = 32
 
 
+async def _run_one_tool(
+    tools: ToolRegistry,
+    call: AnyAssistantToolCall,
+    *,
+    max_result_chars: int,
+) -> tuple[ToolChatMessage, ErrorEvent | None]:
+    if isinstance(call, AssistantFunctionToolCall):
+        try:
+            result_text = await tools.execute(call.function.name, call.function.arguments)
+        except Exception as exc:  # noqa: BLE001
+            result_text = f"error: tool {call.function.name!r} failed: {exc}"
+            err = ErrorEvent(message=result_text)
+            truncated = truncate_tool_result(result_text, max_result_chars)
+            return ToolChatMessage(content=truncated, tool_call_id=call.id), err
+        truncated = truncate_tool_result(result_text, max_result_chars)
+        return ToolChatMessage(content=truncated, tool_call_id=call.id), None
+    msg = ToolChatMessage(
+        content="error: custom tool calls are not supported",
+        tool_call_id=call.id,
+    )
+    return msg, None
+
+
 async def _execute_tool_calls(
     tools: ToolRegistry,
     tool_calls: Sequence[AnyAssistantToolCall],
     messages: list[AnyChatMessage],
+    *,
+    max_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+    parallel: bool = True,
 ) -> AsyncIterator[AgentEvent]:
     for call in tool_calls:
         yield ToolCallEvent(tool_call=call)
-        if isinstance(call, AssistantFunctionToolCall):
-            try:
-                result_text = await tools.execute(call.function.name, call.function.arguments)
-            except Exception as exc:  # noqa: BLE001
-                result_text = f"error: tool {call.function.name!r} failed: {exc}"
-                yield ErrorEvent(message=result_text)
-            tool_msg = ToolChatMessage(content=result_text, tool_call_id=call.id)
-        else:
-            tool_msg = ToolChatMessage(
-                content="error: custom tool calls are not supported",
-                tool_call_id=call.id,
-            )
+
+    if parallel and len(tool_calls) > 1:
+        results = await asyncio.gather(
+            *[_run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
+        )
+    else:
+        results = [
+            await _run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls
+        ]
+
+    for tool_msg, err in results:
+        if err is not None:
+            yield err
         messages.append(tool_msg)
         yield ToolResultEvent(message=tool_msg)
 
@@ -127,11 +156,14 @@ async def run_chat_loop(
     temperature: float | None = None,
     on_limit: LimitContinueHook | None = None,
     stream: bool = True,
+    max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+    parallel_tools: bool = True,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
     When ``stream=True``, uses ``chat_completions(..., stream=True)`` and yields
     text deltas as chunks arrive; tool calls are merged from stream deltas.
+    Multiple tool calls in one round run in parallel when ``parallel_tools``.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -166,7 +198,13 @@ async def run_chat_loop(
                 return
             if tools is None:
                 return
-            async for event in _execute_tool_calls(tools, tool_calls, messages):
+            async for event in _execute_tool_calls(
+                tools,
+                tool_calls,
+                messages,
+                max_result_chars=max_tool_result_chars,
+                parallel=parallel_tools,
+            ):
                 yield event
 
         reason = f"tool loop reached {allowance} rounds (used {rounds_used})"
