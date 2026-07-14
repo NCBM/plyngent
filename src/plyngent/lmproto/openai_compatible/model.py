@@ -239,3 +239,25 @@ class ChatCompletionChunk(Struct):
     model: str
     choices: list[ChunkChoice]
     usage: dict[str, Any] | Unset = UNSET
+
+
+# -- Streaming-tolerant models (ignore partial tool calls in stream) --
+
+class StreamDelta(Struct):
+    """Delta that accepts any extra fields (partial tool calls), ignoring them."""
+    content: str | Unset = UNSET
+
+
+class StreamChunkChoice(Struct):
+    index: int
+    delta: StreamDelta
+    finish_reason: FinishReason | None | Unset = UNSET
+
+
+class StreamChatCompletionChunk(Struct):
+    id: str
+    object: Literal["chat.completion.chunk"]
+    created: int
+    model: str
+    choices: list[StreamChunkChoice]
+    usage: dict[str, Any] | Unset = UNSET
