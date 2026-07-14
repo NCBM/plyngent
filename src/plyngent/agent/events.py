@@ -30,10 +30,12 @@ class MaxRoundsEvent(Struct, tag_field="type", tag="max_rounds"):
 
 class ErrorEvent(Struct, tag_field="type", tag="error"):
     message: str
+    retryable: bool = True
+    source: str = ""
 
 
 class CancelledEvent(Struct, tag_field="type", tag="cancelled"):
-    pass
+    reason: str = ""
 
 
 type AgentEvent = (

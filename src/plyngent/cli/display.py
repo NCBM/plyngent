@@ -52,9 +52,17 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
             one_line = preview.replace("\n", " ")
             click.secho(f"[tool ok] {one_line}", fg="magenta")
         elif isinstance(event, ErrorEvent):
-            click.secho(f"\n[error] {event.message}", fg="bright_red")
+            suffix = ""
+            if event.source:
+                suffix += f" source={event.source}"
+            if not event.retryable:
+                suffix += " (fatal)"
+            click.secho(f"\n[error]{suffix} {event.message}", fg="bright_red")
         elif isinstance(event, CancelledEvent):
-            click.secho("\n[cancelled]", fg="yellow")
+            if event.reason:
+                click.secho(f"\n[cancelled] {event.reason}", fg="yellow")
+            else:
+                click.secho("\n[cancelled]", fg="yellow")
         elif isinstance(event, MaxRoundsEvent):
             if event.continued:
                 click.secho(
