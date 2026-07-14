@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import pytest
+
+from plyngent.config.models import (
+    AnthropicProvider,
+    DeepseekProvider,
+    OpenAICompatibleProvider,
+    OpenAIProvider,
+)
+from plyngent.lmproto.deepseek import DeepseekOpenAIClient
+from plyngent.lmproto.openai_compatible import OpenAIClient
+from plyngent.runtime import ProviderNotSupportedError, create_client, provider_to_openai_config
+
+
+def test_openai_provider_defaults_base_url() -> None:
+    provider = OpenAIProvider(access_key_or_token="sk-test")
+    config = provider_to_openai_config(provider)
+    assert config.access_key_or_token == "sk-test"
+    assert config.base_url == "https://api.openai.com/v1"
+    client = create_client(provider)
+    assert isinstance(client, OpenAIClient)
+
+
+def test_openai_compatible_requires_url() -> None:
+    provider = OpenAICompatibleProvider(access_key_or_token="sk-test")
+    with pytest.raises(ProviderNotSupportedError, match="url"):
+        _ = create_client(provider)
+
+
+def test_openai_compatible_client() -> None:
+    provider = OpenAICompatibleProvider(
+        access_key_or_token="sk-test",
+        url="https://example.com/v1",
+    )
+    client = create_client(provider)
+    assert isinstance(client, OpenAIClient)
+    assert provider_to_openai_config(provider).base_url == "https://example.com/v1"
+
+
+def test_deepseek_openai_convention() -> None:
+    provider = DeepseekProvider(access_key_or_token="sk-test")
+    client = create_client(provider)
+    assert isinstance(client, DeepseekOpenAIClient)
+    assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com/v1"
+
+
+def test_deepseek_anthropic_convention_not_implemented() -> None:
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        extras={"convention": "anthropic"},
+    )
+    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
+        _ = create_client(provider)
+
+
+def test_anthropic_not_implemented() -> None:
+    provider = AnthropicProvider(access_key_or_token="sk-test")
+    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
+        _ = create_client(provider)
