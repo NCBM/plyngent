@@ -16,7 +16,12 @@ from plyngent.lmproto.openai_compatible.model import (
 )
 from plyngent.typedef import Unset  # noqa: TC001
 
-from .budget import DEFAULT_TOOL_RESULT_MAX_CHARS, truncate_tool_result
+from .budget import (
+    DEFAULT_CONTEXT_MAX_CHARS,
+    DEFAULT_TOOL_RESULT_MAX_CHARS,
+    compact_messages_for_request,
+    truncate_tool_result,
+)
 from .events import (
     AgentEvent,
     AssistantMessageEvent,
@@ -41,18 +46,28 @@ if TYPE_CHECKING:
 DEFAULT_MAX_ROUNDS = 32
 
 
+def _raise_if_cancelled() -> None:
+    """Cooperative cancel points between model/tool steps."""
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError
+
+
 async def _run_one_tool(
     tools: ToolRegistry,
     call: AnyAssistantToolCall,
     *,
     max_result_chars: int,
 ) -> tuple[ToolChatMessage, ErrorEvent | None]:
+    _raise_if_cancelled()
     if isinstance(call, AssistantFunctionToolCall):
         try:
             result_text = await tools.execute(call.function.name, call.function.arguments)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001
             result_text = f"error: tool {call.function.name!r} failed: {exc}"
-            err = ErrorEvent(message=result_text)
+            err = ErrorEvent(message=result_text, retryable=True, source="tool")
             truncated = truncate_tool_result(result_text, max_result_chars)
             return ToolChatMessage(content=truncated, tool_call_id=call.id), err
         truncated = truncate_tool_result(result_text, max_result_chars)
@@ -61,7 +76,11 @@ async def _run_one_tool(
         content="error: custom tool calls are not supported",
         tool_call_id=call.id,
     )
-    return msg, None
+    return msg, ErrorEvent(
+        message=msg.content,
+        retryable=False,
+        source="tool",
+    )
 
 
 async def _execute_tool_calls(
@@ -75,6 +94,7 @@ async def _execute_tool_calls(
     for call in tool_calls:
         yield ToolCallEvent(tool_call=call)
 
+    _raise_if_cancelled()
     if parallel and len(tool_calls) > 1:
         results = await asyncio.gather(
             *[_run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
@@ -158,12 +178,14 @@ async def run_chat_loop(
     stream: bool = True,
     max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
     parallel_tools: bool = True,
+    max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
     When ``stream=True``, uses ``chat_completions(..., stream=True)`` and yields
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
+    Request payloads may shrink older tool results when over ``max_context_chars``.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -175,8 +197,13 @@ async def run_chat_loop(
     while True:
         while rounds_used < allowance:
             rounds_used += 1
+            _raise_if_cancelled()
+            request_messages = compact_messages_for_request(
+                messages,
+                max_chars=max_context_chars,
+            )
             param = ChatCompletionsParam(
-                messages=list(messages),
+                messages=request_messages,
                 model=model,
                 temperature=temperature if temperature is not None else UNSET,
                 tools=list(tool_items) if tool_items is not None else UNSET,
