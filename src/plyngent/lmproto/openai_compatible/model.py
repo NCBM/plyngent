@@ -65,7 +65,9 @@ class AssistantCustomToolCall(Struct, tag_field="type", tag="custom"):
 type AnyAssistantToolCall = AssistantFunctionToolCall | AssistantCustomToolCall
 
 
-class AssistantChatMessage(ChatMessage, tag_field="role", tag="assistant"):
+class AssistantChatMessage(Struct, tag_field="role", tag="assistant"):
+    # APIs often return content=null when tool_calls are present.
+    content: str | None | Unset = UNSET
     name: str | Unset = UNSET
     audio: IDObject | Unset = UNSET
     refusal: str | Unset = UNSET
@@ -201,8 +203,8 @@ class ChatCompletionsParam(Struct):
 class ChatCompletionChoice(Struct):
     index: int
     message: AssistantChatMessage
-    logprobs: dict[str, Any]
-    finish_reason: FinishReason
+    logprobs: dict[str, Any] | None = None
+    finish_reason: FinishReason | None = None
 
 
 class ChatCompletionResponse(Struct):
@@ -211,8 +213,8 @@ class ChatCompletionResponse(Struct):
     created: int
     model: str
     choices: list[ChatCompletionChoice]
-    system_fingerprint: str
-    usage: dict[str, Any]
+    system_fingerprint: str | Unset = UNSET
+    usage: dict[str, Any] | Unset = UNSET
     moderation: dict[str, Any] | Unset = UNSET
     service_tier: ServiceTier | Unset = UNSET
 

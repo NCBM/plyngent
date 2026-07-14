@@ -66,7 +66,7 @@ async def run_chat_loop(  # noqa: PLR0913
         messages.append(assistant)
         yield AssistantMessageEvent(message=assistant)
 
-        if assistant.content:
+        if isinstance(assistant.content, str) and assistant.content:
             yield TextDeltaEvent(content=assistant.content)
 
         tool_calls = assistant.tool_calls
