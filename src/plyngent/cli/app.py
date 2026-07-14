@@ -83,18 +83,22 @@ async def _run_chat(
             tools_enabled=tools,
             max_rounds=max_rounds,
         )
+        click.secho(f"workspace: {state.workspace}", fg="bright_black")
         if session_id is not None:
             await state.resume_session(session_id)
             click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages)")
         elif new_session:
             await state.new_session()
+            click.echo(f"new session {state.session_id} (workspace={state.workspace})")
         else:
             mode = await state.resume_latest_or_new()
             if mode == "resume":
                 click.echo(
-                    f"resumed latest session {state.session_id} "
+                    f"resumed latest session {state.session_id} for this workspace "
                     f"({len(state.agent.messages)} messages); use --new for a fresh chat"
                 )
+            else:
+                click.echo(f"new session {state.session_id} (workspace={state.workspace})")
         await run_repl(state)
     finally:
         await memory.close()

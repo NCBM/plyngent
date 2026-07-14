@@ -28,9 +28,9 @@ Commands:
   /quit, /exit       Leave the REPL
   /clear             Clear in-memory conversation (keeps session id)
   /history [n]       Show last n messages in this session (default 20)
-  /sessions          List sessions
-  /new [name]        Start a new session
-  /resume <id>       Resume a session by id
+  /sessions          List sessions for this workspace
+  /new [name]        Start a new session (bound to workspace)
+  /resume <id>       Resume a session by id (must match workspace)
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
@@ -66,13 +66,16 @@ def _cmd_status(state: ReplState) -> None:
 
 
 async def _cmd_sessions(state: ReplState) -> None:
-    sessions = await state.memory.list_sessions()
+    sessions = await state.memory.list_sessions(workspace=state.workspace)
     if not sessions:
-        click.echo("(no sessions)")
+        click.echo(f"(no sessions for workspace {state.workspace})")
         return
     for session in sessions:
         marker = "*" if session.sid == state.session_id else " "
-        click.echo(f"{marker} {session.sid}\t{session.name}\tupdated={session.updated_at}")
+        ws = session.workspace or "(unbound)"
+        click.echo(
+            f"{marker} {session.sid}\t{session.name}\tworkspace={ws}\tupdated={session.updated_at}"
+        )
 
 
 async def _cmd_new(state: ReplState, arg: str) -> None:

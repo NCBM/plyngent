@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
+from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
-from plyngent.tools import DEFAULT_TOOLS
+from plyngent.tools import DEFAULT_TOOLS, set_workspace_root
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from plyngent.config.models import Provider
     from plyngent.config.store import ConfigStore
     from plyngent.memory import MemoryStore
+    from plyngent.memory.database.schema import Session as SessionRow
 
 
 @dataclass
@@ -35,7 +36,15 @@ class ReplState:
     def __post_init__(self) -> None:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
+        self.workspace = Path(self.workspace).expanduser().resolve()
         self.agent = self._make_agent()
+
+    def _workspace_key(self) -> str:
+        key = normalize_workspace(self.workspace)
+        if key is None:
+            msg = "workspace path is required"
+            raise RuntimeError(msg)
+        return key
 
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
@@ -79,8 +88,19 @@ class ReplState:
         self.agent = self._make_agent()
         self.agent.messages = messages
 
+    def _apply_session_workspace(self, row: SessionRow) -> None:
+        """Bind tools/REPL workspace to the session's directory when set."""
+        if not row.workspace:
+            return
+        path = Path(row.workspace).expanduser().resolve()
+        if not path.is_dir():
+            msg = f"session {row.sid} workspace is not a directory: {path}"
+            raise ValueError(msg)
+        self.workspace = path
+        _ = set_workspace_root(path)
+
     async def new_session(self, name: str = "chat") -> None:
-        session = await self.memory.create_session(name=name)
+        session = await self.memory.create_session(name=name, workspace=self.workspace)
         self.session_id = session.sid
         self.agent = self._make_agent()
         self.agent.pending_retry_text = None
@@ -90,13 +110,21 @@ class ReplState:
         if row is None:
             msg = f"session not found: {session_id}"
             raise ValueError(msg)
+        expected = self._workspace_key()
+        if row.workspace is not None and row.workspace != expected:
+            msg = (
+                f"session {session_id} is bound to workspace {row.workspace!r}, "
+                f"not current {expected!r} (use matching --workspace or /resume from that dir)"
+            )
+            raise ValueError(msg)
+        self._apply_session_workspace(row)
         self.session_id = session_id
         self.agent = self._make_agent()
         await self.agent.load_history()
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
-        """Resume the most recently updated session, or create one if none exist."""
-        sessions = await self.memory.list_sessions()
+        """Resume latest session for this workspace, or create one if none exist."""
+        sessions = await self.memory.list_sessions(workspace=self.workspace)
         if not sessions:
             await self.new_session(name=name)
             return "new"

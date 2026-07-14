@@ -48,7 +48,7 @@ TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]
 
 ### Memory (`memory/`)
 
-Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, sessions, messages stored as msgspec chat message JSON.
+Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `ALTER` for new columns), default local user, sessions (bound to `workspace` path), messages stored as msgspec chat message JSON.
 
 ### Agent (`agent/`)
 
@@ -75,9 +75,9 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
-- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), resumes latest session by default (`--new` / `--session`).
+- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes latest **for cwd/`--workspace`** by default (`--new` / `--session`).
 - Slash: `/history`, `/sessions`, `/resume`, `/rounds`, `/retry`, …
-- Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; auto-retry 10s/20s/30s (Ctrl+C cancels wait); `/retry` manual.
+- Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; **TTY confirms** (max-rounds / destructive tools) pause cancel so prompts work; auto-retry 10s/20s/30s; `/retry` manual.
 - **`plyngent providers`**: list config providers.
 - **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
 - If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.
