@@ -50,6 +50,13 @@ TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]
 
 Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, sessions, messages stored as msgspec chat message JSON.
 
+### Agent (`agent/`)
+
+- **`ChatClient`** Protocol for `chat_completions`.
+- **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
+- **`run_chat_loop`**: multi-round tool loop, yields `AgentEvent` stream.
+- **`ChatAgent`**: wrapper with optional `MemoryStore` bind (load/append messages).
+
 ### Composition utility: `Forward` descriptor
 
 `utils/components.py` — `Forward[T]` / `forward()` for attribute forwarding on composed objects.
