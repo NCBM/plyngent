@@ -10,7 +10,9 @@ dependencies = [
   "niquests>=3.20",
   "typing-extensions>=4.15.0",
   "platformdirs>=4.10.0",
-  "tomlkit>=0.15.0"
+  "tomlkit>=0.15.0",
+  "sqlalchemy>=2.0.51",
+  "aiosqlite>=0.22.1"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
@@ -21,6 +23,7 @@ dev = [
     "basedpyright>=1.39.7",
     "ruff>=0.15.17",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [build-system]
