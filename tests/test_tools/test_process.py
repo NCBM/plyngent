@@ -51,7 +51,19 @@ async def test_run_command_cwd(workspace: object) -> None:
 async def test_run_command_timeout(workspace: object) -> None:
     del workspace
     out = await call_async(run_command, ["sleep", "5"], timeout_seconds=0.2)
-    assert "timed out" in out
+    assert "timed_out=true" in out
+
+
+async def test_run_command_timeout_keeps_partial_output(workspace: object) -> None:
+    del workspace
+    # Print then sleep past the timeout so communicate has partial stdout after kill.
+    out = await call_async(
+        run_command,
+        ["sh", "-c", "printf partial-out; sleep 5"],
+        timeout_seconds=0.3,
+    )
+    assert "timed_out=true" in out
+    assert "partial-out" in out
 
 
 async def test_run_command_stdin(workspace: object) -> None:
@@ -180,6 +192,7 @@ def test_pty_output_budget(workspace: object) -> None:
     del workspace
     previous = PtyManager.session_output_budget
     try:
+        PtyManager.set_limit_continue_hook(None)
         PtyManager.configure(session_output_budget=64)
         opened = call_sync(open_pty, ["sh", "-c", "yes x | head -c 1000"])
         session_id = _session_id(opened)
@@ -199,3 +212,32 @@ def test_pty_output_budget(workspace: object) -> None:
     finally:
         PtyManager.close_all()
         PtyManager.configure(session_output_budget=previous)
+        PtyManager.set_limit_continue_hook(None)
+
+
+def test_pty_output_budget_is_per_session(workspace: object) -> None:
+    del workspace
+    previous = PtyManager.session_output_budget
+    try:
+        # configure clamps budget to >= 1024
+        PtyManager.configure(session_output_budget=1024)
+        class_budget = PtyManager.session_output_budget
+        PtyManager.set_limit_continue_hook(lambda _reason: True)
+        opened = call_sync(open_pty, ["sh", "-c", "yes x | head -c 200"])
+        session_id = _session_id(opened)
+        session = PtyManager.get(session_id)
+        assert session is not None
+        before = session.output_budget
+        # Force budget exhaustion path by setting bytes_read high.
+        session.bytes_read = session.output_budget
+        _ = call_sync(read_pty, session_id, timeout=0.1)
+        session2 = PtyManager.get(session_id)
+        assert session2 is not None
+        assert session2.output_budget > before
+        # Raising is per-session; class default for new sessions stays put.
+        assert PtyManager.session_output_budget == class_budget
+        _ = call_sync(close_pty, session_id)
+    finally:
+        PtyManager.close_all()
+        PtyManager.configure(session_output_budget=previous)
+        PtyManager.set_limit_continue_hook(None)

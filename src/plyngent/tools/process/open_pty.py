@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+
 from plyngent.agent import tool
 from plyngent.tools.workspace import WorkspaceError
 
@@ -24,6 +26,6 @@ def open_pty(command: list[str], *, cwd: str = ".") -> str:
             f"session_id={session.session_id}",
             "alive=true",
             "exit_code=",
-            f"cmd={' '.join(session.command)}",
+            f"cmd={shlex.join(session.command)}",
         ]
     )

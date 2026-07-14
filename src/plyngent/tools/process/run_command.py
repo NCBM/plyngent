@@ -26,16 +26,18 @@ def _truncate(text: str, label: str) -> str:
     return text[:DEFAULT_MAX_OUTPUT_CHARS] + f"\n...[{label} truncated]"
 
 
-def _format_result(
+def _format_result(  # noqa: PLR0913
     *,
     returncode: int | None,
     workdir_display: str,
     command: list[str],
     stdout: str,
     stderr: str,
+    timed_out: bool = False,
 ) -> str:
     parts = [
-        f"exit_code={returncode}",
+        f"exit_code={'' if returncode is None else returncode}",
+        f"timed_out={'true' if timed_out else 'false'}",
         f"cwd={workdir_display}",
         f"cmd={shlex.join(command)}",
     ]
@@ -46,13 +48,20 @@ def _format_result(
     return "\n".join(parts)
 
 
+def _validate_env(env: object) -> str | None:
+    """Runtime guard for tool-JSON args (may not match static typing at the boundary)."""
+    if env is None:
+        return None
+    if type(env) is not dict:
+        return "error: env must be an object of string keys and values"
+    # Tool schema should already enforce dict[str, str]; keep a light check.
+    return None
+
+
 def _merge_env(overrides: dict[str, str] | None) -> dict[str, str] | None:
     if overrides is None:
         return None
-    merged = dict(os.environ)
-    for key, value in overrides.items():
-        merged[str(key)] = str(value)
-    return merged
+    return {**os.environ, **overrides}
 
 
 async def _run_exec(
@@ -62,7 +71,8 @@ async def _run_exec(
     timeout_seconds: float,
     stdin_data: bytes | None,
     env: dict[str, str] | None,
-) -> tuple[int | None, str, str] | str:
+) -> tuple[int | None, str, str, bool] | str:
+    """Return ``(returncode, stdout, stderr, timed_out)`` or an error string."""
     stdin = asyncio.subprocess.PIPE if stdin_data is not None else None
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -78,19 +88,20 @@ async def _run_exec(
     except OSError as exc:
         return f"error: failed to start command: {exc}"
 
+    timed_out = False
     try:
         stdout_b, stderr_b = await asyncio.wait_for(
             proc.communicate(input=stdin_data),
             timeout=timeout_seconds,
         )
     except TimeoutError:
+        timed_out = True
         proc.kill()
-        _ = await proc.communicate()
-        return f"error: command timed out after {timeout_seconds}s: {shlex.join(command)}"
+        stdout_b, stderr_b = await proc.communicate()
 
     stdout = _truncate(stdout_b.decode(errors="replace"), "stdout")
     stderr = _truncate(stderr_b.decode(errors="replace"), "stderr")
-    return proc.returncode, stdout, stderr
+    return proc.returncode, stdout, stderr, timed_out
 
 
 def _validate_run_args(
@@ -112,7 +123,9 @@ def _validate_run_args(
         return f"error: cwd is not a directory: {cwd}"
     if timeout_seconds <= 0:
         return "error: timeout_seconds must be > 0"
-    _ = env  # typed as dict[str, str] | None; runtime JSON already constrained by tool schema
+    env_error = _validate_env(env)
+    if env_error is not None:
+        return env_error
     return workdir
 
 
@@ -130,6 +143,9 @@ async def run_command(
     ``cwd`` is relative to or under the workspace root. Optional ``stdin`` is
     written to the process stdin. Optional ``env`` overlays process environment
     variables (merged with the current environment). Output is truncated.
+
+    On timeout the process is killed and any partial stdout/stderr is still
+    returned with ``timed_out=true``.
     """
     workdir = _validate_run_args(command, cwd=cwd, timeout_seconds=timeout_seconds, env=env)
     if isinstance(workdir, str):
@@ -145,11 +161,12 @@ async def run_command(
     )
     if isinstance(result, str):
         return result
-    returncode, stdout, stderr = result
+    returncode, stdout, stderr, timed_out = result
     return _format_result(
         returncode=returncode,
         workdir_display=str(workdir.relative_to(get_workspace_root())),
         command=command,
         stdout=stdout,
         stderr=stderr,
+        timed_out=timed_out,
     )

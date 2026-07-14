@@ -42,6 +42,7 @@ class PtySession:
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
     bytes_read: int = 0
+    output_budget: int = DEFAULT_SESSION_OUTPUT_BUDGET
     command: tuple[str, ...] = ()
 
 
@@ -157,6 +158,7 @@ class PtyManager:
                 master_fd=master_fd,
                 pid=pid,
                 command=tuple(command),
+                output_budget=cls.session_output_budget,
             )
             cls._sessions[session_id] = session
             return session
@@ -200,9 +202,9 @@ class PtyManager:
 
     @classmethod
     def _read_once(cls, session: PtySession, *, max_bytes: int, timeout: float) -> bytes:
-        if session.closed or (cls.session_output_budget - session.bytes_read) <= 0:
+        if session.closed or (session.output_budget - session.bytes_read) <= 0:
             return b""
-        to_read = min(max_bytes, cls.session_output_budget - session.bytes_read)
+        to_read = min(max_bytes, session.output_budget - session.bytes_read)
         data = b""
         try:
             ready, _, _ = select.select([session.master_fd], [], [], timeout)
@@ -250,9 +252,22 @@ class PtyManager:
                     matched = True
                     break
             cls._poll_exit(session)
-            if not session.alive or (cls.session_output_budget - session.bytes_read) <= 0:
+            if not session.alive or (session.output_budget - session.bytes_read) <= 0:
                 break
         return chunks, matched
+
+    @classmethod
+    def _maybe_raise_budget(cls, session: PtySession) -> bool:
+        """If budget is exhausted, offer to raise this session's ceiling. Returns whether still exhausted."""
+        if (session.output_budget - session.bytes_read) > 0:
+            return False
+        if cls._offer_raise(
+            f"PTY output budget exhausted for session {session.session_id} "
+            f"({session.output_budget} bytes); raise by {_BUDGET_STEP}?"
+        ):
+            session.output_budget += _BUDGET_STEP
+            return False
+        return True
 
     @classmethod
     def read(
@@ -281,20 +296,14 @@ class PtyManager:
             msg = f"closed PTY session: {session_id}"
             raise WorkspaceError(msg)
 
-        if (cls.session_output_budget - session.bytes_read) <= 0:
-            if cls._offer_raise(
-                f"PTY output budget exhausted for session {session_id} "
-                f"({cls.session_output_budget} bytes); raise by {_BUDGET_STEP}?"
-            ):
-                cls.session_output_budget += _BUDGET_STEP
-            else:
-                return PtyReadResult(
-                    session_id=session_id,
-                    alive=session.alive,
-                    exit_code=session.exit_code,
-                    data="",
-                    budget_exhausted=True,
-                )
+        if cls._maybe_raise_budget(session):
+            return PtyReadResult(
+                session_id=session_id,
+                alive=session.alive,
+                exit_code=session.exit_code,
+                data="",
+                budget_exhausted=True,
+            )
 
         chunks, matched = cls._collect_chunks(
             session, max_bytes=max_bytes, timeout=timeout, until=until
@@ -303,13 +312,7 @@ class PtyManager:
         truncated = len(data) > max_bytes
         if truncated:
             data = data[:max_bytes]
-        budget_exhausted = (cls.session_output_budget - session.bytes_read) <= 0
-        if budget_exhausted and cls._offer_raise(
-            f"PTY output budget exhausted for session {session_id} "
-            f"({cls.session_output_budget} bytes); raise by {_BUDGET_STEP}?"
-        ):
-            cls.session_output_budget += _BUDGET_STEP
-            budget_exhausted = False
+        budget_exhausted = cls._maybe_raise_budget(session)
         return PtyReadResult(
             session_id=session_id,
             alive=session.alive,
