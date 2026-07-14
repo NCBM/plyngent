@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import click
 
 from plyngent.agent import (
+    CancelledEvent,
+    ErrorEvent,
     MaxRoundsEvent,
     TextDeltaEvent,
     ToolCallEvent,
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 _TOOL_RESULT_PREVIEW = 200
 
 
-async def render_events(events: AsyncIterator[AgentEvent]) -> None:
+async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C901, PLR0912
     """Print agent events to the terminal."""
     printed_text = False
     async for event in events:
@@ -47,6 +49,10 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:
                 else content[:_TOOL_RESULT_PREVIEW] + "…"
             )
             click.secho(f"[tool result] {preview}", fg="magenta")
+        elif isinstance(event, ErrorEvent):
+            click.secho(f"\n[error] {event.message}", fg="bright_red")
+        elif isinstance(event, CancelledEvent):
+            click.secho("\n[cancelled]", fg="yellow")
         elif isinstance(event, MaxRoundsEvent):
             if event.continued:
                 click.secho(
@@ -60,5 +66,5 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:
             _ = event
     if printed_text:
         click.echo()
-    # Blank line before the next readline prompt so log and input are not jammed.
     click.echo()
+

@@ -96,10 +96,10 @@ async def test_run_chat_loop_text_only() -> None:
         ]
     )
     messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
-    events = [e async for e in run_chat_loop(client, messages, model="m")]
-    assert isinstance(events[0], AssistantMessageEvent)
-    assert isinstance(events[1], TextDeltaEvent)
-    assert events[1].content == "hello"
+    events = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+    assert isinstance(events[0], TextDeltaEvent)
+    assert events[0].content == "hello"
+    assert isinstance(events[1], AssistantMessageEvent)
     assert len(messages) == 2  # noqa: PLR2004
     assert len(client.calls) == 1
 

@@ -34,7 +34,7 @@ class ReplState:
 
     def __post_init__(self) -> None:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
-        self.client = cast("ChatClient", create_client(self.provider))
+        self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.agent = self._make_agent()
 
     def _tool_registry(self) -> ToolRegistry | None:
@@ -53,12 +53,13 @@ class ReplState:
             session_id=self.session_id,
             max_rounds=self.max_rounds,
             on_limit=prompt_continue_limit,
+            stream=True,
         )
 
     def rebuild_client(self) -> None:
         """Recreate client and agent after provider/model/tools change."""
         messages = list(self.agent.messages)
-        self.client = cast("ChatClient", create_client(self.provider))
+        self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.agent = self._make_agent()
         self.agent.messages = messages
 
