@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import msgspec
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from plyngent.config.models import DatabaseConfig
@@ -19,6 +20,16 @@ if TYPE_CHECKING:
 DEFAULT_USER_NAME = "local"
 DEFAULT_USER_EMAIL = "local@localhost"
 DEFAULT_USER_PASSWORD_HASH = ""
+
+
+def normalize_workspace(path: str | Path | None) -> str | None:
+    """Return a stable absolute workspace path string, or None if unset."""
+    if path is None:
+        return None
+    text_path = str(path).strip()
+    if not text_path:
+        return None
+    return str(Path(text_path).expanduser().resolve())
 
 
 class MemoryStore:
@@ -50,9 +61,10 @@ class MemoryStore:
         return store
 
     async def create_schema(self) -> None:
-        """Create all tables if they do not exist."""
+        """Create all tables if they do not exist; apply lightweight migrations."""
         async with self._engine.begin() as conn:
             _ = await conn.run_sync(PlyngentBase.metadata.create_all)
+            await conn.run_sync(_migrate_session_workspace)
 
     async def close(self) -> None:
         """Dispose the underlying engine."""
@@ -80,13 +92,23 @@ class MemoryStore:
             result = await session.execute(select(User).where(User.name == name))
             return result.scalar_one_or_none()
 
-    async def create_session(self, *, uid: int | None = None, name: str = "default") -> Session:
-        """Create a chat session for ``uid`` (default local user when omitted)."""
+    async def create_session(
+        self,
+        *,
+        uid: int | None = None,
+        name: str = "default",
+        workspace: str | Path | None = None,
+    ) -> Session:
+        """Create a chat session for ``uid`` (default local user when omitted).
+
+        ``workspace`` is stored as a resolved absolute path when provided.
+        """
         if uid is None:
             user = await self.ensure_default_user()
             uid = user.uid
+        ws = normalize_workspace(workspace)
         async with self._session_factory() as session:
-            row = Session(uid=uid, name=name)
+            row = Session(uid=uid, name=name, workspace=ws)
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -96,14 +118,22 @@ class MemoryStore:
         async with self._session_factory() as session:
             return await session.get(Session, sid)
 
-    async def list_sessions(self, *, uid: int | None = None) -> Sequence[Session]:
+    async def list_sessions(
+        self,
+        *,
+        uid: int | None = None,
+        workspace: str | Path | None = None,
+    ) -> Sequence[Session]:
+        """List sessions; optionally filter by user and/or bound workspace path."""
+        ws = normalize_workspace(workspace)
         async with self._session_factory() as session:
             stmt = select(Session).order_by(Session.sid)
             if uid is not None:
                 stmt = stmt.where(Session.uid == uid)
+            if ws is not None:
+                stmt = stmt.where(Session.workspace == ws)
             result = await session.execute(stmt)
             return result.scalars().all()
-
     async def append_message(self, sid: int, message: AnyChatMessage) -> Message:
         """Append a chat message to a session with the next sequence number."""
         data = msgspec.to_builtins(message)
@@ -135,3 +165,16 @@ class MemoryStore:
         async with self._session_factory() as session:
             result = await session.execute(select(Message).where(Message.sid == sid).order_by(Message.seq))
             return result.scalars().all()
+
+
+def _migrate_session_workspace(sync_conn: object) -> None:
+    """Add ``session.workspace`` on existing SQLite DBs created before the column existed."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    rows = sync_conn.execute(text("PRAGMA table_info(session)")).fetchall()
+    columns = {str(row[1]) for row in rows}
+    if "workspace" in columns:
+        return
+    _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN workspace VARCHAR(1024)"))

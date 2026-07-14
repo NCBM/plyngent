@@ -27,6 +27,8 @@ class Session(PlyngentBase):
     sid: Mapped[int] = mapped_column(primary_key=True)
     uid: Mapped[int] = mapped_column(ForeignKey(User.uid, ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(64))
+    # Absolute workspace path this chat is bound to (tools root); null = legacy unbound.
+    workspace: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
