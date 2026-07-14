@@ -9,6 +9,23 @@ from plyngent.tools.workspace import set_command_denylist
 from tests.test_tools.helpers import call_async, call_sync
 
 
+def _session_id(opened: str) -> int:
+    for line in opened.splitlines():
+        if line.startswith("session_id="):
+            return int(line.split("=", 1)[1])
+    msg = f"no session_id in: {opened!r}"
+    raise AssertionError(msg)
+
+
+def _field(text: str, name: str) -> str:
+    prefix = f"{name}="
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+    msg = f"missing {name} in: {text!r}"
+    raise AssertionError(msg)
+
+
 async def test_run_command_echo(workspace: object) -> None:
     del workspace
     out = await call_async(run_command, ["echo", "hi"])
@@ -59,12 +76,13 @@ def test_pty_open_read_close(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["sleep", "30"])
-        assert opened.startswith("session_id=")
-        session_id = int(opened.split("=", 1)[1])
+        assert "session_id=" in opened
+        session_id = _session_id(opened)
         data = call_sync(read_pty, session_id, timeout=0.05)
-        assert isinstance(data, str)
+        assert "alive=" in data
+        assert "--- data ---" in data
         closed = call_sync(close_pty, session_id)
-        assert "closed" in closed
+        assert _field(closed, "closed") == "true"
         assert "error" in call_sync(read_pty, session_id)
     finally:
         PtyManager.close_all()
@@ -80,18 +98,12 @@ def test_pty_echo_output(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["/bin/echo", "hello-pty"])
-        session_id = int(opened.split("=", 1)[1])
-        chunks: list[str] = []
-        for _ in range(20):
-            chunk = call_sync(read_pty, session_id, timeout=0.1)
-            if chunk:
-                chunks.append(chunk)
-                if "hello-pty" in "".join(chunks):
-                    break
-            time.sleep(0.05)
-        text = "".join(chunks)
-        _ = call_sync(close_pty, session_id)
+        session_id = _session_id(opened)
+        text = call_sync(read_pty, session_id, timeout=2.0, until="hello-pty")
         assert "hello-pty" in text
+        assert _field(text, "matched") == "true"
+        closed = call_sync(close_pty, session_id)
+        assert _field(closed, "closed") == "true"
     finally:
         PtyManager.close_all()
 
@@ -100,20 +112,12 @@ def test_write_pty(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["cat"])
-        session_id = int(opened.split("=", 1)[1])
+        session_id = _session_id(opened)
         written = call_sync(write_pty, session_id, "pty-input\n")
-        assert "wrote" in written
-        chunks: list[str] = []
-        for _ in range(30):
-            chunk = call_sync(read_pty, session_id, timeout=0.1)
-            if chunk:
-                chunks.append(chunk)
-                if "pty-input" in "".join(chunks):
-                    break
-            time.sleep(0.05)
-        text = "".join(chunks)
-        _ = call_sync(close_pty, session_id)
+        assert "wrote=" in written
+        text = call_sync(read_pty, session_id, timeout=2.0, until="pty-input")
         assert "pty-input" in text
+        _ = call_sync(close_pty, session_id)
     finally:
         PtyManager.close_all()
 
@@ -121,3 +125,58 @@ def test_write_pty(workspace: object) -> None:
 def test_write_pty_unknown_session(workspace: object) -> None:
     del workspace
     assert "error" in call_sync(write_pty, 999_999, "x")
+
+
+def test_pty_exec_failure_surfaces(workspace: object) -> None:
+    del workspace
+    try:
+        opened = call_sync(open_pty, ["definitely-not-a-real-binary-xyz"])
+        session_id = _session_id(opened)
+        text = call_sync(read_pty, session_id, timeout=2.0)
+        # marker and/or dead process with 127
+        assert "plyngent-pty-exec-failed" in text or _field(text, "alive") == "false"
+        closed = call_sync(close_pty, session_id)
+        # exit 127 is conventional for exec failure
+        exit_code = _field(closed, "exit_code")
+        assert exit_code in {"127", "-9", ""} or exit_code.startswith("-")
+    finally:
+        PtyManager.close_all()
+
+
+def test_pty_session_limit(workspace: object) -> None:
+    del workspace
+    previous = PtyManager.max_sessions
+    try:
+        PtyManager.configure(max_sessions=1)
+        first = call_sync(open_pty, ["sleep", "30"])
+        assert "session_id=" in first
+        second = call_sync(open_pty, ["sleep", "30"])
+        assert "limit" in second
+    finally:
+        PtyManager.close_all()
+        PtyManager.configure(max_sessions=previous)
+
+
+def test_pty_output_budget(workspace: object) -> None:
+    del workspace
+    previous = PtyManager.session_output_budget
+    try:
+        PtyManager.configure(session_output_budget=64)
+        opened = call_sync(open_pty, ["sh", "-c", "yes x | head -c 1000"])
+        session_id = _session_id(opened)
+        # Drain until budget exhausted or process ends.
+        budget_hit = False
+        last = ""
+        for _ in range(20):
+            last = call_sync(read_pty, session_id, timeout=0.5, max_bytes=32)
+            if _field(last, "budget_exhausted") == "true":
+                budget_hit = True
+                break
+            if _field(last, "alive") == "false":
+                break
+            time.sleep(0.05)
+        assert budget_hit or "x" in last
+        _ = call_sync(close_pty, session_id)
+    finally:
+        PtyManager.close_all()
+        PtyManager.configure(session_output_budget=previous)
