@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Literal, overload
 
 import msgspec
@@ -22,6 +23,18 @@ if TYPE_CHECKING:
 
     from niquests.async_session import AsyncSession
     from niquests.models import AsyncResponse
+
+
+async def _close_async_response(resp: AsyncResponse) -> None:
+    """Close a streaming response; support sync or async close()."""
+    for name in ("aclose", "close"):
+        method = getattr(resp, name, None)
+        if not callable(method):
+            continue
+        result = method()
+        if inspect.isawaitable(result):
+            await result
+        return
 
 
 class BaseOpenAIClient:
@@ -47,13 +60,7 @@ class BaseOpenAIClient:
                 if line.startswith(b"data: "):
                     yield self.chunk_decoder.decode(line[6:])
         finally:
-            aclose = getattr(resp, "aclose", None)
-            if callable(aclose):
-                await aclose()  # pyright: ignore[reportGeneralTypeIssues]
-            else:
-                close = getattr(resp, "close", None)
-                if callable(close):
-                    _ = close()
+            await _close_async_response(resp)
 
 
 class OpenAIClient(BaseOpenAIClient):
