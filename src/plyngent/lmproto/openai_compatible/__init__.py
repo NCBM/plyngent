@@ -16,8 +16,10 @@ from .model import ChatCompletionsParam as ChatCompletionsParam
 from .model import ChatMessage as ChatMessage
 from .model import ChunkChoice as ChunkChoice
 from .model import DeltaMessage as DeltaMessage
+from .model import DeveloperChatMessage as DeveloperChatMessage
 from .model import FinishReason as FinishReason
 from .model import GrammarSyntax as GrammarSyntax
+from .model import JsonObjectResponseFormat as JsonObjectResponseFormat
 from .model import Modality as Modality
 from .model import NamedChatMessage as NamedChatMessage
 from .model import NamedRole as NamedRole
@@ -28,8 +30,11 @@ from .model import RoleTool as RoleTool
 from .model import SchemaResponseFormat as SchemaResponseFormat
 from .model import ServiceTier as ServiceTier
 from .model import StreamOptions as StreamOptions
+from .model import SystemChatMessage as SystemChatMessage
+from .model import TextResponseFormat as TextResponseFormat
 from .model import ToolChatMessage as ToolChatMessage
 from .model import ToolChoiceMode as ToolChoiceMode
 from .model import ToolFunctionItem as ToolFunctionItem
+from .model import UserChatMessage as UserChatMessage
 from .model import Verbosity as Verbosity
 from .model import VoiceName as VoiceName

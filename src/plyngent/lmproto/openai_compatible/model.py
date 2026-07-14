@@ -23,9 +23,19 @@ class ChatMessage(Struct):
     content: str
 
 
-class NamedChatMessage(ChatMessage):
-    role: NamedRole
+class SystemChatMessage(ChatMessage, tag_field="role", tag="system"):
     name: str | Unset = UNSET
+
+
+class UserChatMessage(ChatMessage, tag_field="role", tag="user"):
+    name: str | Unset = UNSET
+
+
+class DeveloperChatMessage(ChatMessage, tag_field="role", tag="developer"):
+    name: str | Unset = UNSET
+
+
+type NamedChatMessage = SystemChatMessage | UserChatMessage | DeveloperChatMessage
 
 
 class IDObject(Struct):
@@ -37,9 +47,8 @@ class AssistantFunctionTool(Struct):
     arguments: str
 
 
-class AssistantFunctionToolCall(Struct):
+class AssistantFunctionToolCall(Struct, tag_field="type", tag="function"):
     id: str
-    type: Literal["function"]
     function: AssistantFunctionTool
 
 
@@ -48,41 +57,44 @@ class AssistantCustomTool(Struct):
     input: str
 
 
-class AssistantCustomToolCall(Struct):
+class AssistantCustomToolCall(Struct, tag_field="type", tag="custom"):
     id: str
-    type: Literal["custom"]
     custom: AssistantCustomTool
 
 
 type AnyAssistantToolCall = AssistantFunctionToolCall | AssistantCustomToolCall
 
 
-class AssistantChatMessage(ChatMessage):
-    role: RoleAssistant
+class AssistantChatMessage(ChatMessage, tag_field="role", tag="assistant"):
     name: str | Unset = UNSET
     audio: IDObject | Unset = UNSET
     refusal: str | Unset = UNSET
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
 
 
-class ToolChatMessage(ChatMessage):
-    role: RoleTool
+class ToolChatMessage(ChatMessage, tag_field="role", tag="tool"):
     tool_call_id: str
 
 
-type AnyChatMessage = NamedChatMessage | AssistantChatMessage | ToolChatMessage
+type AnyChatMessage = (
+    SystemChatMessage | UserChatMessage | DeveloperChatMessage | AssistantChatMessage | ToolChatMessage
+)
 
 
-class ResponseFormat(Struct):
-    type: Literal["text", "json_object"]
+class TextResponseFormat(Struct, tag_field="type", tag="text"):
+    pass
 
 
-class SchemaResponseFormat(Struct):
-    type: Literal["json_schema"]
+class JsonObjectResponseFormat(Struct, tag_field="type", tag="json_object"):
+    pass
+
+
+class SchemaResponseFormat(Struct, tag_field="type", tag="json_schema"):
     json_schema: JSONSchema
 
 
-type AnyResponseFormat = ResponseFormat | SchemaResponseFormat
+type ResponseFormat = TextResponseFormat | JsonObjectResponseFormat
+type AnyResponseFormat = TextResponseFormat | JsonObjectResponseFormat | SchemaResponseFormat
 
 
 class ToolFunction(Struct):
@@ -92,13 +104,12 @@ class ToolFunction(Struct):
     strict: bool | Unset = UNSET
 
 
-class ToolFunctionItem(Struct):
-    type: Literal["function"]
+class ToolFunctionItem(Struct, tag_field="type", tag="function"):
     function: ToolFunction
 
 
-class TextFormat(Struct):
-    type: Literal["text"]
+class TextFormat(Struct, tag_field="type", tag="text"):
+    pass
 
 
 class GrammarDefinition(Struct):
@@ -106,8 +117,7 @@ class GrammarDefinition(Struct):
     definition: str
 
 
-class GrammarFormat(Struct):
-    type: Literal["grammar"]
+class GrammarFormat(Struct, tag_field="type", tag="grammar"):
     grammar: GrammarDefinition
 
 
@@ -117,8 +127,7 @@ class ToolCustom(Struct):
     format: TextFormat | GrammarFormat | Unset = UNSET
 
 
-class ToolCustomItem(Struct):
-    type: Literal["custom"]
+class ToolCustomItem(Struct, tag_field="type", tag="custom"):
     custom: ToolCustom
 
 
@@ -134,8 +143,7 @@ class ModerationOptions(Struct):
     model: str
 
 
-class PredictionOptions(Struct):
-    type: Literal["content"]
+class PredictionOptions(Struct, tag_field="type", tag="content"):
     content: str
 
 
@@ -149,8 +157,7 @@ class AllowedTools(Struct):
     tools: list[AnyToolItem]
 
 
-class AllowedToolChoice(Struct):
-    type: Literal["allowed_tools"]
+class AllowedToolChoice(Struct, tag_field="type", tag="allowed_tools"):
     allowed_tools: AllowedTools
 
 

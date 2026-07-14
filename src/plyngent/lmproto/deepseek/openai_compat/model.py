@@ -4,23 +4,19 @@ from msgspec import UNSET, Struct
 
 from plyngent.typedef import Unset  # noqa: TC001
 
-from ...openai_compatible.model import AssistantChatMessage as BaseAssistantChatMessage
 from ...openai_compatible.model import (
-    ChatMessage,
+    AnyResponseFormat,
     ReasoningEffort,
-    ResponseFormat,
     StreamOptions,
+    SystemChatMessage,
     ToolChoiceMode,
     ToolFunctionItem,
+    UserChatMessage,
 )
+from ...openai_compatible.model import AssistantChatMessage as BaseAssistantChatMessage
 from ...openai_compatible.model import ToolChatMessage as BaseToolChatMessage
 
 type DeepSeekReasoningEffort = ReasoningEffort | Literal["max"]
-
-
-class NamedChatMessage(ChatMessage):
-    role: Literal["system", "user"]
-    name: str | Unset = UNSET
 
 
 class AssistantChatMessage(BaseAssistantChatMessage):
@@ -32,7 +28,8 @@ class ToolChatMessage(BaseToolChatMessage):
     pass
 
 
-type AnyChatMessage = NamedChatMessage | AssistantChatMessage | ToolChatMessage
+type NamedChatMessage = SystemChatMessage | UserChatMessage
+type AnyChatMessage = SystemChatMessage | UserChatMessage | AssistantChatMessage | ToolChatMessage
 
 
 class ThinkingOptions(Struct):
@@ -45,7 +42,7 @@ class ChatCompletionsParam(Struct):
     thinking: ThinkingOptions | Unset = UNSET
     reasoning_effort: DeepSeekReasoningEffort | Unset = UNSET
     max_tokens: int | Unset = UNSET
-    response_format: ResponseFormat | Unset = UNSET
+    response_format: AnyResponseFormat | Unset = UNSET
     stop: str | list[str] | Unset = UNSET
     stream: bool | Unset = UNSET
     stream_options: StreamOptions | Unset = UNSET

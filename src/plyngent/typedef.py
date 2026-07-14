@@ -1,6 +1,7 @@
-from typing import Any, Literal
+from typing import Any
 
 from msgspec import UnsetType
 
 type JSONSchema = dict[str, Any]
-type Unset = Literal[UnsetType.UNSET]
+# Assignment (not PEP 695 `type`) so msgspec recognizes UnsetType in unions.
+Unset = UnsetType
