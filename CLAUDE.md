@@ -57,6 +57,15 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init, default local user, se
 - **`run_chat_loop`**: multi-round tool loop, yields `AgentEvent` stream.
 - **`ChatAgent`**: wrapper with optional `MemoryStore` bind (load/append messages).
 
+### Tools (`tools/`)
+
+Module-level `@tool` handlers. Call `set_workspace_root()` before use.
+
+- **`workspace`**: path resolve under root; path substring denylist; command basename denylist.
+- **`file`**: `read_file`, `write_file`, `listdir`, `edit_replace` (first occurrence).
+- **`process`**: `run_command` (argv, no shell, timeout); minimal PTY `open_pty` / `read_pty` / `close_pty`.
+- **`DEFAULT_TOOLS`**: file + process tool list for a `ToolRegistry`.
+
 ### Composition utility: `Forward` descriptor
 
 `utils/components.py` — `Forward[T]` / `forward()` for attribute forwarding on composed objects.
