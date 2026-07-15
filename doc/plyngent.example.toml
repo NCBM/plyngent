@@ -31,11 +31,18 @@ access_key_or_token = "sk-replace-me"
 [providers.openai_compat.models]
 "gpt-4o-mini" = { text = true, cost_factor = 1.0 }
 
-# --- OpenAI preset (same client shape; tag is "openai") ---
+# --- OpenAI platform (Responses API; tag is "openai") ---
 # [providers.openai]
 # preset = "openai"
 # access_key_or_token = "sk-replace-me"
 # url = "https://api.openai.com/v1"
+# # Hosted/provider-side tools (OpenAI runs them; not local ToolRegistry).
+# # Examples: web_search, file_search (+ vector_store_ids), code_interpreter, mcp.
+# provider_tools = [
+#   { type = "web_search" },
+#   # { type = "file_search", vector_store_ids = ["vs_xxx"] },
+#   # { type = "code_interpreter", container = { type = "auto" } },
+# ]
 #
 # [providers.openai.models]
 # "gpt-4o-mini" = { text = true }

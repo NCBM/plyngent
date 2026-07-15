@@ -57,6 +57,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 
 - **`ChatClient`** Protocol for `chat_completions` (agent history stays chat-shaped).
 - **OpenAI Responses integration**: `ResponsesChatClient` adapts platform `OpenAIClient.responses` to `ChatClient`; selected automatically for `OpenAIProvider` in `create_client`. Compat/DeepSeek stay on chat completions.
+- **Provider-side tools**: `OpenAIProvider.provider_tools` (list of dicts, e.g. `{type="web_search"}`) merged into Responses `tools` alongside local function tools; never executed by `ToolRegistry`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
 - **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; **completed tool batches checkpointed** mid-turn; unfinished assistant suffix rolled back on failure); `stream`; system prompt; `retry()` continues incomplete turns (user-only **or** after committed tools — does not re-run those tools).

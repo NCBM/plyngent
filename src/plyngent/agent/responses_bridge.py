@@ -263,12 +263,31 @@ def usage_chunk_from_response(response: Response, *, model: str) -> ChatCompleti
     )
 
 
-def chat_param_to_responses_kwargs(param: ChatCompletionsParam) -> dict[str, Any]:
-    """Build keyword args for :class:`ResponsesCreateParam` from a chat param."""
-    instructions, input_items = chat_messages_to_responses_input(param.messages)
-    tools = tool_items_to_response_tools(
-        param.tools if param.tools is not UNSET else None,
+def _merge_response_tools(
+    param: ChatCompletionsParam,
+    provider_tools: Sequence[dict[str, Any]] | None,
+) -> list[ResponseFunctionTool | dict[str, Any]]:
+    tools: list[ResponseFunctionTool | dict[str, Any]] = list(
+        tool_items_to_response_tools(param.tools if param.tools is not UNSET else None)
     )
+    if provider_tools:
+        tools.extend(dict(item) for item in provider_tools if item.get("type"))
+    return tools
+
+
+def chat_param_to_responses_kwargs(
+    param: ChatCompletionsParam,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build keyword args for :class:`ResponsesCreateParam` from a chat param.
+
+    *provider_tools* are hosted tools (web_search, file_search, …) as opaque
+    dicts; they are merged after local function tools and never executed by
+    :class:`~plyngent.agent.tools.ToolRegistry`.
+    """
+    instructions, input_items = chat_messages_to_responses_input(param.messages)
+    tools = _merge_response_tools(param, provider_tools)
     kwargs: dict[str, Any] = {
         "model": param.model,
         "input": input_items or "",
@@ -288,9 +307,6 @@ def chat_param_to_responses_kwargs(param: ChatCompletionsParam) -> dict[str, Any
         kwargs["max_output_tokens"] = param.max_tokens
     if param.parallel_tool_calls is not UNSET:
         kwargs["parallel_tool_calls"] = param.parallel_tool_calls
-    if param.tool_choice is not UNSET:
-        # "auto"/"none"/"required" strings pass through; structured choices left as-is if str.
-        choice = param.tool_choice
-        if isinstance(choice, str):
-            kwargs["tool_choice"] = choice
+    if param.tool_choice is not UNSET and isinstance(param.tool_choice, str):
+        kwargs["tool_choice"] = param.tool_choice
     return kwargs

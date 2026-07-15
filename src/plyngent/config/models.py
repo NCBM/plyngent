@@ -1,3 +1,5 @@
+from typing import Any
+
 from msgspec import Struct, field
 
 
@@ -52,7 +54,14 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
 
 
 class OpenAIProvider(ProviderConfig, tag="openai"):
-    """OpenAI API provider."""
+    """OpenAI platform provider (agent uses Responses API).
+
+    ``provider_tools`` are hosted/provider-side tools (e.g. web_search) passed
+    through to ``POST /responses`` as opaque dicts. They are **not** local
+    ``ToolRegistry`` handlers and are ignored by non-OpenAI clients.
+    """
+
+    provider_tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 class OpenAICompatibleProvider(ProviderConfig, tag="openai-compatible"):

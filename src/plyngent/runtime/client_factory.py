@@ -65,7 +65,10 @@ def create_client(provider: Provider) -> ProtocolClient:
     if isinstance(provider, OpenAIProvider):
         from plyngent.agent.responses_client import wrap_openai_for_agent
 
-        return wrap_openai_for_agent(OpenAIClient(provider_to_openai_config(provider)))
+        return wrap_openai_for_agent(
+            OpenAIClient(provider_to_openai_config(provider)),
+            provider_tools=provider.provider_tools or None,
+        )
     if isinstance(provider, OpenAICompatibleProvider):
         return OpenAICompatibleClient(provider_to_openai_config(provider))
     if isinstance(provider, DeepseekProvider):

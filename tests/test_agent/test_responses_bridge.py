@@ -117,6 +117,23 @@ def test_chat_param_to_responses_kwargs() -> None:
     assert len(kwargs["tools"]) == 1
 
 
+def test_provider_tools_merged_after_local_functions() -> None:
+    param = ChatCompletionsParam(
+        model="gpt-test",
+        messages=[UserChatMessage(content="hi")],
+        tools=[ToolFunctionItem(function=ToolFunction(name="local_tool", parameters={"type": "object"}))],
+    )
+    kwargs = chat_param_to_responses_kwargs(
+        param,
+        provider_tools=[{"type": "web_search"}, {"type": "file_search", "vector_store_ids": ["vs_1"]}],
+    )
+    tools = kwargs["tools"]
+    assert len(tools) == 3
+    assert tools[0].name == "local_tool"
+    assert tools[1]["type"] == "web_search"
+    assert tools[2]["vector_store_ids"] == ["vs_1"]
+
+
 @pytest.mark.asyncio
 async def test_responses_chat_client_non_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     from plyngent.lmproto.openai.client import OpenAIClient

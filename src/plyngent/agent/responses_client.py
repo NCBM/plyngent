@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from msgspec import UNSET
 
@@ -17,7 +17,7 @@ from plyngent.agent.responses_bridge import (
 from plyngent.lmproto.openai.model import ResponsesCreateParam
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from plyngent.lmproto.openai.client import OpenAIClient
     from plyngent.lmproto.openai.model import Response
@@ -32,13 +32,21 @@ class ResponsesChatClient:
     """Present OpenAI Responses as :class:`~plyngent.agent.client.ChatClient`.
 
     History and tool results remain chat-completions-shaped; only the HTTP call
-    uses ``POST /responses``.
+    uses ``POST /responses``. Optional *provider_tools* are hosted tools merged
+    into the request (not local registry handlers).
     """
 
     _client: OpenAIClient
+    _provider_tools: list[dict[str, Any]]
 
-    def __init__(self, client: OpenAIClient) -> None:
+    def __init__(
+        self,
+        client: OpenAIClient,
+        *,
+        provider_tools: Sequence[dict[str, Any]] | None = None,
+    ) -> None:
         self._client = client
+        self._provider_tools = [dict(t) for t in provider_tools] if provider_tools else []
 
     async def models(self) -> list[str]:
         return await self._client.models()
@@ -56,7 +64,10 @@ class ResponsesChatClient:
     async def chat_completions(
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
-        kwargs = chat_param_to_responses_kwargs(param)
+        kwargs = chat_param_to_responses_kwargs(
+            param,
+            provider_tools=self._provider_tools or None,
+        )
         create = ResponsesCreateParam(**kwargs)
         if stream:
             return self._stream_as_chat_chunks(create, model=param.model)
@@ -101,6 +112,10 @@ class ResponsesChatClient:
                 yield usage
 
 
-def wrap_openai_for_agent(client: OpenAIClient) -> ResponsesChatClient:
+def wrap_openai_for_agent(
+    client: OpenAIClient,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
+) -> ResponsesChatClient:
     """Wrap a platform OpenAI client so the agent uses Responses by default."""
-    return ResponsesChatClient(client)
+    return ResponsesChatClient(client, provider_tools=provider_tools)
