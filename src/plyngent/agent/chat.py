@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.lmproto.openai_compatible.model import SystemChatMessage, UserChatMessage
+from msgspec import UNSET
+
+from plyngent.lmproto.openai_compatible.model import (
+    AssistantChatMessage,
+    AssistantFunctionToolCall,
+    SystemChatMessage,
+    ToolChatMessage,
+    UserChatMessage,
+)
 
 from .budget import (
     DEFAULT_CONTEXT_MAX_TOKENS,
@@ -26,6 +34,74 @@ if TYPE_CHECKING:
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
 
+def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
+    """User text for an incomplete turn, if history can be retried.
+
+    Incomplete when the last non-system message is a user message (failed before
+    any commit), or tool results after a complete tool batch (failed on a later
+    model round — keep tools so retry does not re-execute side effects).
+    """
+    # Skip leading system prompt only.
+    start = 0
+    if messages and isinstance(messages[0], SystemChatMessage):
+        start = 1
+    body = list(messages[start:])
+    if not body:
+        return None
+    last = body[-1]
+    if isinstance(last, UserChatMessage):
+        return last.content
+    if isinstance(last, ToolChatMessage):
+        # Walk back to the user that opened this turn.
+        for msg in reversed(body):
+            if isinstance(msg, UserChatMessage):
+                return msg.content
+        return None
+    return None
+
+
+def committed_prefix_end(messages: Sequence[AnyChatMessage], user_index: int) -> int:
+    """Index of the first uncommitted message after a successful tool batch.
+
+    Committed = complete assistant(tool_calls) + matching tool results for that
+    batch, possibly repeated. An assistant without finished tools, or a partial
+    text-only assistant mid-stream, is not committed.
+    """
+    end = user_index + 1
+    i = user_index + 1
+    n = len(messages)
+    while i < n:
+        msg = messages[i]
+        if not isinstance(msg, AssistantChatMessage):
+            break
+        tool_calls = msg.tool_calls
+        if tool_calls is UNSET or not tool_calls:
+            # Final text assistant is only committed on successful turn end.
+            break
+        expected_ids: list[str] = []
+        for call in tool_calls:
+            if isinstance(call, AssistantFunctionToolCall):
+                expected_ids.append(call.id)
+            else:
+                expected_ids.append(call.id)
+        j = i + 1
+        got: list[str] = []
+        while j < n and isinstance(messages[j], ToolChatMessage):
+            tool_msg = messages[j]
+            assert isinstance(tool_msg, ToolChatMessage)
+            got.append(tool_msg.tool_call_id)
+            j += 1
+        if len(got) < len(expected_ids):
+            # Incomplete tool batch — do not commit this assistant.
+            break
+        # Allow extra tool messages only if exact prefix match of ids (order may vary).
+        if sorted(got[: len(expected_ids)]) != sorted(expected_ids):
+            break
+        end = j
+        i = j
+    return end
+
+
 class ChatAgent:
     """Thin wrapper: chat client + optional tools + optional memory bind."""
 
@@ -47,6 +123,8 @@ class ChatAgent:
     last_turn_usage: TokenUsage
     last_request_usage: TokenUsage
     last_turn_rounds: int
+    # Index into messages of the first unpersisted message (checkpoint cursor).
+    _persist_from: int
 
     def __init__(
         self,
@@ -84,18 +162,13 @@ class ChatAgent:
         self.last_turn_usage = TokenUsage()
         self.last_request_usage = TokenUsage()
         self.last_turn_rounds = 0
+        self._persist_from = len(self.messages)
         self._ensure_system_prompt()
 
     @property
     def pending_retry_text(self) -> str | None:
-        """Text of an incomplete last user turn, if any.
-
-        Derived only: history ending with a user message means that turn never
-        completed (failure, cancel, or resume of an orphan user in DB).
-        """
-        if self.messages and isinstance(self.messages[-1], UserChatMessage):
-            return self.messages[-1].content
-        return None
+        """User text of an incomplete turn that can be continued with :meth:`retry`."""
+        return incomplete_turn_user_text(self.messages)
 
     @property
     def context_tokens(self) -> int:
@@ -123,6 +196,9 @@ class ChatAgent:
         if self.messages and isinstance(self.messages[0], SystemChatMessage):
             return
         self.messages.insert(0, SystemChatMessage(content=self.system_prompt))
+        # System inject is not a DB message unless already stored.
+        if self._persist_from == 0:
+            self._persist_from = 1
 
     async def load_history(self) -> None:
         """Replace in-memory messages from the bound memory session."""
@@ -130,6 +206,7 @@ class ChatAgent:
             msg = "load_history requires memory and session_id"
             raise RuntimeError(msg)
         self.messages = await self.memory.list_messages(self.session_id)
+        self._persist_from = len(self.messages)
         self._ensure_system_prompt()
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
@@ -145,6 +222,12 @@ class ChatAgent:
         if self.memory is not None and self.session_id is not None:
             _ = await self.memory.append_message(self.session_id, message)
 
+    async def _persist_range(self, start: int, end: int) -> None:
+        """Persist messages[start:end] and advance the checkpoint cursor."""
+        for message in self.messages[start:end]:
+            await self._persist(message)
+        self._persist_from = max(self._persist_from, end)
+
     def _user_index(self, user_msg: UserChatMessage) -> int:
         for i in range(len(self.messages) - 1, -1, -1):
             if self.messages[i] is user_msg:
@@ -156,16 +239,30 @@ class ChatAgent:
         msg = "user message not found in history"
         raise RuntimeError(msg)
 
-    def _rollback_partial(self, user_index: int) -> None:
-        """Drop assistant/tool messages after the user; keep user for retry/DB."""
-        del self.messages[user_index + 1 :]
+    def _find_turn_user_index(self) -> int:
+        """Index of the user message that opens the current incomplete turn."""
+        text = incomplete_turn_user_text(self.messages)
+        if text is None:
+            msg = "nothing to retry"
+            raise RuntimeError(msg)
+        for i in range(len(self.messages) - 1, -1, -1):
+            msg = self.messages[i]
+            if isinstance(msg, UserChatMessage) and msg.content == text:
+                return i
+        msg = "nothing to retry"
+        raise RuntimeError(msg)
+
+    def _rollback_uncommitted(self, user_index: int) -> None:
+        """Drop incomplete suffix; keep committed tool rounds after the user."""
+        end = committed_prefix_end(self.messages, user_index)
+        del self.messages[end:]
 
     async def _run_from_user_message(self, user_msg: UserChatMessage) -> AsyncIterator[AgentEvent]:
         """Run the tool loop for an already-appended user message.
 
-        On success, persists assistant/tool messages produced after the user.
-        On failure, keeps the trailing user message so :meth:`retry` can re-run
-        without duplicating it (see :attr:`pending_retry_text`).
+        After each completed tool batch, commits assistant+tool messages to the
+        DB and keeps them on failure so :meth:`retry` continues without redoing
+        side-effecting tools. Unfinished assistant/stream suffix is rolled back.
         """
         user_index = self._user_index(user_msg)
 
@@ -192,18 +289,23 @@ class ChatAgent:
                     last_request = event.usage
                     turn_usage = turn_usage.add(event.usage)
                     self.session_usage = self.session_usage.add(event.usage)
+                # After a full tool batch, commit prefix so failures do not
+                # discard work that already had external effects.
+                commit_end = committed_prefix_end(self.messages, user_index)
+                if commit_end > self._persist_from:
+                    await self._persist_range(self._persist_from, commit_end)
                 yield event
             completed = True
         except BaseException:
             if not completed:
-                self._rollback_partial(user_index)
+                self._rollback_uncommitted(user_index)
             raise
 
         self.last_turn_usage = turn_usage
         self.last_request_usage = last_request
         self.last_turn_rounds = turn_rounds
-        for message in self.messages[user_index + 1 :]:
-            await self._persist(message)
+        if self._persist_from < len(self.messages):
+            await self._persist_range(self._persist_from, len(self.messages))
 
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
         """Append a user message (persist immediately), run the tool loop, yield events."""
@@ -211,19 +313,25 @@ class ChatAgent:
         user_msg = UserChatMessage(content=user_text)
         self.messages.append(user_msg)
         await self._persist(user_msg)
+        self._persist_from = len(self.messages)
         async for event in self._run_from_user_message(user_msg):
             yield event
 
     async def retry(self) -> AsyncIterator[AgentEvent]:
-        """Re-run the incomplete last user turn without appending a new user message.
+        """Continue an incomplete turn without re-appending the user message.
 
-        Requires history to end with a :class:`UserChatMessage` (failed/cancelled
-        turn or resumed orphan user in the session DB).
+        Supports:
+        - History ending with the user (failed before any tool commit / orphan).
+        - History ending with tool results (failed after tools; continue model).
         """
-        if not self.messages or not isinstance(self.messages[-1], UserChatMessage):
+        if incomplete_turn_user_text(self.messages) is None:
             msg = "nothing to retry"
             raise RuntimeError(msg)
-        user_msg = self.messages[-1]
+        user_index = self._find_turn_user_index()
+        user_msg = self.messages[user_index]
+        assert isinstance(user_msg, UserChatMessage)
         self._ensure_system_prompt()
+        # Already-committed messages stay; only new rounds are persisted.
+        self._persist_from = len(self.messages)
         async for event in self._run_from_user_message(user_msg):
             yield event

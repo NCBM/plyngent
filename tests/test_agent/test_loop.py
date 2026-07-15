@@ -32,6 +32,7 @@ from plyngent.lmproto.openai_compatible.model import (
     DeltaMessage,
     StreamFunctionDelta,
     StreamToolCallDelta,
+    ToolChatMessage,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -687,6 +688,88 @@ async def test_retry_after_resume_orphan_user() -> None:
     loaded = await store.list_messages(session.sid)
     assert len(loaded) == 2
     assert sum(1 for m in loaded if isinstance(m, UserChatMessage)) == 1
+    await store.close()
+
+
+async def test_retry_keeps_committed_tools_after_second_round_fails() -> None:
+    """Tools that already ran stay in history; retry continues without re-calling them."""
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+    calls: list[str] = []
+
+    @tool
+    def side_effect() -> str:
+        calls.append("ran")
+        return "done-once"
+
+    registry = ToolRegistry([side_effect])
+
+    class ToolThenBoom:
+        n: int
+
+        def __init__(self) -> None:
+            self.n = 0
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del stream
+            self.n += 1
+            if self.n == 1:
+                return _response(
+                    AssistantChatMessage(
+                        content="",
+                        tool_calls=[
+                            AssistantFunctionToolCall(
+                                id="c1",
+                                function=AssistantFunctionTool(
+                                    name="side_effect",
+                                    arguments="{}",
+                                ),
+                            )
+                        ],
+                    )
+                )
+            if self.n == 2:
+                msg = "api down after tools"
+                raise RuntimeError(msg)
+            # Retry continues: third call is next model round with tools in history.
+            assert any(getattr(m, "tool_call_id", None) == "c1" for m in param.messages)
+            return _response(AssistantChatMessage(content="finished"))
+
+    client = ToolThenBoom()
+    agent = ChatAgent(
+        client,
+        model="m",
+        tools=registry,
+        memory=store,
+        session_id=session.sid,
+        stream=False,
+    )
+    with pytest.raises(RuntimeError, match="api down after tools"):
+        _ = [e async for e in agent.run("do it")]
+
+    assert calls == ["ran"]
+    assert agent.pending_retry_text == "do it"
+    # User + assistant(tool_calls) + tool result kept; incomplete second assistant dropped.
+    assert isinstance(agent.messages[-1], ToolChatMessage)
+    loaded = await store.list_messages(session.sid)
+    assert len(loaded) == 3  # user, assistant, tool — committed before boom
+
+    events = [e async for e in agent.retry()]
+    assert any(isinstance(e, TextDeltaEvent) and e.content == "finished" for e in events)
+    assert calls == ["ran"]  # tool not re-executed
+    assert agent.pending_retry_text is None
     await store.close()
 
 

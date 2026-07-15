@@ -691,7 +691,11 @@ def history_cmd(state: ReplState, n: int | None) -> None:
 @slash.command("retry")
 @click.pass_obj
 def retry_cmd(state: ReplState) -> None:
-    """Re-run incomplete last user turn (DB/orphan user; no retype)."""
+    """Continue an incomplete turn (user-only or after committed tools).
+
+    Does not retype the user message. After tools already ran, continues the
+    model loop without re-executing those tool calls.
+    """
     _ = _await(retry_pending_with_retries(state.agent))
 
 

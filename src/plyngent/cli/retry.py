@@ -196,12 +196,20 @@ async def run_user_text_with_retries(
 
 
 async def retry_pending_with_retries(agent: ChatAgent) -> bool:
-    """Retry the last failed user turn with auto-retry."""
+    """Retry/continue an incomplete turn with auto-retry.
+
+    Continues from committed tool results when present (does not re-run them).
+    """
     if agent.pending_retry_text is None:
         click.echo("nothing to retry")
         return False
     preview = agent.pending_retry_text
     if len(preview) > _PREVIEW_LEN:
         preview = preview[:_PREVIEW_LEN] + "…"
-    click.echo(f"retrying: {preview}")
+    from plyngent.lmproto.openai_compatible.model import ToolChatMessage
+
+    if agent.messages and isinstance(agent.messages[-1], ToolChatMessage):
+        click.echo(f"continuing after tools (user: {preview})")
+    else:
+        click.echo(f"retrying: {preview}")
     return await run_turn_with_retries(agent, starter=agent.retry)

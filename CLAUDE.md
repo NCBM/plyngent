@@ -55,7 +55,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
-- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; assistant/tools on success); `stream`; system prompt; `retry()` when history ends with a user message (failed/cancelled turn or orphan after resume).
+- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; **completed tool batches checkpointed** mid-turn; unfinished assistant suffix rolled back on failure); `stream`; system prompt; `retry()` continues incomplete turns (user-only **or** after committed tools — does not re-run those tools).
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, **reasoning_delta**, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.
@@ -86,7 +86,7 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 - **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes`, `--stream/--no-stream`, `--quiet`. Root `--log-level`.
 - Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
-- Failed/cancelled turns: user message kept; partial assistant/tool rolled back; Ctrl+C cancels turn; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
+- Failed/cancelled turns: user kept; **committed tool rounds kept** (side effects not re-run on `/retry`); only unfinished assistant rolled back; Ctrl+C cancels; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
 - **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.
 - Tools default on; workspace defaults to cwd; `--max-rounds` default 32. Readline history under platformdirs (`repl_history`). PTY: `close_all` on chat exit.
 
