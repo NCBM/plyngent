@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING
 from plyngent.lmproto.openai_compatible.model import SystemChatMessage, UserChatMessage
 
 from .budget import DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_TOOL_RESULT_MAX_CHARS
+from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
+from .usage import TokenUsage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -38,6 +40,8 @@ class ChatAgent:
     max_context_chars: int
     messages: list[AnyChatMessage]
     pending_retry_text: str | None
+    session_usage: TokenUsage
+    last_turn_usage: TokenUsage
 
     def __init__(
         self,
@@ -72,6 +76,8 @@ class ChatAgent:
         self.max_context_chars = max_context_chars
         self.messages = list(messages) if messages is not None else []
         self.pending_retry_text = None
+        self.session_usage = TokenUsage()
+        self.last_turn_usage = TokenUsage()
         self._ensure_system_prompt()
 
     def _ensure_system_prompt(self) -> None:
@@ -116,6 +122,7 @@ class ChatAgent:
             self.messages.append(user_msg)
 
         completed = False
+        turn_usage = TokenUsage()
         try:
             async for event in run_chat_loop(
                 self.client,
@@ -130,6 +137,9 @@ class ChatAgent:
                 parallel_tools=self.parallel_tools,
                 max_context_chars=self.max_context_chars,
             ):
+                if isinstance(event, UsageEvent):
+                    turn_usage = turn_usage.add(event.usage)
+                    self.session_usage = self.session_usage.add(event.usage)
                 yield event
             completed = True
         except BaseException:
@@ -137,6 +147,7 @@ class ChatAgent:
                 self._rollback_turn(pre_len, user_msg.content)
             raise
 
+        self.last_turn_usage = turn_usage
         for message in self.messages[pre_len:]:
             await self._persist(message)
         self.pending_retry_text = None

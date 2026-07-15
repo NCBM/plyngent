@@ -57,7 +57,8 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request; cooperative cancel points; optional `on_limit`.
 - **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
-- Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`).
+- Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
+- Usage: API `usage` from completions (stream with `include_usage`); `ChatAgent.session_usage` / `last_turn_usage`; CLI end-of-turn + `/status`.
 - Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_chars`.
 
 ### Tools (`tools/`)
@@ -97,10 +98,10 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 
 ## Roadmap notes (single-user → platform)
 
-- **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions — **current**. Context size is **char estimate only** until usage lands.
-- **No local tokenizer stage** for now. Prefer **API usage v2** later.
+- **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions. Context size is **char estimate** plus optional API usage when reported.
+- **No local tokenizer stage** for now.
 - **Phase E**: tooling depth (grep/glob, VCS backends; prefer `edit_replace` / `edit_lineno` over model-generated patches).
-- **Phase F (providers + usage v2)**: capture response/stream `usage` (prompt/completion/total); session/turn totals; `/status` or end-of-turn line; optional cost. Optional later: tokenizer-backed estimates if needed.
+- **Phase F (providers + usage v2)**: capture response/stream `usage` — **in progress / landing**; session/turn totals; `/status` + end-of-turn line. Optional later: cost, tokenizer-backed estimates.
 - **Phase G–H**: CLI polish, hardening; then multi-tenant platform (`router/`, auth, sandboxed tools).
 
 ## Commit messages

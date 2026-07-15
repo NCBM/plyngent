@@ -11,6 +11,7 @@ from plyngent.agent import (
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
+    UsageEvent,
 )
 from plyngent.lmproto.openai_compatible.model import AssistantFunctionToolCall
 
@@ -82,6 +83,9 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
                 )
             else:
                 click.secho(f"\n[max rounds reached: {event.rounds}]", fg="red")
+        elif isinstance(event, UsageEvent):
+            # Printed at end of turn as a summary; individual round usage is quiet.
+            _ = event
         else:
             # AssistantMessageEvent — text already shown via TextDeltaEvent.
             _ = event

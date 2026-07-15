@@ -60,6 +60,8 @@ def _cmd_status(state: ReplState) -> None:
     pending_disp = "yes" if pending else "no"
     ctx_chars = estimate_messages_chars(state.agent.messages)
     ctx_budget = state.agent.max_context_chars
+    session_u = state.agent.session_usage
+    last_u = state.agent.last_turn_usage
     click.echo(
         f"provider={state.provider_name}  model={state.model}\n"
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
@@ -68,6 +70,8 @@ def _cmd_status(state: ReplState) -> None:
         f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
         f"context_chars={ctx_chars}/{ctx_budget}  "
         f"tool_result_max={state.agent.max_tool_result_chars}\n"
+        f"usage_session={session_u.format_line()}\n"
+        f"usage_last_turn={last_u.format_line()}\n"
         f"workspace={state.workspace}"
     )
 
