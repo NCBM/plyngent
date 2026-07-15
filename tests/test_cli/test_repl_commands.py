@@ -138,8 +138,8 @@ async def test_history(state: ReplState, capsys: pytest.CaptureFixture[str]) -> 
 
 async def test_rounds(state: ReplState) -> None:
     assert await handle_slash(state, "/rounds 40") is True
-    assert state.max_rounds == 40  # noqa: PLR2004
-    assert state.agent.max_rounds == 40  # noqa: PLR2004
+    assert state.max_rounds == 40
+    assert state.agent.max_rounds == 40
 
 
 async def test_status_shows_context_chars(

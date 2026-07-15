@@ -42,6 +42,23 @@ reportExplicitAny = "hint"
 reportImplicitStringConcatenation = "hint"
 reportImportCycles = "hint"
 
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["src", "."]
+reportPrivateUsage = "none"
+reportUnreachable = "none"
+reportUnusedCallResult = "none"
+reportUnannotatedClassAttribute = "none"
+reportUnknownArgumentType = "none"
+reportUnknownLambdaType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownParameterType = "none"
+reportMissingParameterType = "none"
+reportUnusedParameter = "none"
+reportMissingImports = "none"
+reportMissingTypeStubs = "none"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -128,4 +145,20 @@ allowed-confusables = [
   "（",
   "）",
   "、"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "ANN",      # type annotations often noisy in tests
+  "ARG",      # unused fixtures/args are common
+  "ASYNC240", # pathlib in async tests is fine
+  "PLR2004",  # magic values in asserts
+  "PLR0911",  # many returns in fixtures/helpers
+  "PLR0912",  # branching in scripted clients
+  "PLR0915",  # long test functions
+  "C901",     # complexity in scripted fakes
+  "S101",     # assert is the point of tests
+  "TC",       # TYPE_CHECKING import churn
+  "TRY003",   # long exception messages in tests
+  "FBT",      # boolean positional args in helpers
 ]

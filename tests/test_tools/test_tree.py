@@ -60,7 +60,7 @@ def test_tree_max_entries(workspace: object) -> None:
     assert "more entries not shown" in out
     # only first 10 of 60 files listed as entries
     listed = [line for line in out.splitlines() if line.strip().endswith(".txt")]
-    assert len(listed) == 10  # noqa: PLR2004
+    assert len(listed) == 10
 
 
 def test_tree_origin_subdir(workspace: object) -> None:

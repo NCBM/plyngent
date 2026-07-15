@@ -42,7 +42,7 @@ def test_open_in_editor_splits_args(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     path = tmp_path / "plyngent.toml"
     calls: list[list[str]] = []
 
-    def fake_run(argv: list[str], check: bool = False) -> object:  # noqa: FBT001, FBT002
+    def fake_run(argv: list[str], check: bool = False) -> object:
         del check
         calls.append(list(argv))
 
@@ -112,7 +112,7 @@ def test_config_edit_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("EDITOR", "true")
     calls: list[list[str]] = []
 
-    def fake_run(argv: list[str], check: bool = False) -> object:  # noqa: FBT001, FBT002
+    def fake_run(argv: list[str], check: bool = False) -> object:
         del check
         calls.append(list(argv))
 

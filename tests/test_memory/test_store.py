@@ -45,7 +45,7 @@ async def test_append_and_list_messages(store: MemoryStore) -> None:
     assert row1.seq == 1
 
     messages = await store.list_messages(session.sid)
-    assert len(messages) == 2  # noqa: PLR2004
+    assert len(messages) == 2
     assert isinstance(messages[0], UserChatMessage)
     assert messages[0].content == "hello"
     assert isinstance(messages[1], AssistantChatMessage)

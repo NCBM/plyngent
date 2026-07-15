@@ -176,7 +176,7 @@ async def test_run_chat_loop_text_only() -> None:
     assert isinstance(events[0], TextDeltaEvent)
     assert events[0].content == "hello"
     assert isinstance(events[1], AssistantMessageEvent)
-    assert len(messages) == 2  # noqa: PLR2004
+    assert len(messages) == 2
     assert len(client.calls) == 1
 
 
@@ -256,7 +256,7 @@ async def test_run_chat_loop_with_tools() -> None:
     assert ToolCallEvent in types
     assert ToolResultEvent in types
     assert any(isinstance(e, TextDeltaEvent) and e.content == "3" for e in events)
-    assert len(client.calls) == 2  # noqa: PLR2004
+    assert len(client.calls) == 2
     # second call includes tool result message
     assert any(getattr(m, "tool_call_id", None) == "c1" for m in client.calls[1].messages)
 
@@ -281,8 +281,8 @@ async def test_max_rounds() -> None:
     client = ScriptedClient([forever, forever, forever])
     messages: list[AnyChatMessage] = [UserChatMessage(content="x")]
     events = [e async for e in run_chat_loop(client, messages, model="m", tools=registry, max_rounds=2)]
-    assert any(isinstance(e, MaxRoundsEvent) and e.rounds == 2 and not e.continued for e in events)  # noqa: PLR2004
-    assert len(client.calls) == 2  # noqa: PLR2004
+    assert any(isinstance(e, MaxRoundsEvent) and e.rounds == 2 and not e.continued for e in events)
+    assert len(client.calls) == 2
 
 
 async def test_max_rounds_continue_hook() -> None:
@@ -325,7 +325,7 @@ async def test_max_rounds_continue_hook() -> None:
     assert len(asks) == 1
     assert any(isinstance(e, MaxRoundsEvent) and e.continued for e in events)
     assert any(isinstance(e, TextDeltaEvent) and e.content == "done" for e in events)
-    assert len(client.calls) == 3  # noqa: PLR2004
+    assert len(client.calls) == 3
 
 
 async def test_max_rounds_async_continue_hook() -> None:
@@ -373,7 +373,7 @@ async def test_max_rounds_async_continue_hook() -> None:
 async def test_default_max_rounds_is_generous() -> None:
     from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 
-    assert DEFAULT_MAX_ROUNDS >= 16  # noqa: PLR2004
+    assert DEFAULT_MAX_ROUNDS >= 16
 
 
 async def test_chat_agent_memory_roundtrip() -> None:
@@ -385,13 +385,13 @@ async def test_chat_agent_memory_roundtrip() -> None:
     assert any(isinstance(e, TextDeltaEvent) and e.content == "yo" for e in events)
 
     loaded = await store.list_messages(session.sid)
-    assert len(loaded) == 2  # noqa: PLR2004
+    assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "hi"
 
     agent2 = ChatAgent(client, model="m", memory=store, session_id=session.sid)
     await agent2.load_history()
-    assert len(agent2.messages) == 2  # noqa: PLR2004
+    assert len(agent2.messages) == 2
     await store.close()
 
 
@@ -477,7 +477,7 @@ async def test_chat_agent_retry_after_failure() -> None:
     assert any(isinstance(e, TextDeltaEvent) and e.content == "recovered" for e in events)
     assert agent.pending_retry_text is None
     loaded = await store.list_messages(session.sid)
-    assert len(loaded) == 2  # noqa: PLR2004
+    assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "ping"
     await store.close()

@@ -17,6 +17,6 @@ def test_truncate_tool_result_long() -> None:
 
 
 def test_estimate_message_chars() -> None:
-    assert estimate_message_chars(UserChatMessage(content="hello")) == 5  # noqa: PLR2004
+    assert estimate_message_chars(UserChatMessage(content="hello")) == 5
     tool = ToolChatMessage(content="abc", tool_call_id="id1")
-    assert estimate_message_chars(tool) == 6  # noqa: PLR2004
+    assert estimate_message_chars(tool) == 6

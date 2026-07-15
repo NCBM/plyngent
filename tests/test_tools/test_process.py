@@ -181,7 +181,7 @@ def test_pty_session_limit_continue(workspace: object) -> None:
         second = call_sync(open_pty, ["sleep", "30"])
         assert "session_id=" in first
         assert "session_id=" in second
-        assert PtyManager.max_sessions >= 2  # noqa: PLR2004
+        assert PtyManager.max_sessions >= 2
     finally:
         PtyManager.close_all()
         PtyManager.configure(max_sessions=previous)

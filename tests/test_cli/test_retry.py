@@ -112,9 +112,9 @@ async def test_auto_retry_eventually_succeeds(monkeypatch: pytest.MonkeyPatch) -
         delays=(0.01, 0.01, 0.01),
     )
     assert ok is True
-    assert client.calls == 3  # noqa: PLR2004
+    assert client.calls == 3
     loaded = await store.list_messages(session.sid)
-    assert len(loaded) == 2  # noqa: PLR2004
+    assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "hello"
     await store.close()
@@ -205,7 +205,7 @@ async def test_manual_retry_after_exhausted(monkeypatch: pytest.MonkeyPatch) -> 
     assert ok2 is True
     assert agent.pending_retry_text is None
     loaded = await store.list_messages(session.sid)
-    assert len(loaded) == 2  # noqa: PLR2004
+    assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "hold-me"
     await store.close()
