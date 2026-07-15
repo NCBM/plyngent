@@ -77,7 +77,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/rounds`, `/retry`, …
+- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/status` (incl. context char estimate), `/rounds`, `/retry`, …
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; **TTY confirms** (max-rounds / destructive tools) run off-loop via `asyncio.to_thread` + pause cancel so prompts do not abort the turn; auto-retry 10s/20s/30s; `/retry` manual.
 - **`plyngent providers`**: list config providers.
@@ -93,6 +93,14 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 ### Type annotations are mandatory
 
 Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` ignored). Prefer PEP 695 aliases except where msgspec requires plain assignment (`Unset`).
+
+## Roadmap notes (single-user → platform)
+
+- **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions — **current**. Context size is **char estimate only** until usage lands.
+- **No local tokenizer stage** for now. Prefer **API usage v2** later.
+- **Phase E**: tooling depth (grep/glob, edit_patch, optional git).
+- **Phase F (providers + usage v2)**: capture response/stream `usage` (prompt/completion/total); session/turn totals; `/status` or end-of-turn line; optional cost. Optional later: tokenizer-backed estimates if needed.
+- **Phase G–H**: CLI polish, hardening; then multi-tenant platform (`router/`, auth, sandboxed tools).
 
 ## Commit messages
 
