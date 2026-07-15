@@ -41,6 +41,18 @@ async def _close_async_response(resp: AsyncResponse) -> None:
         return
 
 
+async def read_response_body(resp: object) -> bytes | str | None:
+    """Read response body; niquests ``AsyncResponse.content`` is an async property."""
+    content = getattr(resp, "content", None)
+    if inspect.isawaitable(content):
+        content = await content
+    if isinstance(content, bytes | bytearray):
+        return bytes(content)
+    if isinstance(content, str):
+        return content
+    return None
+
+
 def sse_data_payload(line: bytes) -> bytes | None | Literal[False]:
     """Parse one SSE line.
 
@@ -98,12 +110,11 @@ class BaseOpenAIClient:
         status = getattr(resp, "status_code", None)
         if not isinstance(status, int):
             return
-        content = getattr(resp, "content", None)
+        # Only pull the body for error responses — success streams must not
+        # await content (that would consume the SSE body).
         body: bytes | str | None = None
-        if isinstance(content, bytes | bytearray):
-            body = bytes(content)
-        elif isinstance(content, str):
-            body = content
+        if status >= _HTTP_ERROR:
+            body = await read_response_body(resp)
         msg = http_error_message(status, body)
         if msg is None:
             return
@@ -163,8 +174,14 @@ class OpenAIClient(BaseOpenAIClient):
             stream=False,
         )
         await self._ensure_ok(resp)
-        assert resp.content is not None
-        return self.decoder.decode(resp.content)
+        body = await read_response_body(resp)
+        if body is None:
+            msg = "chat completions response body is empty"
+            raise RuntimeError(msg)
+        if not isinstance(body, (bytes, bytearray)):
+            msg = f"chat completions response body has unexpected type {type(body)!r}"
+            raise TypeError(msg)
+        return self.decoder.decode(bytes(body))
 
 
 def merge_stream_tool_calls(deltas: list[StreamToolCallDelta]) -> list[AssistantFunctionToolCall]:

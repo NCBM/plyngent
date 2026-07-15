@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import msgspec
 
-from ...openai_compatible.client import BaseOpenAIClient
+from ...openai_compatible.client import BaseOpenAIClient, read_response_body
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -45,5 +45,12 @@ class DeepseekOpenAIClient(BaseOpenAIClient):
             headers={"Content-Type": "application/json"},
             stream=False,
         )
-        assert resp.content is not None
-        return self.decoder.decode(resp.content)
+        await self._ensure_ok(resp)
+        body = await read_response_body(resp)
+        if body is None:
+            msg = "chat completions response body is empty"
+            raise RuntimeError(msg)
+        if not isinstance(body, (bytes, bytearray)):
+            msg = f"chat completions response body has unexpected type {type(body)!r}"
+            raise TypeError(msg)
+        return self.decoder.decode(bytes(body))

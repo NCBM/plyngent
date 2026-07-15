@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from plyngent.lmproto.openai_compatible.client import http_error_message, sse_data_payload
+from plyngent.lmproto.openai_compatible.client import (
+    http_error_message,
+    read_response_body,
+    sse_data_payload,
+)
 from plyngent.lmproto.openai_compatible.model import ChatCompletionChunk
 
 
@@ -69,3 +73,20 @@ def test_http_error_message() -> None:
     assert err503 is not None
     assert "503" in err503
     assert "unavailable" in err503
+
+
+async def test_response_body_awaits_async_content() -> None:
+    class AsyncContentResp:
+        @property
+        async def content(self) -> bytes:
+            return b'{"ok":true}'
+
+    body = await read_response_body(AsyncContentResp())
+    assert body == b'{"ok":true}'
+
+
+async def test_response_body_sync_bytes() -> None:
+    class SyncContentResp:
+        content = b"plain"
+
+    assert await read_response_body(SyncContentResp()) == b"plain"
