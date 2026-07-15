@@ -42,6 +42,8 @@ class ChatAgent:
     pending_retry_text: str | None
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
+    last_request_usage: TokenUsage
+    last_turn_rounds: int
 
     def __init__(
         self,
@@ -78,6 +80,8 @@ class ChatAgent:
         self.pending_retry_text = None
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
+        self.last_request_usage = TokenUsage()
+        self.last_turn_rounds = 0
         self._ensure_system_prompt()
 
     def _ensure_system_prompt(self) -> None:
@@ -123,6 +127,8 @@ class ChatAgent:
 
         completed = False
         turn_usage = TokenUsage()
+        turn_rounds = 0
+        last_request = TokenUsage()
         try:
             async for event in run_chat_loop(
                 self.client,
@@ -138,6 +144,9 @@ class ChatAgent:
                 max_context_tokens=self.max_context_tokens,
             ):
                 if isinstance(event, UsageEvent):
+                    # Each tool-loop round re-sends history; sum is billing, not context size.
+                    turn_rounds += 1
+                    last_request = event.usage
                     turn_usage = turn_usage.add(event.usage)
                     self.session_usage = self.session_usage.add(event.usage)
                 yield event
@@ -148,6 +157,8 @@ class ChatAgent:
             raise
 
         self.last_turn_usage = turn_usage
+        self.last_request_usage = last_request
+        self.last_turn_rounds = turn_rounds
         for message in self.messages[pre_len:]:
             await self._persist(message)
         self.pending_retry_text = None

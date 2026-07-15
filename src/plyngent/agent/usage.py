@@ -40,15 +40,21 @@ class TokenUsage(Struct, omit_defaults=True):
     def is_zero(self) -> bool:
         return self.prompt_tokens == 0 and self.completion_tokens == 0 and self.total_tokens == 0
 
-    def format_line(self) -> str:
+    def format_line(self, *, billed: bool = False) -> str:
+        """Format for display.
+
+        When ``billed`` is True, label as cumulative API billing (sum of rounds),
+        not a single context snapshot — each tool-loop round re-sends history.
+        """
         tag = ""
         if self.source == "estimate":
             tag = " (est)"
         elif self.source == "mixed":
             tag = " (api+est)"
+        prefix = "billed " if billed else ""
         return (
-            f"tokens prompt={self.prompt_tokens} completion={self.completion_tokens} "
-            f"total={self.total_tokens}{tag}"
+            f"{prefix}tokens prompt={self.prompt_tokens} "
+            f"completion={self.completion_tokens} total={self.total_tokens}{tag}"
         )
 
 

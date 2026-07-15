@@ -97,3 +97,5 @@ def test_format_line_marks_estimate() -> None:
     assert "(est)" in line
     mixed = TokenUsage(prompt_tokens=1, completion_tokens=0, total_tokens=1, source="mixed").format_line()
     assert "(api+est)" in mixed
+    billed = TokenUsage(prompt_tokens=1, completion_tokens=0, total_tokens=1).format_line(billed=True)
+    assert billed.startswith("billed tokens")

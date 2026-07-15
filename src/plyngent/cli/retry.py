@@ -89,8 +89,19 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
 
 
 def _echo_turn_usage(agent: ChatAgent) -> None:
+    if agent.last_turn_usage.is_zero() and agent.last_request_usage.is_zero():
+        return
+    rounds = agent.last_turn_rounds
+    parts: list[str] = []
+    if not agent.last_request_usage.is_zero():
+        parts.append(f"last_request {agent.last_request_usage.format_line()}")
     if not agent.last_turn_usage.is_zero():
-        click.secho(f"[{agent.last_turn_usage.format_line()}]", fg="bright_black")
+        label = agent.last_turn_usage.format_line(billed=True)
+        if rounds > 1:
+            parts.append(f"turn {label} over {rounds} rounds")
+        else:
+            parts.append(f"turn {label}")
+    click.secho(f"[{'; '.join(parts)}]", fg="bright_black")
 
 
 async def _wait_for_retry(attempt: int, max_retries: int, wait: float) -> bool:

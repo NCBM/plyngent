@@ -63,17 +63,22 @@ def _cmd_status(state: ReplState) -> None:
     ctx_budget = state.agent.max_context_tokens
     session_u = state.agent.session_usage
     last_u = state.agent.last_turn_usage
+    last_req = state.agent.last_request_usage
+    last_rounds = state.agent.last_turn_rounds
     click.echo(
         f"provider={state.provider_name}  model={state.model}\n"
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
         f"pending_retry={pending_disp}\n"
         f"tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
-        f"context_tokens~={ctx_tokens}/{ctx_budget} (est)  "
+        f"context_tokens~={ctx_tokens}/{ctx_budget} (est, once)  "
         f"context_chars={ctx_chars}  "
         f"tool_result_max={state.agent.max_tool_result_chars}\n"
-        f"usage_session={session_u.format_line()}\n"
-        f"usage_last_turn={last_u.format_line()}\n"
+        f"last_request={last_req.format_line()}  "
+        f"(last model call; ~context size if from API)\n"
+        f"usage_last_turn={last_u.format_line(billed=True)}  "
+        f"rounds={last_rounds}\n"
+        f"usage_session={session_u.format_line(billed=True)}\n"
         f"workspace={state.workspace}"
     )
 

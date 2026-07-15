@@ -230,10 +230,49 @@ async def test_chat_agent_accumulates_session_usage() -> None:
     agent = ChatAgent(client, model="m", stream=False)
     _ = [e async for e in agent.run("one")]
     assert agent.last_turn_usage.total_tokens == 6
+    assert agent.last_request_usage.total_tokens == 6
+    assert agent.last_turn_rounds == 1
     assert agent.session_usage.total_tokens == 6
     _ = [e async for e in agent.run("two")]
     assert agent.last_turn_usage.total_tokens == 10
+    assert agent.last_request_usage.total_tokens == 10
     assert agent.session_usage.total_tokens == 16
+
+
+async def test_chat_agent_turn_usage_sums_tool_rounds() -> None:
+    """Multi-round tool loop: turn usage is billing sum; last_request is final call."""
+
+    @tool
+    def ping() -> str:
+        return "pong"
+
+    registry = ToolRegistry([ping])
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(
+                    content="",
+                    tool_calls=[
+                        AssistantFunctionToolCall(
+                            id="1",
+                            function=AssistantFunctionTool(name="ping", arguments="{}"),
+                        )
+                    ],
+                ),
+                usage={"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+            ),
+            _response(
+                AssistantChatMessage(content="done"),
+                usage={"prompt_tokens": 200, "completion_tokens": 3, "total_tokens": 203},
+            ),
+        ]
+    )
+    agent = ChatAgent(client, model="m", tools=registry, stream=False)
+    _ = [e async for e in agent.run("go")]
+    assert agent.last_turn_rounds == 2
+    assert agent.last_request_usage.prompt_tokens == 200
+    assert agent.last_turn_usage.prompt_tokens == 300
+    assert agent.last_turn_usage.total_tokens == 308
 
 
 async def test_stream_yields_deltas_incrementally() -> None:
