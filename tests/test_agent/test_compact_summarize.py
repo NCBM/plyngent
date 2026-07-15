@@ -43,7 +43,7 @@ def test_soft_compact_transcript_shrinks_tools() -> None:
         ToolChatMessage(content=big, tool_call_id="1"),
         ToolChatMessage(content="recent", tool_call_id="2"),
     ]
-    out = soft_compact_transcript(messages, max_chars=500)
+    out = soft_compact_transcript(messages, max_tokens=100)
     assert "truncated" in out or len(out) < len(big) + 50
     assert "recent" in out
 

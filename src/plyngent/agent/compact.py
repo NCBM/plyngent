@@ -13,7 +13,7 @@ from plyngent.lmproto.openai_compatible.model import (
     UserChatMessage,
 )
 
-from .budget import DEFAULT_CONTEXT_MAX_CHARS, compact_messages_for_request
+from .budget import DEFAULT_CONTEXT_MAX_TOKENS, compact_messages_for_request
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -67,10 +67,10 @@ def format_transcript(messages: Sequence[AnyChatMessage]) -> str:
 def soft_compact_transcript(
     messages: Sequence[AnyChatMessage],
     *,
-    max_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
+    max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
 ) -> str:
     """Soft-compact tool dumps then format as transcript text."""
-    compacted = compact_messages_for_request(messages, max_chars=max_chars)
+    compacted = compact_messages_for_request(messages, max_tokens=max_tokens)
     return format_transcript(compacted)
 
 
@@ -79,14 +79,14 @@ async def summarize_messages(
     messages: Sequence[AnyChatMessage],
     *,
     model: str,
-    max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
+    max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     temperature: float | None = 0.2,
 ) -> str:
     """Soft-compact history and ask the model for a dense summary (no tools)."""
     if not messages:
         msg = "nothing to compact"
         raise ValueError(msg)
-    transcript = soft_compact_transcript(messages, max_chars=max_context_chars)
+    transcript = soft_compact_transcript(messages, max_tokens=max_context_tokens)
     if not transcript.strip():
         msg = "nothing to compact"
         raise ValueError(msg)

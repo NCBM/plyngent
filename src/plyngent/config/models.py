@@ -18,7 +18,7 @@ class AgentConfig(Struct, omit_defaults=True):
     parallel_tools: bool = True
     confirm_destructive: bool = True
     path_denylist: list[str] = field(default_factory=list)
-    max_context_chars: int = 200_000
+    max_context_tokens: int = 200_000
 
 
 class ModelConfig(Struct, omit_defaults=True):

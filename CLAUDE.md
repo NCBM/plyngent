@@ -59,7 +59,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; `ChatAgent.session_usage` / `last_turn_usage`; CLI end-of-turn + `/status` (marks `(est)` / `(api+est)`).
-- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_chars`.
+- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_tokens` (default 200k est. tokens).
 
 ### Tools (`tools/`)
 

@@ -6,7 +6,7 @@ from msgspec import UNSET
 
 from plyngent.agent.budget import (
     compact_messages_for_request,
-    estimate_messages_chars,
+    estimate_messages_tokens,
     truncate_tool_result,
 )
 from plyngent.agent.loop import run_chat_loop
@@ -75,7 +75,7 @@ def test_compact_shrinks_old_tool_results() -> None:
 
     compacted = compact_messages_for_request(
         messages,
-        max_chars=estimate_messages_chars(messages) - 1,
+        max_tokens=max(1, estimate_messages_tokens(messages) - 1),
         old_tool_result_chars=40,
         keep_recent_tool_results=1,
     )
@@ -90,11 +90,11 @@ def test_compact_shrinks_old_tool_results() -> None:
     assert compacted[5].content == "NEW" * 50
 
 
-def test_compact_disabled_when_max_chars_zero() -> None:
+def test_compact_disabled_when_max_tokens_zero() -> None:
     messages: list[AnyChatMessage] = [
         ToolChatMessage(content="x" * 500, tool_call_id="1"),
     ]
-    out = compact_messages_for_request(messages, max_chars=0)
+    out = compact_messages_for_request(messages, max_tokens=0)
     assert out[0] is messages[0] or (
         isinstance(out[0], ToolChatMessage) and out[0].content == "x" * 500
     )
@@ -211,7 +211,7 @@ async def test_loop_sends_compacted_request_not_history() -> None:
             history,
             model="m",
             stream=False,
-            max_context_chars=200,
+            max_context_tokens=50,
             max_tool_result_chars=50,
         )
     ]

@@ -78,7 +78,7 @@ class ReplState:
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,
             parallel_tools=agent_cfg.parallel_tools,
-            max_context_chars=agent_cfg.max_context_chars,
+            max_context_tokens=agent_cfg.max_context_tokens,
         )
 
     def rebuild_client(self) -> None:
@@ -174,7 +174,7 @@ class ReplState:
             self.client,
             messages,
             model=self.model,
-            max_context_chars=self.agent.max_context_chars,
+            max_context_tokens=self.agent.max_context_tokens,
         )
         session_name = name or f"compact-from-{old_id}"
         await self.new_session(name=session_name)

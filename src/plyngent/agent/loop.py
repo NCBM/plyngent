@@ -20,7 +20,7 @@ from plyngent.lmproto.openai_compatible.model import (
 from plyngent.typedef import Unset  # noqa: TC001
 
 from .budget import (
-    DEFAULT_CONTEXT_MAX_CHARS,
+    DEFAULT_CONTEXT_MAX_TOKENS,
     DEFAULT_TOOL_RESULT_MAX_CHARS,
     compact_messages_for_request,
     truncate_tool_result,
@@ -225,14 +225,14 @@ async def run_chat_loop(
     stream: bool = True,
     max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
     parallel_tools: bool = True,
-    max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
+    max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
     When ``stream=True``, uses ``chat_completions(..., stream=True)`` and yields
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
-    Request payloads may shrink older tool results when over ``max_context_chars``.
+    Request payloads may shrink older tool results when over ``max_context_tokens``.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -246,7 +246,7 @@ async def run_chat_loop(
             rounds_used += 1
             request_messages = compact_messages_for_request(
                 messages,
-                max_chars=max_context_chars,
+                max_tokens=max_context_tokens,
             )
             param = ChatCompletionsParam(
                 messages=request_messages,

@@ -16,9 +16,13 @@ if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
 DEFAULT_TOOL_RESULT_MAX_CHARS = 32_000
-DEFAULT_CONTEXT_MAX_CHARS = 200_000
+# Soft context budget in estimated tokens (~4 chars/token); not a hard model limit.
+DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
 DEFAULT_RECENT_TOOL_RESULTS = 4
+
+# Backward-compat alias (older code/docs may still import this name).
+DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
 
 
 def truncate_tool_result(text: str, max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS) -> str:
@@ -59,6 +63,13 @@ def estimate_messages_chars(messages: Sequence[AnyChatMessage]) -> int:
     return sum(estimate_message_chars(m) for m in messages)
 
 
+def estimate_messages_tokens(messages: Sequence[AnyChatMessage]) -> int:
+    """Char-based token estimate for soft context budget checks."""
+    from plyngent.agent.usage import chars_to_tokens
+
+    return chars_to_tokens(estimate_messages_chars(messages))
+
+
 def _shrink_tool(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
     if len(message.content) <= max_chars:
         return message
@@ -96,7 +107,7 @@ def _shrink_largest(
     messages: list[AnyChatMessage],
     tool_indices: Sequence[int],
     *,
-    max_chars: int,
+    max_tokens: int,
     shrink_cap: int,
 ) -> None:
     def tool_len(i: int) -> int:
@@ -104,7 +115,7 @@ def _shrink_largest(
         return len(msg.content) if isinstance(msg, ToolChatMessage) else 0
 
     for idx in sorted(tool_indices, key=tool_len, reverse=True):
-        if estimate_messages_chars(messages) <= max_chars:
+        if estimate_messages_tokens(messages) <= max_tokens:
             return
         tool_msg = messages[idx]
         if isinstance(tool_msg, ToolChatMessage):
@@ -114,17 +125,20 @@ def _shrink_largest(
 def compact_messages_for_request(
     messages: Sequence[AnyChatMessage],
     *,
-    max_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
+    max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     old_tool_result_chars: int = DEFAULT_OLD_TOOL_RESULT_CHARS,
     keep_recent_tool_results: int = DEFAULT_RECENT_TOOL_RESULTS,
+    # Deprecated alias: treated as token budget if max_tokens not overridden via callers.
+    max_chars: int | None = None,
 ) -> list[AnyChatMessage]:
     """Return a request-time copy with older tool dumps shrunk if over budget.
 
-    Does not mutate the original history (full results stay for persistence/UI).
-    ``max_chars < 1`` disables compacting.
+    Budget is in **estimated tokens** (char/4). Does not mutate the original history.
+    ``max_tokens < 1`` disables compacting.
     """
+    budget = max_tokens if max_chars is None else max_chars
     out: list[AnyChatMessage] = list(messages)
-    if max_chars < 1 or estimate_messages_chars(out) <= max_chars:
+    if budget < 1 or estimate_messages_tokens(out) <= budget:
         return out
 
     indices = _tool_indices(out)
@@ -133,13 +147,13 @@ def compact_messages_for_request(
 
     protect = _protect_indices(indices, keep_recent_tool_results)
     _shrink_except(out, indices, protect, old_tool_result_chars)
-    if estimate_messages_chars(out) <= max_chars:
+    if estimate_messages_tokens(out) <= budget:
         return out
 
     _shrink_largest(
         out,
         indices,
-        max_chars=max_chars,
+        max_tokens=budget,
         shrink_cap=max(64, old_tool_result_chars // 2),
     )
     return out
