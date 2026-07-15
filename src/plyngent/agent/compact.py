@@ -33,6 +33,13 @@ _SUMMARY_SYSTEM = (
 _SUMMARY_USER_PREFIX = (
     "Summarize the following conversation for continued agent work. "
     "Output only the summary (no preamble).\n\n--- transcript ---\n"
+    "{transcript}"
+)
+
+_SEED_MESSAGE_TEMPLATE = (
+    "Conversation summary (compacted from {src}):\n\n"
+    "{summary}\n\n"
+    "Continue from this summary. Prefer not to re-ask for information already covered."
 )
 
 
@@ -88,8 +95,21 @@ async def summarize_messages(
     temperature: float | None = 0.2,
     prompt_tokens_hint: int | None = None,
     sent_estimate_tokens: int | None = None,
+    system_prompt: str | None = None,
+    user_prefix: str | None = None,
 ) -> str:
-    """Soft-compact history and ask the model for a dense summary (no tools)."""
+    """Soft-compact history and ask the model for a dense summary (no tools).
+
+    Parameters
+    ----------
+    system_prompt:
+        Override for the summarizer system prompt.
+        ``None`` or empty string uses the built-in default.
+    user_prefix:
+        Override for the user-message prefix (appended before the transcript).
+        ``None`` or empty string uses the built-in default.
+        The placeholder ``{transcript}`` is substituted with the rendered transcript.
+    """
     if not messages:
         msg = "nothing to compact"
         raise ValueError(msg)
@@ -102,10 +122,19 @@ async def summarize_messages(
     if not transcript.strip():
         msg = "nothing to compact"
         raise ValueError(msg)
+
+    sys_content = system_prompt.strip() if system_prompt else _SUMMARY_SYSTEM
+    user_prefix_resolved = user_prefix.strip() if user_prefix else _SUMMARY_USER_PREFIX
+    if "{transcript}" in user_prefix_resolved:
+        user_content = user_prefix_resolved.replace("{transcript}", transcript)
+    else:
+        # Custom prefix without placeholder: append transcript (legacy/default shape).
+        user_content = user_prefix_resolved + transcript
+
     param = ChatCompletionsParam(
         messages=[
-            SystemChatMessage(content=_SUMMARY_SYSTEM),
-            UserChatMessage(content=_SUMMARY_USER_PREFIX + transcript),
+            SystemChatMessage(content=sys_content),
+            UserChatMessage(content=user_content),
         ],
         model=model,
         temperature=temperature if temperature is not None else UNSET,
@@ -126,20 +155,26 @@ def build_compacted_seed_messages(
     *,
     system_prompt: str | None = None,
     source_session_id: int | None = None,
+    seed_text: str | None = None,
 ) -> list[AnyChatMessage]:
     """Messages to seed a new session after compact.
 
     Summary is an assistant message so history does not end with a user turn
     (which would look like an incomplete /retry-able request).
+
+    Parameters
+    ----------
+    seed_text:
+        Override template for the seed assistant message body.
+        ``None`` or empty string uses the built-in default.
+        Placeholders ``{src}`` and ``{summary}`` are substituted.
     """
     out: list[AnyChatMessage] = []
     if system_prompt:
         out.append(SystemChatMessage(content=system_prompt))
     src = f"session {source_session_id}" if source_session_id is not None else "prior session"
-    body = (
-        f"Conversation summary (compacted from {src}):\n\n"
-        f"{summary}\n\n"
-        "Continue from this summary. Prefer not to re-ask for information already covered."
-    )
+    template = seed_text.strip() if seed_text else _SEED_MESSAGE_TEMPLATE
+    # Use replace (not str.format) so braces inside the model summary are safe.
+    body = template.replace("{src}", src).replace("{summary}", summary)
     out.append(AssistantChatMessage(content=body))
     return out

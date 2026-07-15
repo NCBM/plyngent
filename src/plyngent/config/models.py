@@ -20,6 +20,11 @@ class AgentConfig(Struct, omit_defaults=True):
     path_denylist: list[str] = field(default_factory=list)
     max_context_tokens: int = 200_000
 
+    # Compact / summarisation prompts (empty = use built-in defaults).
+    compact_system_prompt: str = ""
+    compact_user_prefix: str = ""
+    compact_seed_text: str = ""
+
 
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags for a model within a provider."""

@@ -17,6 +17,11 @@ path_denylist = ["/secrets/", ".ssh/", ".gnupg/"]
 # Soft context budget in estimated tokens (~4 chars/token when API usage missing).
 max_context_tokens = 200000
 
+# Optional: custom compact/summarisation prompts (empty = built-in defaults).
+# compact_system_prompt = ""
+# compact_user_prefix = "Summarize the following conversation:\n\n{transcript}"
+# compact_seed_text = "Compacted from {src}:\n\n{summary}\n\nCarry on."
+
 # --- OpenAI-compatible (vLLM, LiteLLM, OpenAI, …) ---
 [providers.openai_compat]
 preset = "openai-compatible"

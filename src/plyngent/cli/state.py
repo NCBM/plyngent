@@ -303,6 +303,8 @@ class ReplState:
             max_context_tokens=self.agent.max_context_tokens,
             prompt_tokens_hint=hint,
             sent_estimate_tokens=sent_est,
+            system_prompt=self.config.agent_config.compact_system_prompt or None,
+            user_prefix=self.config.agent_config.compact_user_prefix or None,
         )
         session_name = name or f"compact-from-{old_id}"
         await self.new_session(name=session_name)
@@ -315,6 +317,7 @@ class ReplState:
             summary,
             system_prompt=self.agent.system_prompt,
             source_session_id=old_id,
+            seed_text=self.config.agent_config.compact_seed_text or None,
         )
         self.agent.messages = list(seed)
         for message in seed:

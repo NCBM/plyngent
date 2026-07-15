@@ -30,6 +30,11 @@ _MINIMAL_CONFIG = """\
 # confirm_destructive = true
 # path_denylist = ["/secrets/", ".ssh/"]
 # max_context_tokens = 200000
+#
+# # Optional compact prompts (empty = use built-in defaults).
+# # compact_system_prompt = ""
+# # compact_user_prefix = "Summarize:\n\n{transcript}"
+# # compact_seed_text = "Compacted from {src}:\n\n{summary}"
 
 # [providers.example]
 # preset = "openai-compatible"

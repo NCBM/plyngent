@@ -59,6 +59,19 @@ def test_build_compacted_seed_messages() -> None:
     assert "session 3" in content
 
 
+def test_build_compacted_seed_custom_template_and_braces_in_summary() -> None:
+    seed = build_compacted_seed_messages(
+        "use {braces} carefully",
+        source_session_id=1,
+        seed_text="From {src}:\n{summary}",
+    )
+    assert isinstance(seed[0], AssistantChatMessage)
+    content = seed[0].content
+    assert isinstance(content, str)
+    assert "session 1" in content
+    assert "use {braces} carefully" in content
+
+
 class SummaryClient:
     last: ChatCompletionsParam | None
 
@@ -111,3 +124,27 @@ async def test_summarize_messages() -> None:
     from msgspec import UNSET
 
     assert client.last.tools is UNSET
+    user_msg = client.last.messages[1]
+    assert isinstance(user_msg, UserChatMessage)
+    assert "hello" in user_msg.content
+    assert "world" in user_msg.content
+
+
+async def test_summarize_custom_prompts() -> None:
+    client = SummaryClient()
+    _ = await summarize_messages(
+        client,
+        [UserChatMessage(content="hello")],
+        model="m",
+        system_prompt="SYS-CUSTOM",
+        user_prefix="PREFIX:\n{transcript}\nEND",
+    )
+    assert client.last is not None
+    sys_msg = client.last.messages[0]
+    user_msg = client.last.messages[1]
+    assert isinstance(sys_msg, SystemChatMessage)
+    assert sys_msg.content == "SYS-CUSTOM"
+    assert isinstance(user_msg, UserChatMessage)
+    assert user_msg.content.startswith("PREFIX:")
+    assert "hello" in user_msg.content
+    assert user_msg.content.endswith("END")
