@@ -236,8 +236,9 @@ class StreamToolCallDelta(Struct):
 
 class DeltaMessage(Struct):
     role: RoleAssistant | Unset = UNSET
-    content: str | Unset = UNSET
-    reasoning_content: str | Unset = UNSET
+    # Providers often send content=null / reasoning_content=null on partial chunks.
+    content: str | None | Unset = UNSET
+    reasoning_content: str | None | Unset = UNSET
     tool_calls: list[StreamToolCallDelta] | Unset = UNSET
 
 

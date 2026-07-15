@@ -34,6 +34,19 @@ def test_sse_data_payload_json() -> None:
     assert chunk.choices[0].delta.content == "hi"
 
 
+def test_delta_accepts_null_content_and_reasoning() -> None:
+    """DeepSeek / OpenAI often send content=null on reasoning-only or role chunks."""
+    payload = (
+        b'{"id":"1","object":"chat.completion.chunk","created":0,"model":"m",'
+        b'"choices":[{"index":0,"delta":{"role":"assistant","content":null,'
+        b'"reasoning_content":null},"finish_reason":null}]}'
+    )
+    chunk = msgspec_decode_chunk(payload)
+    delta = chunk.choices[0].delta
+    assert delta.content is None
+    assert delta.reasoning_content is None
+
+
 def msgspec_decode_chunk(payload: bytes) -> ChatCompletionChunk:
     import msgspec
 
