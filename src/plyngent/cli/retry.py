@@ -57,14 +57,14 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     def _reinstall() -> None:
         try:
             loop.add_signal_handler(signal.SIGINT, _on_sigint)
-        except (NotImplementedError, RuntimeError, ValueError):
+        except NotImplementedError, RuntimeError, ValueError:
             return
 
     try:
         loop.add_signal_handler(signal.SIGINT, _on_sigint)
         installed = True
         set_sigint_reinstall(_reinstall)
-    except (NotImplementedError, RuntimeError, ValueError):
+    except NotImplementedError, RuntimeError, ValueError:
         installed = False
 
     try:
@@ -115,8 +115,7 @@ def _echo_turn_usage(agent: ChatAgent) -> None:
 
 async def _wait_for_retry(attempt: int, max_retries: int, wait: float) -> bool:
     click.secho(
-        f"auto-retry {attempt}/{max_retries} in {wait:g}s "
-        f"(Ctrl+C to cancel; then /retry later)",
+        f"auto-retry {attempt}/{max_retries} in {wait:g}s (Ctrl+C to cancel; then /retry later)",
         fg="yellow",
     )
     try:

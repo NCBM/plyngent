@@ -41,4 +41,3 @@ max_context_tokens = 5000
     assert store.agent_config.confirm_destructive is False
     assert store.agent_config.path_denylist == ["/secrets/", ".ssh/"]
     assert store.agent_config.max_context_tokens == 5000
-

@@ -104,9 +104,7 @@ async def _execute_tool_calls(
             *[_run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
         )
     else:
-        results = [
-            await _run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls
-        ]
+        results = [await _run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
 
     for tool_msg, err in results:
         if err is not None:

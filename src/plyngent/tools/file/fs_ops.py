@@ -90,9 +90,7 @@ def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     source, dest, root = pair
     if not source.exists() and not source.is_symlink():
         return f"error: source does not exist: {src}"
-    return _copy_or_move_validated(
-        source, dest, root, src=src, dst=dst, overwrite=overwrite, action="copy"
-    )
+    return _copy_or_move_validated(source, dest, root, src=src, dst=dst, overwrite=overwrite, action="copy")
 
 
 @tool
@@ -106,9 +104,7 @@ def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
         return f"error: source does not exist: {src}"
     if source == root:
         return "error: cannot move the workspace root"
-    return _copy_or_move_validated(
-        source, dest, root, src=src, dst=dst, overwrite=overwrite, action="move"
-    )
+    return _copy_or_move_validated(source, dest, root, src=src, dst=dst, overwrite=overwrite, action="move")
 
 
 def _delete_directory(target: Path, path: str, *, recursive: bool) -> str:

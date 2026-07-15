@@ -52,9 +52,7 @@ def format_transcript(messages: Sequence[AnyChatMessage]) -> str:
             if tool_calls is not UNSET and tool_calls:
                 for call in tool_calls:
                     if isinstance(call, AssistantFunctionToolCall):
-                        lines.append(
-                            f"[assistant tool_call] {call.function.name}({call.function.arguments})"
-                        )
+                        lines.append(f"[assistant tool_call] {call.function.name}({call.function.arguments})")
                     else:
                         lines.append(f"[assistant tool_call] custom id={call.id}")
         elif isinstance(msg, ToolChatMessage):

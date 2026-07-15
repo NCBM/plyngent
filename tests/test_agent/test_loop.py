@@ -617,7 +617,6 @@ async def test_retry_after_resume_orphan_user() -> None:
     await store.close()
 
 
-
 async def test_chat_agent_system_prompt_prepended() -> None:
     from plyngent.lmproto.openai_compatible.model import SystemChatMessage
 

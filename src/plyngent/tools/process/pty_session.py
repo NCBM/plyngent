@@ -210,7 +210,7 @@ class PtyManager:
             ready, _, _ = select.select([session.master_fd], [], [], timeout)
             if ready:
                 data = os.read(session.master_fd, to_read)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             data = b""
         cls._poll_exit(session)
         if not data:
@@ -305,9 +305,7 @@ class PtyManager:
                 budget_exhausted=True,
             )
 
-        chunks, matched = cls._collect_chunks(
-            session, max_bytes=max_bytes, timeout=timeout, until=until
-        )
+        chunks, matched = cls._collect_chunks(session, max_bytes=max_bytes, timeout=timeout, until=until)
         data = b"".join(chunks).decode(errors="replace")
         truncated = len(data) > max_bytes
         if truncated:

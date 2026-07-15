@@ -94,9 +94,7 @@ async def _cmd_sessions(state: ReplState) -> None:
     for session in sessions:
         marker = "*" if session.sid == state.session_id else " "
         ws = session.workspace or "(unbound)"
-        click.echo(
-            f"{marker} {session.sid}\t{session.name}\tworkspace={ws}\tupdated={session.updated_at}"
-        )
+        click.echo(f"{marker} {session.sid}\t{session.name}\tworkspace={ws}\tupdated={session.updated_at}")
 
 
 async def _cmd_new(state: ReplState, arg: str) -> None:
@@ -126,10 +124,7 @@ async def _cmd_resume(state: ReplState, arg: str) -> None:
     except ValueError as exc:
         click.echo(f"error: {exc}")
         return
-    click.echo(
-        f"resumed session {session_id} ({len(state.agent.messages)} messages) "
-        f"workspace={state.workspace}"
-    )
+    click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages) workspace={state.workspace}")
 
 
 async def _cmd_compact(state: ReplState, arg: str) -> None:

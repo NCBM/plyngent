@@ -43,7 +43,7 @@ def pause_task_cancel_for_prompt() -> Generator[None]:
             loop = asyncio.get_running_loop()
             _ = loop.remove_signal_handler(signal.SIGINT)
             loop_handler_removed = True
-        except (RuntimeError, NotImplementedError, ValueError):
+        except RuntimeError, NotImplementedError, ValueError:
             loop_handler_removed = False
 
         try:

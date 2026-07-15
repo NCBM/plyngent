@@ -41,7 +41,7 @@ def _collect_glob(
         try:
             resolved = candidate.resolve()
             rel = resolved.relative_to(root)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         # Skip anything under (or itself) VCS / hidden path components.
         if skip_hidden_dirs and _hidden_or_vcs(rel.parts):
@@ -87,9 +87,7 @@ def glob_paths(
         return resolved
     root, base = resolved
 
-    result = _collect_glob(
-        base, root, pattern, max_matches=max_matches, skip_hidden_dirs=skip_hidden_dirs
-    )
+    result = _collect_glob(base, root, pattern, max_matches=max_matches, skip_hidden_dirs=skip_hidden_dirs)
     if isinstance(result, str):
         return result
     matches, truncated = result

@@ -18,10 +18,7 @@ def _backend_or_error() -> VcsBackend | str:
         return f"error: {exc}"
     backend = detect_vcs(root)
     if backend is None:
-        return (
-            "error: no supported VCS detected under workspace "
-            "(currently: git; other systems can register detectors)"
-        )
+        return "error: no supported VCS detected under workspace (currently: git; other systems can register detectors)"
     return backend
 
 

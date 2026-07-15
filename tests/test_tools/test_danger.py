@@ -13,9 +13,7 @@ def test_classify_delete_and_move() -> None:
 
 def test_classify_copy_overwrite_only() -> None:
     assert classify_danger("copy_path", {"src": "a", "dst": "b"}) is None
-    assert "overwrite" in (
-        classify_danger("copy_path", {"src": "a", "dst": "b", "overwrite": True}) or ""
-    )
+    assert "overwrite" in (classify_danger("copy_path", {"src": "a", "dst": "b", "overwrite": True}) or "")
 
 
 def test_classify_write_file_overwrite(workspace: object) -> None:

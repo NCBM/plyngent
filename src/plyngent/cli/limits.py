@@ -18,7 +18,7 @@ def _prompt_continue_limit_sync(reason: str) -> bool:
     click.secho(f"[limit] {reason}", fg="yellow")
     try:
         return bool(click.confirm("Raise limit and continue?", default=True))
-    except (click.Abort, KeyboardInterrupt):
+    except click.Abort, KeyboardInterrupt:
         return False
 
 
@@ -39,7 +39,7 @@ def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str
     click.secho(f"[confirm] tool {name!r}: {reason}", fg="yellow")
     try:
         return bool(click.confirm("Allow this tool call?", default=False))
-    except (click.Abort, KeyboardInterrupt):
+    except click.Abort, KeyboardInterrupt:
         return False
 
 
@@ -73,7 +73,7 @@ def _prompt_workspace_mismatch_sync(
             default="k",
             show_choices=True,
         )
-    except (click.Abort, KeyboardInterrupt):
+    except click.Abort, KeyboardInterrupt:
         return "abort"
     key = str(raw).strip().lower()
     if key == "u":

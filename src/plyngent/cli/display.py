@@ -92,4 +92,3 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
     if printed_text:
         click.echo()
     click.echo()
-

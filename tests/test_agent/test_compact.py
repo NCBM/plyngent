@@ -96,9 +96,7 @@ def test_compact_disabled_when_max_tokens_zero() -> None:
         ToolChatMessage(content="x" * 500, tool_call_id="1"),
     ]
     out = compact_messages_for_request(messages, max_tokens=0)
-    assert out[0] is messages[0] or (
-        isinstance(out[0], ToolChatMessage) and out[0].content == "x" * 500
-    )
+    assert out[0] is messages[0] or (isinstance(out[0], ToolChatMessage) and out[0].content == "x" * 500)
 
 
 def test_measure_messages_tokens_calibrates_to_api_hint() -> None:

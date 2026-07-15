@@ -142,9 +142,7 @@ async def test_rounds(state: ReplState) -> None:
     assert state.agent.max_rounds == 40
 
 
-async def test_status_shows_context_tokens(
-    state: ReplState, capsys: pytest.CaptureFixture[str]
-) -> None:
+async def test_status_shows_context_tokens(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
     from plyngent.agent.usage import TokenUsage
     from plyngent.lmproto.openai_compatible.model import UserChatMessage
 

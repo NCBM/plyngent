@@ -90,8 +90,7 @@ async def _run_chat(
             except ValueError as exc:
                 raise click.ClickException(str(exc)) from exc
             click.echo(
-                f"resumed session {session_id} ({len(state.agent.messages)} messages) "
-                f"workspace={state.workspace}"
+                f"resumed session {session_id} ({len(state.agent.messages)} messages) workspace={state.workspace}"
             )
         elif new_session:
             await state.new_session()
