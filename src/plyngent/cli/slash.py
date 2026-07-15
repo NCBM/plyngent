@@ -64,7 +64,17 @@ ON_OFF = OnOffParam()
 
 
 class SlashGroup(click.Group):
-    """Click group for REPL slash commands (no process-level ownership)."""
+    """Click group for REPL slash commands (no process-level ownership).
+
+    Commands never expose Click's ``--help``; use ``/help`` / ``/help <cmd>``.
+    """
+
+    @override
+    def command(self, *args: Any, **kwargs: Any) -> Any:
+        # No auto --help; drop [OPTIONS] metavar when the command has no options.
+        kwargs.setdefault("add_help_option", False)
+        kwargs.setdefault("options_metavar", "")
+        return super().command(*args, **kwargs)
 
     @override
     def get_help(self, ctx: click.Context) -> str:
@@ -83,6 +93,7 @@ class SlashGroup(click.Group):
 slash = SlashGroup(
     "slash",
     help="REPL slash commands",
+    add_help_option=False,
     context_settings={"help_option_names": [], "max_content_width": 100},
 )
 

@@ -102,6 +102,23 @@ async def test_help_command_usage_line(state: ReplState, capsys: pytest.CaptureF
     assert "Usage: /compact" in out
     assert "help [COMMAND] compact" not in out
     assert "Soft-compact" in out
+    assert "--help" not in out
+    assert "Options:" not in out
+
+
+async def test_help_history_no_fake_options(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/help history") is True
+    out = capsys.readouterr().out
+    assert "Usage: /history [N]" in out
+    assert "Options:" not in out
+    assert "--help" not in out
+
+
+async def test_history_rejects_help_flag(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/history --help") is True
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "No such option" in combined
 
 
 async def test_quit(state: ReplState) -> None:
