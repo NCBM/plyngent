@@ -4,7 +4,11 @@ from typing import TYPE_CHECKING
 
 from plyngent.lmproto.openai_compatible.model import SystemChatMessage, UserChatMessage
 
-from .budget import DEFAULT_CONTEXT_MAX_TOKENS, DEFAULT_TOOL_RESULT_MAX_CHARS
+from .budget import (
+    DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_TOOL_RESULT_MAX_CHARS,
+    estimate_messages_tokens,
+)
 from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 from .usage import TokenUsage
@@ -83,6 +87,25 @@ class ChatAgent:
         self.last_request_usage = TokenUsage()
         self.last_turn_rounds = 0
         self._ensure_system_prompt()
+
+    @property
+    def context_tokens(self) -> int:
+        """Best current context size (tokens).
+
+        Prefers the last model call's ``prompt_tokens`` (API or per-request
+        estimate) — that is the real size of the context the model just saw.
+        Before any call, falls back to a char-based estimate of ``messages``.
+        """
+        if not self.last_request_usage.is_zero():
+            return self.last_request_usage.prompt_tokens
+        return estimate_messages_tokens(self.messages)
+
+    @property
+    def context_tokens_source(self) -> str:
+        """``api`` / ``estimate`` for :attr:`context_tokens`."""
+        if not self.last_request_usage.is_zero():
+            return self.last_request_usage.source
+        return "estimate"
 
     def _ensure_system_prompt(self) -> None:
         """Prepend system prompt once when configured and history has none."""

@@ -54,28 +54,31 @@ _CONTENT_PREVIEW = 200
 
 
 def _cmd_status(state: ReplState) -> None:
-    from plyngent.agent.budget import estimate_messages_chars, estimate_messages_tokens
+    from plyngent.agent.budget import estimate_messages_chars
 
     pending = state.agent.pending_retry_text
     pending_disp = "yes" if pending else "no"
     ctx_chars = estimate_messages_chars(state.agent.messages)
-    ctx_tokens = estimate_messages_tokens(state.agent.messages)
+    ctx_tokens = state.agent.context_tokens
+    ctx_src = state.agent.context_tokens_source
     ctx_budget = state.agent.max_context_tokens
     session_u = state.agent.session_usage
     last_u = state.agent.last_turn_usage
     last_req = state.agent.last_request_usage
     last_rounds = state.agent.last_turn_rounds
+    # API prompt_tokens from the last model call is real context size for that request.
+    ctx_tag = "api" if ctx_src == "api" else "est"
+    ctx_tilde = "" if ctx_src == "api" else "~"
     click.echo(
         f"provider={state.provider_name}  model={state.model}\n"
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
         f"pending_retry={pending_disp}\n"
         f"tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
-        f"context_tokens~={ctx_tokens}/{ctx_budget} (est, once)  "
+        f"context_tokens={ctx_tilde}{ctx_tokens}/{ctx_budget} ({ctx_tag})  "
         f"context_chars={ctx_chars}  "
         f"tool_result_max={state.agent.max_tool_result_chars}\n"
-        f"last_request={last_req.format_line()}  "
-        f"(last model call; ~context size if from API)\n"
+        f"last_request={last_req.format_line()}\n"
         f"usage_last_turn={last_u.format_line(billed=True)}  "
         f"rounds={last_rounds}\n"
         f"usage_session={session_u.format_line(billed=True)}\n"

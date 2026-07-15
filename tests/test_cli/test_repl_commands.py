@@ -145,12 +145,25 @@ async def test_rounds(state: ReplState) -> None:
 async def test_status_shows_context_tokens(
     state: ReplState, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    from plyngent.agent.usage import TokenUsage
     from plyngent.lmproto.openai_compatible.model import UserChatMessage
 
     state.agent.messages = [UserChatMessage(content="hello")]
     assert await handle_slash(state, "/status") is True
     out = capsys.readouterr().out
-    assert "context_tokens~=" in out
+    assert "context_tokens=" in out
+    assert "(est)" in out  # no API usage yet
     assert "context_chars=" in out
     assert "tool_result_max=" in out
     assert str(state.workspace) in out
+
+    state.agent.last_request_usage = TokenUsage(
+        prompt_tokens=1234,
+        completion_tokens=10,
+        total_tokens=1244,
+        source="api",
+    )
+    assert await handle_slash(state, "/status") is True
+    out2 = capsys.readouterr().out
+    assert "context_tokens=1234/" in out2
+    assert "(api)" in out2

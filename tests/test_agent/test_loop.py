@@ -273,6 +273,21 @@ async def test_chat_agent_turn_usage_sums_tool_rounds() -> None:
     assert agent.last_request_usage.prompt_tokens == 200
     assert agent.last_turn_usage.prompt_tokens == 300
     assert agent.last_turn_usage.total_tokens == 308
+    # Context size is last request prompt, not billed sum
+    assert agent.context_tokens == 200
+    assert agent.context_tokens_source == "api"
+
+
+async def test_context_tokens_falls_back_to_message_estimate() -> None:
+    agent = ChatAgent(
+        ScriptedClient([]),
+        model="m",
+        stream=False,
+        messages=[UserChatMessage(content="12345678")],
+    )
+    assert agent.last_request_usage.is_zero()
+    assert agent.context_tokens_source == "estimate"
+    assert agent.context_tokens >= 1
 
 
 async def test_stream_yields_deltas_incrementally() -> None:

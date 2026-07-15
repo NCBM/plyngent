@@ -94,8 +94,17 @@ def _echo_turn_usage(agent: ChatAgent) -> None:
     rounds = agent.last_turn_rounds
     parts: list[str] = []
     if not agent.last_request_usage.is_zero():
-        parts.append(f"last_request {agent.last_request_usage.format_line()}")
-    if not agent.last_turn_usage.is_zero():
+        # prompt_tokens on the last call ≈ context the model just saw
+        req = agent.last_request_usage
+        parts.append(
+            f"context={req.prompt_tokens} "
+            f"(prompt+completion={req.prompt_tokens}+{req.completion_tokens}"
+            f"={req.total_tokens}"
+            f"{' est' if req.source == 'estimate' else ''})"
+        )
+    if not agent.last_turn_usage.is_zero() and (
+        rounds > 1 or agent.last_turn_usage.total_tokens != agent.last_request_usage.total_tokens
+    ):
         label = agent.last_turn_usage.format_line(billed=True)
         if rounds > 1:
             parts.append(f"turn {label} over {rounds} rounds")
