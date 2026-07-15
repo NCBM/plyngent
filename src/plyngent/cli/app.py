@@ -46,7 +46,7 @@ def _load_config(config_path: Path | None) -> ConfigStore:
 
 
 def _warn_bad_providers(bad: Mapping[str, object]) -> None:
-    """Surface ignored provider entries (parse errors, empty models, …)."""
+    """Surface ignored provider entries (parse errors, unknown fields, …)."""
     if not bad:
         return
     names = ", ".join(sorted(bad.keys()))
@@ -66,6 +66,19 @@ def _warn_bad_providers(bad: Mapping[str, object]) -> None:
             elif "preset" not in entry_map and not any(k in entry_map for k in ("access_key_or_token", "url")):
                 reason = "not a provider table"
         click.secho(f"  - {name}: {reason}", fg="yellow", err=True)
+
+
+def _warn_recoverable_providers(recoverable: Mapping[str, object]) -> None:
+    """Surface providers with empty models (recoverable via GET /models)."""
+    if not recoverable:
+        return
+    names = ", ".join(sorted(recoverable.keys()))
+    click.secho(
+        f"warning: providers with empty models ({len(recoverable)}): {names} "
+        f"(will try GET /models or --model on use)",
+        fg="yellow",
+        err=True,
+    )
 
 
 def _database_config(store: ConfigStore, *, quiet: bool = False) -> DatabaseConfig:
@@ -165,7 +178,7 @@ async def _run_oneshot(state: ReplState, prompt_text: str) -> int:
     return EXIT_OK if ok else EXIT_TURN_FAILED
 
 
-async def _run_chat(  # noqa: C901 — chat orchestration
+async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
     *,
     config_path: Path | None,
     provider_name: str | None,
@@ -187,14 +200,19 @@ async def _run_chat(  # noqa: C901 — chat orchestration
         configure_prompting(backend=NonInteractiveBackend())
 
     store = _load_config(config_path)
-    if store.bad_providers and not quiet:
-        _warn_bad_providers(store.bad_providers)
+    if not quiet:
+        if store.bad_providers:
+            _warn_bad_providers(store.bad_providers)
+        if store.recoverable_providers:
+            _warn_recoverable_providers(store.recoverable_providers)
 
     _setup_workspace_and_hooks(store, workspace, interactive=interactive)
     confirm_destructive: bool | None = False if yes else None
 
     memory = await MemoryStore.open(_database_config(store, quiet=quiet or oneshot))
     try:
+        from plyngent.cli.provider_recovery import ensure_provider_ready
+
         # Prefer session-remembered LLM when resuming (unless flags override).
         preferred_provider = provider_name
         preferred_model = model
@@ -211,8 +229,15 @@ async def _run_chat(  # noqa: C901 — chat orchestration
 
         try:
             pname, provider = select_provider(
-                store.providers,
+                store.selectable_providers(),
                 preferred=preferred_provider,
+                interactive=interactive,
+            )
+            provider = await ensure_provider_ready(
+                store,
+                pname,
+                provider,
+                preferred_model=preferred_model,
                 interactive=interactive,
             )
             model_id = select_model(provider, preferred=preferred_model, interactive=interactive)
@@ -414,12 +439,15 @@ def chat_cmd(
 def providers_cmd(config_path: Path | None) -> None:
     """List configured providers."""
     store = _load_config(config_path)
-    if not store.providers:
+    if not store.providers and not store.recoverable_providers:
         click.echo("(no providers)")
     for name, provider in sorted(store.providers.items()):
         tag = type(provider).__struct_config__.tag
         models = ", ".join(sorted(provider.models.keys())) or "(none listed)"
         click.echo(f"{name}\tpreset={tag}\tmodels={models}")
+    for name, provider in sorted(store.recoverable_providers.items()):
+        tag = type(provider).__struct_config__.tag
+        click.echo(f"{name}\tpreset={tag}\tmodels=(empty; recoverable)")
     if store.bad_providers:
         _warn_bad_providers(store.bad_providers)
 

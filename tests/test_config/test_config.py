@@ -81,7 +81,7 @@ def test_read_bad_config() -> None:
     assert isinstance(config.bad_providers, Mapping)
 
 
-def test_provider_with_empty_models_is_bad(tmp_path: Path) -> None:
+def test_provider_with_empty_models_is_recoverable(tmp_path: Path) -> None:
     path = tmp_path / "empty-models.toml"
     _ = path.write_text(
         """
@@ -95,7 +95,29 @@ models = {}
     )
     config = plyngent.config.load(path)
     assert "hollow" not in config.providers
-    assert "hollow" in config.bad_providers
+    assert "hollow" not in config.bad_providers
+    assert "hollow" in config.recoverable_providers
+    promoted = config.promote_provider("hollow", ["m1", "m2"])
+    assert "hollow" in config.providers
+    assert "hollow" not in config.recoverable_providers
+    assert set(promoted.models) == {"m1", "m2"}
+
+
+def test_promote_provider_requires_ids(tmp_path: Path) -> None:
+    path = tmp_path / "empty-models.toml"
+    _ = path.write_text(
+        """
+[providers.hollow]
+preset = "openai-compatible"
+url = "https://example.com/v1"
+access_key_or_token = "sk-test"
+models = {}
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    with pytest.raises(ValueError, match="no model ids"):
+        _ = config.promote_provider("hollow", [])
 
 
 def test_read_invalid_config() -> None:
