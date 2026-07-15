@@ -96,6 +96,14 @@ async def test_help_and_clear(state: ReplState) -> None:
     assert state.agent.messages == []
 
 
+async def test_help_command_usage_line(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/help compact") is True
+    out = capsys.readouterr().out
+    assert "Usage: /compact" in out
+    assert "help [COMMAND] compact" not in out
+    assert "Soft-compact" in out
+
+
 async def test_quit(state: ReplState) -> None:
     assert await handle_slash(state, "/quit") is False
 

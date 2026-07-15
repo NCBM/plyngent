@@ -116,3 +116,29 @@ def test_completer_provider_args(tmp_path: object, monkeypatch: object) -> None:
 
     first = completer("r", 0)
     assert first == "remote"
+
+
+def test_completer_help_commands(tmp_path: object, monkeypatch: object) -> None:
+    import readline
+    from pathlib import Path
+
+    import pytest
+
+    assert isinstance(tmp_path, Path)
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+
+    state = _minimal_state(tmp_path)
+    completer = build_completer(state)
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/help ")
+    monkeypatch.setattr(readline, "get_begidx", lambda: len("/help "))
+
+    found: list[str] = []
+    index = 0
+    while True:
+        item = completer("c", index)
+        if item is None:
+            break
+        found.append(item)
+        index += 1
+    assert "compact" in found
+    assert "clear" in found

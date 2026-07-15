@@ -112,8 +112,8 @@ def help_cmd(ctx: click.Context, command: str | None) -> None:
         if cmd is None:
             click.echo(f"unknown command /{name}; try /help")
             return
-        # Build a child context so get_help includes usage.
-        with click.Context(cmd, info_name=name, parent=ctx) as sub:
+        # Standalone context (no parent=help) so usage is "/compact …" not "help … compact".
+        with click.Context(cmd, info_name=f"/{name}") as sub:
             click.echo(cmd.get_help(sub))
         return
     click.echo(slash.get_help(ctx))

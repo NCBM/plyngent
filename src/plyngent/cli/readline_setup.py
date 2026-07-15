@@ -60,17 +60,20 @@ def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
 
 
 def _argument_options(state: ReplState, command: str, text: str) -> list[str]:
-    if command == "/provider":
-        return filter_prefix(text, sorted(state.config.providers.keys()))
-    if command == "/model":
-        return filter_prefix(text, sorted(state.provider.models.keys()))
-    if command in {"/tools", "/stream", "/verbose"}:
-        return filter_prefix(text, list(_ON_OFF_ARGS))
-    if command == "/export":
-        return filter_prefix(text, list(_EXPORT_ARGS))
-    if command == "/resume":
-        return []
-    return []
+    candidates: list[str] = []
+    if command == "/help":
+        # Second token: command name without leading slash (also accept /name).
+        candidates = [n.removeprefix("/") for n in slash_commands()]
+        text = text.lstrip("/")
+    elif command == "/provider":
+        candidates = sorted(state.config.providers.keys())
+    elif command == "/model":
+        candidates = sorted(state.provider.models.keys())
+    elif command in {"/tools", "/stream", "/verbose"}:
+        candidates = list(_ON_OFF_ARGS)
+    elif command == "/export":
+        candidates = list(_EXPORT_ARGS)
+    return filter_prefix(text, candidates)
 
 
 def bind_tab_complete(readline_mod: object) -> None:
