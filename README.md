@@ -124,6 +124,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/stream` `/verbose` `/tools` `/rounds` | Toggles and limits |
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
 | `/provider` `/model` | Switch without restarting |
+| `/config` | Edit `plyngent.toml` in `$EDITOR` and reload |
 | `/quit` | Leave the REPL |
 
 User messages are saved immediately. On API error or Ctrl+C, partial assistant/tool output is discarded but the user message stays so `/retry` works after resume. Interactive auto-retry uses 10s / 20s / 30s delays.

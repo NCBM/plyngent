@@ -111,6 +111,39 @@ class ReplState:
         self.agent.messages = messages
         self.sync_display_flags()
 
+    def reload_config_from_disk(self) -> None:
+        """Re-read TOML config and re-bind provider/model when still valid."""
+        import click
+
+        from plyngent.cli.selection import select_model, select_provider
+        from plyngent.runtime import ProviderNotSupportedError
+        from plyngent.tools import set_path_denylist
+
+        self.config.reload()
+        set_path_denylist(self.config.agent_config.path_denylist or None)
+
+        preferred_provider = self.provider_name if self.provider_name in self.config.providers else None
+        preferred_model = self.model
+        try:
+            pname, provider = select_provider(
+                self.config.providers,
+                preferred=preferred_provider,
+                interactive=False,
+            )
+        except (click.ClickException, ProviderNotSupportedError) as exc:
+            msg = f"config reloaded but provider selection failed: {exc}"
+            raise ValueError(msg) from exc
+        try:
+            model_id = select_model(provider, preferred=preferred_model, interactive=False)
+        except click.ClickException:
+            # Previous model not on this provider; pick first listed or keep free-form.
+            model_id = next(iter(sorted(provider.models.keys()))) if provider.models else preferred_model
+
+        self.provider_name = pname
+        self.provider = provider
+        self.model = model_id
+        self.rebuild_client()
+
     def _set_workspace(self, path: Path) -> None:
         """Update REPL + tool workspace root."""
         resolved = path.expanduser().resolve()

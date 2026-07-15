@@ -293,6 +293,35 @@ def edit_cmd(state: ReplState) -> None:
     click.echo(f"(edit) {len(text)} characters ready to send")
 
 
+@slash.command("config")
+@click.pass_obj
+def config_cmd(state: ReplState) -> None:
+    """Open plyngent.toml in ``$EDITOR``, then reload providers/agent settings.
+
+    Same file as ``plyngent config edit``. After the editor exits, config is
+    re-read; current provider/model are kept when still valid.
+    """
+    from plyngent import config as config_mod
+    from plyngent.cli.editor import open_in_editor
+
+    path = state.config.path
+    try:
+        open_in_editor(path)
+    except click.ClickException as exc:
+        click.echo(f"error: {exc}")
+        return
+    try:
+        state.reload_config_from_disk()
+    except (config_mod.ConfigFormatError, ValueError, OSError) as exc:
+        click.secho(f"error: config reload failed: {exc}", fg="red")
+        click.echo(f"config file: {path}")
+        return
+    if state.config.bad_providers:
+        names = ", ".join(sorted(state.config.bad_providers.keys()))
+        click.secho(f"warning: ignored bad providers: {names}", fg="yellow")
+    click.echo(f"config reloaded from {path}\nprovider={state.provider_name}  model={state.model}")
+
+
 @slash.command("status")
 @click.pass_obj
 def status_cmd(state: ReplState) -> None:

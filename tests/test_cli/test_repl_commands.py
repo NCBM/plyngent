@@ -173,6 +173,26 @@ async def test_rename_slash(state: ReplState) -> None:
     assert row.name == "my-chat"
 
 
+async def test_config_slash_reloads(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = state.config.path
+    assert path is not None
+    # Fixture ConfigStore may not have written the file yet.
+    state.config.write()
+
+    def fake_open(p: object, **_k: object) -> None:
+        assert str(p) == str(path)
+
+    monkeypatch.setattr("plyngent.cli.editor.open_in_editor", fake_open)
+    assert await handle_slash(state, "/config") is True
+    out = capsys.readouterr().out
+    assert "config reloaded" in out
+    assert state.provider_name
+
+
 async def test_model_switch_persists(state: ReplState) -> None:
     from plyngent.config.models import ModelConfig
 

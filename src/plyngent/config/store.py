@@ -99,6 +99,11 @@ class ConfigStore:
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._providers, self._bad_providers = _parse_providers(document)
 
+    @property
+    def path(self) -> Path:
+        """Filesystem path of the TOML config file."""
+        return self._path
+
     # -- database (read-only) --
 
     @property
