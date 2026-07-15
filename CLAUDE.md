@@ -30,13 +30,15 @@ All protocol models use `msgspec.Struct` — not dataclasses, not Pydantic. Opti
 
 ```
 lmproto/openai_compatible/     ← Base: model, config, client
+lmproto/openai/                ← OpenAI platform: Responses + chat (extends base)
 lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 ```
 
 - **`openai_compatible/model.py`** — tagged chat messages (`SystemChatMessage`, `UserChatMessage`, …), tools, request/response, streaming chunks.
-- **`openai_compatible/responses_model.py`** — OpenAI Responses API (`ResponsesCreateParam`, `Response`, function_call items, stream events).
-- **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAIClient` via `niquests` async + SSE; `chat_completions`, `models`, `responses` / `get_response` / `delete_response`.
+- **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAICompatibleClient` via `niquests` async + SSE; `chat_completions`, `models` only (`OpenAIClient` is a compat alias).
 - **`openai_compatible/config.py`** — `OpenAIConfig` (token + base URL).
+- **`openai/model.py`** — OpenAI Responses API (`ResponsesCreateParam`, `Response`, function_call items, stream events).
+- **`openai/client.py`** — platform `OpenAIClient`: chat completions + `responses` / `get_response` / `delete_response`.
 - **DeepSeek** — `DeepseekOpenAIClient`; models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`.
 
 ### Config (`config/`)
@@ -45,7 +47,7 @@ TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]
 
 ### Runtime (`runtime/`)
 
-`create_client(provider)` maps config `Provider` → protocol client. OpenAI / openai-compatible / deepseek(openai convention) supported; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
+`create_client(provider)` maps config `Provider` → protocol client. OpenAI → `lmproto.openai.OpenAIClient` (Responses-capable); openai-compatible / deepseek(openai convention) → chat-completions clients; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
 
 ### Memory (`memory/`)
 

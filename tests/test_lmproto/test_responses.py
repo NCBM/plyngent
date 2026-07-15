@@ -3,9 +3,8 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from plyngent.lmproto.openai_compatible.client import OpenAIClient
-from plyngent.lmproto.openai_compatible.config import OpenAIConfig
-from plyngent.lmproto.openai_compatible.responses_model import (
+from plyngent.lmproto.openai import (
+    OpenAIClient,
     Response,
     ResponseDeleted,
     ResponseFunctionTool,
@@ -15,6 +14,7 @@ from plyngent.lmproto.openai_compatible.responses_model import (
     response_function_calls,
     response_output_text,
 )
+from plyngent.lmproto.openai_compatible.config import OpenAIConfig
 
 
 def _sample_response_body() -> bytes:

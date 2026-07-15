@@ -1,5 +1,6 @@
 from .client import BaseOpenAIClient as BaseOpenAIClient
 from .client import OpenAIClient as OpenAIClient
+from .client import OpenAICompatibleClient as OpenAICompatibleClient
 from .config import OpenAIConfig as OpenAIConfig
 from .model import AnyAssistantToolCall as AnyAssistantToolCall
 from .model import AnyChatMessage as AnyChatMessage
@@ -40,14 +41,3 @@ from .model import ToolFunctionItem as ToolFunctionItem
 from .model import UserChatMessage as UserChatMessage
 from .model import Verbosity as Verbosity
 from .model import VoiceName as VoiceName
-from .responses_model import Response as Response
-from .responses_model import ResponseDeleted as ResponseDeleted
-from .responses_model import ResponseFunctionTool as ResponseFunctionTool
-from .responses_model import ResponseFunctionToolCall as ResponseFunctionToolCall
-from .responses_model import ResponseFunctionToolCallOutput as ResponseFunctionToolCallOutput
-from .responses_model import ResponseOutputMessage as ResponseOutputMessage
-from .responses_model import ResponseOutputText as ResponseOutputText
-from .responses_model import ResponsesCreateParam as ResponsesCreateParam
-from .responses_model import ResponseStreamEvent as ResponseStreamEvent
-from .responses_model import response_function_calls as response_function_calls
-from .responses_model import response_output_text as response_output_text

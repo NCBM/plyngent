@@ -13,9 +13,8 @@ from typing import Any, Literal, cast
 import msgspec
 from msgspec import UNSET, Struct, field
 
+from plyngent.lmproto.openai_compatible.model import ServiceTier  # noqa: TC001
 from plyngent.typedef import JSONSchema, Unset  # noqa: TC001
-
-from .model import ServiceTier  # noqa: TC001
 
 type ResponseStatus = Literal[
     "completed",
@@ -294,7 +293,7 @@ def response_output_text(response: Response) -> str:
     for raw in response.output:
         if raw.get("type") != "message":
             continue
-        content = raw.get("content")
+        content: list[object] | None = raw.get("content")
         if not isinstance(content, list):
             continue
         for block_obj in content:

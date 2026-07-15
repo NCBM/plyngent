@@ -18,7 +18,6 @@ from .model import (
     ModelsResponse,
     StreamToolCallDelta,
 )
-from .responses_model import Response, ResponseDeleted, ResponsesCreateParam, ResponseStreamEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -31,7 +30,7 @@ _HTTP_ERROR = 400
 _ERROR_BODY_PREVIEW = 500
 
 
-async def _close_async_response(resp: AsyncResponse) -> None:
+async def close_async_response(resp: AsyncResponse) -> None:
     """Close a streaming response; support sync or async close()."""
     for name in ("aclose", "close"):
         method = getattr(resp, name, None)
@@ -41,6 +40,10 @@ async def _close_async_response(resp: AsyncResponse) -> None:
         if inspect.isawaitable(result):
             await result
         return
+
+
+# Internal alias kept for older call sites in this module.
+_close_async_response = close_async_response
 
 
 async def read_response_body(resp: object) -> bytes | str | None:
@@ -98,14 +101,13 @@ def http_error_message(
 
 
 class BaseOpenAIClient:
+    """Shared OpenAI-compatible HTTP surface (session, models, chat SSE)."""
+
     session: AsyncSession
     encoder: msgspec.json.Encoder
     decoder: msgspec.json.Decoder[ChatCompletionResponse]
     chunk_decoder: msgspec.json.Decoder[ChatCompletionChunk]
     models_decoder: msgspec.json.Decoder[ModelsResponse]
-    response_decoder: msgspec.json.Decoder[Response]
-    response_deleted_decoder: msgspec.json.Decoder[ResponseDeleted]
-    response_event_decoder: msgspec.json.Decoder[ResponseStreamEvent]
 
     def __init__(self, config: OpenAIConfig) -> None:
         self.session = niquests.AsyncSession(
@@ -116,9 +118,6 @@ class BaseOpenAIClient:
         self.decoder = msgspec.json.Decoder(ChatCompletionResponse)
         self.chunk_decoder = msgspec.json.Decoder(ChatCompletionChunk)
         self.models_decoder = msgspec.json.Decoder(ModelsResponse)
-        self.response_decoder = msgspec.json.Decoder(Response)
-        self.response_deleted_decoder = msgspec.json.Decoder(ResponseDeleted)
-        self.response_event_decoder = msgspec.json.Decoder(ResponseStreamEvent)
 
     async def models(self) -> list[str]:
         """List model ids via OpenAI-compatible ``GET /models``.
@@ -164,22 +163,6 @@ class BaseOpenAIClient:
         finally:
             await _close_async_response(resp)
 
-    async def _parse_response_sse(self, resp: AsyncResponse) -> AsyncIterator[ResponseStreamEvent]:
-        """Yield Responses API SSE events; stop at ``data: [DONE]``."""
-        try:
-            await self._ensure_ok(resp, what="responses")
-            async for raw in resp.iter_lines():
-                if not raw:
-                    continue
-                parsed = sse_data_payload(bytes(raw))
-                if parsed is None:
-                    continue
-                if parsed is False:
-                    break
-                yield self.response_event_decoder.decode(parsed)
-        finally:
-            await _close_async_response(resp)
-
     async def _read_json_body(self, resp: object, *, what: str) -> bytes:
         await self._ensure_ok(resp, what=what)
         body = await read_response_body(resp)
@@ -192,7 +175,9 @@ class BaseOpenAIClient:
         return bytes(body)
 
 
-class OpenAIClient(BaseOpenAIClient):
+class OpenAICompatibleClient(BaseOpenAIClient):
+    """Chat Completions only (``POST /chat/completions`` + ``GET /models``)."""
+
     def __init__(self, config: OpenAIConfig) -> None:
         super().__init__(config)
 
@@ -229,50 +214,9 @@ class OpenAIClient(BaseOpenAIClient):
         body = await self._read_json_body(resp, what="chat completions")
         return self.decoder.decode(body)
 
-    @overload
-    async def responses(
-        self, param: ResponsesCreateParam, *, stream: Literal[False] = False
-    ) -> Response: ...
 
-    @overload
-    async def responses(
-        self, param: ResponsesCreateParam, *, stream: Literal[True]
-    ) -> AsyncIterator[ResponseStreamEvent]: ...
-
-    async def responses(
-        self, param: ResponsesCreateParam, *, stream: bool = False
-    ) -> Response | AsyncIterator[ResponseStreamEvent]:
-        """Create a model response via OpenAI ``POST /responses``."""
-        param = msgspec.structs.replace(param, stream=stream)
-        data = self.encoder.encode(param)
-        if stream:
-            resp = await self.session.post(
-                "/responses",
-                data=data,
-                headers={"Content-Type": "application/json"},
-                stream=True,
-            )
-            return self._parse_response_sse(resp)
-        resp = await self.session.post(
-            "/responses",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            stream=False,
-        )
-        body = await self._read_json_body(resp, what="responses")
-        return self.response_decoder.decode(body)
-
-    async def get_response(self, response_id: str) -> Response:
-        """Retrieve a stored response via ``GET /responses/{id}``."""
-        resp = await self.session.get(f"/responses/{response_id}", stream=False)
-        body = await self._read_json_body(resp, what="responses")
-        return self.response_decoder.decode(body)
-
-    async def delete_response(self, response_id: str) -> ResponseDeleted:
-        """Delete a stored response via ``DELETE /responses/{id}``."""
-        resp = await self.session.delete(f"/responses/{response_id}", stream=False)
-        body = await self._read_json_body(resp, what="responses")
-        return self.response_deleted_decoder.decode(body)
+# Backward-compatible alias: many call sites still import OpenAIClient from this package.
+OpenAIClient = OpenAICompatibleClient
 
 
 def merge_stream_tool_calls(deltas: list[StreamToolCallDelta]) -> list[AssistantFunctionToolCall]:

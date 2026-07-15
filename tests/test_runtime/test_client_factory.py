@@ -9,7 +9,8 @@ from plyngent.config.models import (
     OpenAIProvider,
 )
 from plyngent.lmproto.deepseek import DeepseekOpenAIClient
-from plyngent.lmproto.openai_compatible import OpenAIClient
+from plyngent.lmproto.openai import OpenAIClient
+from plyngent.lmproto.openai_compatible import OpenAICompatibleClient
 from plyngent.runtime import ProviderNotSupportedError, create_client, provider_to_openai_config
 
 
@@ -20,6 +21,7 @@ def test_openai_provider_defaults_base_url() -> None:
     assert config.base_url == "https://api.openai.com/v1"
     client = create_client(provider)
     assert isinstance(client, OpenAIClient)
+    assert hasattr(client, "responses")
 
 
 def test_openai_compatible_requires_url() -> None:
@@ -34,7 +36,8 @@ def test_openai_compatible_client() -> None:
         url="https://example.com/v1",
     )
     client = create_client(provider)
-    assert isinstance(client, OpenAIClient)
+    assert isinstance(client, OpenAICompatibleClient)
+    assert not isinstance(client, OpenAIClient)
     assert provider_to_openai_config(provider).base_url == "https://example.com/v1"
 
 

@@ -9,7 +9,8 @@ from plyngent.config.models import (
     Provider,
 )
 from plyngent.lmproto.deepseek import DeepseekOpenAIClient
-from plyngent.lmproto.openai_compatible import OpenAIClient, OpenAIConfig
+from plyngent.lmproto.openai import OpenAIClient
+from plyngent.lmproto.openai_compatible import OpenAICompatibleClient, OpenAIConfig
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -17,7 +18,9 @@ if TYPE_CHECKING:
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-type OpenAICompatibleClient = OpenAIClient | DeepseekOpenAIClient
+type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient
+# Backward-compatible name used by older imports/tests.
+type OpenAICompatibleClientUnion = ProtocolClient
 
 
 class ProviderNotSupportedError(NotImplementedError):
@@ -45,7 +48,7 @@ def _deepseek_convention(extras: Mapping[str, str]) -> str:
     return extras.get("convention", "openai").lower()
 
 
-def create_client(provider: Provider) -> OpenAICompatibleClient:
+def create_client(provider: Provider) -> ProtocolClient:
     """Build a protocol client for the given provider config entry.
 
     Raises:
@@ -55,7 +58,7 @@ def create_client(provider: Provider) -> OpenAICompatibleClient:
     if isinstance(provider, OpenAIProvider):
         return OpenAIClient(provider_to_openai_config(provider))
     if isinstance(provider, OpenAICompatibleProvider):
-        return OpenAIClient(provider_to_openai_config(provider))
+        return OpenAICompatibleClient(provider_to_openai_config(provider))
     if isinstance(provider, DeepseekProvider):
         convention = _deepseek_convention(provider.extras)
         if convention in {"openai", "openai_compat", "openai-compatible"}:
