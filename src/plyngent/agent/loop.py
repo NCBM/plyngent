@@ -4,6 +4,7 @@ import asyncio
 import inspect
 from typing import TYPE_CHECKING, cast
 
+import msgspec
 from msgspec import UNSET
 
 from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
@@ -12,6 +13,7 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    StreamOptions,
     StreamToolCallDelta,
     ToolChatMessage,
 )
@@ -31,7 +33,9 @@ from .events import (
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
+    UsageEvent,
 )
+from .usage import token_usage_from_api
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -110,19 +114,21 @@ async def _execute_tool_calls(
         yield ToolResultEvent(message=tool_msg)
 
 
-async def _non_stream_assistant(
+async def _non_stream_round(
     client: ChatClient,
     param: ChatCompletionsParam,
-) -> tuple[AssistantChatMessage, list[TextDeltaEvent]]:
+) -> AsyncIterator[AgentEvent]:
     response = await client.chat_completions(param, stream=False)
     if not response.choices:
         msg = "chat completion response contained no choices"
         raise RuntimeError(msg)
     assistant = response.choices[0].message
-    text_events: list[TextDeltaEvent] = []
     if isinstance(assistant.content, str) and assistant.content:
-        text_events.append(TextDeltaEvent(content=assistant.content))
-    return assistant, text_events
+        yield TextDeltaEvent(content=assistant.content)
+    yield AssistantMessageEvent(message=assistant)
+    usage = token_usage_from_api(response.usage)
+    if usage is not None:
+        yield UsageEvent(usage=usage)
 
 
 async def _stream_round(
@@ -133,12 +139,21 @@ async def _stream_round(
 
     Pattern: ``stream = await client.chat_completions(..., stream=True)`` then
     ``async for chunk in stream``. Tool-call deltas are merged after the stream.
+    Requests ``stream_options.include_usage`` so providers may send a final usage chunk.
     """
-    stream = await client.chat_completions(param, stream=True)
+    stream_param = msgspec.structs.replace(
+        param,
+        stream_options=StreamOptions(include_usage=True),
+    )
+    stream = await client.chat_completions(stream_param, stream=True)
     content_parts: list[str] = []
     tool_deltas: list[StreamToolCallDelta] = []
+    last_usage = None
 
     async for chunk in stream:
+        usage = token_usage_from_api(chunk.usage)
+        if usage is not None:
+            last_usage = usage
         if not chunk.choices:
             continue
         choice = chunk.choices[0]
@@ -161,6 +176,8 @@ async def _stream_round(
         tool_calls=tool_calls,
     )
     yield AssistantMessageEvent(message=assistant)
+    if last_usage is not None:
+        yield UsageEvent(usage=last_usage)
 
 
 async def _assistant_round(
@@ -177,11 +194,10 @@ async def _assistant_round(
                 messages.append(event.message)
             yield event
         return
-    assistant, text_events = await _non_stream_assistant(client, param)
-    for event in text_events:
+    async for event in _non_stream_round(client, param):
+        if isinstance(event, AssistantMessageEvent):
+            messages.append(event.message)
         yield event
-    messages.append(assistant)
-    yield AssistantMessageEvent(message=assistant)
 
 
 def _last_assistant(messages: list[AnyChatMessage], pre_len: int) -> AssistantChatMessage:

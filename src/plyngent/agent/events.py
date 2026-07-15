@@ -6,6 +6,8 @@ from plyngent.lmproto.openai_compatible.model import (  # noqa: TC001
     ToolChatMessage,
 )
 
+from .usage import TokenUsage  # noqa: TC001
+
 
 class TextDeltaEvent(Struct, tag_field="type", tag="text_delta"):
     content: str
@@ -38,6 +40,12 @@ class CancelledEvent(Struct, tag_field="type", tag="cancelled"):
     reason: str = ""
 
 
+class UsageEvent(Struct, tag_field="type", tag="usage"):
+    """Token usage for one model completion (one tool-loop round)."""
+
+    usage: TokenUsage
+
+
 type AgentEvent = (
     TextDeltaEvent
     | AssistantMessageEvent
@@ -46,4 +54,5 @@ type AgentEvent = (
     | MaxRoundsEvent
     | ErrorEvent
     | CancelledEvent
+    | UsageEvent
 )

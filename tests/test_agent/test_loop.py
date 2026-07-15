@@ -13,6 +13,7 @@ from plyngent.agent import (
     ToolCallEvent,
     ToolRegistry,
     ToolResultEvent,
+    UsageEvent,
     run_chat_loop,
     tool,
 )
@@ -146,7 +147,11 @@ class ScriptedClient:
             yield chunk
 
 
-def _response(message: AssistantChatMessage) -> ChatCompletionResponse:
+def _response(
+    message: AssistantChatMessage,
+    *,
+    usage: dict[str, int] | None = None,
+) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id="1",
         object="chat.completion",
@@ -161,7 +166,7 @@ def _response(message: AssistantChatMessage) -> ChatCompletionResponse:
             )
         ],
         system_fingerprint="",
-        usage={},
+        usage=usage if usage is not None else {},
     )
 
 
@@ -178,6 +183,46 @@ async def test_run_chat_loop_text_only() -> None:
     assert isinstance(events[1], AssistantMessageEvent)
     assert len(messages) == 2
     assert len(client.calls) == 1
+
+
+async def test_non_stream_emits_usage() -> None:
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(content="hi"),
+                usage={"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11},
+            ),
+        ]
+    )
+    messages: list[AnyChatMessage] = [UserChatMessage(content="x")]
+    events = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+    usages = [e for e in events if isinstance(e, UsageEvent)]
+    assert len(usages) == 1
+    assert usages[0].usage.prompt_tokens == 9
+    assert usages[0].usage.completion_tokens == 2
+    assert usages[0].usage.total_tokens == 11
+
+
+async def test_chat_agent_accumulates_session_usage() -> None:
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(content="a"),
+                usage={"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+            ),
+            _response(
+                AssistantChatMessage(content="b"),
+                usage={"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+            ),
+        ]
+    )
+    agent = ChatAgent(client, model="m", stream=False)
+    _ = [e async for e in agent.run("one")]
+    assert agent.last_turn_usage.total_tokens == 6
+    assert agent.session_usage.total_tokens == 6
+    _ = [e async for e in agent.run("two")]
+    assert agent.last_turn_usage.total_tokens == 10
+    assert agent.session_usage.total_tokens == 16
 
 
 async def test_stream_yields_deltas_incrementally() -> None:
