@@ -70,7 +70,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - PTY: structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close SIGTERM→SIGKILL.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`.
-- **`DEFAULT_TOOLS`**: file + process tool list for a `ToolRegistry`.
+- **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
+- **`DEFAULT_TOOLS`**: file + process + vcs tool list for a `ToolRegistry`.
 
 ### CLI (`cli/`)
 

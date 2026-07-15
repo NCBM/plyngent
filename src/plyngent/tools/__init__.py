@@ -17,6 +17,12 @@ from .process import open_pty as open_pty
 from .process import read_pty as read_pty
 from .process import run_command as run_command
 from .process import write_pty as write_pty
+from .vcs import VCS_TOOLS as VCS_TOOLS
+from .vcs import vcs_branch as vcs_branch
+from .vcs import vcs_diff as vcs_diff
+from .vcs import vcs_kind as vcs_kind
+from .vcs import vcs_log as vcs_log
+from .vcs import vcs_status as vcs_status
 from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )
@@ -31,4 +37,4 @@ from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_workspace_root as set_workspace_root
 
-DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS]
+DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS]
