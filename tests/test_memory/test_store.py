@@ -98,6 +98,37 @@ async def test_session_workspace_binding(store: MemoryStore, tmp_path: object) -
     assert {s.sid for s in listed_b} == {sb.sid}
 
 
+async def test_rename_session(store: MemoryStore) -> None:
+    session = await store.create_session(name="old")
+    updated = await store.rename_session(session.sid, "  new name  ")
+    assert updated.name == "new name"
+    again = await store.get_session(session.sid)
+    assert again is not None
+    assert again.name == "new name"
+    try:
+        await store.rename_session(session.sid, "   ")
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "non-empty" in str(exc)
+    try:
+        await store.rename_session(999_999, "x")
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "not found" in str(exc)
+
+
+async def test_delete_session_cascades_messages(store: MemoryStore) -> None:
+    from plyngent.lmproto.openai_compatible.model import UserChatMessage
+
+    session = await store.create_session(name="gone")
+    _ = await store.append_message(session.sid, UserChatMessage(content="a"))
+    _ = await store.append_message(session.sid, UserChatMessage(content="b"))
+    assert await store.delete_session(session.sid) is True
+    assert await store.get_session(session.sid) is None
+    assert await store.list_messages(session.sid) == []
+    assert await store.delete_session(session.sid) is False
+
+
 async def test_update_session_workspace(store: MemoryStore, tmp_path: object) -> None:
     from pathlib import Path
 

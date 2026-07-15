@@ -116,6 +116,64 @@ async def test_tools_toggle(state: ReplState) -> None:
     assert state.tools_enabled is False
 
 
+async def test_rename_slash(state: ReplState) -> None:
+    sid = state.session_id
+    assert sid is not None
+    assert await handle_slash(state, "/rename my-chat") is True
+    row = await state.memory.get_session(sid)
+    assert row is not None
+    assert row.name == "my-chat"
+
+
+async def test_delete_slash_confirm(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    # Delete a non-current session so SQLite cannot reuse the same sid as "current".
+    victim = state.session_id
+    assert victim is not None
+    assert await handle_slash(state, "/new keep") is True
+    current = state.session_id
+    assert current != victim
+
+    with temporary_backend(ScriptedBackend([], confirms=[False])):
+        assert await handle_slash(state, f"/delete {victim}") is True
+    assert await state.memory.get_session(victim) is not None
+    assert "cancelled" in capsys.readouterr().out
+
+    with temporary_backend(ScriptedBackend([], confirms=[True])):
+        assert await handle_slash(state, f"/delete {victim}") is True
+    assert await state.memory.get_session(victim) is None
+    assert state.session_id == current
+    out = capsys.readouterr().out
+    assert "deleted" in out
+    assert "new session" not in out
+
+
+async def test_export_slash(state: ReplState, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from plyngent.lmproto.openai_compatible.model import AssistantChatMessage, UserChatMessage
+
+    assert state.session_id is not None
+    _ = await state.memory.append_message(state.session_id, UserChatMessage(content="hi"))
+    _ = await state.memory.append_message(state.session_id, AssistantChatMessage(content="yo"))
+    path = tmp_path / "out.md"
+    assert await handle_slash(state, f"/export md {path}") is True
+    text = path.read_text(encoding="utf-8")
+    assert "Session" in text
+    assert "hi" in text
+    assert "yo" in text
+    assert str(path.resolve()) in capsys.readouterr().out
+
+    jpath = tmp_path / "out.json"
+    assert await handle_slash(state, f"/export json {jpath}") is True
+    raw = jpath.read_text(encoding="utf-8")
+    assert '"session_id"' in raw
+    assert "hi" in raw
+
+
 async def test_stream_toggle(state: ReplState) -> None:
     assert state.agent.stream is True
     assert await handle_slash(state, "/stream off") is True

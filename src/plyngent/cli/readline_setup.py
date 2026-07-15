@@ -24,6 +24,9 @@ SLASH_COMMANDS: tuple[str, ...] = (
     "/sessions",
     "/new",
     "/resume",
+    "/rename",
+    "/delete",
+    "/export",
     "/compact",
     "/provider",
     "/model",
@@ -36,6 +39,7 @@ SLASH_COMMANDS: tuple[str, ...] = (
 )
 
 _ON_OFF_ARGS: tuple[str, ...] = ("on", "off")
+_EXPORT_ARGS: tuple[str, ...] = ("md", "json")
 
 
 def history_path() -> Path:
@@ -78,6 +82,8 @@ def _argument_options(state: ReplState, command: str, text: str) -> list[str]:
         return filter_prefix(text, sorted(state.provider.models.keys()))
     if command in {"/tools", "/stream", "/verbose"}:
         return filter_prefix(text, list(_ON_OFF_ARGS))
+    if command == "/export":
+        return filter_prefix(text, list(_EXPORT_ARGS))
     if command == "/resume":
         return []
     return []

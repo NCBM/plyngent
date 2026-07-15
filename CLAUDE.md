@@ -84,7 +84,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/status` (incl. context char estimate), `/rounds`, `/stream`, `/verbose`, `/retry`, …
+- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/rename`, `/delete` (confirm), `/export md|json`, `/compact`, `/status`, `/rounds`, `/stream`, `/verbose`, `/retry`, …
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: user message kept in DB; partial assistant/tool rolled back; Ctrl+C cancels in-flight turn; **TTY confirms** off-loop; auto-retry 10s/20s/30s then `/retry` (no duplicate user message).
 - **`plyngent providers`**: list config providers.

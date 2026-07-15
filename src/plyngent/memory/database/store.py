@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import msgspec
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from plyngent.config.models import DatabaseConfig
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 DEFAULT_USER_NAME = "local"
 DEFAULT_USER_EMAIL = "local@localhost"
 DEFAULT_USER_PASSWORD_HASH = ""
+_SESSION_NAME_MAX = 64
 
 
 def normalize_workspace(path: str | Path | None) -> str | None:
@@ -174,6 +175,38 @@ class MemoryStore:
             await session.commit()
             await session.refresh(row)
             return row
+
+    async def rename_session(self, sid: int, name: str) -> Session:
+        """Rename a session (max 64 characters, non-empty after strip)."""
+        cleaned = name.strip()
+        if not cleaned:
+            msg = "session name must be non-empty"
+            raise ValueError(msg)
+        if len(cleaned) > _SESSION_NAME_MAX:
+            msg = f"session name too long (max {_SESSION_NAME_MAX})"
+            raise ValueError(msg)
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            row.name = cleaned
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def delete_session(self, sid: int) -> bool:
+        """Hard-delete a session and its messages. Returns False if missing."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                return False
+            # Explicit message delete: SQLite FK cascade may be off without PRAGMA.
+            _ = await session.execute(delete(Message).where(Message.sid == sid))
+            await session.delete(row)
+            await session.commit()
+            return True
 
     async def append_message(self, sid: int, message: AnyChatMessage) -> Message:
         """Append a chat message to a session with the next sequence number."""

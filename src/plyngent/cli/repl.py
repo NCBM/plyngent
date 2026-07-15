@@ -31,6 +31,9 @@ Commands:
   /sessions          List sessions for this workspace (newest first)
   /new [name]        Start a new session (bound to workspace)
   /resume [id]       Resume session id, or latest for this workspace if omitted
+  /rename <name>     Rename the current session
+  /delete [id]       Hard-delete a session (confirm; current → new empty)
+  /export [md|json] [path]  Export session transcript from DB
   /compact [name]    Soft-compact + model-summarize into a new session
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
@@ -106,6 +109,113 @@ async def _cmd_new(state: ReplState, arg: str) -> None:
     name = arg.strip() or "chat"
     await state.new_session(name=name)
     click.echo(f"new session id={state.session_id} name={name}")
+
+
+async def _cmd_rename(state: ReplState, arg: str) -> None:
+    name = arg.strip()
+    if not name:
+        click.echo("usage: /rename <name>")
+        return
+    try:
+        row = await state.rename_current_session(name)
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    click.echo(f"renamed session {row.sid} -> {row.name}")
+
+
+async def _cmd_delete(state: ReplState, arg: str) -> None:
+    from plyngent.prompting import NonInteractiveError, confirm_async
+
+    token = arg.strip()
+    if token:
+        try:
+            sid = int(token)
+        except ValueError:
+            click.echo("usage: /delete [session id]")
+            return
+    else:
+        if state.session_id is None:
+            click.echo("error: no active session")
+            return
+        sid = state.session_id
+    try:
+        allowed = await confirm_async(
+            f"Permanently delete session {sid} and all messages?",
+            default=False,
+        )
+    except NonInteractiveError:
+        click.echo("error: delete requires interactive confirm (or TTY)")
+        return
+    if not allowed:
+        click.echo("delete cancelled")
+        return
+    try:
+        was_current = await state.delete_session_and_maybe_replace(sid)
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    if was_current:
+        click.echo(f"deleted session {sid}; new session {state.session_id}")
+    else:
+        click.echo(f"deleted session {sid}")
+
+
+async def _cmd_export(state: ReplState, arg: str) -> None:
+    from plyngent.cli.export import (
+        encode_session_export_json,
+        format_session_export_md,
+        resolve_export_path,
+        session_export_payload,
+        write_export_file,
+    )
+
+    if state.session_id is None:
+        click.echo("error: no active session")
+        return
+    parts = arg.split()
+    fmt = "md"
+    path_arg: str | None = None
+    if parts:
+        first = parts[0].lower()
+        if first in {"md", "markdown", "json"}:
+            fmt = "json" if first == "json" else "md"
+            path_arg = parts[1] if len(parts) > 1 else None
+        else:
+            path_arg = parts[0]
+            if len(parts) > 1:
+                click.echo("usage: /export [md|json] [path]")
+                return
+    row = await state.memory.get_session(state.session_id)
+    if row is None:
+        click.echo(f"error: session not found: {state.session_id}")
+        return
+    messages = await state.memory.list_messages(state.session_id)
+    out_path = resolve_export_path(state.session_id, fmt, path_arg)
+    if fmt == "json":
+        text = encode_session_export_json(
+            session_export_payload(
+                sid=row.sid,
+                name=row.name,
+                workspace=row.workspace,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                messages=messages,
+            )
+        )
+    else:
+        text = format_session_export_md(
+            messages,
+            sid=row.sid,
+            name=row.name,
+            workspace=row.workspace,
+        )
+    try:
+        written = write_export_file(out_path, text)
+    except OSError as exc:
+        click.echo(f"error: write failed: {exc}")
+        return
+    click.echo(f"exported session {row.sid} ({fmt}) -> {written}")
 
 
 async def _cmd_resume(state: ReplState, arg: str) -> None:
@@ -321,6 +431,9 @@ async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
         "history": lambda: _cmd_history(state, arg),
         "sessions": lambda: _cmd_sessions(state),
         "new": lambda: _cmd_new(state, arg),
+        "rename": lambda: _cmd_rename(state, arg),
+        "delete": lambda: _cmd_delete(state, arg),
+        "export": lambda: _cmd_export(state, arg),
         "resume": lambda: _cmd_resume(state, arg),
         "compact": lambda: _cmd_compact(state, arg),
         "provider": lambda: _cmd_provider(state, arg),

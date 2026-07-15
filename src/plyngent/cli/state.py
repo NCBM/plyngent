@@ -120,6 +120,26 @@ class ReplState:
         self.session_id = session.sid
         self.agent = self._make_agent()
 
+    async def rename_current_session(self, name: str) -> SessionRow:
+        if self.session_id is None:
+            msg = "no active session"
+            raise ValueError(msg)
+        return await self.memory.rename_session(self.session_id, name)
+
+    async def delete_session_and_maybe_replace(self, sid: int) -> bool:
+        """Hard-delete ``sid``. If it was current, start a new empty session.
+
+        Returns True when the deleted session was the active one.
+        """
+        was_current = self.session_id == sid
+        ok = await self.memory.delete_session(sid)
+        if not ok:
+            msg = f"session not found: {sid}"
+            raise ValueError(msg)
+        if was_current:
+            await self.new_session()
+        return was_current
+
     async def resume_session(self, session_id: int) -> None:
         """Load a session; on workspace mismatch, prompt keep / rebind / abort."""
         from plyngent.cli.limits import prompt_workspace_mismatch
