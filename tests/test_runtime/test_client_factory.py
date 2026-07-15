@@ -24,7 +24,7 @@ def test_openai_provider_defaults_base_url() -> None:
     client = create_client(provider)
     assert isinstance(client, ResponsesChatClient)
     assert hasattr(client, "chat_completions")
-    assert client._provider_tools == []
+    assert client._provider_tools == [{"type": "web_search"}]
 
 
 def test_openai_provider_tools_passed_to_wrapper() -> None:

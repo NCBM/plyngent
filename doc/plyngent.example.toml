@@ -39,6 +39,7 @@ access_key_or_token = "sk-replace-me"
 # access_key_or_token = "sk-replace-me"
 # url = "https://api.openai.com/v1"
 # # Hosted/provider-side tools (OpenAI runs them; not local ToolRegistry).
+# # Default if omitted: [{ type = "web_search" }]. Use [] to disable.
 # # Examples: web_search, file_search (+ vector_store_ids), code_interpreter, mcp.
 # provider_tools = [
 #   { type = "web_search" },

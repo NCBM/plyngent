@@ -61,6 +61,12 @@ def test_deepseek_default_models_on_construct() -> None:
 def test_openai_default_models_on_construct() -> None:
     provider = OpenAIProvider(access_key_or_token="sk-test")
     assert set(provider.models) == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+    assert provider.provider_tools == [{"type": "web_search"}]
+
+
+def test_openai_explicit_empty_provider_tools() -> None:
+    provider = OpenAIProvider(access_key_or_token="sk-test", provider_tools=[])
+    assert provider.provider_tools == []
 
 
 def test_openai_omitted_preset_and_models_from_toml(tmp_path: Path) -> None:
