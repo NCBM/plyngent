@@ -68,9 +68,16 @@ def soft_compact_transcript(
     messages: Sequence[AnyChatMessage],
     *,
     max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
+    prompt_tokens_hint: int | None = None,
+    sent_estimate_tokens: int | None = None,
 ) -> str:
     """Soft-compact tool dumps then format as transcript text."""
-    compacted = compact_messages_for_request(messages, max_tokens=max_tokens)
+    compacted = compact_messages_for_request(
+        messages,
+        max_tokens=max_tokens,
+        prompt_tokens_hint=prompt_tokens_hint,
+        sent_estimate_tokens=sent_estimate_tokens,
+    )
     return format_transcript(compacted)
 
 
@@ -81,12 +88,19 @@ async def summarize_messages(
     model: str,
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     temperature: float | None = 0.2,
+    prompt_tokens_hint: int | None = None,
+    sent_estimate_tokens: int | None = None,
 ) -> str:
     """Soft-compact history and ask the model for a dense summary (no tools)."""
     if not messages:
         msg = "nothing to compact"
         raise ValueError(msg)
-    transcript = soft_compact_transcript(messages, max_tokens=max_context_tokens)
+    transcript = soft_compact_transcript(
+        messages,
+        max_tokens=max_context_tokens,
+        prompt_tokens_hint=prompt_tokens_hint,
+        sent_estimate_tokens=sent_estimate_tokens,
+    )
     if not transcript.strip():
         msg = "nothing to compact"
         raise ValueError(msg)

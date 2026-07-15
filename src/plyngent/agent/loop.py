@@ -23,6 +23,7 @@ from .budget import (
     DEFAULT_CONTEXT_MAX_TOKENS,
     DEFAULT_TOOL_RESULT_MAX_CHARS,
     compact_messages_for_request,
+    estimate_messages_tokens,
     truncate_tool_result,
 )
 from .events import (
@@ -240,6 +241,9 @@ async def run_chat_loop(
 
     rounds_used = 0
     allowance = max_rounds
+    # Calibrate soft-compact from last model call's prompt_tokens (API preferred).
+    prompt_tokens_hint: int | None = None
+    sent_estimate_tokens: int | None = None
 
     while True:
         while rounds_used < allowance:
@@ -247,7 +251,10 @@ async def run_chat_loop(
             request_messages = compact_messages_for_request(
                 messages,
                 max_tokens=max_context_tokens,
+                prompt_tokens_hint=prompt_tokens_hint,
+                sent_estimate_tokens=sent_estimate_tokens,
             )
+            sent_est = estimate_messages_tokens(request_messages)
             param = ChatCompletionsParam(
                 messages=request_messages,
                 model=model,
@@ -257,6 +264,10 @@ async def run_chat_loop(
 
             pre_len = len(messages)
             async for event in _assistant_round(client, param, messages, stream=stream):
+                if isinstance(event, UsageEvent):
+                    # Next rounds scale char-estimates by real/resolved prompt size.
+                    prompt_tokens_hint = event.usage.prompt_tokens
+                    sent_estimate_tokens = sent_est
                 yield event
             assistant = _last_assistant(messages, pre_len)
             tool_calls = assistant.tool_calls

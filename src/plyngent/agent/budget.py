@@ -11,12 +11,14 @@ from plyngent.lmproto.openai_compatible.model import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
+    type TokenMeasure = Callable[[Sequence[AnyChatMessage]], int]
+
 DEFAULT_TOOL_RESULT_MAX_CHARS = 32_000
-# Soft context budget in estimated tokens (~4 chars/token); not a hard model limit.
+# Soft context budget in tokens (API-calibrated when possible; else ~4 chars/token).
 DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
 DEFAULT_RECENT_TOOL_RESULTS = 4
@@ -64,10 +66,35 @@ def estimate_messages_chars(messages: Sequence[AnyChatMessage]) -> int:
 
 
 def estimate_messages_tokens(messages: Sequence[AnyChatMessage]) -> int:
-    """Char-based token estimate for soft context budget checks."""
+    """Char-based token estimate (fallback when no API calibration is available)."""
     from plyngent.agent.usage import chars_to_tokens
 
     return chars_to_tokens(estimate_messages_chars(messages))
+
+
+def measure_messages_tokens(
+    messages: Sequence[AnyChatMessage],
+    *,
+    prompt_tokens_hint: int | None = None,
+    sent_estimate_tokens: int | None = None,
+) -> int:
+    """Token size for budget checks.
+
+    When ``prompt_tokens_hint`` is the last request's API (or resolved) prompt
+    size and ``sent_estimate_tokens`` is the char-estimate of that same payload,
+    scale the current char-estimate by ``hint / sent_estimate`` so soft-compact
+    tracks near-real tokens after the first model call.
+    """
+    est = estimate_messages_tokens(messages)
+    if (
+        prompt_tokens_hint is not None
+        and prompt_tokens_hint > 0
+        and sent_estimate_tokens is not None
+        and sent_estimate_tokens > 0
+    ):
+        scaled = round(est * (prompt_tokens_hint / sent_estimate_tokens))
+        return max(1, scaled) if est > 0 else 0
+    return est
 
 
 def _shrink_tool(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
@@ -109,13 +136,14 @@ def _shrink_largest(
     *,
     max_tokens: int,
     shrink_cap: int,
+    measure: TokenMeasure,
 ) -> None:
     def tool_len(i: int) -> int:
         msg = messages[i]
         return len(msg.content) if isinstance(msg, ToolChatMessage) else 0
 
     for idx in sorted(tool_indices, key=tool_len, reverse=True):
-        if estimate_messages_tokens(messages) <= max_tokens:
+        if measure(messages) <= max_tokens:
             return
         tool_msg = messages[idx]
         if isinstance(tool_msg, ToolChatMessage):
@@ -128,17 +156,29 @@ def compact_messages_for_request(
     max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     old_tool_result_chars: int = DEFAULT_OLD_TOOL_RESULT_CHARS,
     keep_recent_tool_results: int = DEFAULT_RECENT_TOOL_RESULTS,
-    # Deprecated alias: treated as token budget if max_tokens not overridden via callers.
+    prompt_tokens_hint: int | None = None,
+    sent_estimate_tokens: int | None = None,
+    # Deprecated alias: treated as token budget.
     max_chars: int | None = None,
 ) -> list[AnyChatMessage]:
     """Return a request-time copy with older tool dumps shrunk if over budget.
 
-    Budget is in **estimated tokens** (char/4). Does not mutate the original history.
+    Budget is in tokens. Prefer API-calibrated measurement via
+    ``prompt_tokens_hint`` / ``sent_estimate_tokens`` (last request); otherwise
+    fall back to char/4. Does not mutate the original history.
     ``max_tokens < 1`` disables compacting.
     """
     budget = max_tokens if max_chars is None else max_chars
+
+    def measure(msgs: Sequence[AnyChatMessage]) -> int:
+        return measure_messages_tokens(
+            msgs,
+            prompt_tokens_hint=prompt_tokens_hint,
+            sent_estimate_tokens=sent_estimate_tokens,
+        )
+
     out: list[AnyChatMessage] = list(messages)
-    if budget < 1 or estimate_messages_tokens(out) <= budget:
+    if budget < 1 or measure(out) <= budget:
         return out
 
     indices = _tool_indices(out)
@@ -147,7 +187,7 @@ def compact_messages_for_request(
 
     protect = _protect_indices(indices, keep_recent_tool_results)
     _shrink_except(out, indices, protect, old_tool_result_chars)
-    if estimate_messages_tokens(out) <= budget:
+    if measure(out) <= budget:
         return out
 
     _shrink_largest(
@@ -155,5 +195,6 @@ def compact_messages_for_request(
         indices,
         max_tokens=budget,
         shrink_cap=max(64, old_tool_result_chars // 2),
+        measure=measure,
     )
     return out

@@ -7,6 +7,7 @@ from msgspec import UNSET
 from plyngent.agent.budget import (
     compact_messages_for_request,
     estimate_messages_tokens,
+    measure_messages_tokens,
     truncate_tool_result,
 )
 from plyngent.agent.loop import run_chat_loop
@@ -98,6 +99,45 @@ def test_compact_disabled_when_max_tokens_zero() -> None:
     assert out[0] is messages[0] or (
         isinstance(out[0], ToolChatMessage) and out[0].content == "x" * 500
     )
+
+
+def test_measure_messages_tokens_calibrates_to_api_hint() -> None:
+    messages: list[AnyChatMessage] = [UserChatMessage(content="a" * 40)]
+    raw = estimate_messages_tokens(messages)
+    # If char-est was 10 and API said 100, scale 2x content → ~200
+    calibrated = measure_messages_tokens(
+        messages,
+        prompt_tokens_hint=raw * 10,
+        sent_estimate_tokens=raw,
+    )
+    assert calibrated == raw * 10
+
+
+def test_compact_uses_api_calibration() -> None:
+    """With a high API hint scale, compact triggers earlier than raw char-est."""
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="start"),
+        ToolChatMessage(content="OLD" * 400, tool_call_id="1"),
+        ToolChatMessage(content="NEW" * 20, tool_call_id="2"),
+    ]
+    est = estimate_messages_tokens(messages)
+    # Raw est under budget → no compact
+    no_api = compact_messages_for_request(messages, max_tokens=est + 100)
+    assert isinstance(no_api[1], ToolChatMessage)
+    assert "truncated" not in no_api[1].content
+    # Calibrate so measured size is 5x → over a mid budget → shrink old tool
+    compacted = compact_messages_for_request(
+        messages,
+        max_tokens=max(1, est * 2),
+        prompt_tokens_hint=est * 5,
+        sent_estimate_tokens=est,
+        old_tool_result_chars=40,
+        keep_recent_tool_results=1,
+    )
+    assert isinstance(compacted[1], ToolChatMessage)
+    old = messages[1]
+    assert isinstance(old, ToolChatMessage)
+    assert "truncated" in compacted[1].content or len(compacted[1].content) < len(old.content)
 
 
 def _response(message: AssistantChatMessage) -> ChatCompletionResponse:

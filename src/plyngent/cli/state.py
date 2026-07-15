@@ -170,11 +170,22 @@ class ReplState:
             msg = "nothing to compact (empty history)"
             raise ValueError(msg)
 
+        # Prefer last API prompt_tokens to drive soft-compact toward real size.
+        hint: int | None = None
+        sent_est: int | None = None
+        if not self.agent.last_request_usage.is_zero():
+            from plyngent.agent.budget import estimate_messages_tokens
+
+            hint = self.agent.last_request_usage.prompt_tokens
+            # Approximate: calibrate against current full history char-est.
+            sent_est = estimate_messages_tokens(messages)
         summary = await summarize_messages(
             self.client,
             messages,
             model=self.model,
             max_context_tokens=self.agent.max_context_tokens,
+            prompt_tokens_hint=hint,
+            sent_estimate_tokens=sent_est,
         )
         session_name = name or f"compact-from-{old_id}"
         await self.new_session(name=session_name)
