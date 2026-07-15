@@ -180,6 +180,54 @@ async def test_run_chat_loop_text_only() -> None:
     assert len(client.calls) == 1
 
 
+async def test_stream_yields_deltas_incrementally() -> None:
+    """Text deltas are yielded as chunks arrive, not only after the full stream."""
+
+    class ChunkClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param
+            if not stream:
+                return _response(AssistantChatMessage(content="ab"))
+
+            async def chunks() -> AsyncIterator[ChatCompletionChunk]:
+                for part in ("a", "b"):
+                    yield ChatCompletionChunk(
+                        id="1",
+                        object="chat.completion.chunk",
+                        created=0,
+                        model="t",
+                        choices=[
+                            ChunkChoice(
+                                index=0,
+                                delta=DeltaMessage(content=part),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+
+            return chunks()
+
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(ChunkClient(), messages, model="m", stream=True)]
+    deltas = [e for e in events if isinstance(e, TextDeltaEvent)]
+    assert [d.content for d in deltas] == ["a", "b"]
+    assert any(isinstance(e, AssistantMessageEvent) for e in events)
+    assert isinstance(messages[-1], AssistantChatMessage)
+    assert messages[-1].content == "ab"
+
+
 async def test_run_chat_loop_with_tools() -> None:
     @tool
     def add(a: int, b: int) -> int:

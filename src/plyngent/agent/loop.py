@@ -125,19 +125,17 @@ async def _non_stream_assistant(
     return assistant, text_events
 
 
-async def _stream_and_build_assistant(
+async def _stream_round(
     client: ChatClient,
     param: ChatCompletionsParam,
-) -> tuple[AssistantChatMessage, list[TextDeltaEvent]]:
-    """Stream one completion via the normal client API.
+) -> AsyncIterator[AgentEvent]:
+    """Stream one completion; yield text deltas as chunks arrive, then assistant.
 
     Pattern: ``stream = await client.chat_completions(..., stream=True)`` then
-    ``async for chunk in stream``. That return type (async function → async
-    iterator) is accepted as the library interface.
+    ``async for chunk in stream``. Tool-call deltas are merged after the stream.
     """
     stream = await client.chat_completions(param, stream=True)
     content_parts: list[str] = []
-    text_events: list[TextDeltaEvent] = []
     tool_deltas: list[StreamToolCallDelta] = []
 
     async for chunk in stream:
@@ -147,7 +145,7 @@ async def _stream_and_build_assistant(
         delta = choice.delta
         if isinstance(delta.content, str) and delta.content:
             content_parts.append(delta.content)
-            text_events.append(TextDeltaEvent(content=delta.content))
+            yield TextDeltaEvent(content=delta.content)
         if delta.tool_calls is not UNSET and delta.tool_calls:
             tool_deltas.extend(delta.tool_calls)
 
@@ -162,7 +160,39 @@ async def _stream_and_build_assistant(
         content=full_content or None,
         tool_calls=tool_calls,
     )
-    return assistant, text_events
+    yield AssistantMessageEvent(message=assistant)
+
+
+async def _assistant_round(
+    client: ChatClient,
+    param: ChatCompletionsParam,
+    messages: list[AnyChatMessage],
+    *,
+    stream: bool,
+) -> AsyncIterator[AgentEvent]:
+    """One model turn: yield events and append the assistant message to ``messages``."""
+    if stream:
+        async for event in _stream_round(client, param):
+            if isinstance(event, AssistantMessageEvent):
+                messages.append(event.message)
+            yield event
+        return
+    assistant, text_events = await _non_stream_assistant(client, param)
+    for event in text_events:
+        yield event
+    messages.append(assistant)
+    yield AssistantMessageEvent(message=assistant)
+
+
+def _last_assistant(messages: list[AnyChatMessage], pre_len: int) -> AssistantChatMessage:
+    if len(messages) <= pre_len:
+        msg = "model round produced no assistant message"
+        raise RuntimeError(msg)
+    last = messages[-1]
+    if not isinstance(last, AssistantChatMessage):
+        msg = "model round did not end with an assistant message"
+        raise TypeError(msg)
+    return last
 
 
 async def run_chat_loop(
@@ -207,21 +237,12 @@ async def run_chat_loop(
                 tools=list(tool_items) if tool_items is not None else UNSET,
             )
 
-            if stream:
-                assistant, text_events = await _stream_and_build_assistant(client, param)
-            else:
-                assistant, text_events = await _non_stream_assistant(client, param)
-
-            for event in text_events:
+            pre_len = len(messages)
+            async for event in _assistant_round(client, param, messages, stream=stream):
                 yield event
-
-            messages.append(assistant)
-            yield AssistantMessageEvent(message=assistant)
-
+            assistant = _last_assistant(messages, pre_len)
             tool_calls = assistant.tool_calls
-            if tool_calls is UNSET or not tool_calls:
-                return
-            if tools is None:
+            if tool_calls is UNSET or not tool_calls or tools is None:
                 return
             async for event in _execute_tool_calls(
                 tools,
