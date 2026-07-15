@@ -405,10 +405,13 @@ def model_cmd(state: ReplState, model_id: str | None) -> None:
 
 
 @slash.command("tools")
-@click.argument("enabled", required=False, type=ON_OFF)
+@click.argument("enabled", required=False, type=ON_OFF, metavar="[on|off]")
 @click.pass_obj
 def tools_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
-    """Show or toggle tools."""
+    """Show or set whether agent tools are enabled.
+
+    Omit the argument to print the current value; pass ``on`` or ``off`` to change it.
+    """
     if enabled is None:
         click.echo(f"tools={'on' if state.tools_enabled else 'off'}")
         return
@@ -418,10 +421,15 @@ def tools_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
 
 
 @slash.command("stream")
-@click.argument("enabled", required=False, type=ON_OFF)
+@click.argument("enabled", required=False, type=ON_OFF, metavar="[on|off]")
 @click.pass_obj
 def stream_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
-    """Show or toggle streaming model output."""
+    """Show or set streaming model output.
+
+    ``on`` (default): print assistant text and reasoning as tokens arrive.
+    ``off``: wait for each full model response before printing.
+    Omit the argument to print the current value.
+    """
     if enabled is None:
         click.echo(f"stream={'on' if state.agent.stream else 'off'}")
         return
@@ -431,10 +439,15 @@ def stream_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
 
 
 @slash.command("verbose")
-@click.argument("enabled", required=False, type=ON_OFF)
+@click.argument("enabled", required=False, type=ON_OFF, metavar="[on|off]")
 @click.pass_obj
 def verbose_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
-    """Show or toggle full tool-result dumps."""
+    """Show or set full tool-result dumps in the terminal.
+
+    ``off`` (default): short one-line tool result preview.
+    ``on``: print the full tool result text.
+    Omit the argument to print the current value.
+    """
     if enabled is None:
         click.echo(f"verbose={'on' if state.verbose else 'off'}")
         return

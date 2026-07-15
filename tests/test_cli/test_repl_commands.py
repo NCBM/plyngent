@@ -114,6 +114,15 @@ async def test_help_history_no_fake_options(state: ReplState, capsys: pytest.Cap
     assert "--help" not in out
 
 
+async def test_help_stream_clearer(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/help stream") is True
+    out = capsys.readouterr().out
+    assert "Usage: /stream [on|off]" in out
+    assert "ENABLED" not in out
+    assert "tokens arrive" in out
+    assert "default" in out
+
+
 async def test_history_rejects_help_flag(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
     assert await handle_slash(state, "/history --help") is True
     captured = capsys.readouterr()
