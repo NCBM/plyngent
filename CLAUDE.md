@@ -99,7 +99,7 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 
 - **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions — **current**. Context size is **char estimate only** until usage lands.
 - **No local tokenizer stage** for now. Prefer **API usage v2** later.
-- **Phase E**: tooling depth (grep/glob, edit_patch, optional git).
+- **Phase E**: tooling depth (grep/glob, VCS backends; prefer `edit_replace` / `edit_lineno` over model-generated patches).
 - **Phase F (providers + usage v2)**: capture response/stream `usage` (prompt/completion/total); session/turn totals; `/status` or end-of-turn line; optional cost. Optional later: tokenizer-backed estimates if needed.
 - **Phase G–H**: CLI polish, hardening; then multi-tenant platform (`router/`, auth, sandboxed tools).
 
