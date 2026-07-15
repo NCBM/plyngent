@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import msgspec
 import niquests
@@ -52,13 +52,44 @@ class BaseOpenAIClient:
         self.decoder = msgspec.json.Decoder(ChatCompletionResponse)
         self.chunk_decoder = msgspec.json.Decoder(ChatCompletionChunk)
 
+    async def _ensure_ok(self, resp: object) -> None:
+        """Raise if the HTTP response is an error (stream or non-stream)."""
+        http_error = 400
+        status = getattr(resp, "status_code", None)
+        if not isinstance(status, int) or status < http_error:
+            return
+        body = ""
+        content = getattr(resp, "content", None)
+        if content is not None:
+            if isinstance(content, (bytes, bytearray)):
+                body = bytes(content[:500]).decode(errors="replace")
+            else:
+                body = str(content)[:500]
+        if hasattr(resp, "close") or hasattr(resp, "aclose"):
+            await _close_async_response(cast("AsyncResponse", resp))
+        msg = f"chat completions HTTP {status}"
+        if body:
+            msg = f"{msg}: {body}"
+        raise RuntimeError(msg)
+
     async def _parse_sse(self, resp: AsyncResponse) -> AsyncIterator[ChatCompletionChunk]:
+        """Yield SSE chunks; stop at ``data: [DONE]`` so we do not hang on keep-alive."""
         try:
-            async for line in resp.iter_lines():
-                if not line or line == b"data: [DONE]":
+            await self._ensure_ok(resp)
+            async for raw in resp.iter_lines():
+                if not raw:
                     continue
-                if line.startswith(b"data: "):
-                    yield self.chunk_decoder.decode(line[6:])
+                line = bytes(raw).strip()
+                if line in {b"data: [DONE]", b"[DONE]"}:
+                    break
+                if not line.startswith(b"data: "):
+                    continue
+                payload = line[6:].strip()
+                if payload == b"[DONE]":
+                    break
+                if not payload:
+                    continue
+                yield self.chunk_decoder.decode(payload)
         finally:
             await _close_async_response(resp)
 
@@ -97,6 +128,7 @@ class OpenAIClient(BaseOpenAIClient):
             headers={"Content-Type": "application/json"},
             stream=False,
         )
+        await self._ensure_ok(resp)
         assert resp.content is not None
         return self.decoder.decode(resp.content)
 
