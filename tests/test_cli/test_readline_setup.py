@@ -3,10 +3,10 @@ from __future__ import annotations
 import tomlkit
 
 from plyngent.cli.readline_setup import (
-    SLASH_COMMANDS,
     build_completer,
     filter_prefix,
     history_path,
+    slash_commands,
 )
 from plyngent.cli.state import ReplState
 from plyngent.config.models import ModelConfig, OpenAICompatibleProvider, OpenAIProvider
@@ -76,10 +76,11 @@ def test_completer_commands(tmp_path: object, monkeypatch: object) -> None:
             break
         found.append(item)
         index += 1
+    names = slash_commands()
     assert "/help" in found
-    assert "/stream" in SLASH_COMMANDS
-    assert "/verbose" in SLASH_COMMANDS
-    assert set(found) <= set(SLASH_COMMANDS)
+    assert "/stream" in names
+    assert "/verbose" in names
+    assert set(found) <= set(names)
 
 
 def test_bind_tab_complete_runs() -> None:

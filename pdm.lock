@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:a27f943f7f5204047e0fe0e99b1080301877e231ec01cabee48c3a79473ca676"
+content_hash = "sha256:cd5131c309485626148d1933a2a557a9cb6a41038b980bc26a453def4c38032c"
 
 [[metadata.targets]]
 requires_python = "~=3.14"
@@ -19,6 +19,21 @@ groups = ["default"]
 files = [
     {file = "aiosqlite-0.22.1-py3-none-any.whl", hash = "sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb"},
     {file = "aiosqlite-0.22.1.tar.gz", hash = "sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650"},
+]
+
+[[package]]
+name = "awaitlet"
+version = "0.0.1"
+requires_python = ">=3.8"
+summary = "Allow non-async defs that invoke awaitables inside of asyncio applications"
+groups = ["default"]
+dependencies = [
+    "greenlet>=1",
+    "typing-extensions>=4.6.0",
+]
+files = [
+    {file = "awaitlet-0.0.1-py3-none-any.whl", hash = "sha256:255b1c086f2fbfef2d8d88b66acae8636418d38bcfe93a897ccd8234a7b8bf6d"},
+    {file = "awaitlet-0.0.1.tar.gz", hash = "sha256:d98c8b821f595284f9327d45067995ccbee0d99993f0d0b935b23ac8ecf58334"},
 ]
 
 [[package]]
@@ -98,7 +113,7 @@ version = "0.4.6"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 summary = "Cross-platform colored terminal text."
 groups = ["default", "dev"]
-marker = "sys_platform == \"win32\" or platform_system == \"Windows\""
+marker = "platform_system == \"Windows\" or sys_platform == \"win32\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
@@ -110,7 +125,6 @@ version = "3.5.3"
 requires_python = ">=3.10"
 summary = "Lightweight in-process concurrent programming"
 groups = ["default"]
-marker = "platform_machine == \"win32\" or platform_machine == \"WIN32\" or platform_machine == \"AMD64\" or platform_machine == \"amd64\" or platform_machine == \"x86_64\" or platform_machine == \"ppc64le\" or platform_machine == \"aarch64\""
 files = [
     {file = "greenlet-3.5.3-cp314-cp314-macosx_11_0_universal2.whl", hash = "sha256:fd2e02fa07485778536a036222d616ab957b1d533f36b3ed98ce725d9c9d3117"},
     {file = "greenlet-3.5.3-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:df0a0628d1597eb0897b62f55d1343f772405fd25f3b2a796c76874b0c2e22e8"},

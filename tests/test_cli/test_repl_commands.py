@@ -6,7 +6,7 @@ import pytest
 import tomlkit
 
 from plyngent.agent import ChatAgent
-from plyngent.cli.repl import handle_slash
+from plyngent.cli.slash import handle_slash
 from plyngent.cli.state import ReplState
 from plyngent.config.models import DatabaseConfig, OpenAIProvider
 from plyngent.config.store import ConfigStore

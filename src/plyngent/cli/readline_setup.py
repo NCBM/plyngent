@@ -15,31 +15,15 @@ if TYPE_CHECKING:
 HISTORY_FILE_NAME = "repl_history"
 DEFAULT_HISTORY_LENGTH = 1000
 
-SLASH_COMMANDS: tuple[str, ...] = (
-    "/help",
-    "/quit",
-    "/exit",
-    "/clear",
-    "/history",
-    "/sessions",
-    "/new",
-    "/resume",
-    "/rename",
-    "/delete",
-    "/export",
-    "/compact",
-    "/provider",
-    "/model",
-    "/tools",
-    "/stream",
-    "/verbose",
-    "/rounds",
-    "/retry",
-    "/status",
-)
-
 _ON_OFF_ARGS: tuple[str, ...] = ("on", "off")
 _EXPORT_ARGS: tuple[str, ...] = ("md", "json")
+
+
+def slash_commands() -> list[str]:
+    """Slash command tokens for Tab completion (with leading /)."""
+    from plyngent.cli.slash import slash_command_names
+
+    return slash_command_names()
 
 
 def history_path() -> Path:
@@ -63,7 +47,7 @@ def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
         begidx = readline.get_begidx()
         # Completing the first token (command).
         if begidx == 0 or (begidx > 0 and buffer[:begidx].strip() == ""):
-            options = filter_prefix(text, list(SLASH_COMMANDS))
+            options = filter_prefix(text, slash_commands())
         else:
             head = buffer[:begidx].strip()
             command = head.split()[0] if head else ""

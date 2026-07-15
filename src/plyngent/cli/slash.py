@@ -1,0 +1,551 @@
+from __future__ import annotations
+
+import shlex
+from typing import TYPE_CHECKING, Any, override
+
+import awaitlet  # pyright: ignore[reportMissingTypeStubs]
+import click
+from msgspec import UNSET
+
+from plyngent.cli.retry import retry_pending_with_retries
+from plyngent.cli.selection import select_model, select_provider
+from plyngent.lmproto.openai_compatible.model import (
+    AssistantChatMessage,
+    AssistantFunctionToolCall,
+    ToolChatMessage,
+    UserChatMessage,
+)
+from plyngent.runtime import ProviderNotSupportedError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Sequence
+
+    from plyngent.cli.state import ReplState
+    from plyngent.lmproto.openai_compatible.model import AnyChatMessage
+
+_DEFAULT_HISTORY_LINES = 20
+_CONTENT_PREVIEW = 200
+_COMPACT_PREVIEW = 400
+
+HELP_FOOTER = """\
+User messages are saved immediately. On API errors or Ctrl+C, partial
+assistant/tool output is discarded but the user message stays (so /retry
+works after resume, not only via readline history). Auto-retry: 10s/20s/30s.
+
+Tab completes slash commands and some arguments (provider, model, tools,
+stream, verbose, export). Use --session ID or /resume to continue a prior
+chat after restart.
+"""
+
+
+class ReplExitError(Exception):
+    """Signal that the REPL should leave (not a process exit)."""
+
+
+class OnOffParam(click.ParamType[bool]):
+    """Accept on/off (and common synonyms); convert to bool."""
+
+    name: str = "on_off"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> bool:
+        if isinstance(value, bool):
+            return value
+        token = str(value).strip().lower()
+        if token in {"on", "1", "true", "yes"}:
+            return True
+        if token in {"off", "0", "false", "no"}:
+            return False
+        self.fail("expected on or off", param, ctx)
+        return False
+
+
+ON_OFF = OnOffParam()
+
+
+class SlashGroup(click.Group):
+    """Click group for REPL slash commands (no process-level ownership)."""
+
+    @override
+    def get_help(self, ctx: click.Context) -> str:
+        lines = ["Commands:"]
+        for name in sorted(self.list_commands(ctx)):
+            cmd = self.get_command(ctx, name)
+            if cmd is None or cmd.hidden:
+                continue
+            brief = cmd.get_short_help_str(limit=60)
+            lines.append(f"  /{name:<16} {brief}")
+        lines.append("")
+        lines.append(HELP_FOOTER.rstrip())
+        return "\n".join(lines)
+
+
+slash = SlashGroup(
+    "slash",
+    help="REPL slash commands",
+    context_settings={"help_option_names": [], "max_content_width": 100},
+)
+
+
+def slash_command_names() -> list[str]:
+    """Slash tokens for Tab completion (including leading /)."""
+    ctx = click.Context(slash)
+    return sorted(f"/{name}" for name in slash.list_commands(ctx))
+
+
+def _await[T](awaitable: Awaitable[T]) -> T:
+    # Greenlet parks until the awaitable completes on the running loop.
+    return awaitlet.awaitlet(awaitable)  # pyright: ignore[reportUnknownVariableType]
+
+
+# --- commands -----------------------------------------------------------------
+
+
+@slash.command("help")
+@click.argument("command", required=False)
+@click.pass_context
+def help_cmd(ctx: click.Context, command: str | None) -> None:
+    """Show this help, or help for one command."""
+    if command:
+        name = command.lstrip("/").lower()
+        cmd = slash.get_command(ctx, name)
+        if cmd is None:
+            click.echo(f"unknown command /{name}; try /help")
+            return
+        # Build a child context so get_help includes usage.
+        with click.Context(cmd, info_name=name, parent=ctx) as sub:
+            click.echo(cmd.get_help(sub))
+        return
+    click.echo(slash.get_help(ctx))
+
+
+@slash.command("quit")
+@click.pass_obj
+def quit_cmd(_state: ReplState) -> None:
+    """Leave the REPL."""
+    raise ReplExitError
+
+
+slash.add_command(quit_cmd, name="exit")
+slash.add_command(quit_cmd, name="q")
+
+
+@slash.command("clear")
+@click.pass_obj
+def clear_cmd(state: ReplState) -> None:
+    """Clear in-memory conversation (keeps session id)."""
+    state.agent.messages.clear()
+    click.echo("conversation cleared (in-memory only; DB history kept)")
+
+
+@slash.command("status")
+@click.pass_obj
+def status_cmd(state: ReplState) -> None:
+    """Show session/provider/tools/rounds status."""
+    from plyngent.agent.budget import estimate_messages_chars
+
+    pending = state.agent.pending_retry_text
+    pending_disp = "yes" if pending else "no"
+    ctx_chars = estimate_messages_chars(state.agent.messages)
+    ctx_tokens = state.agent.context_tokens
+    ctx_src = state.agent.context_tokens_source
+    ctx_budget = state.agent.max_context_tokens
+    session_u = state.agent.session_usage
+    last_u = state.agent.last_turn_usage
+    last_req = state.agent.last_request_usage
+    last_rounds = state.agent.last_turn_rounds
+    ctx_tag = "api" if ctx_src == "api" else "est"
+    ctx_tilde = "" if ctx_src == "api" else "~"
+    click.echo(
+        f"provider={state.provider_name}  model={state.model}\n"
+        f"session={state.session_id}  messages={len(state.agent.messages)}  "
+        f"pending_retry={pending_disp}\n"
+        f"tools={'on' if state.tools_enabled else 'off'}  "
+        f"rounds={state.max_rounds}  "
+        f"stream={'on' if state.agent.stream else 'off'}  "
+        f"verbose={'on' if state.verbose else 'off'}\n"
+        f"context_tokens={ctx_tilde}{ctx_tokens}/{ctx_budget} ({ctx_tag})  "
+        f"context_chars={ctx_chars}  "
+        f"tool_result_max={state.agent.max_tool_result_chars}\n"
+        f"last_request={last_req.format_line()}\n"
+        f"usage_last_turn={last_u.format_line(billed=True)}  "
+        f"rounds={last_rounds}\n"
+        f"usage_session={session_u.format_line(billed=True)}\n"
+        f"workspace={state.workspace}"
+    )
+
+
+@slash.command("sessions")
+@click.pass_obj
+def sessions_cmd(state: ReplState) -> None:
+    """List sessions for this workspace (newest first)."""
+    sessions = _await(state.memory.list_sessions(workspace=state.workspace))
+    if not sessions:
+        click.echo(f"(no sessions for workspace {state.workspace})")
+        return
+    for session in sessions:
+        marker = "*" if session.sid == state.session_id else " "
+        ws = session.workspace or "(unbound)"
+        click.echo(f"{marker} {session.sid}\t{session.name}\tworkspace={ws}\tupdated={session.updated_at}")
+
+
+@slash.command("new")
+@click.argument("name", required=False, default="chat")
+@click.pass_obj
+def new_cmd(state: ReplState, name: str) -> None:
+    """Start a new session (bound to workspace)."""
+    label = name.strip() or "chat"
+    _await(state.new_session(name=label))
+    click.echo(f"new session id={state.session_id} name={label}")
+
+
+@slash.command("rename")
+@click.argument("name", nargs=-1, required=True)
+@click.pass_obj
+def rename_cmd(state: ReplState, name: tuple[str, ...]) -> None:
+    """Rename the current session."""
+    full = " ".join(name).strip()
+    if not full:
+        msg = "NAME is required"
+        raise click.UsageError(msg)
+    try:
+        row = _await(state.rename_current_session(full))
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    click.echo(f"renamed session {row.sid} -> {row.name}")
+
+
+@slash.command("delete")
+@click.argument("session_id", type=int, required=False)
+@click.pass_obj
+def delete_cmd(state: ReplState, session_id: int | None) -> None:
+    """Hard-delete a session (confirm; current → new empty)."""
+    from plyngent.prompting import NonInteractiveError, confirm_async
+
+    sid = session_id
+    if sid is None:
+        if state.session_id is None:
+            click.echo("error: no active session")
+            return
+        sid = state.session_id
+    try:
+        allowed = _await(
+            confirm_async(
+                f"Permanently delete session {sid} and all messages?",
+                default=False,
+            )
+        )
+    except NonInteractiveError:
+        click.echo("error: delete requires interactive confirm (or TTY)")
+        return
+    if not allowed:
+        click.echo("delete cancelled")
+        return
+    try:
+        was_current = _await(state.delete_session_and_maybe_replace(sid))
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    if was_current:
+        click.echo(f"deleted session {sid}; new session {state.session_id}")
+    else:
+        click.echo(f"deleted session {sid}")
+
+
+@slash.command("export")
+@click.argument("parts", nargs=-1)
+@click.pass_obj
+def export_cmd(state: ReplState, parts: tuple[str, ...]) -> None:
+    """Export session transcript from DB: /export [md|json] [path]."""
+    from plyngent.cli.export import (
+        encode_session_export_json,
+        format_session_export_md,
+        resolve_export_path,
+        session_export_payload,
+        write_export_file,
+    )
+
+    fmt = "md"
+    path: str | None = None
+    if parts:
+        first = parts[0].lower()
+        if first in {"md", "markdown", "json"}:
+            fmt = "json" if first == "json" else "md"
+            path = parts[1] if len(parts) > 1 else None
+            if len(parts) > 2:  # noqa: PLR2004
+                msg = "usage: /export [md|json] [path]"
+                raise click.UsageError(msg)
+        else:
+            path = parts[0]
+            if len(parts) > 1:
+                msg = "usage: /export [md|json] [path]"
+                raise click.UsageError(msg)
+
+    if state.session_id is None:
+        click.echo("error: no active session")
+        return
+    row = _await(state.memory.get_session(state.session_id))
+    if row is None:
+        click.echo(f"error: session not found: {state.session_id}")
+        return
+    messages = _await(state.memory.list_messages(state.session_id))
+    out_path = resolve_export_path(state.session_id, fmt, path)
+    if fmt == "json":
+        text = encode_session_export_json(
+            session_export_payload(
+                sid=row.sid,
+                name=row.name,
+                workspace=row.workspace,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                messages=messages,
+            )
+        )
+    else:
+        text = format_session_export_md(
+            messages,
+            sid=row.sid,
+            name=row.name,
+            workspace=row.workspace,
+        )
+    try:
+        written = write_export_file(out_path, text)
+    except OSError as exc:
+        click.echo(f"error: write failed: {exc}")
+        return
+    click.echo(f"exported session {row.sid} ({fmt}) -> {written}")
+
+
+@slash.command("resume")
+@click.argument("session_id", type=int, required=False)
+@click.pass_obj
+def resume_cmd(state: ReplState, session_id: int | None) -> None:
+    """Resume session id, or latest for this workspace if omitted."""
+    if session_id is None:
+        mode = _await(state.resume_latest_or_new())
+        if mode == "new":
+            click.echo(f"no prior session; created new session {state.session_id}")
+        else:
+            click.echo(
+                f"resumed latest session {state.session_id} "
+                f"({len(state.agent.messages)} messages) workspace={state.workspace}"
+            )
+        return
+    try:
+        _await(state.resume_session(session_id))
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages) workspace={state.workspace}")
+
+
+@slash.command("compact")
+@click.argument("name", required=False)
+@click.pass_obj
+def compact_cmd(state: ReplState, name: str | None) -> None:
+    """Soft-compact + model-summarize into a new session."""
+    click.secho("compacting (soft-compact + model summary)…", fg="yellow")
+    try:
+        old_id, new_id, summary = _await(state.compact_to_new_session(name=name))
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001 — surface model/API failures
+        click.secho(f"error: compact failed: {exc}", fg="red")
+        return
+    preview = summary if len(summary) <= _COMPACT_PREVIEW else summary[:_COMPACT_PREVIEW] + "…"
+    click.echo(f"compacted session {old_id} -> new session {new_id}")
+    click.secho(preview, fg="bright_black")
+
+
+@slash.command("provider")
+@click.argument("name", required=False)
+@click.pass_obj
+def provider_cmd(state: ReplState, name: str | None) -> None:
+    """Show or switch provider."""
+    if not name:
+        click.echo(f"provider={state.provider_name}")
+        return
+    try:
+        pname, provider = select_provider(state.config.providers, preferred=name.strip())
+        state.provider_name = pname
+        state.provider = provider
+        state.rebuild_client()
+        click.echo(f"switched provider to {pname}")
+    except (click.ClickException, ProviderNotSupportedError) as exc:
+        click.echo(f"error: {exc}")
+
+
+@slash.command("model")
+@click.argument("model_id", required=False)
+@click.pass_obj
+def model_cmd(state: ReplState, model_id: str | None) -> None:
+    """Show or switch model."""
+    if not model_id:
+        click.echo(f"model={state.model}")
+        return
+    try:
+        state.model = select_model(state.provider, preferred=model_id.strip())
+        state.rebuild_client()
+        click.echo(f"switched model to {state.model}")
+    except click.ClickException as exc:
+        click.echo(f"error: {exc}")
+
+
+@slash.command("tools")
+@click.argument("enabled", required=False, type=ON_OFF)
+@click.pass_obj
+def tools_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
+    """Show or toggle tools."""
+    if enabled is None:
+        click.echo(f"tools={'on' if state.tools_enabled else 'off'}")
+        return
+    state.tools_enabled = enabled
+    state.rebuild_client()
+    click.echo(f"tools={'on' if enabled else 'off'}")
+
+
+@slash.command("stream")
+@click.argument("enabled", required=False, type=ON_OFF)
+@click.pass_obj
+def stream_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
+    """Show or toggle streaming model output."""
+    if enabled is None:
+        click.echo(f"stream={'on' if state.agent.stream else 'off'}")
+        return
+    state.stream_enabled = enabled
+    state.agent.stream = enabled
+    click.echo(f"stream={'on' if enabled else 'off'}")
+
+
+@slash.command("verbose")
+@click.argument("enabled", required=False, type=ON_OFF)
+@click.pass_obj
+def verbose_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
+    """Show or toggle full tool-result dumps."""
+    if enabled is None:
+        click.echo(f"verbose={'on' if state.verbose else 'off'}")
+        return
+    state.verbose = enabled
+    state.sync_display_flags()
+    click.echo(f"verbose={'on' if enabled else 'off'}")
+
+
+@slash.command("rounds")
+@click.argument("n", required=False, type=int)
+@click.pass_obj
+def rounds_cmd(state: ReplState, n: int | None) -> None:
+    """Show or set max tool-loop rounds."""
+    if n is None:
+        click.echo(f"max_rounds={state.max_rounds}")
+        return
+    if n < 1:
+        msg = "max_rounds must be >= 1"
+        raise click.UsageError(msg)
+    state.max_rounds = n
+    state.agent.max_rounds = n
+    click.echo(f"max_rounds={state.max_rounds}")
+
+
+@slash.command("history")
+@click.argument("n", required=False, type=int)
+@click.pass_obj
+def history_cmd(state: ReplState, n: int | None) -> None:
+    """Show last n messages in this session (default 20)."""
+    limit = _DEFAULT_HISTORY_LINES if n is None else n
+    if limit < 1:
+        msg = "n must be >= 1"
+        raise click.UsageError(msg)
+    messages = state.agent.messages
+    if not messages:
+        click.echo("(no messages in this session)")
+        return
+    start = max(0, len(messages) - limit)
+    click.echo(f"session={state.session_id}  messages={len(messages)}  showing={len(messages) - start}")
+    for offset, message in enumerate(messages[start:]):
+        click.echo(_format_history_message(start + offset, message))
+    if state.agent.pending_retry_text is not None:
+        click.secho(
+            f"(pending retry) user: {_preview_content(state.agent.pending_retry_text)}",
+            fg="yellow",
+        )
+
+
+@slash.command("retry")
+@click.pass_obj
+def retry_cmd(state: ReplState) -> None:
+    """Re-run incomplete last user turn (DB/orphan user; no retype)."""
+    _ = _await(retry_pending_with_retries(state.agent))
+
+
+def _preview_content(text: str | None) -> str:
+    if not text:
+        return ""
+    if len(text) <= _CONTENT_PREVIEW:
+        return text
+    return text[:_CONTENT_PREVIEW] + "…"
+
+
+def _format_history_message(index: int, message: AnyChatMessage) -> str:
+    if isinstance(message, UserChatMessage):
+        return f"{index}. user: {_preview_content(message.content)}"
+    if isinstance(message, AssistantChatMessage):
+        parts: list[str] = []
+        if isinstance(message.content, str) and message.content:
+            parts.append(_preview_content(message.content))
+        tool_calls = message.tool_calls
+        if tool_calls is not UNSET and tool_calls:
+            names: list[str] = []
+            for call in tool_calls:
+                if isinstance(call, AssistantFunctionToolCall):
+                    names.append(call.function.name)
+                else:
+                    names.append("custom")
+            parts.append(f"tool_calls=[{', '.join(names)}]")
+        body = " ".join(parts) if parts else "(empty)"
+        return f"{index}. assistant: {body}"
+    if isinstance(message, ToolChatMessage):
+        return f"{index}. tool({message.tool_call_id}): {_preview_content(message.content)}"
+    role = getattr(message, "role", type(message).__name__)
+    content = getattr(message, "content", "")
+    return f"{index}. {role}: {_preview_content(str(content))}"
+
+
+def _run_slash_argv(args: Sequence[str], state: ReplState) -> None:
+    """Sync Click entrypoint; may call awaitlet() for async work."""
+    # standalone_mode=False → UsageError/ClickException instead of SystemExit.
+    slash.main(
+        args=list(args),
+        prog_name="",
+        obj=state,
+        standalone_mode=False,
+    )
+
+
+async def handle_slash(state: ReplState, line: str) -> bool:
+    """Handle a slash command. Returns False if the REPL should exit."""
+    body = line[1:].strip()
+    if not body:
+        return True
+    try:
+        args = shlex.split(body)
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return True
+    if not args:
+        return True
+    args[0] = args[0].lower()
+    try:
+        await awaitlet.async_def(_run_slash_argv, args, state)
+    except ReplExitError:
+        return False
+    except click.ClickException as exc:
+        exc.show()
+    except click.exceptions.Exit as exc:
+        # Click may still raise Exit(0) for some paths; ignore non-error codes.
+        if exc.exit_code not in {0, None}:
+            click.echo(f"error: exit {exc.exit_code}")
+    except click.Abort:
+        click.echo("aborted")
+    return True

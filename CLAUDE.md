@@ -84,7 +84,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/rename`, `/delete` (confirm), `/export md|json`, `/compact`, `/status`, `/rounds`, `/stream`, `/verbose`, `/retry`, …
+- Slash commands: Click group in `cli/slash.py` (params/help/`UsageError`); dispatch via `awaitlet.async_def` + `awaitlet()` for async work. Completer reads `slash.list_commands`.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: user message kept in DB; partial assistant/tool rolled back; Ctrl+C cancels in-flight turn; **TTY confirms** off-loop; auto-retry 10s/20s/30s then `/retry` (no duplicate user message).
 - **`plyngent providers`**: list config providers.
@@ -107,7 +107,23 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 - **No local tokenizer stage** for now.
 - **Phase E**: tooling depth (grep/glob, VCS backends; prefer `edit_replace` / `edit_lineno` over model-generated patches).
 - **Phase F (providers + usage v2)**: API `usage` + char-based estimate fallback; session/turn totals; `/status` + end-of-turn. Optional later: cost, real tokenizer.
-- **Phase G (CLI polish + hardening)**: shared `prompting` (`ask`/`choose`/`form`) + chat tools; then display/session/export/multiline/one-shot; agent/tools hardening; README. Multi-tenant stays Phase H.
+- **Phase G (CLI polish + hardening)** — single-user only; multi-tenant stays Phase H.
+
+  **Done**
+  - G0: `prompting` (`ask`/`choose`/`form`/`confirm`) + chat tools (`ask_user`/`choose_user`/`form_user`)
+  - G1: `ReasoningDeltaEvent`, `/stream`, `/verbose`
+  - G2: `/rename`, `/delete` (confirm), `/export md|json`
+  - G2.5: Click slash registry (`cli/slash.py`) + `awaitlet` for sync Click / async memory; auto `/help`; completer from `slash.list_commands`
+
+  **Planned**
+
+  - **G3 — Input**: multiline (`"""` … `"""`) and/or `/edit` via `$EDITOR`
+  - **G4 — One-shot**: `plyngent chat -p/--prompt` (and stdin non-TTY); exit codes; non-interactive safety (`--yes` / deny destructive)
+  - **G5 — Hardening**: tool timeouts/defaults review, config error clarity, cancel edges, optional `--log-level`, no secrets in status/export
+  - **G6 — Docs**: real README, example TOML, CLAUDE/help accuracy
+
+  Milestone order: G3 → G4 → G5 → G6.
+
 - **Phase H**: multi-tenant platform (`router/`, auth, sandboxed tools, web).
 
 ## Commit messages

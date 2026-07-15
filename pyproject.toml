@@ -13,7 +13,8 @@ dependencies = [
   "tomlkit>=0.15.0",
   "sqlalchemy>=2.0.51",
   "aiosqlite>=0.22.1",
-  "click>=8.4.2"
+  "click>=8.4.2",
+  "awaitlet>=0.0.1"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
