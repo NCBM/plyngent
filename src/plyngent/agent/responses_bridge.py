@@ -146,10 +146,11 @@ def _reasoning_summary_text(response: Response) -> str:
         summary = raw.get("summary")
         if not isinstance(summary, list):
             continue
-        for block in summary:
-            if not isinstance(block, dict):
+        summary_items = cast("list[object]", summary)
+        for block_obj in summary_items:
+            if not isinstance(block_obj, dict):
                 continue
-            block_map = cast("dict[str, object]", block)
+            block_map = cast("dict[str, object]", block_obj)
             if block_map.get("type") in {"summary_text", "output_text"}:
                 text = block_map.get("text")
                 if isinstance(text, str) and text:
@@ -258,7 +259,7 @@ def usage_chunk_from_response(response: Response, *, model: str) -> ChatCompleti
         created=created,
         model=model,
         choices=[],
-        usage=cast("dict[str, Any]", response.usage),
+        usage=response.usage,
     )
 
 

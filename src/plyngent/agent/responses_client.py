@@ -35,6 +35,8 @@ class ResponsesChatClient:
     uses ``POST /responses``.
     """
 
+    _client: OpenAIClient
+
     def __init__(self, client: OpenAIClient) -> None:
         self._client = client
 
@@ -80,10 +82,8 @@ class ResponsesChatClient:
             } and isinstance(event.delta, str) and event.delta:
                 yield reasoning_delta_chunk(model=model, content=event.delta)
                 continue
-            if etype == "response.completed" and event.response is not UNSET and isinstance(
-                event.response, dict
-            ):
-                # Decode full response for tools + usage
+            if etype == "response.completed" and event.response is not UNSET:
+                # Decode full response for tools + usage (field is dict | Unset).
                 import msgspec
 
                 from plyngent.lmproto.openai.model import Response as ResponseModel
