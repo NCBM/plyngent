@@ -61,6 +61,26 @@ async def test_list_sessions(store: MemoryStore) -> None:
     assert s2.sid in ids
 
 
+async def test_list_sessions_newest_first(store: MemoryStore) -> None:
+    import asyncio
+
+    from plyngent.lmproto.openai_compatible.model import UserChatMessage
+
+    s1 = await store.create_session(name="old")
+    await asyncio.sleep(0.02)
+    s2 = await store.create_session(name="new")
+    latest = await store.get_latest_session()
+    assert latest is not None
+    assert latest.sid == s2.sid
+    # Activity on s1 makes it the latest
+    _ = await store.append_message(s1.sid, UserChatMessage(content="ping"))
+    latest2 = await store.get_latest_session()
+    assert latest2 is not None
+    assert latest2.sid == s1.sid
+    ordered = await store.list_sessions()
+    assert ordered[0].sid == s1.sid
+
+
 async def test_session_workspace_binding(store: MemoryStore, tmp_path: object) -> None:
     from pathlib import Path
 

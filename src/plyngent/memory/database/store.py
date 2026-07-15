@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
@@ -124,16 +125,37 @@ class MemoryStore:
         uid: int | None = None,
         workspace: str | Path | None = None,
     ) -> Sequence[Session]:
-        """List sessions; optionally filter by user and/or bound workspace path."""
+        """List sessions (most recently updated first); filter by user/workspace."""
         ws = normalize_workspace(workspace)
         async with self._session_factory() as session:
-            stmt = select(Session).order_by(Session.sid)
+            stmt = select(Session).order_by(Session.updated_at.desc(), Session.sid.desc())
             if uid is not None:
                 stmt = stmt.where(Session.uid == uid)
             if ws is not None:
                 stmt = stmt.where(Session.workspace == ws)
             result = await session.execute(stmt)
             return result.scalars().all()
+
+    async def get_latest_session(
+        self,
+        *,
+        uid: int | None = None,
+        workspace: str | Path | None = None,
+    ) -> Session | None:
+        """Return the most recently updated session for the filters, if any."""
+        sessions = await self.list_sessions(uid=uid, workspace=workspace)
+        return sessions[0] if sessions else None
+
+    async def touch_session(self, sid: int) -> Session | None:
+        """Bump ``updated_at`` so the session ranks as lately used."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                return None
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
 
     async def update_session_workspace(
         self,
@@ -148,6 +170,7 @@ class MemoryStore:
                 msg = f"session not found: {sid}"
                 raise ValueError(msg)
             row.workspace = ws
+            row.updated_at = datetime.now(UTC)
             await session.commit()
             await session.refresh(row)
             return row
@@ -167,6 +190,9 @@ class MemoryStore:
             seq = 0 if last_seq is None else last_seq + 1
             row = Message(sid=sid, seq=seq, data=data)
             session.add(row)
+            chat = await session.get(Session, sid)
+            if chat is not None:
+                chat.updated_at = datetime.now(UTC)
             await session.commit()
             await session.refresh(row)
             return row
