@@ -21,6 +21,8 @@ from .model import FinishReason as FinishReason
 from .model import GrammarSyntax as GrammarSyntax
 from .model import JsonObjectResponseFormat as JsonObjectResponseFormat
 from .model import Modality as Modality
+from .model import ModelObject as ModelObject
+from .model import ModelsResponse as ModelsResponse
 from .model import NamedChatMessage as NamedChatMessage
 from .model import NamedRole as NamedRole
 from .model import ReasoningEffort as ReasoningEffort

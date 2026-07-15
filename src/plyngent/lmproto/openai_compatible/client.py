@@ -15,6 +15,7 @@ from .model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ModelsResponse,
     StreamToolCallDelta,
 )
 
@@ -95,6 +96,7 @@ class BaseOpenAIClient:
     encoder: msgspec.json.Encoder
     decoder: msgspec.json.Decoder[ChatCompletionResponse]
     chunk_decoder: msgspec.json.Decoder[ChatCompletionChunk]
+    models_decoder: msgspec.json.Decoder[ModelsResponse]
 
     def __init__(self, config: OpenAIConfig) -> None:
         self.session = niquests.AsyncSession(
@@ -104,6 +106,25 @@ class BaseOpenAIClient:
         self.encoder = msgspec.json.Encoder()
         self.decoder = msgspec.json.Decoder(ChatCompletionResponse)
         self.chunk_decoder = msgspec.json.Decoder(ChatCompletionChunk)
+        self.models_decoder = msgspec.json.Decoder(ModelsResponse)
+
+    async def models(self) -> list[str]:
+        """List model ids via OpenAI-compatible ``GET /models``.
+
+        Returns sorted unique ``id`` values from the response ``data`` array.
+        """
+        resp = await self.session.get("/models", stream=False)
+        await self._ensure_ok(resp)
+        body = await read_response_body(resp)
+        if body is None:
+            msg = "models response body is empty"
+            raise RuntimeError(msg)
+        if not isinstance(body, (bytes, bytearray)):
+            msg = f"models response body has unexpected type {type(body)!r}"
+            raise TypeError(msg)
+        parsed = self.models_decoder.decode(bytes(body))
+        ids = {item.id for item in parsed.data if item.id}
+        return sorted(ids)
 
     async def _ensure_ok(self, resp: object) -> None:
         """Raise if the HTTP response is an error (stream or non-stream)."""

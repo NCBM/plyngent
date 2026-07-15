@@ -258,3 +258,19 @@ class ChatCompletionChunk(Struct):
     choices: list[ChunkChoice]
     # Final usage chunk may omit or null usage depending on provider.
     usage: dict[str, Any] | None | Unset = UNSET
+
+
+class ModelObject(Struct):
+    """One entry from OpenAI-compatible ``GET /models``."""
+
+    id: str
+    object: Literal["model"] | Unset = UNSET
+    created: int | Unset = UNSET
+    owned_by: str | Unset = UNSET
+
+
+class ModelsResponse(Struct):
+    """OpenAI-compatible ``GET /models`` list body."""
+
+    data: list[ModelObject]
+    object: Literal["list"] | Unset = UNSET
