@@ -1,5 +1,7 @@
 from .chat import ChatAgent as ChatAgent
 from .client import ChatClient as ChatClient
+from .compact import build_compacted_seed_messages as build_compacted_seed_messages
+from .compact import summarize_messages as summarize_messages
 from .events import AgentEvent as AgentEvent
 from .events import AssistantMessageEvent as AssistantMessageEvent
 from .events import CancelledEvent as CancelledEvent

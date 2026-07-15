@@ -142,14 +142,54 @@ class ReplState:
         await self.agent.load_history()
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
-        """Resume latest session for this workspace, or create one if none exist."""
-        sessions = await self.memory.list_sessions(workspace=self.workspace)
-        if not sessions:
+        """Resume most recently updated session for this workspace, or create one."""
+        latest = await self.memory.get_latest_session(workspace=self.workspace)
+        if latest is None:
             await self.new_session(name=name)
             return "new"
-        latest = max(sessions, key=lambda s: (s.updated_at, s.sid))
         # Same-workspace list: no mismatch prompt expected.
         self.session_id = latest.sid
         self.agent = self._make_agent()
         await self.agent.load_history()
+        _ = await self.memory.touch_session(latest.sid)
         return "resume"
+
+    async def compact_to_new_session(self, *, name: str | None = None) -> tuple[int, int, str]:
+        """Soft-compact + model-summarize current history into a new workspace session.
+
+        Returns ``(old_session_id, new_session_id, summary)``.
+        """
+        from plyngent.agent.compact import build_compacted_seed_messages, summarize_messages
+
+        old_id = self.session_id
+        if old_id is None:
+            msg = "no active session to compact"
+            raise ValueError(msg)
+        messages = list(self.agent.messages)
+        if len(messages) < 1:
+            msg = "nothing to compact (empty history)"
+            raise ValueError(msg)
+
+        summary = await summarize_messages(
+            self.client,
+            messages,
+            model=self.model,
+            max_context_chars=self.agent.max_context_chars,
+        )
+        session_name = name or f"compact-from-{old_id}"
+        await self.new_session(name=session_name)
+        new_id = self.session_id
+        if new_id is None:
+            msg = "failed to create compact session"
+            raise RuntimeError(msg)
+
+        seed = build_compacted_seed_messages(
+            summary,
+            system_prompt=self.agent.system_prompt,
+            source_session_id=old_id,
+        )
+        self.agent.messages = list(seed)
+        for message in seed:
+            _ = await self.memory.append_message(new_id, message)
+        self.agent.pending_retry_text = None
+        return old_id, new_id, summary

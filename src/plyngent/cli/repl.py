@@ -28,9 +28,10 @@ Commands:
   /quit, /exit       Leave the REPL
   /clear             Clear in-memory conversation (keeps session id)
   /history [n]       Show last n messages in this session (default 20)
-  /sessions          List sessions for this workspace
+  /sessions          List sessions for this workspace (newest first)
   /new [name]        Start a new session (bound to workspace)
-  /resume <id>       Resume a session by id (prompts if workspace differs)
+  /resume [id]       Resume session id, or latest for this workspace if omitted
+  /compact [name]    Soft-compact + model-summarize into a new session
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
@@ -86,12 +87,19 @@ async def _cmd_new(state: ReplState, arg: str) -> None:
 
 async def _cmd_resume(state: ReplState, arg: str) -> None:
     if not arg.strip():
-        click.echo("usage: /resume <session_id>")
+        mode = await state.resume_latest_or_new()
+        if mode == "new":
+            click.echo(f"no prior session; created new session {state.session_id}")
+        else:
+            click.echo(
+                f"resumed latest session {state.session_id} "
+                f"({len(state.agent.messages)} messages) workspace={state.workspace}"
+            )
         return
     try:
         session_id = int(arg.strip())
     except ValueError:
-        click.echo("session id must be an integer")
+        click.echo("session id must be an integer (or omit for latest)")
         return
     try:
         await state.resume_session(session_id)
@@ -102,6 +110,22 @@ async def _cmd_resume(state: ReplState, arg: str) -> None:
         f"resumed session {session_id} ({len(state.agent.messages)} messages) "
         f"workspace={state.workspace}"
     )
+
+
+async def _cmd_compact(state: ReplState, arg: str) -> None:
+    name = arg.strip() or None
+    click.secho("compacting (soft-compact + model summary)…", fg="yellow")
+    try:
+        old_id, new_id, summary = await state.compact_to_new_session(name=name)
+    except ValueError as exc:
+        click.echo(f"error: {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001 — surface model/API failures
+        click.secho(f"error: compact failed: {exc}", fg="red")
+        return
+    preview = summary if len(summary) <= 400 else summary[:400] + "…"  # noqa: PLR2004
+    click.echo(f"compacted session {old_id} -> new session {new_id}")
+    click.secho(preview, fg="bright_black")
 
 
 def _cmd_provider(state: ReplState, arg: str) -> None:
@@ -245,6 +269,7 @@ async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
         "sessions": lambda: _cmd_sessions(state),
         "new": lambda: _cmd_new(state, arg),
         "resume": lambda: _cmd_resume(state, arg),
+        "compact": lambda: _cmd_compact(state, arg),
         "provider": lambda: _cmd_provider(state, arg),
         "model": lambda: _cmd_model(state, arg),
         "tools": lambda: _cmd_tools(state, arg),

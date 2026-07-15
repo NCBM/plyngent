@@ -56,6 +56,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request; cooperative cancel points; optional `on_limit`.
 - **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
+- **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`).
 - Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_chars`.
 
@@ -75,8 +76,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
-- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes latest **for cwd/`--workspace`** by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions`, `/resume`, `/rounds`, `/retry`, …
+- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
+- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/rounds`, `/retry`, …
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; **TTY confirms** (max-rounds / destructive tools) run off-loop via `asyncio.to_thread` + pause cancel so prompts do not abort the turn; auto-retry 10s/20s/30s; `/retry` manual.
 - **`plyngent providers`**: list config providers.

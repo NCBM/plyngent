@@ -24,6 +24,7 @@ SLASH_COMMANDS: tuple[str, ...] = (
     "/sessions",
     "/new",
     "/resume",
+    "/compact",
     "/provider",
     "/model",
     "/tools",
