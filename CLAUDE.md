@@ -77,6 +77,7 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes latest **for cwd/`--workspace`** by default (`--new` / `--session`).
 - Slash: `/history`, `/sessions`, `/resume`, `/rounds`, `/retry`, …
+- Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; **TTY confirms** (max-rounds / destructive tools) pause cancel so prompts work; auto-retry 10s/20s/30s; `/retry` manual.
 - **`plyngent providers`**: list config providers.
 - **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).

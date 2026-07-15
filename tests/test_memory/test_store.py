@@ -78,6 +78,21 @@ async def test_session_workspace_binding(store: MemoryStore, tmp_path: object) -
     assert {s.sid for s in listed_b} == {sb.sid}
 
 
+async def test_update_session_workspace(store: MemoryStore, tmp_path: object) -> None:
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    session = await store.create_session(name="x", workspace=a)
+    updated = await store.update_session_workspace(session.sid, b)
+    assert updated.workspace == str(b.resolve())
+    listed = await store.list_sessions(workspace=b)
+    assert {s.sid for s in listed} == {session.sid}
+
+
 async def test_workspace_column_migration(tmp_path: object) -> None:
     """Existing DBs without session.workspace get the column via ALTER."""
     from pathlib import Path

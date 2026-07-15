@@ -88,16 +88,20 @@ class ReplState:
         self.agent = self._make_agent()
         self.agent.messages = messages
 
+    def _set_workspace(self, path: Path) -> None:
+        """Update REPL + tool workspace root."""
+        resolved = path.expanduser().resolve()
+        if not resolved.is_dir():
+            msg = f"workspace is not a directory: {resolved}"
+            raise ValueError(msg)
+        self.workspace = resolved
+        _ = set_workspace_root(resolved)
+
     def _apply_session_workspace(self, row: SessionRow) -> None:
         """Bind tools/REPL workspace to the session's directory when set."""
         if not row.workspace:
             return
-        path = Path(row.workspace).expanduser().resolve()
-        if not path.is_dir():
-            msg = f"session {row.sid} workspace is not a directory: {path}"
-            raise ValueError(msg)
-        self.workspace = path
-        _ = set_workspace_root(path)
+        self._set_workspace(Path(row.workspace))
 
     async def new_session(self, name: str = "chat") -> None:
         session = await self.memory.create_session(name=name, workspace=self.workspace)
@@ -106,18 +110,33 @@ class ReplState:
         self.agent.pending_retry_text = None
 
     async def resume_session(self, session_id: int) -> None:
+        """Load a session; on workspace mismatch, prompt keep / rebind / abort."""
+        from plyngent.cli.limits import prompt_workspace_mismatch
+
         row = await self.memory.get_session(session_id)
         if row is None:
             msg = f"session not found: {session_id}"
             raise ValueError(msg)
-        expected = self._workspace_key()
-        if row.workspace is not None and row.workspace != expected:
-            msg = (
-                f"session {session_id} is bound to workspace {row.workspace!r}, "
-                f"not current {expected!r} (use matching --workspace or /resume from that dir)"
-            )
-            raise ValueError(msg)
-        self._apply_session_workspace(row)
+
+        current = self._workspace_key()
+        if row.workspace is None:
+            # Legacy unbound session: attach to the current workspace.
+            row = await self.memory.update_session_workspace(session_id, self.workspace)
+        elif row.workspace != current:
+            choice = prompt_workspace_mismatch(session_id, row.workspace, current)
+            if choice == "abort":
+                msg = "resume aborted"
+                raise ValueError(msg)
+            if choice == "rebind":
+                row = await self.memory.update_session_workspace(session_id, self.workspace)
+            else:
+                # keep: switch live workspace to the session binding
+                try:
+                    self._set_workspace(Path(row.workspace))
+                except ValueError as exc:
+                    msg = f"cannot keep session workspace: {exc}"
+                    raise ValueError(msg) from exc
+
         self.session_id = session_id
         self.agent = self._make_agent()
         await self.agent.load_history()
@@ -129,5 +148,8 @@ class ReplState:
             await self.new_session(name=name)
             return "new"
         latest = max(sessions, key=lambda s: (s.updated_at, s.sid))
-        await self.resume_session(latest.sid)
+        # Same-workspace list: no mismatch prompt expected.
+        self.session_id = latest.sid
+        self.agent = self._make_agent()
+        await self.agent.load_history()
         return "resume"

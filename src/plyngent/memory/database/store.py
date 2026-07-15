@@ -134,6 +134,24 @@ class MemoryStore:
                 stmt = stmt.where(Session.workspace == ws)
             result = await session.execute(stmt)
             return result.scalars().all()
+
+    async def update_session_workspace(
+        self,
+        sid: int,
+        workspace: str | Path | None,
+    ) -> Session:
+        """Set or clear the workspace binding for a session."""
+        ws = normalize_workspace(workspace)
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            row.workspace = ws
+            await session.commit()
+            await session.refresh(row)
+            return row
+
     async def append_message(self, sid: int, message: AnyChatMessage) -> Message:
         """Append a chat message to a session with the next sequence number."""
         data = msgspec.to_builtins(message)

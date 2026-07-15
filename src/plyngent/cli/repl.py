@@ -30,7 +30,7 @@ Commands:
   /history [n]       Show last n messages in this session (default 20)
   /sessions          List sessions for this workspace
   /new [name]        Start a new session (bound to workspace)
-  /resume <id>       Resume a session by id (must match workspace)
+  /resume <id>       Resume a session by id (prompts if workspace differs)
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
@@ -98,7 +98,10 @@ async def _cmd_resume(state: ReplState, arg: str) -> None:
     except ValueError as exc:
         click.echo(f"error: {exc}")
         return
-    click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages)")
+    click.echo(
+        f"resumed session {session_id} ({len(state.agent.messages)} messages) "
+        f"workspace={state.workspace}"
+    )
 
 
 def _cmd_provider(state: ReplState, arg: str) -> None:

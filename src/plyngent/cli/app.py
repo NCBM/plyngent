@@ -85,8 +85,14 @@ async def _run_chat(
         )
         click.secho(f"workspace: {state.workspace}", fg="bright_black")
         if session_id is not None:
-            await state.resume_session(session_id)
-            click.echo(f"resumed session {session_id} ({len(state.agent.messages)} messages)")
+            try:
+                await state.resume_session(session_id)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+            click.echo(
+                f"resumed session {session_id} ({len(state.agent.messages)} messages) "
+                f"workspace={state.workspace}"
+            )
         elif new_session:
             await state.new_session()
             click.echo(f"new session {state.session_id} (workspace={state.workspace})")
