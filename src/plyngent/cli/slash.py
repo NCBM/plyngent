@@ -526,11 +526,23 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
         return
     try:
         pname, provider = select_provider(state.config.providers, preferred=name.strip())
+        prev_model = state.model
         state.provider_name = pname
         state.provider = provider
-        # Keep model if still listed; else first model on the new provider.
-        if state.model not in provider.models and provider.models:
-            state.model = next(iter(sorted(provider.models.keys())))
+        if prev_model in provider.models:
+            state.model = prev_model
+        else:
+            # Current model not on the new provider — pick one (prompt when interactive).
+            try:
+                state.model = select_model(provider, preferred=None, interactive=True)
+            except click.ClickException as exc:
+                click.echo(f"error: switched provider but model selection failed: {exc}")
+                return
+            if prev_model:
+                click.secho(
+                    f"model {prev_model!r} is not available on {pname}; using {state.model!r}",
+                    fg="yellow",
+                )
         state.rebuild_client()
         _await(state.persist_llm_selection())
         click.echo(f"switched provider to {pname}  model={state.model}")

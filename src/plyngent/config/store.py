@@ -70,6 +70,12 @@ def _parse_providers(
             bad_providers[name] = raw_entry
             continue
 
+        # Usable providers must list at least one model (DeepSeek seeds defaults
+        # when models is omitted; an explicit empty models={} is invalid).
+        if not provider.models:
+            bad_providers[name] = {**cast("dict[str, object]", raw_entry), "_reason": "no models"}
+            continue
+
         providers[name] = provider
 
     return providers, bad_providers

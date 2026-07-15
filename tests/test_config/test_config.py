@@ -81,6 +81,23 @@ def test_read_bad_config() -> None:
     assert isinstance(config.bad_providers, Mapping)
 
 
+def test_provider_with_empty_models_is_bad(tmp_path: Path) -> None:
+    path = tmp_path / "empty-models.toml"
+    _ = path.write_text(
+        """
+[providers.hollow]
+preset = "openai-compatible"
+url = "https://example.com/v1"
+access_key_or_token = "sk-test"
+models = {}
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert "hollow" not in config.providers
+    assert "hollow" in config.bad_providers
+
+
 def test_read_invalid_config() -> None:
     with pytest.raises(ConfigFormatError):
         _ = plyngent.config.load(Path(__file__).parent / "plyngent-invalid.toml")
@@ -91,8 +108,13 @@ def test_write_new_config() -> None:
     file.unlink(missing_ok=True)
     config = plyngent.config.load(file)
     assert isinstance(config.providers, Mapping)
+    from plyngent.config import ModelConfig
+
     config.providers = {
-        "foo1": OpenAIProvider(access_key_or_token="sk-00301212"),
+        "foo1": OpenAIProvider(
+            access_key_or_token="sk-00301212",
+            models={"gpt-test": ModelConfig()},
+        ),
         "foo2": DeepseekProvider(access_key_or_token="sk-00301212"),
     }
     assert isinstance(config.providers, Mapping)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import click
 import msgspec
@@ -29,6 +29,8 @@ from plyngent.runtime import ProviderNotSupportedError, create_client
 from plyngent.tools import set_workspace_root
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from plyngent.config.store import ConfigStore
 
 _DEFAULT_DB_FILENAME = "chat.db"
@@ -41,6 +43,29 @@ def _load_config(config_path: Path | None) -> ConfigStore:
         path = resolve_config_path(config_path)
         msg = f"invalid config TOML ({path}): {exc}"
         raise click.ClickException(msg) from exc
+
+
+def _warn_bad_providers(bad: Mapping[str, object]) -> None:
+    """Surface ignored provider entries (parse errors, empty models, …)."""
+    if not bad:
+        return
+    names = ", ".join(sorted(bad.keys()))
+    click.secho(
+        f"warning: ignored bad providers ({len(bad)}): {names}",
+        fg="yellow",
+        err=True,
+    )
+    for name in sorted(bad.keys()):
+        entry = bad[name]
+        reason = "invalid or incomplete entry"
+        if isinstance(entry, dict):
+            entry_map = cast("dict[str, object]", entry)
+            raw_reason = entry_map.get("_reason")
+            if isinstance(raw_reason, str) and raw_reason:
+                reason = raw_reason
+            elif "preset" not in entry_map and not any(k in entry_map for k in ("access_key_or_token", "url")):
+                reason = "not a provider table"
+        click.secho(f"  - {name}: {reason}", fg="yellow", err=True)
 
 
 def _database_config(store: ConfigStore, *, quiet: bool = False) -> DatabaseConfig:
@@ -163,8 +188,7 @@ async def _run_chat(  # noqa: C901 — chat orchestration
 
     store = _load_config(config_path)
     if store.bad_providers and not quiet:
-        names = ", ".join(sorted(store.bad_providers.keys()))
-        click.secho(f"warning: ignored bad providers: {names}", fg="yellow", err=True)
+        _warn_bad_providers(store.bad_providers)
 
     _setup_workspace_and_hooks(store, workspace, interactive=interactive)
     confirm_destructive: bool | None = False if yes else None
@@ -397,7 +421,7 @@ def providers_cmd(config_path: Path | None) -> None:
         models = ", ".join(sorted(provider.models.keys())) or "(none listed)"
         click.echo(f"{name}\tpreset={tag}\tmodels={models}")
     if store.bad_providers:
-        click.secho(f"bad: {', '.join(sorted(store.bad_providers.keys()))}", fg="yellow")
+        _warn_bad_providers(store.bad_providers)
 
 
 @main.group("config")

@@ -190,6 +190,67 @@ async def test_model_switch_persists(state: ReplState) -> None:
     assert row.model == "m2"
 
 
+async def test_provider_switch_prompts_when_model_missing(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from plyngent.config.models import ModelConfig, OpenAICompatibleProvider, OpenAIProvider
+
+    state.config.providers = {
+        "a": OpenAIProvider(
+            access_key_or_token="sk",
+            models={"shared": ModelConfig(), "only-a": ModelConfig()},
+        ),
+        "b": OpenAICompatibleProvider(
+            access_key_or_token="sk",
+            url="https://x/v1",
+            models={"shared": ModelConfig(), "only-b": ModelConfig()},
+        ),
+    }
+    state.provider_name = "a"
+    state.provider = state.config.providers["a"]
+    state.model = "only-a"
+    state.rebuild_client()
+
+    # When switching to b, only-a is missing → select_model is invoked interactively.
+    monkeypatch.setattr(
+        "plyngent.cli.slash.select_model",
+        lambda provider, preferred=None, interactive=True: "only-b",
+    )
+    assert await handle_slash(state, "/provider b") is True
+    assert state.provider_name == "b"
+    assert state.model == "only-b"
+    sid = state.session_id
+    assert sid is not None
+    row = await state.memory.get_session(sid)
+    assert row is not None
+    assert row.provider_name == "b"
+    assert row.model == "only-b"
+
+
+async def test_provider_switch_keeps_shared_model(state: ReplState) -> None:
+    from plyngent.config.models import ModelConfig, OpenAICompatibleProvider, OpenAIProvider
+
+    state.config.providers = {
+        "a": OpenAIProvider(
+            access_key_or_token="sk",
+            models={"shared": ModelConfig()},
+        ),
+        "b": OpenAICompatibleProvider(
+            access_key_or_token="sk",
+            url="https://x/v1",
+            models={"shared": ModelConfig()},
+        ),
+    }
+    state.provider_name = "a"
+    state.provider = state.config.providers["a"]
+    state.model = "shared"
+    state.rebuild_client()
+    assert await handle_slash(state, "/provider b") is True
+    assert state.provider_name == "b"
+    assert state.model == "shared"
+
+
 async def test_delete_slash_confirm(
     state: ReplState,
     capsys: pytest.CaptureFixture[str],

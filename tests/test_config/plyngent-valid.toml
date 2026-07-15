@@ -6,6 +6,9 @@ url = ":memory:"
 preset = "openai"
 access_key_or_token = "sk-1145141919810"
 
+[providers.test1.models]
+"gpt-test" = { text = true }
+
 [providers.test2]
 preset = "openai-compatible"
 url = "https://www.example.com/v1"
@@ -17,6 +20,9 @@ access_key_or_token = "sk-1145141919810"
 [providers.test3]
 preset = "anthropic"
 access_key_or_token = "sk-1145141919810"
+
+[providers.test3.models]
+"claude-test" = { text = true }
 
 [providers.foo1]
 preset = "deepseek"

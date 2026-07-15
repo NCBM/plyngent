@@ -52,9 +52,23 @@ def test_select_provider_interactive_choose() -> None:
     from tests.test_prompting import ScriptedBackend
 
     providers = {
-        "a": OpenAIProvider(access_key_or_token="sk"),
-        "b": OpenAICompatibleProvider(access_key_or_token="sk", url="https://x/v1"),
+        "a": OpenAIProvider(access_key_or_token="sk", models={"m": ModelConfig()}),
+        "b": OpenAICompatibleProvider(
+            access_key_or_token="sk",
+            url="https://x/v1",
+            models={"m": ModelConfig()},
+        ),
     }
     with temporary_backend(ScriptedBackend(["2"])):
         name, _ = select_provider(providers)
     assert name == "b"
+
+
+def test_select_model_when_preferred_missing_raises() -> None:
+    provider = OpenAICompatibleProvider(
+        access_key_or_token="sk",
+        url="https://x/v1",
+        models={"m1": ModelConfig()},
+    )
+    with pytest.raises(Exception, match="unknown model"):
+        _ = select_model(provider, preferred="nope")
