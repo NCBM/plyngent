@@ -30,15 +30,18 @@ _COMPACT_PREVIEW = 400
 _ON_OFF_CHOICES = ("on", "off")
 _EXPORT_FORMAT_CHOICES = ("md", "json")
 
-HELP_FOOTER = """\
-User messages are saved immediately. On API errors or Ctrl+C, partial
-assistant/tool output is discarded but the user message stays (so /retry
-works after resume, not only via readline history). Auto-retry: 10s/20s/30s.
-
-Tab completes slash commands and some arguments (provider, model, tools,
-stream, verbose, export). Use --session ID or /resume to continue a prior
-chat after restart.
-"""
+HELP_FOOTER = (
+    "User messages are saved immediately. On API errors or Ctrl+C, partial\n"
+    "assistant/tool output is discarded but the user message stays (so /retry\n"
+    "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
+    "\n"
+    "Tab completes slash commands and some arguments (provider, model, tools,\n"
+    "stream, verbose, export). Use --session ID or /resume to continue a prior\n"
+    "chat after restart.\n"
+    "\n"
+    'Multiline: start a message with """ then end a later line with """.\n'
+    "Long prompts: /edit opens $EDITOR.\n"
+)
 
 
 class ReplExitError(Exception):
@@ -266,6 +269,28 @@ def clear_cmd(state: ReplState) -> None:
     """Clear in-memory conversation (keeps session id)."""
     state.agent.messages.clear()
     click.echo("conversation cleared (in-memory only; DB history kept)")
+
+
+@slash.command("edit")
+@click.pass_obj
+def edit_cmd(state: ReplState) -> None:
+    """Compose a user message in ``$EDITOR``, then send it.
+
+    Opens a temporary buffer; save and quit the editor to submit.
+    Empty buffer cancels. Requires ``EDITOR`` (e.g. ``codium --wait``).
+    """
+    from plyngent.cli.editor import edit_text_in_editor
+
+    try:
+        text = edit_text_in_editor("")
+    except click.ClickException as exc:
+        click.echo(f"error: {exc}")
+        return
+    if text is None:
+        click.echo("edit cancelled (empty)")
+        return
+    state.pending_user_text = text
+    click.echo(f"(edit) {len(text)} characters ready to send")
 
 
 @slash.command("status")

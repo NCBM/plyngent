@@ -134,6 +134,20 @@ async def test_quit(state: ReplState) -> None:
     assert await handle_slash(state, "/quit") is False
 
 
+async def test_edit_sets_pending(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "plyngent.cli.editor.edit_text_in_editor",
+        lambda *a, **k: "composed message",
+    )
+    assert await handle_slash(state, "/edit") is True
+    assert state.pending_user_text == "composed message"
+    assert "characters ready" in capsys.readouterr().out
+
+
 async def test_new_and_sessions(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
     first = state.session_id
     assert await handle_slash(state, "/new other") is True

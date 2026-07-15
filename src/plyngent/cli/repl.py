@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import click
 
+from plyngent.cli.input_text import read_repl_entry
 from plyngent.cli.readline_setup import setup_readline
 from plyngent.cli.retry import run_user_text_with_retries
 from plyngent.cli.slash import handle_slash
@@ -12,9 +13,13 @@ if TYPE_CHECKING:
     from plyngent.cli.state import ReplState
 
 
-def _read_line() -> str:
-    """Blocking readline input (intentional for TTY REPL)."""
-    return input("> ").strip()
+def _echo_user(text: str) -> None:
+    click.secho("user: ", fg="green", nl=False)
+    if "\n" in text:
+        click.echo()
+        click.echo(text)
+    else:
+        click.echo(text)
 
 
 async def run_repl(state: ReplState) -> None:
@@ -27,26 +32,28 @@ async def run_repl(state: ReplState) -> None:
         f"stream={'on' if state.agent.stream else 'off'}  "
         f"verbose={'on' if state.verbose else 'off'}"
     )
-    click.echo("Type /help for commands. Empty line is ignored.")
+    click.echo('Type /help for commands. Multiline: """ … """. Empty line is ignored.')
 
     while True:
         try:
-            line = _read_line()
+            entry = read_repl_entry()
         except EOFError:
             click.echo()
             break
-        except KeyboardInterrupt:
-            click.echo()
+
+        if entry is None:
             continue
 
-        if not line:
-            continue
-        if line.startswith("/"):
-            cont = await handle_slash(state, line)
+        if entry.startswith("/"):
+            cont = await handle_slash(state, entry)
             if not cont:
                 break
+            if state.pending_user_text is not None:
+                text = state.pending_user_text
+                state.pending_user_text = None
+                _echo_user(text)
+                _ = await run_user_text_with_retries(state.agent, text)
             continue
 
-        click.secho("user: ", fg="green", nl=False)
-        click.echo(line)
-        _ = await run_user_text_with_retries(state.agent, line)
+        _echo_user(entry)
+        _ = await run_user_text_with_retries(state.agent, entry)

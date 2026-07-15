@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -13,9 +13,6 @@ from plyngent.cli.editor import (
     prompt_edit_config,
     resolve_config_path,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_get_editor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,6 +61,42 @@ def test_open_in_editor_missing_editor(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.delenv("EDITOR", raising=False)
     with pytest.raises(Exception, match="EDITOR"):
         open_in_editor(tmp_path / "x.toml", editor=None)
+
+
+def test_edit_text_in_editor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from plyngent.cli.editor import edit_text_in_editor
+
+    def fake_run(argv: list[str], check: bool = False) -> object:
+        del check
+        path = Path(argv[-1])
+        _ = path.write_text("hello from editor\n", encoding="utf-8")
+
+        class Result:
+            returncode: int = 0
+
+        return Result()
+
+    monkeypatch.setenv("EDITOR", "true")
+    monkeypatch.setattr("plyngent.cli.editor.subprocess.run", fake_run)
+    assert edit_text_in_editor("seed") == "hello from editor"
+
+
+def test_edit_text_empty_cancels(monkeypatch: pytest.MonkeyPatch) -> None:
+    from plyngent.cli.editor import edit_text_in_editor
+
+    def fake_run(argv: list[str], check: bool = False) -> object:
+        del check
+        path = Path(argv[-1])
+        _ = path.write_text("  \n", encoding="utf-8")
+
+        class Result:
+            returncode: int = 0
+
+        return Result()
+
+    monkeypatch.setenv("EDITOR", "true")
+    monkeypatch.setattr("plyngent.cli.editor.subprocess.run", fake_run)
+    assert edit_text_in_editor("") is None
 
 
 def test_prompt_edit_no_editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

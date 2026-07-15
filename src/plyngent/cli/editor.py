@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import subprocess
@@ -60,14 +61,24 @@ def ensure_config_file(path: Path) -> None:
         _ = path.write_text(_MINIMAL_CONFIG, encoding="utf-8")
 
 
-def open_in_editor(path: Path, *, editor: str | None = None) -> None:
-    """Open ``path`` with ``EDITOR`` (supports values like ``codium --wait``)."""
+def open_in_editor(
+    path: Path,
+    *,
+    editor: str | None = None,
+    ensure_exists: bool = True,
+) -> None:
+    """Open ``path`` with ``EDITOR`` (supports values like ``codium --wait``).
+
+    When ``ensure_exists`` is true (default), create a minimal config template
+    if the file is missing (used for ``plyngent config edit``).
+    """
     editor_cmd = editor if editor is not None else get_editor()
     if editor_cmd is None:
         msg = "EDITOR is not set"
         raise click.ClickException(msg)
 
-    ensure_config_file(path)
+    if ensure_exists:
+        ensure_config_file(path)
     try:
         argv = [*shlex.split(editor_cmd, posix=os.name != "nt"), str(path)]
     except ValueError as exc:
@@ -89,6 +100,40 @@ def open_in_editor(path: Path, *, editor: str | None = None) -> None:
     if completed.returncode != 0:
         msg = f"editor exited with status {completed.returncode}"
         raise click.ClickException(msg)
+
+
+def edit_text_in_editor(initial: str = "", *, suffix: str = ".md") -> str | None:
+    """Edit ``initial`` in ``$EDITOR``; return text or ``None`` if empty/cancelled.
+
+    Uses a temporary file. Does not create a config template.
+    """
+    import tempfile
+
+    if get_editor() is None:
+        msg = "EDITOR is not set; cannot /edit"
+        raise click.ClickException(msg)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=suffix,
+        prefix="plyngent-edit-",
+        delete=False,
+    ) as handle:
+        path = Path(handle.name)
+        _ = handle.write(initial)
+
+    try:
+        open_in_editor(path, ensure_exists=False)
+        text = path.read_text(encoding="utf-8")
+    finally:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+    cleaned = text.rstrip("\n")
+    if not cleaned.strip():
+        return None
+    return cleaned
 
 
 def prompt_edit_config(path: Path, *, reason: str | None = None) -> bool:

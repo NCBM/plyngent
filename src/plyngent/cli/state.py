@@ -31,6 +31,8 @@ class ReplState:
     max_rounds: int = DEFAULT_MAX_ROUNDS
     stream_enabled: bool = True
     verbose: bool = False
+    # Set by /edit; REPL sends as the next user turn then clears.
+    pending_user_text: str | None = None
     client: ChatClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None

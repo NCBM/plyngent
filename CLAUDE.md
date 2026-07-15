@@ -114,15 +114,15 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
   - G1: `ReasoningDeltaEvent`, `/stream`, `/verbose`
   - G2: `/rename`, `/delete` (confirm), `/export md|json`
   - G2.5: Click slash registry (`cli/slash.py`) + `awaitlet` for sync Click / async memory; auto `/help`; completer from `slash.list_commands`
+  - G3: multiline `"""` … `"""` input (`cli/input_text.py`); `/edit` via `$EDITOR` (`edit_text_in_editor`)
 
   **Planned**
 
-  - **G3 — Input**: multiline (`"""` … `"""`) and/or `/edit` via `$EDITOR`
   - **G4 — One-shot**: `plyngent chat -p/--prompt` (and stdin non-TTY); exit codes; non-interactive safety (`--yes` / deny destructive)
   - **G5 — Hardening**: tool timeouts/defaults review, config error clarity, cancel edges, optional `--log-level`, no secrets in status/export
   - **G6 — Docs**: real README, example TOML, CLAUDE/help accuracy
 
-  Milestone order: G3 → G4 → G5 → G6.
+  Milestone order: G4 → G5 → G6.
 
 - **Phase H**: multi-tenant platform (`router/`, auth, sandboxed tools, web).
 
