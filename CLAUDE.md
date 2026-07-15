@@ -65,7 +65,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 - **`workspace`**: path resolve under root; path substring denylist; command basename denylist; clearer deny messages.
-- **`file`**: `read_file`, `write_file`, `listdir`, `tree`, `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
+- **`file`**: `read_file`, `write_file`, `listdir`, `tree`, `glob_paths`, `grep_files` (regex, skip VCS/binary), `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (**Unix only**: `pty`+`fork`).
 - PTY: structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close SIGTERM→SIGKILL.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
