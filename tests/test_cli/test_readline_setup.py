@@ -142,3 +142,34 @@ def test_completer_help_commands(tmp_path: object, monkeypatch: object) -> None:
         index += 1
     assert "compact" in found
     assert "clear" in found
+
+
+def test_completer_stream_on_off(tmp_path: object, monkeypatch: object) -> None:
+    import readline
+    from pathlib import Path
+
+    import pytest
+
+    assert isinstance(tmp_path, Path)
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+
+    state = _minimal_state(tmp_path)
+    completer = build_completer(state)
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/stream ")
+    monkeypatch.setattr(readline, "get_begidx", lambda: len("/stream "))
+
+    assert completer("o", 0) == "on"
+    assert completer("o", 1) == "off"
+
+
+def test_complete_slash_args_from_registry(tmp_path: object) -> None:
+    from pathlib import Path
+
+    from plyngent.cli.slash import complete_slash_args
+
+    assert isinstance(tmp_path, Path)
+    state = _minimal_state(tmp_path)
+    assert complete_slash_args(state, "/provider", "r") == ["remote"]
+    assert complete_slash_args(state, "/model", "a") == ["alpha"]
+    assert complete_slash_args(state, "/export", "j") == ["json"]
+    assert complete_slash_args(state, "/help", "st") == ["status", "stream"]

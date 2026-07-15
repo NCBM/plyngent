@@ -15,9 +15,6 @@ if TYPE_CHECKING:
 HISTORY_FILE_NAME = "repl_history"
 DEFAULT_HISTORY_LENGTH = 1000
 
-_ON_OFF_ARGS: tuple[str, ...] = ("on", "off")
-_EXPORT_ARGS: tuple[str, ...] = ("md", "json")
-
 
 def slash_commands() -> list[str]:
     """Slash command tokens for Tab completion (with leading /)."""
@@ -38,10 +35,17 @@ def filter_prefix(prefix: str, candidates: list[str]) -> list[str]:
 
 
 def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
-    """Return a readline completer bound to the current REPL state."""
+    """Return a readline completer bound to the current REPL state.
+
+    Command names come from the Click slash registry; argument values come from
+    each parameter's :meth:`~click.ParamType.shell_complete` via
+    :func:`plyngent.cli.slash.complete_slash_args`.
+    """
 
     def completer(text: str, state_index: int) -> str | None:
         import readline
+
+        from plyngent.cli.slash import complete_slash_args
 
         buffer = readline.get_line_buffer()
         begidx = readline.get_begidx()
@@ -51,29 +55,12 @@ def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
         else:
             head = buffer[:begidx].strip()
             command = head.split()[0] if head else ""
-            options = _argument_options(state, command, text)
+            options = complete_slash_args(state, command, text)
         if state_index < len(options):
             return options[state_index]
         return None
 
     return completer
-
-
-def _argument_options(state: ReplState, command: str, text: str) -> list[str]:
-    candidates: list[str] = []
-    if command == "/help":
-        # Second token: command name without leading slash (also accept /name).
-        candidates = [n.removeprefix("/") for n in slash_commands()]
-        text = text.lstrip("/")
-    elif command == "/provider":
-        candidates = sorted(state.config.providers.keys())
-    elif command == "/model":
-        candidates = sorted(state.provider.models.keys())
-    elif command in {"/tools", "/stream", "/verbose"}:
-        candidates = list(_ON_OFF_ARGS)
-    elif command == "/export":
-        candidates = list(_EXPORT_ARGS)
-    return filter_prefix(text, candidates)
 
 
 def bind_tab_complete(readline_mod: object) -> None:

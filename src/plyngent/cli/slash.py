@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import shlex
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 import awaitlet  # pyright: ignore[reportMissingTypeStubs]
 import click
+from click.shell_completion import CompletionItem
 from msgspec import UNSET
 
 from plyngent.cli.retry import retry_pending_with_retries
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
 _DEFAULT_HISTORY_LINES = 20
 _CONTENT_PREVIEW = 200
 _COMPACT_PREVIEW = 400
+_ON_OFF_CHOICES = ("on", "off")
+_EXPORT_FORMAT_CHOICES = ("md", "json")
 
 HELP_FOOTER = """\
 User messages are saved immediately. On API errors or Ctrl+C, partial
@@ -40,6 +43,16 @@ chat after restart.
 
 class ReplExitError(Exception):
     """Signal that the REPL should leave (not a process exit)."""
+
+
+def _filter_choices(incomplete: str, choices: Sequence[str]) -> list[CompletionItem]:
+    return [CompletionItem(c) for c in choices if c.startswith(incomplete)]
+
+
+def _repl_state(ctx: click.Context | None) -> ReplState | None:
+    if ctx is None or ctx.obj is None:
+        return None
+    return cast("ReplState", ctx.obj)
 
 
 class OnOffParam(click.ParamType[bool]):
@@ -59,8 +72,93 @@ class OnOffParam(click.ParamType[bool]):
         msg = "expected on or off"
         raise click.BadParameter(msg, ctx=ctx, param=param)
 
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        return _filter_choices(incomplete, _ON_OFF_CHOICES)
+
 
 ON_OFF = OnOffParam()
+
+
+class ExportFormatParam(click.ParamType[str]):
+    """First token of /export: md|json (or a path if not a format)."""
+
+    name: str = "export_format"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        del param, ctx
+        return str(value)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        return _filter_choices(incomplete, _EXPORT_FORMAT_CHOICES)
+
+
+EXPORT_FORMAT = ExportFormatParam()
+
+
+class ProviderNameParam(click.ParamType[str]):
+    name: str = "provider"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        del param, ctx
+        return str(value)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del param
+        state = _repl_state(ctx)
+        if state is None:
+            return []
+        return _filter_choices(incomplete, sorted(state.config.providers.keys()))
+
+
+PROVIDER_NAME = ProviderNameParam()
+
+
+class ModelIdParam(click.ParamType[str]):
+    name: str = "model"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        del param, ctx
+        return str(value)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del param
+        state = _repl_state(ctx)
+        if state is None:
+            return []
+        return _filter_choices(incomplete, sorted(state.provider.models.keys()))
+
+
+MODEL_ID = ModelIdParam()
+
+
+class SlashCommandNameParam(click.ParamType[str]):
+    """Command name for ``/help <cmd>``."""
+
+    name: str = "slash_command"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        del param, ctx
+        return str(value)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del param
+        names = sorted(slash.list_commands(ctx))
+        token = incomplete.lstrip("/")
+        return _filter_choices(token, names)
+
+
+SLASH_COMMAND_NAME = SlashCommandNameParam()
 
 
 class SlashGroup(click.Group):
@@ -104,6 +202,27 @@ def slash_command_names() -> list[str]:
     return sorted(f"/{name}" for name in slash.list_commands(ctx))
 
 
+def complete_slash_args(state: ReplState, command: str, incomplete: str) -> list[str]:
+    """Tab-complete arguments for ``command`` (e.g. ``/stream``) from ParamTypes.
+
+    Uses the first :class:`click.Argument` on the registered command whose type
+    implements :meth:`~click.ParamType.shell_complete` with candidates.
+    """
+    name = command.lstrip("/").lower()
+    ctx = click.Context(slash, obj=state)
+    cmd = slash.get_command(ctx, name)
+    if cmd is None:
+        return []
+    with click.Context(cmd, info_name=name, parent=ctx, obj=state) as sub:
+        for param in cmd.params:
+            if not isinstance(param, click.Argument):
+                continue
+            items = param.type.shell_complete(sub, param, incomplete)
+            if items:
+                return [item.value for item in items]
+    return []
+
+
 def _await[T](awaitable: Awaitable[T]) -> T:
     # Greenlet parks until the awaitable completes on the running loop.
     return awaitlet.awaitlet(awaitable)
@@ -113,7 +232,7 @@ def _await[T](awaitable: Awaitable[T]) -> T:
 
 
 @slash.command("help")
-@click.argument("command", required=False)
+@click.argument("command", required=False, type=SLASH_COMMAND_NAME)
 @click.pass_context
 def help_cmd(ctx: click.Context, command: str | None) -> None:
     """Show this help, or help for one command."""
@@ -265,7 +384,7 @@ def delete_cmd(state: ReplState, session_id: int | None) -> None:
 
 
 @slash.command("export")
-@click.argument("parts", nargs=-1)
+@click.argument("parts", nargs=-1, type=EXPORT_FORMAT)
 @click.pass_obj
 def export_cmd(state: ReplState, parts: tuple[str, ...]) -> None:
     """Export session transcript from DB: /export [md|json] [path]."""
@@ -371,7 +490,7 @@ def compact_cmd(state: ReplState, name: str | None) -> None:
 
 
 @slash.command("provider")
-@click.argument("name", required=False)
+@click.argument("name", required=False, type=PROVIDER_NAME)
 @click.pass_obj
 def provider_cmd(state: ReplState, name: str | None) -> None:
     """Show or switch provider."""
@@ -389,7 +508,7 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
 
 
 @slash.command("model")
-@click.argument("model_id", required=False)
+@click.argument("model_id", required=False, type=MODEL_ID)
 @click.pass_obj
 def model_cmd(state: ReplState, model_id: str | None) -> None:
     """Show or switch model."""
