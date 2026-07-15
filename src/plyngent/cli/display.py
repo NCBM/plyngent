@@ -57,7 +57,7 @@ def markdown_render_available() -> bool:
         return False
     try:
         return sys.stdout.isatty()
-    except (AttributeError, OSError, ValueError):
+    except AttributeError, OSError, ValueError:
         return False
 
 
