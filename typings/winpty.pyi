@@ -1,9 +1,4 @@
-"""Stubs for pywinpty (ConPTY) matching winpty.PtyProcess runtime API."""
-
-from __future__ import annotations
-
 from collections.abc import Sequence
-from typing import Any
 
 class PtyProcess:
     exitstatus: int | None

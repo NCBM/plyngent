@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 from plyngent.tools.process import close_pty, open_pty, read_pty, run_command, write_pty
@@ -26,9 +27,14 @@ def _field(text: str, name: str) -> str:
     raise AssertionError(msg)
 
 
+def _py(code: str) -> list[str]:
+    """Cross-platform argv that runs a short Python snippet."""
+    return [sys.executable, "-c", code]
+
+
 async def test_run_command_echo(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, ["echo", "hi"])
+    out = await call_async(run_command, _py("print('hi')"))
     assert "exit_code=0" in out
     assert "hi" in out
 
@@ -44,13 +50,13 @@ async def test_run_command_cwd(workspace: object) -> None:
     sub = workspace / "sub"
     sub.mkdir()
     _ = (sub / "f.txt").write_text("z", encoding="utf-8")
-    out = await call_async(run_command, ["ls"], cwd="sub")
+    out = await call_async(run_command, _py("import os; print('\\n'.join(os.listdir()))"), cwd="sub")
     assert "f.txt" in out
 
 
 async def test_run_command_timeout(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, ["sleep", "5"], timeout_seconds=0.2)
+    out = await call_async(run_command, _py("import time; time.sleep(5)"), timeout_seconds=0.2)
     assert "timed_out=true" in out
 
 
@@ -59,7 +65,7 @@ async def test_run_command_timeout_keeps_partial_output(workspace: object) -> No
     # Print then sleep past the timeout so communicate has partial stdout after kill.
     out = await call_async(
         run_command,
-        ["sh", "-c", "printf partial-out; sleep 5"],
+        _py("import sys, time; sys.stdout.write('partial-out'); sys.stdout.flush(); time.sleep(5)"),
         timeout_seconds=0.3,
     )
     assert "timed_out=true" in out
@@ -68,7 +74,11 @@ async def test_run_command_timeout_keeps_partial_output(workspace: object) -> No
 
 async def test_run_command_stdin(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, ["cat"], stdin="hello-stdin\n")
+    out = await call_async(
+        run_command,
+        _py("import sys; print(sys.stdin.read(), end='')"),
+        stdin="hello-stdin\n",
+    )
     assert "exit_code=0" in out
     assert "hello-stdin" in out
 
@@ -77,7 +87,7 @@ async def test_run_command_env(workspace: object) -> None:
     del workspace
     out = await call_async(
         run_command,
-        ["sh", "-c", "printf '%s' \"$PLYNGENT_TEST_VAR\""],
+        _py("import os; print(os.environ.get('PLYNGENT_TEST_VAR', ''), end='')"),
         env={"PLYNGENT_TEST_VAR": "from-env"},
     )
     assert "exit_code=0" in out
@@ -87,7 +97,7 @@ async def test_run_command_env(workspace: object) -> None:
 async def test_pty_open_read_close(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, ["sleep", "30"])
+        opened = call_sync(open_pty, _py("import time; time.sleep(30)"))
         assert "session_id=" in opened
         session_id = _session_id(opened)
         data = await call_async(read_pty, session_id, timeout=0.05)
@@ -109,7 +119,7 @@ def test_pty_denied(workspace: object) -> None:
 async def test_pty_echo_output(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, ["/bin/echo", "hello-pty"])
+        opened = call_sync(open_pty, _py("print('hello-pty')"))
         session_id = _session_id(opened)
         text = await call_async(read_pty, session_id, timeout=2.0, until="hello-pty")
         assert "hello-pty" in text
@@ -123,7 +133,19 @@ async def test_pty_echo_output(workspace: object) -> None:
 async def test_write_pty(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, ["cat"])
+        # Line-oriented echo (portable stand-in for ``cat``).
+        opened = call_sync(
+            open_pty,
+            _py(
+                "import sys\n"
+                "while True:\n"
+                "    line = sys.stdin.readline()\n"
+                "    if not line:\n"
+                "        break\n"
+                "    sys.stdout.write(line)\n"
+                "    sys.stdout.flush()\n"
+            ),
+        )
         session_id = _session_id(opened)
         written = call_sync(write_pty, session_id, "pty-input\n")
         assert "wrote=" in written
@@ -143,6 +165,10 @@ async def test_pty_exec_failure_surfaces(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["definitely-not-a-real-binary-xyz"])
+        # Windows ConPTY may fail at open; POSIX may open then fail on exec.
+        if "error:" in opened and "session_id=" not in opened:
+            assert "not found" in opened.lower() or "failed" in opened.lower()
+            return
         session_id = _session_id(opened)
         text = await call_async(read_pty, session_id, timeout=2.0)
         # marker and/or dead process with 127
@@ -161,9 +187,9 @@ def test_pty_session_limit(workspace: object) -> None:
     try:
         PtyManager.set_limit_continue_hook(None)
         PtyManager.configure(max_sessions=1)
-        first = call_sync(open_pty, ["sleep", "30"])
+        first = call_sync(open_pty, _py("import time; time.sleep(30)"))
         assert "session_id=" in first
-        second = call_sync(open_pty, ["sleep", "30"])
+        second = call_sync(open_pty, _py("import time; time.sleep(30)"))
         assert "limit" in second
     finally:
         PtyManager.close_all()
@@ -177,8 +203,8 @@ def test_pty_session_limit_continue(workspace: object) -> None:
     try:
         PtyManager.configure(max_sessions=1)
         PtyManager.set_limit_continue_hook(lambda _reason: True)
-        first = call_sync(open_pty, ["sleep", "30"])
-        second = call_sync(open_pty, ["sleep", "30"])
+        first = call_sync(open_pty, _py("import time; time.sleep(30)"))
+        second = call_sync(open_pty, _py("import time; time.sleep(30)"))
         assert "session_id=" in first
         assert "session_id=" in second
         assert PtyManager.max_sessions >= 2
@@ -194,7 +220,7 @@ async def test_pty_output_budget(workspace: object) -> None:
     try:
         PtyManager.set_limit_continue_hook(None)
         PtyManager.configure(session_output_budget=64)
-        opened = call_sync(open_pty, ["sh", "-c", "yes x | head -c 1000"])
+        opened = call_sync(open_pty, _py("print('x' * 1000)"))
         session_id = _session_id(opened)
         # Drain until budget exhausted or process ends.
         budget_hit = False
@@ -223,7 +249,7 @@ async def test_pty_output_budget_is_per_session(workspace: object) -> None:
         PtyManager.configure(session_output_budget=1024)
         class_budget = PtyManager.session_output_budget
         PtyManager.set_limit_continue_hook(lambda _reason: True)
-        opened = call_sync(open_pty, ["sh", "-c", "yes x | head -c 200"])
+        opened = call_sync(open_pty, _py("print('x' * 200)"))
         session_id = _session_id(opened)
         session = PtyManager.get(session_id)
         assert session is not None
@@ -246,7 +272,6 @@ async def test_pty_output_budget_is_per_session(workspace: object) -> None:
 def test_pty_master_not_inheritable(workspace: object) -> None:
     del workspace
     import os
-    import sys
 
     if sys.platform == "win32":
         import pytest
@@ -254,7 +279,7 @@ def test_pty_master_not_inheritable(workspace: object) -> None:
         pytest.skip("master FD inheritance is POSIX-only")
 
     try:
-        opened = call_sync(open_pty, ["sleep", "5"])
+        opened = call_sync(open_pty, _py("import time; time.sleep(5)"))
         session_id = _session_id(opened)
         session = PtyManager.get(session_id)
         assert session is not None

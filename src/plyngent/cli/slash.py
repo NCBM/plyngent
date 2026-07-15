@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from typing import TYPE_CHECKING, Any, cast, override
 
@@ -835,7 +836,8 @@ async def handle_slash(state: ReplState, line: str) -> bool:
     if not body:
         return True
     try:
-        args = shlex.split(body)
+        # Windows paths use backslashes; POSIX shlex would treat them as escapes.
+        args = shlex.split(body, posix=os.name != "nt")
     except ValueError as exc:
         click.echo(f"error: {exc}")
         return True

@@ -94,9 +94,10 @@ def resolve_path(path: str | Path) -> Path:
     except ValueError as exc:
         msg = f"path escapes workspace root ({root}): {path}"
         raise WorkspaceError(msg) from exc
-    resolved_str = str(resolved)
+    # Normalize separators so denylist entries like ``/secrets/`` match on Windows.
+    resolved_str = str(resolved).replace("\\", "/")
     for pattern in _state.path_denylist:
-        if pattern and pattern in resolved_str:
+        if pattern and pattern.replace("\\", "/") in resolved_str:
             msg = f"path denied by policy (matched {pattern!r}): {path}"
             raise WorkspaceError(msg)
     return resolved

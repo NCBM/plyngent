@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
+
+import pytest
 import tomlkit
 
 from plyngent.cli.readline_setup import (
@@ -11,6 +14,11 @@ from plyngent.cli.readline_setup import (
 from plyngent.cli.state import ReplState
 from plyngent.config.models import ModelConfig, OpenAICompatibleProvider, OpenAIProvider
 from plyngent.config.store import ConfigStore
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("readline") is None,
+    reason="readline not available (e.g. Windows/Wine)",
+)
 
 
 def _minimal_state(tmp_path: object) -> ReplState:
