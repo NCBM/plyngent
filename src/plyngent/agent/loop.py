@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import TYPE_CHECKING, cast
 
 from msgspec import UNSET
@@ -33,24 +34,24 @@ from .events import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
     from .client import ChatClient
     from .tools import ToolRegistry
 
-    type LimitContinueHook = Callable[[str], bool]
+    type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
 
 DEFAULT_MAX_ROUNDS = 32
 
 
-def _raise_if_cancelled() -> None:
-    """Cooperative cancel points between model/tool steps."""
-    task = asyncio.current_task()
-    if task is not None and task.cancelling():
-        raise asyncio.CancelledError
+async def _call_on_limit(on_limit: LimitContinueHook, reason: str) -> bool:
+    result = on_limit(reason)
+    if inspect.isawaitable(result):
+        return bool(await result)
+    return bool(result)
 
 
 async def _run_one_tool(
@@ -59,7 +60,6 @@ async def _run_one_tool(
     *,
     max_result_chars: int,
 ) -> tuple[ToolChatMessage, ErrorEvent | None]:
-    _raise_if_cancelled()
     if isinstance(call, AssistantFunctionToolCall):
         try:
             result_text = await tools.execute(call.function.name, call.function.arguments)
@@ -94,7 +94,6 @@ async def _execute_tool_calls(
     for call in tool_calls:
         yield ToolCallEvent(tool_call=call)
 
-    _raise_if_cancelled()
     if parallel and len(tool_calls) > 1:
         results = await asyncio.gather(
             *[_run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
@@ -197,7 +196,6 @@ async def run_chat_loop(
     while True:
         while rounds_used < allowance:
             rounds_used += 1
-            _raise_if_cancelled()
             request_messages = compact_messages_for_request(
                 messages,
                 max_chars=max_context_chars,
@@ -235,7 +233,7 @@ async def run_chat_loop(
                 yield event
 
         reason = f"tool loop reached {allowance} rounds (used {rounds_used})"
-        if on_limit is not None and on_limit(reason):
+        if on_limit is not None and await _call_on_limit(on_limit, reason):
             yield MaxRoundsEvent(rounds=allowance, continued=True)
             allowance += max_rounds
             continue

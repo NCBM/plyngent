@@ -49,7 +49,7 @@ class ReplState:
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
-        from plyngent.cli.limits import prompt_confirm_tool
+        from plyngent.cli.limits import prompt_confirm_tool_async
         from plyngent.tools.danger import classify_danger
 
         agent_cfg = self.config.agent_config
@@ -57,12 +57,12 @@ class ReplState:
             return ToolRegistry(
                 list(DEFAULT_TOOLS),
                 danger=classify_danger,
-                on_confirm=prompt_confirm_tool,
+                on_confirm=prompt_confirm_tool_async,
             )
         return ToolRegistry(list(DEFAULT_TOOLS))
 
     def _make_agent(self) -> ChatAgent:
-        from plyngent.cli.limits import prompt_continue_limit
+        from plyngent.cli.limits import prompt_continue_limit_async
 
         agent_cfg = self.config.agent_config
         system_prompt = agent_cfg.system_prompt or None
@@ -73,7 +73,7 @@ class ReplState:
             memory=self.memory,
             session_id=self.session_id,
             max_rounds=self.max_rounds,
-            on_limit=prompt_continue_limit,
+            on_limit=prompt_continue_limit_async,
             stream=True,
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,

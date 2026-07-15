@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import signal
 from contextlib import contextmanager
@@ -30,7 +31,8 @@ def set_sigint_reinstall(callback: Callable[[], None] | None) -> None:
 def pause_task_cancel_for_prompt() -> Generator[None]:
     """Disable turn-task cancel during blocking TTY prompts (confirm, etc.).
 
-    Also restores the default SIGINT handler so ``click.confirm`` can receive
+    Must run on the main thread (signal handlers are main-thread only).
+    Restores the default SIGINT handler so ``click.confirm`` can receive
     KeyboardInterrupt / Abort instead of the asyncio turn being cancelled.
     """
     token = _allow_task_cancel.set(False)
@@ -38,21 +40,34 @@ def pause_task_cancel_for_prompt() -> Generator[None]:
     previous: SigHandler = signal.SIG_DFL
     try:
         try:
-            import asyncio
-
             loop = asyncio.get_running_loop()
             _ = loop.remove_signal_handler(signal.SIGINT)
             loop_handler_removed = True
         except (RuntimeError, NotImplementedError, ValueError):
             loop_handler_removed = False
 
-        previous = signal.getsignal(signal.SIGINT)
-        _ = signal.signal(signal.SIGINT, signal.default_int_handler)
+        try:
+            previous = signal.getsignal(signal.SIGINT)
+            _ = signal.signal(signal.SIGINT, signal.default_int_handler)
+        except ValueError:
+            # Not on the main thread — skip OS signal rebinding.
+            previous = signal.SIG_DFL
         yield
     finally:
-        _ = signal.signal(signal.SIGINT, previous)  # type: ignore[arg-type]
+        with contextlib.suppress(ValueError):
+            _ = signal.signal(signal.SIGINT, previous)  # type: ignore[arg-type]
         reinstall = _reinstall_holder[0]
         if loop_handler_removed and reinstall is not None:
             with contextlib.suppress(RuntimeError, NotImplementedError, ValueError):
                 reinstall()
         _allow_task_cancel.reset(token)
+
+
+async def run_in_prompt_thread[**P, R](func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    """Run a blocking TTY prompt off the event loop with cancel paused.
+
+    Pause/SIGINT rebinding happens on the main thread; only the prompt body
+    runs in a worker so the asyncio loop stays free and turn cancel is disabled.
+    """
+    with pause_task_cancel_for_prompt():
+        return await asyncio.to_thread(func, *args, **kwargs)

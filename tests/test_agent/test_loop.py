@@ -280,6 +280,48 @@ async def test_max_rounds_continue_hook() -> None:
     assert len(client.calls) == 3  # noqa: PLR2004
 
 
+async def test_max_rounds_async_continue_hook() -> None:
+    @tool
+    def ping() -> str:
+        return "pong"
+
+    registry = ToolRegistry([ping])
+    forever = _response(
+        AssistantChatMessage(
+            content="",
+            tool_calls=[
+                AssistantFunctionToolCall(
+                    id="c",
+                    function=AssistantFunctionTool(name="ping", arguments="{}"),
+                )
+            ],
+        )
+    )
+    final = _response(AssistantChatMessage(content="done"))
+    client = ScriptedClient([forever, forever, final])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="x")]
+    asks: list[str] = []
+
+    async def on_limit(reason: str) -> bool:
+        asks.append(reason)
+        return True
+
+    events = [
+        e
+        async for e in run_chat_loop(
+            client,
+            messages,
+            model="m",
+            tools=registry,
+            max_rounds=2,
+            on_limit=on_limit,
+        )
+    ]
+    assert len(asks) == 1
+    assert any(isinstance(e, MaxRoundsEvent) and e.continued for e in events)
+    assert any(isinstance(e, TextDeltaEvent) and e.content == "done" for e in events)
+
+
 async def test_default_max_rounds_is_generous() -> None:
     from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 

@@ -78,7 +78,10 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     finally:
         set_sigint_reinstall(None)
         if installed:
-            _ = loop.remove_signal_handler(signal.SIGINT)
+            with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+                _ = loop.remove_signal_handler(signal.SIGINT)
+        # Only cancel if still running (e.g. KeyboardInterrupt path above).
+        # Do not cancel a finished task — that would mask success.
         if not task.done():
             _ = task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

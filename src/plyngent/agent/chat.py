@@ -8,7 +8,7 @@ from .budget import DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_TOOL_RESULT_MAX_CHARS
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
     from plyngent.memory import MemoryStore
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .events import AgentEvent
     from .tools import ToolRegistry
 
-    type LimitContinueHook = Callable[[str], bool]
+    type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
 
 class ChatAgent:

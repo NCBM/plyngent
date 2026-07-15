@@ -13,7 +13,10 @@ from plyngent.typedef import JSONSchema  # noqa: TC001
 
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
 type DangerClassifier = Callable[[str, Mapping[str, object]], str | None]
-type ToolConfirmHook = Callable[[str, Mapping[str, object], str], bool]
+type ToolConfirmHook = Callable[
+    [str, Mapping[str, object], str],
+    bool | Awaitable[bool],
+]
 
 _PRIMITIVE_SCHEMA: dict[type, JSONSchema] = {
     str: {"type": "string"},
@@ -215,7 +218,10 @@ class ToolRegistry:
             reason = self._danger(name, args)
             if reason is None:
                 return None
-            if self._on_confirm(name, args, reason):
+            allowed = self._on_confirm(name, args, reason)
+            if inspect.isawaitable(allowed):
+                allowed = await allowed
+            if allowed:
                 return None
         return f"error: user denied tool {name!r} ({reason})"
 
