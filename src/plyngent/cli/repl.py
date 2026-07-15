@@ -54,14 +54,20 @@ _CONTENT_PREVIEW = 200
 
 
 def _cmd_status(state: ReplState) -> None:
+    from plyngent.agent.budget import estimate_messages_chars
+
     pending = state.agent.pending_retry_text
     pending_disp = "yes" if pending else "no"
+    ctx_chars = estimate_messages_chars(state.agent.messages)
+    ctx_budget = state.agent.max_context_chars
     click.echo(
         f"provider={state.provider_name}  model={state.model}\n"
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
         f"pending_retry={pending_disp}\n"
         f"tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
+        f"context_chars={ctx_chars}/{ctx_budget}  "
+        f"tool_result_max={state.agent.max_tool_result_chars}\n"
         f"workspace={state.workspace}"
     )
 

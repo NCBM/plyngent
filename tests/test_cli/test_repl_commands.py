@@ -140,3 +140,16 @@ async def test_rounds(state: ReplState) -> None:
     assert await handle_slash(state, "/rounds 40") is True
     assert state.max_rounds == 40  # noqa: PLR2004
     assert state.agent.max_rounds == 40  # noqa: PLR2004
+
+
+async def test_status_shows_context_chars(
+    state: ReplState, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from plyngent.lmproto.openai_compatible.model import UserChatMessage
+
+    state.agent.messages = [UserChatMessage(content="hello")]
+    assert await handle_slash(state, "/status") is True
+    out = capsys.readouterr().out
+    assert "context_chars=" in out
+    assert "tool_result_max=" in out
+    assert str(state.workspace) in out
