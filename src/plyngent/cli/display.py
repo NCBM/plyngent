@@ -29,8 +29,19 @@ def _preview(text: str, limit: int) -> str:
     return text[:limit] + "…"
 
 
+def _echo_stream(text: str) -> None:
+    """Write without newline and flush so assistant text appears token-by-token."""
+    click.echo(text, nl=False)
+    try:
+        import sys
+
+        _ = sys.stdout.flush()
+    except OSError:
+        pass
+
+
 async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C901, PLR0912
-    """Print agent events to the terminal."""
+    """Print agent events to the terminal (text deltas stream as they arrive)."""
     printed_text = False
     async for event in events:
         if isinstance(event, TextDeltaEvent):
@@ -38,7 +49,7 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
                 click.echo()
                 click.secho("assistant: ", fg="cyan", nl=False)
                 printed_text = True
-            click.echo(event.content, nl=False)
+            _echo_stream(event.content)
         elif isinstance(event, ToolCallEvent):
             call = event.tool_call
             if isinstance(call, AssistantFunctionToolCall):
