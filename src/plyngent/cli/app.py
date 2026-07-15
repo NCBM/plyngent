@@ -140,7 +140,7 @@ async def _run_oneshot(state: ReplState, prompt_text: str) -> int:
     return EXIT_OK if ok else EXIT_TURN_FAILED
 
 
-async def _run_chat(
+async def _run_chat(  # noqa: C901 — chat orchestration
     *,
     config_path: Path | None,
     provider_name: str | None,
@@ -166,22 +166,36 @@ async def _run_chat(
         names = ", ".join(sorted(store.bad_providers.keys()))
         click.secho(f"warning: ignored bad providers: {names}", fg="yellow", err=True)
 
-    try:
-        pname, provider = select_provider(
-            store.providers,
-            preferred=provider_name,
-            interactive=interactive,
-        )
-        model_id = select_model(provider, preferred=model, interactive=interactive)
-        _ = create_client(provider)
-    except ProviderNotSupportedError as exc:
-        raise click.ClickException(str(exc)) from exc
-
     _setup_workspace_and_hooks(store, workspace, interactive=interactive)
     confirm_destructive: bool | None = False if yes else None
 
     memory = await MemoryStore.open(_database_config(store, quiet=quiet or oneshot))
     try:
+        # Prefer session-remembered LLM when resuming (unless flags override).
+        preferred_provider = provider_name
+        preferred_model = model
+        if not oneshot and not new_session and preferred_provider is None:
+            if session_id is not None:
+                row = await memory.get_session(session_id)
+            else:
+                row = await memory.get_latest_session(workspace=workspace)
+            if row is not None:
+                if preferred_provider is None and row.provider_name:
+                    preferred_provider = row.provider_name
+                if preferred_model is None and row.model:
+                    preferred_model = row.model
+
+        try:
+            pname, provider = select_provider(
+                store.providers,
+                preferred=preferred_provider,
+                interactive=interactive,
+            )
+            model_id = select_model(provider, preferred=preferred_model, interactive=interactive)
+            _ = create_client(provider)
+        except ProviderNotSupportedError as exc:
+            raise click.ClickException(str(exc)) from exc
+
         state = ReplState(
             config=store,
             memory=memory,
@@ -205,6 +219,8 @@ async def _run_chat(
             oneshot=oneshot,
             quiet=quiet,
         )
+        # Ensure new sessions / flag overrides are stored for next resume.
+        await state.persist_llm_selection()
 
         if oneshot:
             assert prompt_text is not None

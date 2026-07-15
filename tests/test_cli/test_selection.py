@@ -38,11 +38,23 @@ def test_select_model_from_list() -> None:
     assert select_model(provider, preferred="m1") == "m1"
 
 
-def test_select_model_prompt_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_model_prompt_when_empty() -> None:
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
     provider = OpenAIProvider(access_key_or_token="sk")
+    with temporary_backend(ScriptedBackend(["gpt-test"])):
+        assert select_model(provider) == "gpt-test"
 
-    def _prompt(*_args: object, **_kwargs: object) -> str:
-        return "gpt-test"
 
-    monkeypatch.setattr("click.prompt", _prompt)
-    assert select_model(provider) == "gpt-test"
+def test_select_provider_interactive_choose() -> None:
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    providers = {
+        "a": OpenAIProvider(access_key_or_token="sk"),
+        "b": OpenAICompatibleProvider(access_key_or_token="sk", url="https://x/v1"),
+    }
+    with temporary_backend(ScriptedBackend(["2"])):
+        name, _ = select_provider(providers)
+    assert name == "b"

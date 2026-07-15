@@ -38,7 +38,11 @@ def test_session_export_json_roundtrip() -> None:
         created_at=now,
         updated_at=now,
         messages=messages,
+        provider_name="local",
+        model="tiny",
     )
+    assert payload.get("provider") == "local"
+    assert payload.get("model") == "tiny"
     assert isinstance(payload, dict)
     raw = encode_session_export_json(payload)
     assert "7" in raw

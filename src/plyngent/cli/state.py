@@ -126,8 +126,77 @@ class ReplState:
             return
         self._set_workspace(Path(row.workspace))
 
+    async def persist_llm_selection(self) -> None:
+        """Write current provider/model onto the active session row (if any)."""
+        if self.session_id is None:
+            return
+        _ = await self.memory.update_session_llm(
+            self.session_id,
+            provider_name=self.provider_name,
+            model=self.model,
+        )
+
+    def _try_set_provider(self, pname: str) -> bool:
+        import click
+
+        from plyngent.cli.selection import select_provider
+        from plyngent.runtime import ProviderNotSupportedError
+
+        if pname not in self.config.providers:
+            return False
+        try:
+            name, provider = select_provider(
+                self.config.providers,
+                preferred=pname,
+                interactive=False,
+            )
+        except click.ClickException, ProviderNotSupportedError:
+            return False
+        if name != self.provider_name or provider is not self.provider:
+            self.provider_name = name
+            self.provider = provider
+            return True
+        return False
+
+    def _try_set_model(self, model_id: str) -> bool:
+        import click
+
+        from plyngent.cli.selection import select_model
+
+        try:
+            resolved = select_model(self.provider, preferred=model_id, interactive=False)
+        except click.ClickException:
+            return False
+        if resolved != self.model:
+            self.model = resolved
+            return True
+        return False
+
+    def apply_session_llm(self, row: SessionRow) -> bool:
+        """Apply stored provider/model from ``row`` when still valid in config.
+
+        Returns True when selection changed (caller should rebuild agent).
+        """
+        changed = False
+        pname = row.provider_name
+        if pname:
+            changed = self._try_set_provider(pname) or changed
+            if row.model and self._try_set_model(row.model):
+                changed = True
+            elif changed and self.provider.models and self.model not in self.provider.models:
+                self.model = next(iter(sorted(self.provider.models.keys())))
+            return changed
+        if row.model:
+            return self._try_set_model(row.model)
+        return False
+
     async def new_session(self, name: str = "chat") -> None:
-        session = await self.memory.create_session(name=name, workspace=self.workspace)
+        session = await self.memory.create_session(
+            name=name,
+            workspace=self.workspace,
+            provider_name=self.provider_name,
+            model=self.model,
+        )
         self.session_id = session.sid
         self.agent = self._make_agent()
 
@@ -180,7 +249,10 @@ class ReplState:
                     raise ValueError(msg) from exc
 
         self.session_id = session_id
-        self.agent = self._make_agent()
+        if self.apply_session_llm(row):
+            self.rebuild_client()
+        else:
+            self.agent = self._make_agent()
         await self.agent.load_history()
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
@@ -191,7 +263,10 @@ class ReplState:
             return "new"
         # Same-workspace list: no mismatch prompt expected.
         self.session_id = latest.sid
-        self.agent = self._make_agent()
+        if self.apply_session_llm(latest):
+            self.rebuild_client()
+        else:
+            self.agent = self._make_agent()
         await self.agent.load_history()
         _ = await self.memory.touch_session(latest.sid)
         return "resume"

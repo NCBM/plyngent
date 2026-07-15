@@ -48,7 +48,7 @@ TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]
 
 ### Memory (`memory/`)
 
-Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `ALTER` for new columns), default local user, sessions (bound to `workspace` path), messages stored as msgspec chat message JSON.
+Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `ALTER` for new columns), default local user, sessions (bound to `workspace` path; optional `provider_name`/`model`), messages stored as msgspec chat message JSON.
 
 ### Agent (`agent/`)
 
@@ -83,7 +83,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
-- **`plyngent chat`**: provider/model (flags or interactive); SQLite sessions via `[database]` (file DB under user data if unset/`:memory:`); sessions bound to workspace; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes`, `--stream/--no-stream`, `--quiet`. Root `--log-level`.
+- **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes`, `--stream/--no-stream`, `--quiet`. Root `--log-level`.
 - Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
 - Failed/cancelled turns: user message kept; partial assistant/tool rolled back; Ctrl+C cancels turn; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.

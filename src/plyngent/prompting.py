@@ -47,7 +47,13 @@ class PromptBackend(Protocol):
 
     def is_interactive(self) -> bool: ...
 
-    def read_line(self, prompt: str, *, default: str | None = None) -> str: ...
+    def read_line(
+        self,
+        prompt: str,
+        *,
+        default: str | None = None,
+        completions: Sequence[str] | None = None,
+    ) -> str: ...
 
     def confirm(self, prompt: str, *, default: bool = False) -> bool: ...
 
@@ -56,20 +62,60 @@ class PromptBackend(Protocol):
     def secho(self, message: str, *, fg: str | None = None, err: bool = False) -> None: ...
 
 
+def _readline_input(prompt: str, *, completions: Sequence[str] | None = None) -> str:
+    """``input()`` with optional Tab completion via readline when available."""
+    try:
+        import readline
+    except ImportError:
+        return input(prompt)
+
+    previous_completer = readline.get_completer()
+    previous_delims = readline.get_completer_delims()
+    options = list(completions or ())
+
+    def completer(text: str, state: int) -> str | None:
+        matches = [c for c in options if c.startswith(text)] if text else list(options)
+        if state < len(matches):
+            return matches[state]
+        return None
+
+    try:
+        readline.set_completer_delims(" \t\n")
+        readline.set_completer(completer if options else None)
+        # GNU readline + libedit bindings (best-effort).
+        with contextlib.suppress(Exception):
+            _ = readline.parse_and_bind("tab: complete")
+        with contextlib.suppress(Exception):
+            _ = readline.parse_and_bind("bind ^I rl_complete")
+        return input(prompt)
+    finally:
+        readline.set_completer(previous_completer)
+        with contextlib.suppress(Exception):
+            readline.set_completer_delims(previous_delims)
+
+
 class ClickPromptBackend:
-    """Click/TTY backend for interactive prompts."""
+    """Click/TTY backend for interactive prompts (readline + Tab when available)."""
 
     def is_interactive(self) -> bool:
         return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
-    def read_line(self, prompt: str, *, default: str | None = None) -> str:
+    def read_line(
+        self,
+        prompt: str,
+        *,
+        default: str | None = None,
+        completions: Sequence[str] | None = None,
+    ) -> str:
         try:
-            if default is None:
-                return str(click.prompt(prompt, prompt_suffix=": "))
-            return str(click.prompt(prompt, default=default, show_default=True, prompt_suffix=": "))
-        except (click.Abort, KeyboardInterrupt, EOFError) as exc:
+            display = f"{prompt} [{default}]: " if default is not None else f"{prompt}: "
+            raw = _readline_input(display, completions=completions)
+        except (KeyboardInterrupt, EOFError) as exc:
             msg = "prompt cancelled"
             raise NonInteractiveError(msg) from exc
+        if not raw.strip() and default is not None:
+            return default
+        return raw
 
     def confirm(self, prompt: str, *, default: bool = False) -> bool:
         try:
@@ -91,7 +137,14 @@ class NonInteractiveBackend:
     def is_interactive(self) -> bool:
         return False
 
-    def read_line(self, prompt: str, *, default: str | None = None) -> str:
+    def read_line(
+        self,
+        prompt: str,
+        *,
+        default: str | None = None,
+        completions: Sequence[str] | None = None,
+    ) -> str:
+        del completions
         if default is not None:
             return default
         msg = f"non-interactive: cannot prompt for {prompt!r}"
@@ -184,14 +237,22 @@ def _show_choices(
         backend.echo("  (or type a custom answer)")
 
 
-def ask(prompt: str, *, default: str | None = None) -> str:
-    """Free-form question; always allows arbitrary user text."""
+def ask(
+    prompt: str,
+    *,
+    default: str | None = None,
+    completions: Sequence[str] | None = None,
+) -> str:
+    """Free-form question; always allows arbitrary user text.
+
+    Optional ``completions`` enable Tab completion when the backend supports it.
+    """
     backend = get_prompt_backend()
     if not backend.is_interactive() and default is None:
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
     backend.secho(prompt, fg="yellow")
-    return backend.read_line("Answer", default=default).strip()
+    return backend.read_line("Answer", default=default, completions=completions).strip()
 
 
 def choose(
@@ -210,13 +271,24 @@ def choose(
 
     _show_choices(backend, prompt, choices, allow_custom=allow_custom)
     default_display = _default_display(choices, default)
+    # Tab: indices, labels, and resolved values.
+    completions: list[str] = []
+    for index, option in enumerate(choices, start=1):
+        completions.append(str(index))
+        completions.append(option.label)
+        if option.resolved_value != option.label:
+            completions.append(option.resolved_value)
 
     if not backend.is_interactive() and default is None:
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
 
     while True:
-        raw = backend.read_line("Choice", default=default_display).strip()
+        raw = backend.read_line(
+            "Choice",
+            default=default_display,
+            completions=completions,
+        ).strip()
         if not raw:
             if default is not None:
                 return default

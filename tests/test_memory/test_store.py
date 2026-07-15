@@ -129,6 +129,24 @@ async def test_delete_session_cascades_messages(store: MemoryStore) -> None:
     assert await store.delete_session(session.sid) is False
 
 
+async def test_session_llm_remembered(store: MemoryStore) -> None:
+    session = await store.create_session(
+        name="llm",
+        provider_name="deepseek",
+        model="deepseek-v4-flash",
+    )
+    row = await store.get_session(session.sid)
+    assert row is not None
+    assert row.provider_name == "deepseek"
+    assert row.model == "deepseek-v4-flash"
+    updated = await store.update_session_llm(session.sid, model="deepseek-v4-pro")
+    assert updated.provider_name == "deepseek"
+    assert updated.model == "deepseek-v4-pro"
+    again = await store.update_session_llm(session.sid, provider_name="other")
+    assert again.provider_name == "other"
+    assert again.model == "deepseek-v4-pro"
+
+
 async def test_update_session_workspace(store: MemoryStore, tmp_path: object) -> None:
     from pathlib import Path
 

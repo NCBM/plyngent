@@ -173,6 +173,23 @@ async def test_rename_slash(state: ReplState) -> None:
     assert row.name == "my-chat"
 
 
+async def test_model_switch_persists(state: ReplState) -> None:
+    from plyngent.config.models import ModelConfig
+
+    state.provider.models = {
+        "m1": ModelConfig(),
+        "m2": ModelConfig(),
+    }
+    state.model = "m1"
+    await state.persist_llm_selection()
+    assert await handle_slash(state, "/model m2") is True
+    assert state.model == "m2"
+    assert state.session_id is not None
+    row = await state.memory.get_session(state.session_id)
+    assert row is not None
+    assert row.model == "m2"
+
+
 async def test_delete_slash_confirm(
     state: ReplState,
     capsys: pytest.CaptureFixture[str],

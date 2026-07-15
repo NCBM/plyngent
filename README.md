@@ -85,7 +85,7 @@ plyngent chat --session 3
 | `--yes` | Allow destructive tools without confirm (also for one-shot) |
 | `--log-level` | On the root CLI: `DEBUG`, `INFO`, `WARNING`, … |
 
-Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`.
+Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`. Each session remembers the last **provider** and **model** (restored on resume so you are not re-prompted).
 
 ### One-shot (scripts / CI)
 

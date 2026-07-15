@@ -455,6 +455,8 @@ def export_cmd(state: ReplState, parts: tuple[str, ...]) -> None:
                 created_at=row.created_at,
                 updated_at=row.updated_at,
                 messages=messages,
+                provider_name=row.provider_name,
+                model=row.model,
             )
         )
     else:
@@ -526,8 +528,12 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
         pname, provider = select_provider(state.config.providers, preferred=name.strip())
         state.provider_name = pname
         state.provider = provider
+        # Keep model if still listed; else first model on the new provider.
+        if state.model not in provider.models and provider.models:
+            state.model = next(iter(sorted(provider.models.keys())))
         state.rebuild_client()
-        click.echo(f"switched provider to {pname}")
+        _await(state.persist_llm_selection())
+        click.echo(f"switched provider to {pname}  model={state.model}")
     except (click.ClickException, ProviderNotSupportedError) as exc:
         click.echo(f"error: {exc}")
 
@@ -543,6 +549,7 @@ def model_cmd(state: ReplState, model_id: str | None) -> None:
     try:
         state.model = select_model(state.provider, preferred=model_id.strip())
         state.rebuild_client()
+        _await(state.persist_llm_selection())
         click.echo(f"switched model to {state.model}")
     except click.ClickException as exc:
         click.echo(f"error: {exc}")

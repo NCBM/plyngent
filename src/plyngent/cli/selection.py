@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 import click
 
+from plyngent.prompting import ChoiceOption, choose
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -16,7 +18,7 @@ def select_provider(
     preferred: str | None = None,
     interactive: bool = True,
 ) -> tuple[str, Provider]:
-    """Pick a provider by name or interactive prompt."""
+    """Pick a provider by name or interactive prompt (readline + Tab)."""
     if not providers:
         msg = "no providers configured; edit your plyngent.toml"
         raise click.ClickException(msg)
@@ -37,11 +39,15 @@ def select_provider(
         msg = f"multiple providers; pass --provider ({', '.join(names)})"
         raise click.ClickException(msg)
 
-    click.echo("Available providers:")
-    for index, name in enumerate(names, start=1):
-        preset = type(providers[name]).__struct_config__.tag
-        click.echo(f"  {index}. {name} ({preset})")
-    choice = click.prompt("Select provider", type=click.Choice(names), show_choices=True)
+    options = [
+        ChoiceOption(
+            label=name,
+            description=str(type(providers[name]).__struct_config__.tag),
+            value=name,
+        )
+        for name in names
+    ]
+    choice = choose("Select provider", options, allow_custom=False)
     return choice, providers[choice]
 
 
@@ -51,7 +57,7 @@ def select_model(
     preferred: str | None = None,
     interactive: bool = True,
 ) -> str:
-    """Pick a model id from provider.models or free-form prompt."""
+    """Pick a model id from provider.models or free-form prompt (readline + Tab)."""
     model_names = sorted(provider.models.keys())
     if preferred is not None:
         if model_names and preferred not in provider.models:
@@ -72,9 +78,12 @@ def select_model(
         raise click.ClickException(msg)
 
     if model_names:
-        click.echo("Available models:")
-        for index, name in enumerate(model_names, start=1):
-            click.echo(f"  {index}. {name}")
-        return click.prompt("Select model", type=click.Choice(model_names), show_choices=True)
+        return choose(
+            "Select model",
+            model_names,
+            allow_custom=False,
+        )
 
-    return click.prompt("Model id (not listed in config)", type=str)
+    from plyngent.prompting import ask
+
+    return ask("Model id (not listed in config)")

@@ -29,6 +29,9 @@ class Session(PlyngentBase):
     name: Mapped[str] = mapped_column(String(64))
     # Absolute workspace path this chat is bound to (tools root); null = legacy unbound.
     workspace: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
+    # Last selected provider/model for this session (config provider key + model id).
+    provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

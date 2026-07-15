@@ -34,6 +34,8 @@ def session_export_payload(
     created_at: datetime | None,
     updated_at: datetime | None,
     messages: Sequence[AnyChatMessage],
+    provider_name: str | None = None,
+    model: str | None = None,
 ) -> dict[str, object]:
     """Build a JSON-serializable dict for a session transcript.
 
@@ -44,6 +46,8 @@ def session_export_payload(
         "session_id": sid,
         "name": name,
         "workspace": workspace,
+        "provider": provider_name,
+        "model": model,
         "created_at": _iso(created_at),
         "updated_at": _iso(updated_at),
         "messages": [msgspec.to_builtins(m) for m in messages],

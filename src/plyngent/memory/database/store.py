@@ -67,6 +67,7 @@ class MemoryStore:
         async with self._engine.begin() as conn:
             _ = await conn.run_sync(PlyngentBase.metadata.create_all)
             await conn.run_sync(_migrate_session_workspace)
+            await conn.run_sync(_migrate_session_llm)
 
     async def close(self) -> None:
         """Dispose the underlying engine."""
@@ -100,17 +101,26 @@ class MemoryStore:
         uid: int | None = None,
         name: str = "default",
         workspace: str | Path | None = None,
+        provider_name: str | None = None,
+        model: str | None = None,
     ) -> Session:
         """Create a chat session for ``uid`` (default local user when omitted).
 
         ``workspace`` is stored as a resolved absolute path when provided.
+        Optional ``provider_name`` / ``model`` remember LLM selection for resume.
         """
         if uid is None:
             user = await self.ensure_default_user()
             uid = user.uid
         ws = normalize_workspace(workspace)
         async with self._session_factory() as session:
-            row = Session(uid=uid, name=name, workspace=ws)
+            row = Session(
+                uid=uid,
+                name=name,
+                workspace=ws,
+                provider_name=provider_name,
+                model=model,
+            )
             session.add(row)
             await session.commit()
             await session.refresh(row)
@@ -171,6 +181,28 @@ class MemoryStore:
                 msg = f"session not found: {sid}"
                 raise ValueError(msg)
             row.workspace = ws
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def update_session_llm(
+        self,
+        sid: int,
+        *,
+        provider_name: str | None = None,
+        model: str | None = None,
+    ) -> Session:
+        """Update remembered provider/model for a session (omit a field to leave it)."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            if provider_name is not None:
+                row.provider_name = provider_name
+            if model is not None:
+                row.model = model
             row.updated_at = datetime.now(UTC)
             await session.commit()
             await session.refresh(row)
@@ -244,14 +276,35 @@ class MemoryStore:
             return result.scalars().all()
 
 
+def _session_columns(sync_conn: object) -> set[str]:
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return set()
+    rows = sync_conn.execute(text("PRAGMA table_info(session)")).fetchall()
+    return {str(row[1]) for row in rows}
+
+
 def _migrate_session_workspace(sync_conn: object) -> None:
     """Add ``session.workspace`` on existing SQLite DBs created before the column existed."""
     from sqlalchemy.engine import Connection
 
     if not isinstance(sync_conn, Connection):
         return
-    rows = sync_conn.execute(text("PRAGMA table_info(session)")).fetchall()
-    columns = {str(row[1]) for row in rows}
+    columns = _session_columns(sync_conn)
     if "workspace" in columns:
         return
     _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN workspace VARCHAR(1024)"))
+
+
+def _migrate_session_llm(sync_conn: object) -> None:
+    """Add ``session.provider_name`` / ``session.model`` for remembered LLM selection."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    columns = _session_columns(sync_conn)
+    if "provider_name" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN provider_name VARCHAR(128)"))
+    if "model" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN model VARCHAR(256)"))

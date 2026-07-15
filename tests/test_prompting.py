@@ -27,8 +27,14 @@ class ScriptedBackend:
     def is_interactive(self) -> bool:
         return self.interactive
 
-    def read_line(self, prompt: str, *, default: str | None = None) -> str:
-        del prompt
+    def read_line(
+        self,
+        prompt: str,
+        *,
+        default: str | None = None,
+        completions: object = None,
+    ) -> str:
+        del prompt, completions
         if self.lines:
             return self.lines.pop(0)
         if default is not None:
