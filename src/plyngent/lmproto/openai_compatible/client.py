@@ -18,6 +18,7 @@ from .model import (
     ModelsResponse,
     StreamToolCallDelta,
 )
+from .responses_model import Response, ResponseDeleted, ResponsesCreateParam, ResponseStreamEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -77,11 +78,16 @@ def sse_data_payload(line: bytes) -> bytes | None | Literal[False]:
     return payload
 
 
-def http_error_message(status_code: int, body: bytes | str | None = None) -> str | None:
+def http_error_message(
+    status_code: int,
+    body: bytes | str | None = None,
+    *,
+    what: str = "request",
+) -> str | None:
     """Return an error string for HTTP ``status_code`` >= 400, else ``None``."""
     if status_code < _HTTP_ERROR:
         return None
-    msg = f"chat completions HTTP {status_code}"
+    msg = f"{what} HTTP {status_code}"
     if body is None:
         return msg
     if isinstance(body, (bytes, bytearray)):
@@ -97,6 +103,9 @@ class BaseOpenAIClient:
     decoder: msgspec.json.Decoder[ChatCompletionResponse]
     chunk_decoder: msgspec.json.Decoder[ChatCompletionChunk]
     models_decoder: msgspec.json.Decoder[ModelsResponse]
+    response_decoder: msgspec.json.Decoder[Response]
+    response_deleted_decoder: msgspec.json.Decoder[ResponseDeleted]
+    response_event_decoder: msgspec.json.Decoder[ResponseStreamEvent]
 
     def __init__(self, config: OpenAIConfig) -> None:
         self.session = niquests.AsyncSession(
@@ -107,6 +116,9 @@ class BaseOpenAIClient:
         self.decoder = msgspec.json.Decoder(ChatCompletionResponse)
         self.chunk_decoder = msgspec.json.Decoder(ChatCompletionChunk)
         self.models_decoder = msgspec.json.Decoder(ModelsResponse)
+        self.response_decoder = msgspec.json.Decoder(Response)
+        self.response_deleted_decoder = msgspec.json.Decoder(ResponseDeleted)
+        self.response_event_decoder = msgspec.json.Decoder(ResponseStreamEvent)
 
     async def models(self) -> list[str]:
         """List model ids via OpenAI-compatible ``GET /models``.
@@ -114,19 +126,12 @@ class BaseOpenAIClient:
         Returns sorted unique ``id`` values from the response ``data`` array.
         """
         resp = await self.session.get("/models", stream=False)
-        await self._ensure_ok(resp)
-        body = await read_response_body(resp)
-        if body is None:
-            msg = "models response body is empty"
-            raise RuntimeError(msg)
-        if not isinstance(body, (bytes, bytearray)):
-            msg = f"models response body has unexpected type {type(body)!r}"
-            raise TypeError(msg)
-        parsed = self.models_decoder.decode(bytes(body))
+        body = await self._read_json_body(resp, what="models")
+        parsed = self.models_decoder.decode(body)
         ids = {item.id for item in parsed.data if item.id}
         return sorted(ids)
 
-    async def _ensure_ok(self, resp: object) -> None:
+    async def _ensure_ok(self, resp: object, *, what: str = "request") -> None:
         """Raise if the HTTP response is an error (stream or non-stream)."""
         status = getattr(resp, "status_code", None)
         if not isinstance(status, int):
@@ -136,7 +141,7 @@ class BaseOpenAIClient:
         body: bytes | str | None = None
         if status >= _HTTP_ERROR:
             body = await read_response_body(resp)
-        msg = http_error_message(status, body)
+        msg = http_error_message(status, body, what=what)
         if msg is None:
             return
         if hasattr(resp, "close") or hasattr(resp, "aclose"):
@@ -146,7 +151,7 @@ class BaseOpenAIClient:
     async def _parse_sse(self, resp: AsyncResponse) -> AsyncIterator[ChatCompletionChunk]:
         """Yield SSE chunks; stop at ``data: [DONE]`` so we do not hang on keep-alive."""
         try:
-            await self._ensure_ok(resp)
+            await self._ensure_ok(resp, what="chat completions")
             async for raw in resp.iter_lines():
                 if not raw:
                     continue
@@ -158,6 +163,33 @@ class BaseOpenAIClient:
                 yield self.chunk_decoder.decode(parsed)
         finally:
             await _close_async_response(resp)
+
+    async def _parse_response_sse(self, resp: AsyncResponse) -> AsyncIterator[ResponseStreamEvent]:
+        """Yield Responses API SSE events; stop at ``data: [DONE]``."""
+        try:
+            await self._ensure_ok(resp, what="responses")
+            async for raw in resp.iter_lines():
+                if not raw:
+                    continue
+                parsed = sse_data_payload(bytes(raw))
+                if parsed is None:
+                    continue
+                if parsed is False:
+                    break
+                yield self.response_event_decoder.decode(parsed)
+        finally:
+            await _close_async_response(resp)
+
+    async def _read_json_body(self, resp: object, *, what: str) -> bytes:
+        await self._ensure_ok(resp, what=what)
+        body = await read_response_body(resp)
+        if body is None:
+            msg = f"{what} response body is empty"
+            raise RuntimeError(msg)
+        if not isinstance(body, (bytes, bytearray)):
+            msg = f"{what} response body has unexpected type {type(body)!r}"
+            raise TypeError(msg)
+        return bytes(body)
 
 
 class OpenAIClient(BaseOpenAIClient):
@@ -194,15 +226,53 @@ class OpenAIClient(BaseOpenAIClient):
             headers={"Content-Type": "application/json"},
             stream=False,
         )
-        await self._ensure_ok(resp)
-        body = await read_response_body(resp)
-        if body is None:
-            msg = "chat completions response body is empty"
-            raise RuntimeError(msg)
-        if not isinstance(body, (bytes, bytearray)):
-            msg = f"chat completions response body has unexpected type {type(body)!r}"
-            raise TypeError(msg)
-        return self.decoder.decode(bytes(body))
+        body = await self._read_json_body(resp, what="chat completions")
+        return self.decoder.decode(body)
+
+    @overload
+    async def responses(
+        self, param: ResponsesCreateParam, *, stream: Literal[False] = False
+    ) -> Response: ...
+
+    @overload
+    async def responses(
+        self, param: ResponsesCreateParam, *, stream: Literal[True]
+    ) -> AsyncIterator[ResponseStreamEvent]: ...
+
+    async def responses(
+        self, param: ResponsesCreateParam, *, stream: bool = False
+    ) -> Response | AsyncIterator[ResponseStreamEvent]:
+        """Create a model response via OpenAI ``POST /responses``."""
+        param = msgspec.structs.replace(param, stream=stream)
+        data = self.encoder.encode(param)
+        if stream:
+            resp = await self.session.post(
+                "/responses",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                stream=True,
+            )
+            return self._parse_response_sse(resp)
+        resp = await self.session.post(
+            "/responses",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            stream=False,
+        )
+        body = await self._read_json_body(resp, what="responses")
+        return self.response_decoder.decode(body)
+
+    async def get_response(self, response_id: str) -> Response:
+        """Retrieve a stored response via ``GET /responses/{id}``."""
+        resp = await self.session.get(f"/responses/{response_id}", stream=False)
+        body = await self._read_json_body(resp, what="responses")
+        return self.response_decoder.decode(body)
+
+    async def delete_response(self, response_id: str) -> ResponseDeleted:
+        """Delete a stored response via ``DELETE /responses/{id}``."""
+        resp = await self.session.delete(f"/responses/{response_id}", stream=False)
+        body = await self._read_json_body(resp, what="responses")
+        return self.response_deleted_decoder.decode(body)
 
 
 def merge_stream_tool_calls(deltas: list[StreamToolCallDelta]) -> list[AssistantFunctionToolCall]:
