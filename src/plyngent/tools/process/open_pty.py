@@ -10,10 +10,11 @@ from .pty_session import PtyManager
 
 @tool
 def open_pty(command: list[str], *, cwd: str = ".") -> str:
-    """Open a Unix PTY session running ``command`` (argv) under the workspace.
+    """Open a PTY session running ``command`` (argv) under the workspace.
 
-    Returns structured status including session_id. Not supported on Windows.
-    Failed exec surfaces via later read_pty data (marker) and exit_code=127.
+    POSIX uses openpty/fork; Windows uses ConPTY (pywinpty). Returns structured
+    status including session_id. Failed exec may surface via later read_pty
+    data (marker) and a non-zero exit_code.
     """
     try:
         session = PtyManager.open(command, cwd=cwd)

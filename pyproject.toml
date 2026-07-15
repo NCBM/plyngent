@@ -14,7 +14,8 @@ dependencies = [
   "sqlalchemy>=2.0.51",
   "aiosqlite>=0.22.1",
   "click>=8.4.2",
-  "awaitlet>=0.0.1"
+  "awaitlet>=0.0.1",
+  "pywinpty>=2.0.0; sys_platform == \"win32\""
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
@@ -38,6 +39,8 @@ build-backend = "pdm.backend"
 [tool.basedpyright]
 typeCheckingMode = "recommended"
 strictGenericNarrowing = true
+# winpty is Windows-only (pywinpty); stubs live under typings/ (pyright default stubPath).
+reportMissingModuleSource = "hint"
 reportAny = "hint"
 reportExplicitAny = "hint"
 reportImplicitStringConcatenation = "hint"
@@ -59,6 +62,10 @@ reportMissingParameterType = "none"
 reportUnusedParameter = "none"
 reportMissingImports = "none"
 reportMissingTypeStubs = "none"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "scripts"
+reportUnusedCallResult = "none"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -162,4 +169,8 @@ allowed-confusables = [
   "TC",       # TYPE_CHECKING import churn
   "TRY003",   # long exception messages in tests
   "FBT",      # boolean positional args in helpers
+]
+"scripts/**" = [
+  "T201",     # CLI scripts print status
+  "PLR0911",  # command dispatch returns
 ]

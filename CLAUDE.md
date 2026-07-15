@@ -67,8 +67,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 - **`workspace`**: path resolve under root; path substring denylist; command basename denylist; clearer deny messages.
 - **`file`**: `read_file`, `write_file`, `listdir`, `tree`, `glob_paths`, `grep_files` (regex, skip VCS/binary), `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
-- **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (**Unix only**: `pty`+`fork`).
-- PTY: structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close SIGTERM→SIGKILL.
+- **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (POSIX: `pty`+`fork`; Windows: ConPTY via `pywinpty` env marker dep).
+- PTY: backend in `pty_backend.py`; structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close terminate→kill.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`.
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.

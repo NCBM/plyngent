@@ -246,12 +246,25 @@ async def test_pty_output_budget_is_per_session(workspace: object) -> None:
 def test_pty_master_not_inheritable(workspace: object) -> None:
     del workspace
     import os
+    import sys
+
+    if sys.platform == "win32":
+        import pytest
+
+        pytest.skip("master FD inheritance is POSIX-only")
 
     try:
         opened = call_sync(open_pty, ["sleep", "5"])
         session_id = _session_id(opened)
         session = PtyManager.get(session_id)
         assert session is not None
+        assert session.master_fd is not None
         assert os.get_inheritable(session.master_fd) is False
     finally:
         PtyManager.close_all()
+
+
+def test_pty_backend_available() -> None:
+    from plyngent.tools.process.pty_backend import pty_available
+
+    assert pty_available() is True

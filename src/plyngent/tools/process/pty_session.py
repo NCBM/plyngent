@@ -1,17 +1,13 @@
-"""Unix PTY session registry (requires ``pty`` + ``os.fork``; not supported on Windows)."""
+"""Cross-platform PTY session registry (POSIX openpty/fork; Windows ConPTY)."""
 
 from __future__ import annotations
 
-import contextlib
-import os
-import pty
-import select
-import signal
 import time
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import TYPE_CHECKING, ClassVar
 
+from plyngent.tools.process.pty_backend import PtyHandle, pty_available, spawn_pty
 from plyngent.tools.workspace import WorkspaceError, check_command_allowed, resolve_path
 
 if TYPE_CHECKING:
@@ -27,15 +23,12 @@ DEFAULT_SESSION_OUTPUT_BUDGET = 256_000
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
 _SESSION_LIMIT_STEP = 4
 _BUDGET_STEP = 256_000
-_STDERR_FD = 2
-_EXEC_FAIL_MARKER = b"plyngent-pty-exec-failed: "
 
 
 @dataclass
 class PtySession:
     session_id: int
-    master_fd: int
-    pid: int
+    handle: PtyHandle
     closed: bool = False
     alive: bool = True
     exit_code: int | None = None
@@ -44,6 +37,16 @@ class PtySession:
     bytes_read: int = 0
     output_budget: int = DEFAULT_SESSION_OUTPUT_BUDGET
     command: tuple[str, ...] = ()
+
+    @property
+    def master_fd(self) -> int | None:
+        """POSIX master FD when available (``None`` on Windows ConPTY)."""
+        return self.handle.master_fd
+
+    @property
+    def pid(self) -> int | None:
+        """POSIX child pid when available (``None`` on Windows ConPTY)."""
+        return self.handle.pid
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,9 @@ class PtyManager:
         *,
         cwd: str = ".",
     ) -> PtySession:
+        if not pty_available():
+            msg = "PTY is not available on this platform (Windows needs pywinpty)"
+            raise WorkspaceError(msg)
         check_command_allowed(command)
         workdir = resolve_path(cwd)
         if not workdir.is_dir():
@@ -131,37 +137,18 @@ class PtyManager:
                     msg = f"{reason}; close idle sessions or allow a higher limit"
                     raise WorkspaceError(msg)
 
-        master_fd, slave_fd = pty.openpty()
-        # Parent must not pass master into the child (or future children).
-        with contextlib.suppress(OSError, AttributeError):
-            os.set_inheritable(master_fd, False)  # noqa: FBT003 — stdlib API
-        pid = os.fork()
-        if pid == 0:  # child — keep path fork-then-exec only (no Python after exec fail except _exit)
-            try:
-                os.close(master_fd)
-                _ = os.setsid()
-                _ = os.dup2(slave_fd, 0)
-                _ = os.dup2(slave_fd, 1)
-                _ = os.dup2(slave_fd, _STDERR_FD)
-                if slave_fd > _STDERR_FD:
-                    os.close(slave_fd)
-                _ = os.chdir(workdir)
-                os.execvp(command[0], command)
-            except OSError as exc:
-                with contextlib.suppress(OSError):
-                    _ = os.write(1, _EXEC_FAIL_MARKER + str(exc).encode(errors="replace") + b"\n")
-            os._exit(127)
+        try:
+            handle = spawn_pty(command, cwd=workdir)
+        except OSError as exc:
+            msg = f"failed to open PTY: {exc}"
+            raise WorkspaceError(msg) from exc
 
-        os.close(slave_fd)
-        with contextlib.suppress(OSError, AttributeError):
-            os.set_inheritable(master_fd, False)  # noqa: FBT003 — stdlib API
         with cls._lock:
             session_id = cls._next_id
             cls._next_id += 1
             session = PtySession(
                 session_id=session_id,
-                master_fd=master_fd,
-                pid=pid,
+                handle=handle,
                 command=tuple(command),
                 output_budget=cls.session_output_budget,
             )
@@ -181,20 +168,10 @@ class PtyManager:
     def _poll_exit(cls, session: PtySession) -> None:
         if not session.alive or session.closed:
             return
-        try:
-            waited_pid, status = os.waitpid(session.pid, os.WNOHANG)
-        except ChildProcessError:
-            session.alive = False
-            return
-        if waited_pid == 0:
-            return
-        session.alive = False
-        if os.WIFEXITED(status):
-            session.exit_code = os.WEXITSTATUS(status)
-        elif os.WIFSIGNALED(status):
-            session.exit_code = -os.WTERMSIG(status)
-        else:
-            session.exit_code = status
+        alive, exit_code = session.handle.poll_exit()
+        session.alive = alive
+        if exit_code is not None:
+            session.exit_code = exit_code
 
     @classmethod
     def refresh(cls, session_id: int) -> PtySession:
@@ -210,13 +187,7 @@ class PtyManager:
         if session.closed or (session.output_budget - session.bytes_read) <= 0:
             return b""
         to_read = min(max_bytes, session.output_budget - session.bytes_read)
-        data = b""
-        try:
-            ready, _, _ = select.select([session.master_fd], [], [], timeout)
-            if ready:
-                data = os.read(session.master_fd, to_read)
-        except OSError, ValueError:
-            data = b""
+        data = session.handle.read_bytes(to_read, timeout)
         cls._poll_exit(session)
         if not data:
             return b""
@@ -336,7 +307,7 @@ class PtyManager:
             msg = f"PTY session process is not alive: {session_id}"
             raise WorkspaceError(msg)
         try:
-            _ = os.write(session.master_fd, data.encode())
+            session.handle.write_bytes(data.encode())
         except OSError as exc:
             cls._poll_exit(session)
             msg = f"failed to write PTY: {exc}"
@@ -366,27 +337,19 @@ class PtyManager:
 
         cls._poll_exit(session)
         if session.alive:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(session.pid, signal.SIGTERM)
-            deadline = time.monotonic() + max(0.0, grace_seconds)
-            while session.alive and time.monotonic() < deadline:
-                time.sleep(0.05)
-                cls._poll_exit(session)
+            session.handle.terminate()
+            session.handle.wait_reap(timeout=max(0.0, grace_seconds))
+            cls._poll_exit(session)
             if session.alive:
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(session.pid, signal.SIGKILL)
-                with contextlib.suppress(ChildProcessError):
-                    _ = os.waitpid(session.pid, 0)
-                session.alive = False
+                session.handle.kill()
+                session.handle.wait_reap(timeout=1.0)
+                cls._poll_exit(session)
+                if session.alive:
+                    session.alive = False
                 if session.exit_code is None:
-                    session.exit_code = -signal.SIGKILL
-            else:
-                # Ensure reaped
-                with contextlib.suppress(ChildProcessError):
-                    _ = os.waitpid(session.pid, os.WNOHANG)
+                    session.exit_code = session.handle.poll_exit()[1]
 
-        with contextlib.suppress(OSError):
-            os.close(session.master_fd)
+        session.handle.close_resources()
         session.closed = True
         with cls._lock:
             _ = cls._sessions.pop(session_id, None)
