@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 type OpenAICompatibleClient = OpenAIClient | DeepseekOpenAIClient
 

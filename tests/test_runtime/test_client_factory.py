@@ -42,7 +42,7 @@ def test_deepseek_openai_convention() -> None:
     provider = DeepseekProvider(access_key_or_token="sk-test")
     client = create_client(provider)
     assert isinstance(client, DeepseekOpenAIClient)
-    assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com/v1"
+    assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com"
     assert "deepseek-v4-flash" in provider.models
     assert "deepseek-v4-pro" in provider.models
 
