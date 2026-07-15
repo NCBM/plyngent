@@ -2,18 +2,64 @@
 
 Single-user LLM chat and agent toolkit for the terminal.
 
-Python **3.14+**, managed with [PDM](https://pdm-project.org/). OpenAI-compatible APIs (including DeepSeek OpenAI-compat), SQLite session memory, workspace-scoped file/process/VCS tools, and a readline REPL with slash commands.
+Python **3.14+**. OpenAI-compatible APIs (including DeepSeek OpenAI-compat), OpenAI Responses with optional hosted tools, SQLite session memory, workspace-scoped file/process/VCS tools, and a readline REPL with slash commands.
+
+Requires **Python 3.14+** on your `PATH` (or via [uv](https://docs.astral.sh/uv/) / [pipx](https://pipx.pypa.io/)).
 
 ## Install
 
-```bash
-# from a clone
-pdm install
-pdm run plyngent --help
+### Quick try (`uvx`)
 
-# or editable install into your environment
-pdm install
-# entry point: plyngent
+No permanent install — runs the published package in a temporary environment:
+
+```bash
+uvx plyngent --help
+uvx plyngent chat
+```
+
+### User tool install
+
+Keep `plyngent` on your PATH as a managed tool:
+
+```bash
+# uv (recommended)
+uv tool install plyngent
+plyngent --help
+
+# pipx
+pipx install plyngent
+plyngent --help
+```
+
+Upgrade later:
+
+```bash
+uv tool upgrade plyngent
+# or: pipx upgrade plyngent
+```
+
+### pip (venv or user)
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -U pip
+pip install plyngent
+plyngent --help
+```
+
+Or user install (if you accept that layout):
+
+```bash
+pip install --user plyngent
+```
+
+### From a git clone (development)
+
+```bash
+pdm install          # first time
+pdm sync             # after pull
+pdm run plyngent --help
 ```
 
 Dev checks:
@@ -24,6 +70,30 @@ pdm run ruff check .
 pdm run ruff format .
 pdm run pytest
 ```
+
+## Basic usage
+
+```bash
+# 1) Create / open config
+plyngent config path
+plyngent config edit    # needs $EDITOR
+
+# Minimal provider (OpenAI platform — Responses API; preset defaults to openai):
+# [providers.oai]
+# access_key_or_token = "sk-..."
+# # models default: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano
+# # provider_tools default: web_search  (use provider_tools = [] to disable)
+
+# 2) Chat
+plyngent chat
+plyngent chat --provider oai --model gpt-5.4-mini
+plyngent chat -p "Summarize this repo" --provider oai --model gpt-5.4-mini --no-stream
+
+# 3) List providers from config
+plyngent providers
+```
+
+In the REPL: type normally, use `/help` for slash commands, `"""` … `"""` for multiline, `/markdown` for Rich rendering, `/quit` to leave.
 
 ## Configure
 
