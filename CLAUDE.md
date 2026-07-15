@@ -58,7 +58,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
-- Usage: API `usage` from completions (stream with `include_usage`); `ChatAgent.session_usage` / `last_turn_usage`; CLI end-of-turn + `/status`.
+- Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; `ChatAgent.session_usage` / `last_turn_usage`; CLI end-of-turn + `/status` (marks `(est)` / `(api+est)`).
 - Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_chars`.
 
 ### Tools (`tools/`)
@@ -101,7 +101,7 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 - **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions. Context size is **char estimate** plus optional API usage when reported.
 - **No local tokenizer stage** for now.
 - **Phase E**: tooling depth (grep/glob, VCS backends; prefer `edit_replace` / `edit_lineno` over model-generated patches).
-- **Phase F (providers + usage v2)**: capture response/stream `usage` — **in progress / landing**; session/turn totals; `/status` + end-of-turn line. Optional later: cost, tokenizer-backed estimates.
+- **Phase F (providers + usage v2)**: API `usage` + char-based estimate fallback; session/turn totals; `/status` + end-of-turn. Optional later: cost, real tokenizer.
 - **Phase G–H**: CLI polish, hardening; then multi-tenant platform (`router/`, auth, sandboxed tools).
 
 ## Commit messages
