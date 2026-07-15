@@ -9,6 +9,7 @@ import click
 import msgspec
 from platformdirs import user_data_path
 
+from plyngent import config as config_mod
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.cli.editor import (
     load_config_with_optional_edit,
@@ -34,7 +35,12 @@ _DEFAULT_DB_FILENAME = "chat.db"
 
 
 def _load_config(config_path: Path | None) -> ConfigStore:
-    return load_config_with_optional_edit(config_path)
+    try:
+        return load_config_with_optional_edit(config_path)
+    except config_mod.ConfigFormatError as exc:
+        path = resolve_config_path(config_path)
+        msg = f"invalid config TOML ({path}): {exc}"
+        raise click.ClickException(msg) from exc
 
 
 def _database_config(store: ConfigStore, *, quiet: bool = False) -> DatabaseConfig:
@@ -208,12 +214,44 @@ async def _run_chat(
         return EXIT_OK
     finally:
         await memory.close()
+        from plyngent.tools.process.pty_session import PtyManager
+
+        PtyManager.close_all()
+
+
+def _configure_logging(level: str) -> None:
+    import logging
+
+    name = level.upper()
+    numeric = getattr(logging, name, None)
+    if not isinstance(numeric, int):
+        msg = f"invalid --log-level {level!r}"
+        raise click.ClickException(msg)
+    logging.basicConfig(
+        level=numeric,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+        force=True,
+    )
+    # Avoid accidental secret leakage via HTTP libraries at DEBUG.
+    if numeric <= logging.DEBUG:
+        logging.getLogger("niquests").setLevel(logging.INFO)
+        logging.getLogger("urllib3").setLevel(logging.INFO)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(package_name="plyngent")
-def main() -> None:
+@click.option(
+    "--log-level",
+    default="WARNING",
+    show_default=True,
+    help="Logging level for stderr (DEBUG, INFO, WARNING, ERROR).",
+)
+@click.pass_context
+def main(ctx: click.Context, log_level: str) -> None:
     """Plyngent — LLM chat and agent toolkit."""
+    _ = ctx
+    _configure_logging(log_level)
 
 
 @main.command("chat")

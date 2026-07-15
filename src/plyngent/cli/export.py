@@ -35,7 +35,11 @@ def session_export_payload(
     updated_at: datetime | None,
     messages: Sequence[AnyChatMessage],
 ) -> dict[str, object]:
-    """Build a JSON-serializable dict for a session transcript."""
+    """Build a JSON-serializable dict for a session transcript.
+
+    Never includes provider tokens or config secrets — only session metadata
+    and chat messages from the DB.
+    """
     return {
         "session_id": sid,
         "name": name,

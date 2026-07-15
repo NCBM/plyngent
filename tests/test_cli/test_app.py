@@ -21,3 +21,13 @@ def test_help() -> None:
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
     assert "chat" in result.output
+    assert "--log-level" in result.output
+
+
+def test_invalid_config_toml(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.toml"
+    _ = bad.write_text("this is = not [ valid toml\n", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(main, ["providers", "--config", str(bad)])
+    assert result.exit_code != 0
+    assert "invalid config" in result.output.lower() or "toml" in result.output.lower()

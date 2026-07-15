@@ -132,8 +132,11 @@ class PtyManager:
                     raise WorkspaceError(msg)
 
         master_fd, slave_fd = pty.openpty()
+        # Parent must not pass master into the child (or future children).
+        with contextlib.suppress(OSError, AttributeError):
+            os.set_inheritable(master_fd, False)  # noqa: FBT003 — stdlib API
         pid = os.fork()
-        if pid == 0:  # child
+        if pid == 0:  # child — keep path fork-then-exec only (no Python after exec fail except _exit)
             try:
                 os.close(master_fd)
                 _ = os.setsid()
@@ -150,6 +153,8 @@ class PtyManager:
             os._exit(127)
 
         os.close(slave_fd)
+        with contextlib.suppress(OSError, AttributeError):
+            os.set_inheritable(master_fd, False)  # noqa: FBT003 — stdlib API
         with cls._lock:
             session_id = cls._next_id
             cls._next_id += 1

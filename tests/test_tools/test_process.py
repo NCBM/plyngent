@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 
 from plyngent.tools.process import close_pty, open_pty, read_pty, run_command, write_pty
@@ -84,18 +84,18 @@ async def test_run_command_env(workspace: object) -> None:
     assert "from-env" in out
 
 
-def test_pty_open_read_close(workspace: object) -> None:
+async def test_pty_open_read_close(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["sleep", "30"])
         assert "session_id=" in opened
         session_id = _session_id(opened)
-        data = call_sync(read_pty, session_id, timeout=0.05)
+        data = await call_async(read_pty, session_id, timeout=0.05)
         assert "alive=" in data
         assert "--- data ---" in data
-        closed = call_sync(close_pty, session_id)
+        closed = await call_async(close_pty, session_id)
         assert _field(closed, "closed") == "true"
-        assert "error" in call_sync(read_pty, session_id)
+        assert "error" in await call_async(read_pty, session_id)
     finally:
         PtyManager.close_all()
         set_command_denylist(None)
@@ -106,30 +106,30 @@ def test_pty_denied(workspace: object) -> None:
     assert "denied" in call_sync(open_pty, ["sudo", "ls"])
 
 
-def test_pty_echo_output(workspace: object) -> None:
+async def test_pty_echo_output(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["/bin/echo", "hello-pty"])
         session_id = _session_id(opened)
-        text = call_sync(read_pty, session_id, timeout=2.0, until="hello-pty")
+        text = await call_async(read_pty, session_id, timeout=2.0, until="hello-pty")
         assert "hello-pty" in text
         assert _field(text, "matched") == "true"
-        closed = call_sync(close_pty, session_id)
+        closed = await call_async(close_pty, session_id)
         assert _field(closed, "closed") == "true"
     finally:
         PtyManager.close_all()
 
 
-def test_write_pty(workspace: object) -> None:
+async def test_write_pty(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["cat"])
         session_id = _session_id(opened)
         written = call_sync(write_pty, session_id, "pty-input\n")
         assert "wrote=" in written
-        text = call_sync(read_pty, session_id, timeout=2.0, until="pty-input")
+        text = await call_async(read_pty, session_id, timeout=2.0, until="pty-input")
         assert "pty-input" in text
-        _ = call_sync(close_pty, session_id)
+        _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
 
@@ -139,15 +139,15 @@ def test_write_pty_unknown_session(workspace: object) -> None:
     assert "error" in call_sync(write_pty, 999_999, "x")
 
 
-def test_pty_exec_failure_surfaces(workspace: object) -> None:
+async def test_pty_exec_failure_surfaces(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(open_pty, ["definitely-not-a-real-binary-xyz"])
         session_id = _session_id(opened)
-        text = call_sync(read_pty, session_id, timeout=2.0)
+        text = await call_async(read_pty, session_id, timeout=2.0)
         # marker and/or dead process with 127
         assert "plyngent-pty-exec-failed" in text or _field(text, "alive") == "false"
-        closed = call_sync(close_pty, session_id)
+        closed = await call_async(close_pty, session_id)
         # exit 127 is conventional for exec failure
         exit_code = _field(closed, "exit_code")
         assert exit_code in {"127", "-9", ""} or exit_code.startswith("-")
@@ -188,7 +188,7 @@ def test_pty_session_limit_continue(workspace: object) -> None:
         PtyManager.set_limit_continue_hook(None)
 
 
-def test_pty_output_budget(workspace: object) -> None:
+async def test_pty_output_budget(workspace: object) -> None:
     del workspace
     previous = PtyManager.session_output_budget
     try:
@@ -200,22 +200,22 @@ def test_pty_output_budget(workspace: object) -> None:
         budget_hit = False
         last = ""
         for _ in range(20):
-            last = call_sync(read_pty, session_id, timeout=0.5, max_bytes=32)
+            last = await call_async(read_pty, session_id, timeout=0.5, max_bytes=32)
             if _field(last, "budget_exhausted") == "true":
                 budget_hit = True
                 break
             if _field(last, "alive") == "false":
                 break
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
         assert budget_hit or "x" in last
-        _ = call_sync(close_pty, session_id)
+        _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
         PtyManager.configure(session_output_budget=previous)
         PtyManager.set_limit_continue_hook(None)
 
 
-def test_pty_output_budget_is_per_session(workspace: object) -> None:
+async def test_pty_output_budget_is_per_session(workspace: object) -> None:
     del workspace
     previous = PtyManager.session_output_budget
     try:
@@ -230,14 +230,28 @@ def test_pty_output_budget_is_per_session(workspace: object) -> None:
         before = session.output_budget
         # Force budget exhaustion path by setting bytes_read high.
         session.bytes_read = session.output_budget
-        _ = call_sync(read_pty, session_id, timeout=0.1)
+        _ = await call_async(read_pty, session_id, timeout=0.1)
         session2 = PtyManager.get(session_id)
         assert session2 is not None
         assert session2.output_budget > before
         # Raising is per-session; class default for new sessions stays put.
         assert PtyManager.session_output_budget == class_budget
-        _ = call_sync(close_pty, session_id)
+        _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
         PtyManager.configure(session_output_budget=previous)
         PtyManager.set_limit_continue_hook(None)
+
+
+def test_pty_master_not_inheritable(workspace: object) -> None:
+    del workspace
+    import os
+
+    try:
+        opened = call_sync(open_pty, ["sleep", "5"])
+        session_id = _session_id(opened)
+        session = PtyManager.get(session_id)
+        assert session is not None
+        assert os.get_inheritable(session.master_fd) is False
+    finally:
+        PtyManager.close_all()

@@ -148,7 +148,11 @@ def prompt_edit_config(path: Path, *, reason: str | None = None) -> bool:
 
 
 def load_config_with_optional_edit(config_path: Path | None) -> ConfigStore:
-    """Load config; if there are no providers and EDITOR is set, offer to edit and reload."""
+    """Load config; if there are no providers and EDITOR is set, offer to edit and reload.
+
+    Raises:
+        config_mod.ConfigFormatError: Invalid TOML (caller should surface path).
+    """
     path = resolve_config_path(config_path)
     store = config_mod.load(path)
     if store.providers:
