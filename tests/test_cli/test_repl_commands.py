@@ -235,7 +235,7 @@ async def test_provider_switch_prompts_when_model_missing(
     # When switching to b, only-a is missing → select_model is invoked interactively.
     monkeypatch.setattr(
         "plyngent.cli.slash.select_model",
-        lambda provider, preferred=None, interactive=True: "only-b",
+        lambda provider, preferred=None, interactive=True, choices=None: "only-b",
     )
     assert await handle_slash(state, "/provider b") is True
     assert state.provider_name == "b"

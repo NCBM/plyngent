@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import contextlib
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
+from plyngent.cli.models_source import (
+    DEFAULT_MODELS_CACHE_TTL,
+    client_supports_models,
+    config_model_ids,
+    fetch_remote_model_ids,
+    model_choices_for_provider,
+)
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
 from plyngent.tools import DEFAULT_TOOLS, set_workspace_root
@@ -40,6 +49,11 @@ class ReplState:
     client: ChatClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
+    # Remote GET /models cache (per provider base).
+    _remote_models: list[str] | None = field(default=None, init=False, repr=False)
+    _remote_models_fetched_at: float | None = field(default=None, init=False, repr=False)
+    _remote_models_key: tuple[str, str] | None = field(default=None, init=False, repr=False)
+    _remote_models_error: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
@@ -110,6 +124,73 @@ class ReplState:
         self.agent = self._make_agent()
         self.agent.messages = messages
         self.sync_display_flags()
+        # Drop remote catalog when provider identity/url changed (not on model-only switch).
+        if self._remote_models_key is not None and self._remote_models_key != self._models_cache_key():
+            self.invalidate_remote_models()
+
+    def _models_cache_key(self) -> tuple[str, str]:
+        url = getattr(self.provider, "url", "") or ""
+        return (self.provider_name, str(url))
+
+    def invalidate_remote_models(self) -> None:
+        """Drop cached remote model catalog (provider/client change)."""
+        self._remote_models = None
+        self._remote_models_fetched_at = None
+        self._remote_models_key = None
+        self._remote_models_error = None
+
+    def cached_remote_models(self) -> list[str] | None:
+        """Return cached remote ids if still valid for the current provider."""
+        if self._remote_models is None or self._remote_models_fetched_at is None:
+            return None
+        if self._remote_models_key != self._models_cache_key():
+            return None
+        age = time.monotonic() - self._remote_models_fetched_at
+        if age > DEFAULT_MODELS_CACHE_TTL:
+            return None
+        return list(self._remote_models)
+
+    def model_choice_ids(self, *, include_remote_cache: bool = True) -> list[str]:
+        """Config plus optional cached remote ids (no network)."""
+        remote = self.cached_remote_models() if include_remote_cache else None
+        return model_choices_for_provider(self.provider, remote_ids=remote)
+
+    async def ensure_remote_models(self, *, refresh: bool = False) -> list[str]:
+        """Fetch ``GET /models`` (cached) and return remote ids.
+
+        Raises RuntimeError/TypeError when the client cannot list models or
+        the request fails. On failure the previous cache is left unchanged.
+        """
+        if not refresh:
+            cached = self.cached_remote_models()
+            if cached is not None:
+                return cached
+        if not client_supports_models(self.client):
+            msg = "client does not support listing models"
+            self._remote_models_error = msg
+            raise TypeError(msg)
+        try:
+            ids = await fetch_remote_model_ids(self.client)
+        except (RuntimeError, TypeError, OSError, ValueError) as exc:
+            self._remote_models_error = str(exc)
+            raise
+        self._remote_models = list(ids)
+        self._remote_models_fetched_at = time.monotonic()
+        self._remote_models_key = self._models_cache_key()
+        self._remote_models_error = None
+        return list(ids)
+
+    async def merged_model_choices(self, *, refresh: bool = False) -> list[str]:
+        """Config plus remote catalog; remote fetch best-effort when refresh/missing."""
+        remote: list[str] | None
+        try:
+            remote = await self.ensure_remote_models(refresh=refresh)
+        except (RuntimeError, TypeError, OSError, ValueError):
+            remote = self.cached_remote_models()
+        return model_choices_for_provider(self.provider, remote_ids=remote)
+
+    def config_model_ids(self) -> list[str]:
+        return config_model_ids(self.provider)
 
     def reload_config_from_disk(self) -> None:
         """Re-read TOML config and re-bind provider/model when still valid."""
@@ -122,27 +203,32 @@ class ReplState:
         self.config.reload()
         set_path_denylist(self.config.agent_config.path_denylist or None)
 
-        preferred_provider = self.provider_name if self.provider_name in self.config.providers else None
+        selectable = self.config.selectable_providers()
+        preferred_provider = self.provider_name if self.provider_name in selectable else None
         preferred_model = self.model
         try:
             pname, provider = select_provider(
-                self.config.providers,
+                selectable,
                 preferred=preferred_provider,
                 interactive=False,
             )
         except (click.ClickException, ProviderNotSupportedError) as exc:
             msg = f"config reloaded but provider selection failed: {exc}"
             raise ValueError(msg) from exc
+        # Empty-models providers stay recoverable until next use /models promote.
+        if not provider.models and preferred_model:
+            with contextlib.suppress(KeyError, ValueError):
+                provider = self.config.promote_provider(pname, [preferred_model])
         try:
             model_id = select_model(provider, preferred=preferred_model, interactive=False)
         except click.ClickException:
-            # Previous model not on this provider; pick first listed or keep free-form.
             model_id = next(iter(sorted(provider.models.keys()))) if provider.models else preferred_model
 
         self.provider_name = pname
         self.provider = provider
         self.model = model_id
         self.rebuild_client()
+        self.invalidate_remote_models()
 
     def _set_workspace(self, path: Path) -> None:
         """Update REPL + tool workspace root."""
@@ -175,16 +261,22 @@ class ReplState:
         from plyngent.cli.selection import select_provider
         from plyngent.runtime import ProviderNotSupportedError
 
-        if pname not in self.config.providers:
+        if pname not in self.config.selectable_providers():
             return False
         try:
             name, provider = select_provider(
-                self.config.providers,
+                self.config.selectable_providers(),
                 preferred=pname,
                 interactive=False,
             )
-        except click.ClickException, ProviderNotSupportedError:
+        except (click.ClickException, ProviderNotSupportedError):
             return False
+        # Session resume: seed empty recoverable with remembered model if any.
+        if not provider.models and self.model:
+            try:
+                provider = self.config.promote_provider(name, [self.model])
+            except (KeyError, ValueError):
+                return False
         if name != self.provider_name or provider is not self.provider:
             self.provider_name = name
             self.provider = provider
@@ -192,16 +284,11 @@ class ReplState:
         return False
 
     def _try_set_model(self, model_id: str) -> bool:
-        import click
-
-        from plyngent.cli.selection import select_model
-
-        try:
-            resolved = select_model(self.provider, preferred=model_id, interactive=False)
-        except click.ClickException:
+        token = model_id.strip()
+        if not token:
             return False
-        if resolved != self.model:
-            self.model = resolved
+        if token != self.model:
+            self.model = token
             return True
         return False
 

@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 import click
 
+from plyngent.cli.models_source import config_model_ids, model_choices_for_provider
 from plyngent.prompting import ChoiceOption, choose
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from plyngent.config.models import Provider
 
@@ -56,14 +57,20 @@ def select_model(
     *,
     preferred: str | None = None,
     interactive: bool = True,
+    choices: Sequence[str] | None = None,
 ) -> str:
-    """Pick a model id from provider.models or free-form prompt (readline + Tab)."""
-    model_names = sorted(provider.models.keys())
+    """Pick a model id from config/remote choices or free-form prompt.
+
+    *choices* overrides the default list (config keys). Explicit *preferred*
+    is accepted even when not in the list (API validates at chat time).
+    """
+    model_names = list(choices) if choices is not None else config_model_ids(provider)
     if preferred is not None:
-        if model_names and preferred not in provider.models:
-            msg = f"unknown model {preferred!r}; available: {', '.join(model_names)}"
+        token = preferred.strip()
+        if not token:
+            msg = "model id must not be empty"
             raise click.ClickException(msg)
-        return preferred
+        return token
 
     if len(model_names) == 1:
         model = model_names[0]
@@ -81,9 +88,14 @@ def select_model(
         return choose(
             "Select model",
             model_names,
-            allow_custom=False,
+            allow_custom=True,
         )
 
     from plyngent.prompting import ask
 
     return ask("Model id (not listed in config)")
+
+
+def default_model_choices(provider: Provider, remote_ids: Sequence[str] | None = None) -> list[str]:
+    """Config plus optional remote ids (for Tab / interactive pick)."""
+    return model_choices_for_provider(provider, remote_ids=remote_ids)

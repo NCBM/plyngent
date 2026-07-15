@@ -64,11 +64,25 @@ def test_select_provider_interactive_choose() -> None:
     assert name == "b"
 
 
-def test_select_model_when_preferred_missing_raises() -> None:
+def test_select_model_preferred_not_in_config_allowed() -> None:
+    """Explicit model ids are accepted; the API validates at chat time."""
     provider = OpenAICompatibleProvider(
         access_key_or_token="sk",
         url="https://x/v1",
         models={"m1": ModelConfig()},
     )
-    with pytest.raises(Exception, match="unknown model"):
-        _ = select_model(provider, preferred="nope")
+    assert select_model(provider, preferred="nope") == "nope"
+    assert select_model(provider, preferred="  custom  ") == "custom"
+
+
+def test_select_model_choices_override() -> None:
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    provider = OpenAICompatibleProvider(
+        access_key_or_token="sk",
+        url="https://x/v1",
+        models={"m1": ModelConfig()},
+    )
+    with temporary_backend(ScriptedBackend(["remote-x"])):
+        assert select_model(provider, choices=["remote-x", "m1"]) == "remote-x"

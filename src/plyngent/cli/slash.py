@@ -8,6 +8,7 @@ import click
 from click.shell_completion import CompletionItem
 from msgspec import UNSET
 
+from plyngent.cli.models_source import DEFAULT_MODELS_CACHE_TTL, model_choices_for_provider
 from plyngent.cli.retry import retry_pending_with_retries
 from plyngent.cli.selection import select_model, select_provider
 from plyngent.lmproto.openai_compatible.model import (
@@ -117,7 +118,7 @@ class ProviderNameParam(click.ParamType[str]):
         state = _repl_state(ctx)
         if state is None:
             return []
-        return _filter_choices(incomplete, sorted(state.config.providers.keys()))
+        return _filter_choices(incomplete, sorted(state.config.selectable_providers().keys()))
 
 
 PROVIDER_NAME = ProviderNameParam()
@@ -137,7 +138,7 @@ class ModelIdParam(click.ParamType[str]):
         state = _repl_state(ctx)
         if state is None:
             return []
-        return _filter_choices(incomplete, sorted(state.provider.models.keys()))
+        return _filter_choices(incomplete, state.model_choice_ids())
 
 
 MODEL_ID = ModelIdParam()
@@ -316,6 +317,12 @@ def config_cmd(state: ReplState) -> None:
         click.secho(f"error: config reload failed: {exc}", fg="red")
         click.echo(f"config file: {path}")
         return
+    if state.config.recoverable_providers:
+        names = ", ".join(sorted(state.config.recoverable_providers.keys()))
+        click.secho(
+            f"recoverable providers (empty models): {names}",
+            fg="yellow",
+        )
     if state.config.bad_providers:
         names = ", ".join(sorted(state.config.bad_providers.keys()))
         click.secho(f"warning: ignored bad providers: {names}", fg="yellow")
@@ -554,16 +561,37 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
         click.echo(f"provider={state.provider_name}")
         return
     try:
-        pname, provider = select_provider(state.config.providers, preferred=name.strip())
+        from plyngent.cli.provider_recovery import ensure_provider_ready
+
+        pname, provider = select_provider(
+            state.config.selectable_providers(),
+            preferred=name.strip(),
+        )
+        provider = _await(
+            ensure_provider_ready(
+                state.config,
+                pname,
+                provider,
+                preferred_model=state.model,
+                interactive=True,
+            )
+        )
         prev_model = state.model
         state.provider_name = pname
         state.provider = provider
-        if prev_model in provider.models:
+        state.rebuild_client()
+        choices = _await(state.merged_model_choices(refresh=False))
+        if prev_model and (prev_model in choices or prev_model in provider.models):
             state.model = prev_model
         else:
             # Current model not on the new provider — pick one (prompt when interactive).
             try:
-                state.model = select_model(provider, preferred=None, interactive=True)
+                state.model = select_model(
+                    provider,
+                    preferred=None,
+                    interactive=True,
+                    choices=choices,
+                )
             except click.ClickException as exc:
                 click.echo(f"error: switched provider but model selection failed: {exc}")
                 return
@@ -572,23 +600,81 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
                     f"model {prev_model!r} is not available on {pname}; using {state.model!r}",
                     fg="yellow",
                 )
-        state.rebuild_client()
+            state.rebuild_client()
         _await(state.persist_llm_selection())
         click.echo(f"switched provider to {pname}  model={state.model}")
     except (click.ClickException, ProviderNotSupportedError) as exc:
         click.echo(f"error: {exc}")
 
 
+@slash.command("models")
+@click.option("--refresh", is_flag=True, help="Bypass cache and re-fetch GET /models.")
+@click.pass_obj
+def models_cmd(state: ReplState, *, refresh: bool) -> None:
+    """List models (config plus remote GET /models)."""
+    remote: list[str] | None = None
+    remote_err: str | None = None
+    try:
+        remote = _await(state.ensure_remote_models(refresh=refresh))
+    except (RuntimeError, TypeError, OSError, ValueError) as exc:
+        remote_err = str(exc)
+        remote = state.cached_remote_models()
+
+    # Promote empty-models recoverable provider after a successful remote list.
+    if remote and state.provider_name in state.config.recoverable_providers:
+        try:
+            state.provider = state.config.promote_provider(state.provider_name, remote)
+            state.rebuild_client()
+            click.secho(
+                f"recovered provider {state.provider_name!r} from remote catalog",
+                fg="yellow",
+                err=True,
+            )
+        except (KeyError, ValueError) as exc:
+            click.secho(f"could not recover provider: {exc}", fg="yellow", err=True)
+
+    config_ids = set(state.config_model_ids())
+    choices = model_choices_for_provider(state.provider, remote_ids=remote)
+
+    if not choices:
+        click.echo("(no models in config or remote catalog)")
+    else:
+        remote_set = set(remote or ())
+        for mid in choices:
+            tags: list[str] = []
+            if mid in config_ids:
+                tags.append("config")
+            if mid in remote_set:
+                tags.append("remote")
+            suffix = f"  ({', '.join(tags)})" if tags else ""
+            mark = " *" if mid == state.model else ""
+            click.echo(f"{mid}{mark}{suffix}")
+
+    if remote_err is not None:
+        click.secho(f"remote list unavailable: {remote_err}", fg="yellow", err=True)
+    elif remote is not None:
+        click.echo(
+            f"({len(remote)} remote, {len(config_ids)} config; "
+            f"cache TTL {int(DEFAULT_MODELS_CACHE_TTL)}s)",
+            err=True,
+        )
+
+
 @slash.command("model")
 @click.argument("model_id", required=False, type=MODEL_ID)
 @click.pass_obj
 def model_cmd(state: ReplState, model_id: str | None) -> None:
-    """Show or switch model."""
+    """Show or switch model (Tab: config plus cached remote)."""
     if not model_id:
         click.echo(f"model={state.model}")
         return
     try:
-        state.model = select_model(state.provider, preferred=model_id.strip())
+        choices = _await(state.merged_model_choices(refresh=False))
+        state.model = select_model(
+            state.provider,
+            preferred=model_id.strip(),
+            choices=choices,
+        )
         state.rebuild_client()
         _await(state.persist_llm_selection())
         click.echo(f"switched model to {state.model}")

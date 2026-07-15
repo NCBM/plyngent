@@ -124,6 +124,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/stream` `/verbose` `/tools` `/rounds` | Toggles and limits |
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
 | `/provider` `/model` | Switch without restarting |
+| `/models` | List config + remote `GET /models` (`--refresh` bypasses cache) |
 | `/config` | Edit `plyngent.toml` in `$EDITOR` and reload |
 | `/quit` | Leave the REPL |
 
