@@ -35,7 +35,7 @@ from .events import (
     ToolResultEvent,
     UsageEvent,
 )
-from .usage import token_usage_from_api
+from .usage import resolve_round_usage, token_usage_from_api
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -126,9 +126,9 @@ async def _non_stream_round(
     if isinstance(assistant.content, str) and assistant.content:
         yield TextDeltaEvent(content=assistant.content)
     yield AssistantMessageEvent(message=assistant)
-    usage = token_usage_from_api(response.usage)
-    if usage is not None:
-        yield UsageEvent(usage=usage)
+    yield UsageEvent(
+        usage=resolve_round_usage(response.usage, param.messages, assistant),
+    )
 
 
 async def _stream_round(
@@ -140,6 +140,7 @@ async def _stream_round(
     Pattern: ``stream = await client.chat_completions(..., stream=True)`` then
     ``async for chunk in stream``. Tool-call deltas are merged after the stream.
     Requests ``stream_options.include_usage`` so providers may send a final usage chunk.
+    Falls back to a char-based token estimate when the provider omits usage.
     """
     stream_param = msgspec.structs.replace(
         param,
@@ -148,12 +149,12 @@ async def _stream_round(
     stream = await client.chat_completions(stream_param, stream=True)
     content_parts: list[str] = []
     tool_deltas: list[StreamToolCallDelta] = []
-    last_usage = None
+    last_api_usage: object = UNSET
 
     async for chunk in stream:
-        usage = token_usage_from_api(chunk.usage)
-        if usage is not None:
-            last_usage = usage
+        parsed = token_usage_from_api(chunk.usage)
+        if parsed is not None:
+            last_api_usage = chunk.usage
         if not chunk.choices:
             continue
         choice = chunk.choices[0]
@@ -176,8 +177,9 @@ async def _stream_round(
         tool_calls=tool_calls,
     )
     yield AssistantMessageEvent(message=assistant)
-    if last_usage is not None:
-        yield UsageEvent(usage=last_usage)
+    yield UsageEvent(
+        usage=resolve_round_usage(last_api_usage, param.messages, assistant),
+    )
 
 
 async def _assistant_round(

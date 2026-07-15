@@ -201,6 +201,17 @@ async def test_non_stream_emits_usage() -> None:
     assert usages[0].usage.prompt_tokens == 9
     assert usages[0].usage.completion_tokens == 2
     assert usages[0].usage.total_tokens == 11
+    assert usages[0].usage.source == "api"
+
+
+async def test_non_stream_estimates_usage_when_missing() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content="hello"))])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+    usages = [e for e in events if isinstance(e, UsageEvent)]
+    assert len(usages) == 1
+    assert usages[0].usage.source == "estimate"
+    assert usages[0].usage.total_tokens > 0
 
 
 async def test_chat_agent_accumulates_session_usage() -> None:

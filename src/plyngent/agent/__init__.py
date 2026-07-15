@@ -20,4 +20,6 @@ from .tools import ToolRegistry as ToolRegistry
 from .tools import schema_from_callable as schema_from_callable
 from .tools import tool as tool
 from .usage import TokenUsage as TokenUsage
+from .usage import chars_to_tokens as chars_to_tokens
+from .usage import estimate_token_usage as estimate_token_usage
 from .usage import token_usage_from_api as token_usage_from_api

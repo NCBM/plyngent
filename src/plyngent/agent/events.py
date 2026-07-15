@@ -41,7 +41,10 @@ class CancelledEvent(Struct, tag_field="type", tag="cancelled"):
 
 
 class UsageEvent(Struct, tag_field="type", tag="usage"):
-    """Token usage for one model completion (one tool-loop round)."""
+    """Token usage for one model completion (one tool-loop round).
+
+    ``source`` is mirrored from ``usage.source`` (``api`` / ``estimate``).
+    """
 
     usage: TokenUsage
 
