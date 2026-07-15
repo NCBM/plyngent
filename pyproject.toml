@@ -15,7 +15,8 @@ dependencies = [
   "aiosqlite>=0.22.1",
   "click>=8.4.2",
   "awaitlet>=0.0.1",
-  "pywinpty>=2.0.0; sys_platform == \"win32\""
+  "pywinpty>=2.0.0; sys_platform == \"win32\"",
+  "rich>=13"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"

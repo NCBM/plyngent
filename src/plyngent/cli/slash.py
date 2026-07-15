@@ -734,6 +734,24 @@ def verbose_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
     click.echo(f"verbose={'on' if enabled else 'off'}")
 
 
+@slash.command("markdown")
+@click.argument("enabled", required=False, type=ON_OFF, metavar="[on|off]")
+@click.pass_obj
+def markdown_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
+    """Show or set end-of-turn Rich markdown for assistant text.
+
+    ``on`` (default on TTY): stream plain tokens, then re-render as markdown.
+    ``off``: leave streamed plain text as-is.
+    Non-TTY / ``PLYNGENT_PLAIN=1`` never pretty-prints.
+    """
+    if enabled is None:
+        click.echo(f"markdown={'on' if state.markdown_enabled else 'off'}")
+        return
+    state.markdown_enabled = enabled
+    state.sync_display_flags()
+    click.echo(f"markdown={'on' if enabled else 'off'}")
+
+
 @slash.command("rounds")
 @click.argument("n", required=False, type=int)
 @click.pass_obj

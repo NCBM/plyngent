@@ -121,7 +121,8 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/new` `/resume` `/rename` `/delete` | Session lifecycle (`/delete` confirms) |
 | `/export [md\|json] [path]` | Transcript from DB (no secrets) |
 | `/compact` | Soft-compact + model summary into a **new** session |
-| `/stream` `/verbose` `/tools` `/rounds` | Toggles and limits |
+| `/stream` `/verbose` `/markdown` `/tools` `/rounds` | Toggles and limits |
+
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
 | `/provider` `/model` | Switch without restarting |
 | `/models` | List config + remote `GET /models` (`--refresh` bypasses cache) |

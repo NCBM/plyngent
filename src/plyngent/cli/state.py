@@ -40,6 +40,8 @@ class ReplState:
     max_rounds: int = DEFAULT_MAX_ROUNDS
     stream_enabled: bool = True
     verbose: bool = False
+    # End-of-turn Rich markdown for assistant text (TTY only).
+    markdown_enabled: bool = True
     # One-shot / scripts: never prompt to raise tool-loop limits.
     interactive_limits: bool = True
     # When False, skip destructive-tool confirms (e.g. --yes).
@@ -63,9 +65,10 @@ class ReplState:
         self.sync_display_flags()
 
     def sync_display_flags(self) -> None:
-        from plyngent.cli.display import set_verbose_tool_results
+        from plyngent.cli.display import set_markdown_enabled, set_verbose_tool_results
 
         set_verbose_tool_results(self.verbose)
+        set_markdown_enabled(self.markdown_enabled)
 
     def _workspace_key(self) -> str:
         key = normalize_workspace(self.workspace)
