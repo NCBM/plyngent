@@ -14,6 +14,7 @@ def select_provider(
     providers: Mapping[str, Provider],
     *,
     preferred: str | None = None,
+    interactive: bool = True,
 ) -> tuple[str, Provider]:
     """Pick a provider by name or interactive prompt."""
     if not providers:
@@ -29,8 +30,12 @@ def select_provider(
 
     if len(names) == 1:
         name = names[0]
-        click.echo(f"Using provider: {name}")
+        click.echo(f"Using provider: {name}", err=True)
         return name, providers[name]
+
+    if not interactive:
+        msg = f"multiple providers; pass --provider ({', '.join(names)})"
+        raise click.ClickException(msg)
 
     click.echo("Available providers:")
     for index, name in enumerate(names, start=1):
@@ -44,6 +49,7 @@ def select_model(
     provider: Provider,
     *,
     preferred: str | None = None,
+    interactive: bool = True,
 ) -> str:
     """Pick a model id from provider.models or free-form prompt."""
     model_names = sorted(provider.models.keys())
@@ -55,8 +61,15 @@ def select_model(
 
     if len(model_names) == 1:
         model = model_names[0]
-        click.echo(f"Using model: {model}")
+        click.echo(f"Using model: {model}", err=True)
         return model
+
+    if not interactive:
+        if model_names:
+            msg = f"multiple models; pass --model ({', '.join(model_names)})"
+        else:
+            msg = "no models listed; pass --model"
+        raise click.ClickException(msg)
 
     if model_names:
         click.echo("Available models:")

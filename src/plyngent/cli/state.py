@@ -31,6 +31,10 @@ class ReplState:
     max_rounds: int = DEFAULT_MAX_ROUNDS
     stream_enabled: bool = True
     verbose: bool = False
+    # One-shot / scripts: never prompt to raise tool-loop limits.
+    interactive_limits: bool = True
+    # When False, skip destructive-tool confirms (e.g. --yes).
+    confirm_destructive: bool | None = None
     # Set by /edit; REPL sends as the next user turn then clears.
     pending_user_text: str | None = None
     client: ChatClient = field(init=False)
@@ -56,14 +60,18 @@ class ReplState:
             raise RuntimeError(msg)
         return key
 
+    def _confirm_destructive(self) -> bool:
+        if self.confirm_destructive is not None:
+            return self.confirm_destructive
+        return self.config.agent_config.confirm_destructive
+
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
         from plyngent.cli.limits import prompt_confirm_tool_async
         from plyngent.tools.danger import classify_danger
 
-        agent_cfg = self.config.agent_config
-        if agent_cfg.confirm_destructive:
+        if self._confirm_destructive():
             return ToolRegistry(
                 list(DEFAULT_TOOLS),
                 danger=classify_danger,
@@ -76,6 +84,7 @@ class ReplState:
 
         agent_cfg = self.config.agent_config
         system_prompt = agent_cfg.system_prompt or None
+        on_limit = prompt_continue_limit_async if self.interactive_limits else None
         return ChatAgent(
             self.client,
             model=self.model,
@@ -83,7 +92,7 @@ class ReplState:
             memory=self.memory,
             session_id=self.session_id,
             max_rounds=self.max_rounds,
-            on_limit=prompt_continue_limit_async,
+            on_limit=on_limit,
             stream=self.stream_enabled,
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,

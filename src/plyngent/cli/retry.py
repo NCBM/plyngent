@@ -185,9 +185,14 @@ async def run_turn_with_retries(
             return True
 
 
-async def run_user_text_with_retries(agent: ChatAgent, text: str) -> bool:
-    """Send a new user message with auto-retry."""
-    return await run_turn_with_retries(agent, starter=lambda: agent.run(text))
+async def run_user_text_with_retries(
+    agent: ChatAgent,
+    text: str,
+    *,
+    delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS_SECONDS,
+) -> bool:
+    """Send a new user message with auto-retry (empty ``delays`` = no auto-retry)."""
+    return await run_turn_with_retries(agent, starter=lambda: agent.run(text), delays=delays)
 
 
 async def retry_pending_with_retries(agent: ChatAgent) -> bool:
