@@ -55,7 +55,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
-- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; assistant/tools on success); `stream`; system prompt; `pending_retry_text` + `retry()` for incomplete turns (including orphan user after resume).
+- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; assistant/tools on success); `stream`; system prompt; `retry()` when history ends with a user message (failed/cancelled turn or orphan after resume).
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.

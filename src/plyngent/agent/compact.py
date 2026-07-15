@@ -129,7 +129,11 @@ def build_compacted_seed_messages(
     system_prompt: str | None = None,
     source_session_id: int | None = None,
 ) -> list[AnyChatMessage]:
-    """Messages to seed a new session after compact."""
+    """Messages to seed a new session after compact.
+
+    Summary is an assistant message so history does not end with a user turn
+    (which would look like an incomplete /retry-able request).
+    """
     out: list[AnyChatMessage] = []
     if system_prompt:
         out.append(SystemChatMessage(content=system_prompt))
@@ -139,5 +143,5 @@ def build_compacted_seed_messages(
         f"{summary}\n\n"
         "Continue from this summary. Prefer not to re-ask for information already covered."
     )
-    out.append(UserChatMessage(content=body))
+    out.append(AssistantChatMessage(content=body))
     return out

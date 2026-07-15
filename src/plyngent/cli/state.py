@@ -107,7 +107,6 @@ class ReplState:
         session = await self.memory.create_session(name=name, workspace=self.workspace)
         self.session_id = session.sid
         self.agent = self._make_agent()
-        self.agent.pending_retry_text = None
 
     async def resume_session(self, session_id: int) -> None:
         """Load a session; on workspace mismatch, prompt keep / rebind / abort."""
@@ -202,5 +201,4 @@ class ReplState:
         self.agent.messages = list(seed)
         for message in seed:
             _ = await self.memory.append_message(new_id, message)
-        self.agent.pending_retry_text = None
         return old_id, new_id, summary

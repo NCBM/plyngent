@@ -210,7 +210,6 @@ def _cmd_rounds(state: ReplState, arg: str) -> None:
 
 def _cmd_clear(state: ReplState) -> None:
     state.agent.messages.clear()
-    state.agent.pending_retry_text = None
     click.echo("conversation cleared (in-memory only; DB history kept)")
 
 

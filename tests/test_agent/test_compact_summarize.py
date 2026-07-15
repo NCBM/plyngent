@@ -52,7 +52,7 @@ def test_build_compacted_seed_messages() -> None:
     seed = build_compacted_seed_messages("summary text", system_prompt="sys", source_session_id=3)
     assert isinstance(seed[0], SystemChatMessage)
     assert seed[0].content == "sys"
-    assert isinstance(seed[1], UserChatMessage)
+    assert isinstance(seed[1], AssistantChatMessage)
     assert "summary text" in seed[1].content
     assert "session 3" in seed[1].content
 

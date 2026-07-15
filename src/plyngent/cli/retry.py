@@ -140,9 +140,8 @@ async def run_turn_with_retries(
     """Run a chat turn with automatic retries on failure.
 
     ``starter`` produces the event stream for the first attempt (usually
-    ``agent.run``). After a failure that sets ``pending_retry_text``, further
-    attempts use ``agent.retry`` so the user message is not duplicated in
-    history/DB (it is already persisted).
+    ``agent.run``). After a failure (history ends with the user message),
+    further attempts use ``agent.retry`` so the user message is not duplicated.
 
     Ctrl+C cancels the in-flight task; user message stays in DB for ``/retry``.
     """
