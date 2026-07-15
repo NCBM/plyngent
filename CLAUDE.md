@@ -72,7 +72,12 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`.
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
-- **`DEFAULT_TOOLS`**: file + process + vcs tool list for a `ToolRegistry`.
+- **`chat`**: human prompts as tools — `ask_user`, `choose_user`, `form_user` (shared `prompting` core).
+- **`DEFAULT_TOOLS`**: file + process + vcs + chat tool list for a `ToolRegistry`.
+
+### Prompting (`prompting.py`)
+
+Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable backend; non-TTY uses defaults or errors. CLI limit/confirm hooks and chat tools both use this. Async helpers serialize prompts (`run_prompt_async`).
 
 ### CLI (`cli/`)
 
@@ -102,7 +107,8 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 - **No local tokenizer stage** for now.
 - **Phase E**: tooling depth (grep/glob, VCS backends; prefer `edit_replace` / `edit_lineno` over model-generated patches).
 - **Phase F (providers + usage v2)**: API `usage` + char-based estimate fallback; session/turn totals; `/status` + end-of-turn. Optional later: cost, real tokenizer.
-- **Phase G–H**: CLI polish, hardening; then multi-tenant platform (`router/`, auth, sandboxed tools).
+- **Phase G (CLI polish + hardening)**: shared `prompting` (`ask`/`choose`/`form`) + chat tools; then display/session/export/multiline/one-shot; agent/tools hardening; README. Multi-tenant stays Phase H.
+- **Phase H**: multi-tenant platform (`router/`, auth, sandboxed tools, web).
 
 ## Commit messages
 

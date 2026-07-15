@@ -1,3 +1,7 @@
+from .chat import CHAT_TOOLS as CHAT_TOOLS
+from .chat import ask_user as ask_user
+from .chat import choose_user as choose_user
+from .chat import form_user as form_user
 from .danger import classify_danger as classify_danger
 from .file import FILE_TOOLS as FILE_TOOLS
 from .file import copy_path as copy_path
@@ -37,4 +41,4 @@ from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_workspace_root as set_workspace_root
 
-DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS]
+DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS]

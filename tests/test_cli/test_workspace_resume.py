@@ -88,22 +88,18 @@ def _make_state(memory: MemoryStore, workspace: Path) -> ReplState:
     return st
 
 
-def test_prompt_workspace_mismatch_choices(monkeypatch: pytest.MonkeyPatch) -> None:
-    def prompt_u(*_a: object, **_k: object) -> str:
-        return "u"
+def test_prompt_workspace_mismatch_choices() -> None:
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
 
-    def prompt_k(*_a: object, **_k: object) -> str:
-        return "k"
-
-    def prompt_a(*_a: object, **_k: object) -> str:
-        return "a"
-
-    monkeypatch.setattr("click.prompt", prompt_u)
-    assert prompt_workspace_mismatch(1, "/old", "/new") == "rebind"
-    monkeypatch.setattr("click.prompt", prompt_k)
-    assert prompt_workspace_mismatch(1, "/old", "/new") == "keep"
-    monkeypatch.setattr("click.prompt", prompt_a)
-    assert prompt_workspace_mismatch(1, "/old", "/new") == "abort"
+    with temporary_backend(ScriptedBackend(["2"])):
+        assert prompt_workspace_mismatch(1, "/old", "/new") == "rebind"
+    with temporary_backend(ScriptedBackend(["1"])):
+        assert prompt_workspace_mismatch(1, "/old", "/new") == "keep"
+    with temporary_backend(ScriptedBackend(["3"])):
+        assert prompt_workspace_mismatch(1, "/old", "/new") == "abort"
+    with temporary_backend(ScriptedBackend(["abort"])):
+        assert prompt_workspace_mismatch(1, "/old", "/new") == "abort"
 
 
 async def test_resume_mismatch_rebind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
