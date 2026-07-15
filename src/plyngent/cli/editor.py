@@ -38,6 +38,11 @@ _MINIMAL_CONFIG = """\
 #
 # [providers.example.models]
 # "gpt-4o-mini" = { text = true }
+#
+# [providers.deepseek]
+# preset = "deepseek"
+# access_key_or_token = "sk-..."
+# # models default to deepseek-v4-flash and deepseek-v4-pro if omitted
 """
 
 

@@ -43,6 +43,8 @@ def test_deepseek_openai_convention() -> None:
     client = create_client(provider)
     assert isinstance(client, DeepseekOpenAIClient)
     assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com/v1"
+    assert "deepseek-v4-flash" in provider.models
+    assert "deepseek-v4-pro" in provider.models
 
 
 def test_deepseek_anthropic_convention_not_implemented() -> None:

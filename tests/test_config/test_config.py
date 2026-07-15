@@ -43,11 +43,29 @@ def test_read_valid_config() -> None:
     assert isinstance(providers["test2"], OpenAICompatibleProvider)
     assert isinstance(providers["test3"], AnthropicProvider)
     assert isinstance(providers["foo1"], DeepseekProvider)
+    # TOML omitted models → DeepSeek defaults.
+    assert set(providers["foo1"].models) == {"deepseek-v4-flash", "deepseek-v4-pro"}
+    assert providers["foo1"].models["deepseek-v4-flash"].text is True
     db = config.database
     assert db["implementation"] == "sqlite"
     assert db["url"] == ":memory:"
     assert db["username"] is None
     assert db["password"] is None
+
+
+def test_deepseek_default_models_on_construct() -> None:
+    provider = DeepseekProvider(access_key_or_token="sk-test")
+    assert set(provider.models) == {"deepseek-v4-flash", "deepseek-v4-pro"}
+
+
+def test_deepseek_explicit_models_override_defaults() -> None:
+    from plyngent.config import ModelConfig
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        models={"custom-only": ModelConfig(text=True)},
+    )
+    assert set(provider.models) == {"custom-only"}
 
 
 def test_read_empty_config() -> None:

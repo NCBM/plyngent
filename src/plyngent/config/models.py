@@ -58,9 +58,18 @@ class AnthropicProvider(ProviderConfig, tag="anthropic"):
     """Anthropic API provider."""
 
 
+def _default_deepseek_models() -> dict[str, ModelConfig]:
+    """Current DeepSeek text catalog when TOML omits ``models``."""
+    return {
+        "deepseek-v4-flash": ModelConfig(text=True),
+        "deepseek-v4-pro": ModelConfig(text=True),
+    }
+
+
 class DeepseekProvider(ProviderConfig, tag="deepseek"):
     """Deepseek API provider with optional extras (e.g. convention)."""
 
+    models: dict[str, ModelConfig] = field(default_factory=_default_deepseek_models)
     extras: dict[str, str] = field(default_factory=dict)
 
 

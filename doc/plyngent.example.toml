@@ -36,11 +36,13 @@ access_key_or_token = "sk-replace-me"
 # "gpt-4o-mini" = { text = true }
 
 # --- DeepSeek (OpenAI-compatible convention) ---
+# Default models if [providers.*.models] is omitted: deepseek-v4-flash, deepseek-v4-pro.
 # [providers.deepseek]
 # preset = "deepseek"
 # access_key_or_token = "sk-replace-me"
-# url = "https://api.deepseek.com"
+# # url defaults to https://api.deepseek.com/v1 when empty
 # extras = { convention = "openai" }
 #
 # [providers.deepseek.models]
-# "deepseek-chat" = { text = true }
+# "deepseek-v4-flash" = { text = true }
+# "deepseek-v4-pro" = { text = true }

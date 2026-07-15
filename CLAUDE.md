@@ -36,7 +36,7 @@ lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 - **`openai_compatible/model.py`** — tagged chat messages (`SystemChatMessage`, `UserChatMessage`, …), tools, request/response, streaming chunks.
 - **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAIClient` via `niquests` async + SSE.
 - **`openai_compatible/config.py`** — `OpenAIConfig` (token + base URL).
-- **DeepSeek** — `DeepseekOpenAIClient`; models add `reasoning_content`, `prefix`, `ThinkingOptions`.
+- **DeepSeek** — `DeepseekOpenAIClient`; models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`.
 
 ### Config (`config/`)
 
