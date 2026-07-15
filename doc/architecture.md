@@ -18,12 +18,11 @@
     - utils: Common utilities for code architecture.
         - components: Utilities for class composition.
     - memory: Storage controlling for sessions and messages.
-    - router: Multi-source capability routing and interception.
-        - interceptors: Capability of stealing a few arguments for partial re-routing.
-        - ...
-    - config: Plyngent configuration center.
-    - agent: Agent capabilities and controlling.
-    - tools: Client code of tool calls.
-    - cli: CLI for chat/agent application.
-    - web: Web service for chat/agent application.
+    - router: Multi-source capability routing (Phase H; not implemented).
+    - config: Plyngent configuration center (TOML).
+    - agent: Tool loop, streaming, usage, compact.
+    - tools: Workspace file/process/VCS/chat tools.
+    - prompting: Shared ask/choose/form for CLI and tools.
+    - cli: Click entry, slash registry, REPL, one-shot chat.
+    - web: Web service (Phase H; not implemented).
 

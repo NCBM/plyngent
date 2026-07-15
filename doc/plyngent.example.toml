@@ -1,0 +1,46 @@
+# Example plyngent configuration (no real secrets).
+# Copy to the path shown by: plyngent config path
+# Then set access_key_or_token and adjust models.
+
+# Optional. If omitted (or SQLite url is empty / ":memory:"), the CLI uses a
+# durable file under the platform user data dir (e.g. ~/.local/share/plyngent/chat.db).
+# [database]
+# implementation = "sqlite"
+# url = "/path/to/chat.db"
+
+[agent]
+system_prompt = "You are a careful coding assistant. Prefer small, verified edits."
+max_tool_result_chars = 32000
+parallel_tools = true
+confirm_destructive = true
+path_denylist = ["/secrets/", ".ssh/", ".gnupg/"]
+# Soft context budget in estimated tokens (~4 chars/token when API usage missing).
+max_context_tokens = 200000
+
+# --- OpenAI-compatible (vLLM, LiteLLM, OpenAI, …) ---
+[providers.openai_compat]
+preset = "openai-compatible"
+url = "https://api.openai.com/v1"
+access_key_or_token = "sk-replace-me"
+
+[providers.openai_compat.models]
+"gpt-4o-mini" = { text = true, cost_factor = 1.0 }
+
+# --- OpenAI preset (same client shape; tag is "openai") ---
+# [providers.openai]
+# preset = "openai"
+# access_key_or_token = "sk-replace-me"
+# url = "https://api.openai.com/v1"
+#
+# [providers.openai.models]
+# "gpt-4o-mini" = { text = true }
+
+# --- DeepSeek (OpenAI-compatible convention) ---
+# [providers.deepseek]
+# preset = "deepseek"
+# access_key_or_token = "sk-replace-me"
+# url = "https://api.deepseek.com"
+# extras = { convention = "openai" }
+#
+# [providers.deepseek.models]
+# "deepseek-chat" = { text = true }

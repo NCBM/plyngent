@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Early development: protocol clients, config, async memory, and a runtime client factory exist. Agent, CLI, web, tools, and router are still planned/stubbed.
+Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Single-user CLI is usable: protocol clients, config, async memory, agent tool loop, workspace tools, and REPL/one-shot chat. Multi-tenant `router/` / web remain Phase H.
 
 ## Commands
 
@@ -83,15 +83,12 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
-- **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
-- Slash commands: Click group in `cli/slash.py` (params/help/`UsageError`); dispatch via `awaitlet.async_def` + `awaitlet()` for async work. Completer reads `slash.list_commands`.
-- Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
-- Failed/cancelled turns: user message kept in DB; partial assistant/tool rolled back; Ctrl+C cancels in-flight turn; **TTY confirms** off-loop; auto-retry 10s/20s/30s then `/retry` (no duplicate user message).
-- **`plyngent providers`**: list config providers.
-- **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
-- If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.
-- Tools default on (`--tools` / `--no-tools`); workspace defaults to cwd; `--max-rounds` default 32.
-- Readline/editline: Tab completion; input history file under platformdirs user data (`repl_history`).
+- **`plyngent chat`**: provider/model (flags or interactive); SQLite sessions via `[database]` (file DB under user data if unset/`:memory:`); sessions bound to workspace; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes`, `--stream/--no-stream`, `--quiet`. Root `--log-level`.
+- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`.
+- Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
+- Failed/cancelled turns: user message kept; partial assistant/tool rolled back; Ctrl+C cancels turn; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
+- **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.
+- Tools default on; workspace defaults to cwd; `--max-rounds` default 32. Readline history under platformdirs (`repl_history`). PTY: `close_all` on chat exit.
 
 ### Composition utility: `Forward` descriptor
 
@@ -117,22 +114,19 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
   - G3: multiline `"""` … `"""` input (`cli/input_text.py`); `/edit` via `$EDITOR` (`edit_text_in_editor`)
   - G4: `plyngent chat -p/--prompt` (+ non-TTY stdin); exit codes 0/1/2/3; `--yes` / non-interactive confirm deny; `--stream/--no-stream`, `--quiet`
   - G5: PTY master FD non-inheritable; `read_pty`/`close_pty` via `to_thread`; `PtyManager.close_all()` on chat exit; `--log-level`; clearer invalid TOML errors; export/status stay secret-free
+  - G6: README, `doc/plyngent.example.toml`, CLAUDE overview/CLI notes
 
-  **Planned**
-
-  - **G6 — Docs**: real README, example TOML, CLAUDE/help accuracy
-
-  Milestone order: G6.
+  Phase G complete for single-user CLI polish. Next roadmap work is Phase H or optional F (cost/tokenizer).
 
   **PTY / process model (decision)**
 
-  Today `PtyManager` (`tools/process/pty_session.py`) is **in-process**: `pty.openpty` + `os.fork` → child `execvp`, parent holds master FD; tools are **sync** and run on the asyncio loop thread (blocking `select`/`read`/`waitpid`). Session registry is process-global. Safe enough for single-user CLI if the child path stays fork-then-exec only.
+  Today `PtyManager` (`tools/process/pty_session.py`) is **in-process**: `pty.openpty` + `os.fork` → child `execvp`, parent holds master FD; `read_pty`/`close_pty` run via `to_thread`. Session registry is process-global. Safe enough for single-user CLI if the child path stays fork-then-exec only.
 
   | Question | Answer |
   |----------|--------|
   | Separate PTY supervisor process so the main app is safer with threads/greenlets? | **Not for Phase G.** Defer to **Phase H** (sandbox / multi-tenant) or if we hit real FD-leak / freeze bugs. |
   | Why not now? | Fork-then-exec is already the right shape; rewrite cost (IPC, lifecycle, tests) dwarfs single-user CLI risk. awaitlet greenlets are slash-only; PTY is not forked from a worker thread today. |
-  | What *does* belong in G5 | (1) mark master (and ideally app) FDs non-inheritable before/after fork; (2) avoid unbounded loop block — `to_thread` or `add_reader` for long `read_pty`/`close`; (3) CLI exit / `finally`: `PtyManager.close_all()`; (4) keep `os.fork` on the loop/main thread — do not move `open` to a thread pool without redesign. |
+  | G5 (done) | Master FD non-inheritable; `read_pty`/`close_pty` via `to_thread`; chat exit `close_all`; fork stays on loop/main thread. |
   | Phase H | Optional PTY helper process (JSON/Unix socket), or subprocess+PTY with asyncio reaping; sandboxed tools, multi-session isolation. |
 
 - **Phase H**: multi-tenant platform (`router/`, auth, sandboxed tools, web). Optional **out-of-process PTY host** if isolation is required.
