@@ -7,7 +7,10 @@ Usage:
   python scripts/wine_pdm.py setup
   python scripts/wine_pdm.py pdm <args...>
   python scripts/wine_pdm.py run <args...>
-  python scripts/wine_pdm.py pytest [args...]
+  python scripts/wine_pdm.py check [paths...]     # ruff + basedpyright (default: src)
+  python scripts/wine_pdm.py test [pytest-args...] # full suite (default: tests -q)
+  python scripts/wine_pdm.py ci                   # check + test
+  python scripts/wine_pdm.py pytest [args...]     # alias of test
   python scripts/wine_pdm.py basedpyright [paths...]
   python scripts/wine_pdm.py uvx <args...>
   python scripts/wine_pdm.py python <args...>
@@ -15,7 +18,7 @@ Usage:
 
 Env:
   PLYNGENT_SRC, PLYNGENT_WINE_BASE, PLYNGENT_WINEPREFIX, PLYNGENT_WINEDEBUG
-  WIN_CPYTHON_TAG, WIN_UV_VERSION
+  WIN_PYTHON (short uv request, default 3.14), WIN_UV_VERSION
 """
 
 from __future__ import annotations
@@ -73,10 +76,11 @@ else:
 
 
 def cmd_setup(layout: WineLayout, env: dict[str, str], _args: list[str]) -> int:
-    require_cmds("wine", "uv", "wineboot")
+    require_cmds("wine", "wineboot")
     ensure_prefix(layout, env)
-    ensure_windows_python(layout, env)
+    # Windows uv first, then short-version CPython install inside Wine.
     ensure_windows_uv(layout)
+    ensure_windows_python(layout, env)
     ensure_pdm_bootstrap(layout, env)
     refresh_project_view(layout)
     print("Selecting Windows interpreter for PDM project-view ...", file=sys.stderr)
@@ -92,10 +96,10 @@ def cmd_setup(layout: WineLayout, env: dict[str, str], _args: list[str]) -> int:
     print(f"  WINEPREFIX={layout.prefix}")
     print()
     print("Examples:")
-    print("  python scripts/wine_pdm.py pytest")
-    print("  python scripts/wine_pdm.py basedpyright src/plyngent/tools/process")
+    print("  python scripts/wine_pdm.py ci")
+    print("  python scripts/wine_pdm.py check")
+    print("  python scripts/wine_pdm.py test")
     print('  python scripts/wine_pdm.py run python -c "import sys, winpty; print(sys.platform, winpty)"')
-    print("  python scripts/wine_pdm.py uvx --from pdm pdm --version")
     return 0
 
 
@@ -107,14 +111,41 @@ def cmd_run(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
     return wine_pdm(layout, env, ["run", *args])
 
 
-def cmd_pytest(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
+def cmd_ruff(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
     if not args:
-        args = ["tests/test_tools/test_process.py", "-q"]
-    return wine_pdm(layout, env, ["run", "pytest", *args])
+        args = ["src", "tests", "scripts"]
+    return wine_pdm(layout, env, ["run", "ruff", "check", *args])
 
 
 def cmd_basedpyright(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
+    if not args:
+        args = ["src"]
     return wine_basedpyright(layout, env, args)
+
+
+def cmd_check(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
+    """Ruff + basedpyright (full static check)."""
+    # Optional paths apply to both tools when provided.
+    ruff_args = list(args) if args else ["src", "tests", "scripts"]
+    pyright_args = list(args) if args else ["src"]
+    code = cmd_ruff(layout, env, ruff_args)
+    if code != 0:
+        return code
+    return cmd_basedpyright(layout, env, pyright_args)
+
+
+def cmd_pytest(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
+    if not args:
+        args = ["tests", "-q"]
+    return wine_pdm(layout, env, ["run", "pytest", *args])
+
+
+def cmd_ci(layout: WineLayout, env: dict[str, str], _args: list[str]) -> int:
+    """Full Windows check: ruff + basedpyright + pytest."""
+    code = cmd_check(layout, env, [])
+    if code != 0:
+        return code
+    return cmd_pytest(layout, env, [])
 
 
 def cmd_uvx(layout: WineLayout, env: dict[str, str], args: list[str]) -> int:
@@ -143,9 +174,8 @@ def cmd_shell(layout: WineLayout, _env: dict[str, str], _args: list[str]) -> int
     print()
     print("# Typical flow:")
     print("#   python scripts/wine_pdm.py setup")
+    print("#   python scripts/wine_pdm.py ci")
     print('#   python scripts/wine_pdm.py run python -c "import winpty; print(winpty)"')
-    print("#   python scripts/wine_pdm.py basedpyright src/plyngent/tools/process")
-    print("#   python scripts/wine_pdm.py pytest")
     return 0
 
 
@@ -153,7 +183,11 @@ _COMMANDS: dict[str, Callable[[WineLayout, dict[str, str], list[str]], int]] = {
     "setup": cmd_setup,
     "pdm": cmd_pdm,
     "run": cmd_run,
+    "check": cmd_check,
+    "ruff": cmd_ruff,
+    "test": cmd_pytest,
     "pytest": cmd_pytest,
+    "ci": cmd_ci,
     "basedpyright": cmd_basedpyright,
     "pyright": cmd_basedpyright,
     "uvx": cmd_uvx,

@@ -17,11 +17,12 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 # Defaults are version tags only — not machine paths.
-DEFAULT_WIN_CPYTHON = "3.14"
+# Short uv request (e.g. ``3.14``); Windows uv.exe installs the matching windows build.
+DEFAULT_WIN_PYTHON = "3.14"
 DEFAULT_WIN_UV_VERSION = "0.11.28"
 # typings/ is required for Wine basedpyright: pywinpty's shipped types are incomplete
-# (e.g. kill(sig) required) and stubPath=typings is set in pyproject.toml.
-VIEW_LINKS = ("src", "tests", "typings", "README.md", "LICENSE", "CLAUDE.md", "doc")
+# (e.g. kill(sig) required); pyright default stubPath is ``typings/``.
+VIEW_LINKS = ("src", "tests", "scripts", "typings", "README.md", "LICENSE", "CLAUDE.md", "doc")
 VIEW_COPIES = ("pyproject.toml", "pdm.lock")
 
 
@@ -79,7 +80,7 @@ class WineLayout:
     uv_cache: Path
     uv_tools: Path
     pdm_bootstrap: Path
-    win_cpython_tag: str
+    win_python: str
     win_uv_version: str
 
     @classmethod
@@ -98,13 +99,33 @@ class WineLayout:
             uv_cache=base / "uv-cache",
             uv_tools=base / "uv-tools",
             pdm_bootstrap=base / "venv-pdm",
-            win_cpython_tag=os.environ.get("WIN_CPYTHON_TAG", DEFAULT_WIN_CPYTHON),
+            win_python=os.environ.get("WIN_PYTHON", DEFAULT_WIN_PYTHON),
             win_uv_version=os.environ.get("WIN_UV_VERSION", DEFAULT_WIN_UV_VERSION),
         )
 
+    def find_win_python_host(self) -> Path | None:
+        """Locate a Windows ``python.exe`` under the uv install dir."""
+        if not self.uv_python.is_dir():
+            return None
+        # Prefer newest full windows install (cpython-*-windows-*/python.exe).
+        candidates = sorted(
+            self.uv_python.glob("cpython-*-windows-*/python.exe"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if candidates:
+            return candidates[-1]
+        # Fallback: any python.exe one level down.
+        for path in sorted(self.uv_python.glob("*/python.exe")):
+            return path
+        return None
+
     @property
     def win_python_host(self) -> Path:
-        return self.uv_python / self.win_cpython_tag / "python.exe"
+        found = self.find_win_python_host()
+        if found is not None:
+            return found
+        # Placeholder path used in error messages before install.
+        return self.uv_python / f"cpython-{self.win_python}-windows-x86_64-none" / "python.exe"
 
     @property
     def win_python_z(self) -> str:
@@ -161,23 +182,6 @@ def ensure_prefix(layout: WineLayout, env: dict[str, str]) -> None:
         _ = run(["wineboot", "-i"], env=env)
 
 
-def ensure_windows_python(layout: WineLayout, env: dict[str, str]) -> None:
-    if layout.win_python_host.is_file():
-        return
-    print(f"Installing Windows CPython ({layout.win_cpython_tag}) ...", file=sys.stderr)
-    host_env = env.copy()
-    # Host uv installs into host paths, not Wine Z: paths.
-    host_env["UV_PYTHON_INSTALL_DIR"] = str(layout.uv_python)
-    host_env["UV_CACHE_DIR"] = str(layout.uv_cache)
-    code = run(["uv", "python", "install", layout.win_cpython_tag], env=host_env)
-    if code != 0:
-        msg = f"uv python install failed with exit {code}"
-        raise RuntimeError(msg)
-    if not layout.win_python_host.is_file():
-        msg = f"Windows python.exe missing after install: {layout.win_python_host}"
-        raise RuntimeError(msg)
-
-
 def ensure_windows_uv(layout: WineLayout) -> None:
     if layout.uv_exe.is_file():
         return
@@ -193,6 +197,30 @@ def ensure_windows_uv(layout: WineLayout) -> None:
         zf.extractall(layout.bin_dir)
     if not layout.uv_exe.is_file():
         msg = f"uv.exe missing after extract: {layout.uv_exe}"
+        raise RuntimeError(msg)
+
+
+def ensure_windows_python(layout: WineLayout, env: dict[str, str]) -> None:
+    """Install Windows CPython via Wine ``uv.exe`` using a short version request."""
+    if layout.find_win_python_host() is not None:
+        return
+    if not layout.uv_exe.is_file():
+        msg = "Windows uv.exe missing; call ensure_windows_uv first"
+        raise RuntimeError(msg)
+    print(
+        f"Installing Windows CPython via Wine uv ({layout.win_python}) ...",
+        file=sys.stderr,
+    )
+    code = run(
+        ["wine", str(layout.uv_exe), "python", "install", layout.win_python],
+        env=env,
+    )
+    if code != 0:
+        msg = f"wine uv python install failed with exit {code}"
+        raise RuntimeError(msg)
+    found = layout.find_win_python_host()
+    if found is None or not found.is_file():
+        msg = f"Windows python.exe missing after install under {layout.uv_python}"
         raise RuntimeError(msg)
 
 
@@ -283,7 +311,7 @@ def wine_basedpyright(layout: WineLayout, env: dict[str, str], paths: list[str])
     out = layout.base / "basedpyright-out.txt"
     out_z = to_wine_z(out)
     # Node under Wine often hits EBADF on stderr; redirect via cmd.
-    args = " ".join(paths) if paths else "src/plyngent/tools/process"
+    args = " ".join(paths) if paths else "src"
     cmdline = f"{scripts_win}\\basedpyright.exe {args} > {out_z} 2>&1"
     code = run(["wine", "cmd", "/c", cmdline], env=env, cwd=layout.view)
     if out.is_file():
