@@ -20,8 +20,8 @@ type DeepSeekReasoningEffort = ReasoningEffort | Literal["max"]
 
 
 class AssistantChatMessage(BaseAssistantChatMessage):
+    # reasoning_content lives on the base assistant message (OpenAI-compat).
     prefix: bool | Unset = UNSET
-    reasoning_content: str | Unset = UNSET
 
 
 class ToolChatMessage(BaseToolChatMessage):

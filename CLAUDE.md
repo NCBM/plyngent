@@ -57,7 +57,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
 - **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; assistant/tools on success); `stream`; system prompt; `retry()` when history ends with a user message (failed/cancelled turn or orphan after resume).
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
-- Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
+- Events: text_delta, **reasoning_delta**, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.
 - Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_tokens` (default 200k est. tokens).
 
@@ -84,7 +84,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
-- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/status` (incl. context char estimate), `/rounds`, `/retry`, …
+- Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/status` (incl. context char estimate), `/rounds`, `/stream`, `/verbose`, `/retry`, …
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
 - Failed/cancelled turns: user message kept in DB; partial assistant/tool rolled back; Ctrl+C cancels in-flight turn; **TTY confirms** off-loop; auto-retry 10s/20s/30s then `/retry` (no duplicate user message).
 - **`plyngent providers`**: list config providers.

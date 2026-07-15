@@ -35,6 +35,8 @@ Commands:
   /provider [name]   Show or switch provider
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
+  /stream [on|off]   Show or toggle streaming model output
+  /verbose [on|off]  Show or toggle full tool-result dumps
   /rounds [n]        Show or set max tool-loop rounds
   /retry             Re-run incomplete last user turn (DB/orphan user; no retype)
   /status            Show session/provider/tools/rounds status
@@ -43,8 +45,9 @@ User messages are saved immediately. On API errors or Ctrl+C, partial
 assistant/tool output is discarded but the user message stays (so /retry
 works after resume, not only via readline history). Auto-retry: 10s/20s/30s.
 
-Tab completes slash commands and some arguments (provider, model, tools).
-Use --session ID or /resume to continue a prior chat after restart.
+Tab completes slash commands and some arguments (provider, model, tools,
+stream, verbose). Use --session ID or /resume to continue a prior chat
+after restart.
 """
 
 type SlashHandler = Callable[[], None | Awaitable[None]]
@@ -74,7 +77,9 @@ def _cmd_status(state: ReplState) -> None:
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
         f"pending_retry={pending_disp}\n"
         f"tools={'on' if state.tools_enabled else 'off'}  "
-        f"rounds={state.max_rounds}  stream={'on' if state.agent.stream else 'off'}\n"
+        f"rounds={state.max_rounds}  "
+        f"stream={'on' if state.agent.stream else 'off'}  "
+        f"verbose={'on' if state.verbose else 'off'}\n"
         f"context_tokens={ctx_tilde}{ctx_tokens}/{ctx_budget} ({ctx_tag})  "
         f"context_chars={ctx_chars}  "
         f"tool_result_max={state.agent.max_tool_result_chars}\n"
@@ -185,6 +190,40 @@ def _cmd_tools(state: ReplState, arg: str) -> None:
     click.echo(f"tools={'on' if state.tools_enabled else 'off'}")
 
 
+def _cmd_stream(state: ReplState, arg: str) -> None:
+    token = arg.strip().lower()
+    if not token:
+        click.echo(f"stream={'on' if state.agent.stream else 'off'}")
+        return
+    if token in {"on", "1", "true", "yes"}:
+        enabled = True
+    elif token in {"off", "0", "false", "no"}:
+        enabled = False
+    else:
+        click.echo("usage: /stream [on|off]")
+        return
+    state.stream_enabled = enabled
+    state.agent.stream = enabled
+    click.echo(f"stream={'on' if enabled else 'off'}")
+
+
+def _cmd_verbose(state: ReplState, arg: str) -> None:
+    token = arg.strip().lower()
+    if not token:
+        click.echo(f"verbose={'on' if state.verbose else 'off'}")
+        return
+    if token in {"on", "1", "true", "yes"}:
+        enabled = True
+    elif token in {"off", "0", "false", "no"}:
+        enabled = False
+    else:
+        click.echo("usage: /verbose [on|off]")
+        return
+    state.verbose = enabled
+    state.sync_display_flags()
+    click.echo(f"verbose={'on' if enabled else 'off'}")
+
+
 def _cmd_rounds(state: ReplState, arg: str) -> None:
     token = arg.strip()
     if not token:
@@ -287,6 +326,8 @@ async def _dispatch_slash(state: ReplState, command: str, arg: str) -> bool:
         "provider": lambda: _cmd_provider(state, arg),
         "model": lambda: _cmd_model(state, arg),
         "tools": lambda: _cmd_tools(state, arg),
+        "stream": lambda: _cmd_stream(state, arg),
+        "verbose": lambda: _cmd_verbose(state, arg),
         "rounds": lambda: _cmd_rounds(state, arg),
         "retry": lambda: _cmd_retry(state),
         "status": lambda: _cmd_status(state),
@@ -322,7 +363,8 @@ async def run_repl(state: ReplState) -> None:
         f"plyngent chat  provider={state.provider_name}  model={state.model}  "
         f"session={state.session_id}  tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  messages={len(state.agent.messages)}  "
-        f"stream={'on' if state.agent.stream else 'off'}"
+        f"stream={'on' if state.agent.stream else 'off'}  "
+        f"verbose={'on' if state.verbose else 'off'}"
     )
     click.echo("Type /help for commands. Empty line is ignored.")
 

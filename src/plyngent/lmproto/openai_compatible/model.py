@@ -72,6 +72,8 @@ class AssistantChatMessage(Struct, tag_field="role", tag="assistant"):
     audio: IDObject | Unset = UNSET
     refusal: str | Unset = UNSET
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
+    # OpenAI-compat / DeepSeek thinking streams (omitted when unset).
+    reasoning_content: str | Unset = UNSET
 
 
 class ToolChatMessage(ChatMessage, tag_field="role", tag="tool"):
@@ -235,6 +237,7 @@ class StreamToolCallDelta(Struct):
 class DeltaMessage(Struct):
     role: RoleAssistant | Unset = UNSET
     content: str | Unset = UNSET
+    reasoning_content: str | Unset = UNSET
     tool_calls: list[StreamToolCallDelta] | Unset = UNSET
 
 

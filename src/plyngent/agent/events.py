@@ -13,6 +13,10 @@ class TextDeltaEvent(Struct, tag_field="type", tag="text_delta"):
     content: str
 
 
+class ReasoningDeltaEvent(Struct, tag_field="type", tag="reasoning_delta"):
+    content: str
+
+
 class AssistantMessageEvent(Struct, tag_field="type", tag="assistant_message"):
     message: AssistantChatMessage
 
@@ -51,6 +55,7 @@ class UsageEvent(Struct, tag_field="type", tag="usage"):
 
 type AgentEvent = (
     TextDeltaEvent
+    | ReasoningDeltaEvent
     | AssistantMessageEvent
     | ToolCallEvent
     | ToolResultEvent

@@ -31,6 +31,7 @@ from .events import (
     AssistantMessageEvent,
     ErrorEvent,
     MaxRoundsEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -122,6 +123,9 @@ async def _non_stream_round(
         msg = "chat completion response contained no choices"
         raise RuntimeError(msg)
     assistant = response.choices[0].message
+    reasoning = assistant.reasoning_content
+    if isinstance(reasoning, str) and reasoning:
+        yield ReasoningDeltaEvent(content=reasoning)
     if isinstance(assistant.content, str) and assistant.content:
         yield TextDeltaEvent(content=assistant.content)
     yield AssistantMessageEvent(message=assistant)
@@ -147,6 +151,7 @@ async def _stream_round(
     )
     stream = await client.chat_completions(stream_param, stream=True)
     content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     tool_deltas: list[StreamToolCallDelta] = []
     last_api_usage: object = UNSET
 
@@ -158,6 +163,9 @@ async def _stream_round(
             continue
         choice = chunk.choices[0]
         delta = choice.delta
+        if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
+            reasoning_parts.append(delta.reasoning_content)
+            yield ReasoningDeltaEvent(content=delta.reasoning_content)
         if isinstance(delta.content, str) and delta.content:
             content_parts.append(delta.content)
             yield TextDeltaEvent(content=delta.content)
@@ -165,6 +173,7 @@ async def _stream_round(
             tool_deltas.extend(delta.tool_calls)
 
     full_content = "".join(content_parts)
+    full_reasoning = "".join(reasoning_parts)
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
     if tool_deltas:
         calls = merge_stream_tool_calls(tool_deltas)
@@ -174,6 +183,7 @@ async def _stream_round(
     assistant = AssistantChatMessage(
         content=full_content or None,
         tool_calls=tool_calls,
+        reasoning_content=full_reasoning or UNSET,
     )
     yield AssistantMessageEvent(message=assistant)
     yield UsageEvent(

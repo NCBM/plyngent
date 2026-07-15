@@ -9,6 +9,7 @@ from plyngent.agent import (
     AssistantMessageEvent,
     ChatAgent,
     MaxRoundsEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolRegistry,
@@ -336,6 +337,78 @@ async def test_stream_yields_deltas_incrementally() -> None:
     assert any(isinstance(e, AssistantMessageEvent) for e in events)
     assert isinstance(messages[-1], AssistantChatMessage)
     assert messages[-1].content == "ab"
+
+
+async def test_stream_yields_reasoning_deltas() -> None:
+    class ReasoningClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param
+            if not stream:
+                return _response(AssistantChatMessage(content="ans", reasoning_content="think"))
+
+            async def chunks() -> AsyncIterator[ChatCompletionChunk]:
+                for part in ("th", "ink"):
+                    yield ChatCompletionChunk(
+                        id="1",
+                        object="chat.completion.chunk",
+                        created=0,
+                        model="t",
+                        choices=[
+                            ChunkChoice(
+                                index=0,
+                                delta=DeltaMessage(reasoning_content=part),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+                yield ChatCompletionChunk(
+                    id="1",
+                    object="chat.completion.chunk",
+                    created=0,
+                    model="t",
+                    choices=[
+                        ChunkChoice(
+                            index=0,
+                            delta=DeltaMessage(content="ans"),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+
+            return chunks()
+
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(ReasoningClient(), messages, model="m", stream=True)]
+    reasoning = [e for e in events if isinstance(e, ReasoningDeltaEvent)]
+    assert [r.content for r in reasoning] == ["th", "ink"]
+    deltas = [e for e in events if isinstance(e, TextDeltaEvent)]
+    assert [d.content for d in deltas] == ["ans"]
+    assert isinstance(messages[-1], AssistantChatMessage)
+    assert messages[-1].content == "ans"
+    assert messages[-1].reasoning_content == "think"
+
+
+async def test_non_stream_yields_reasoning() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content="ok", reasoning_content="plan"))])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+    reasoning = [e for e in events if isinstance(e, ReasoningDeltaEvent)]
+    assert len(reasoning) == 1
+    assert reasoning[0].content == "plan"
+    assert isinstance(messages[-1], AssistantChatMessage)
+    assert messages[-1].reasoning_content == "plan"
 
 
 async def test_run_chat_loop_with_tools() -> None:

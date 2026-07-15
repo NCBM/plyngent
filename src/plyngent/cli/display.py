@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 import click
@@ -8,6 +9,7 @@ from plyngent.agent import (
     CancelledEvent,
     ErrorEvent,
     MaxRoundsEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -22,6 +24,18 @@ if TYPE_CHECKING:
 
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
+
+# Process/session display flag for tool result dumps (set from ReplState / slash).
+_verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
+
+
+def set_verbose_tool_results(enabled: bool) -> None:  # noqa: FBT001
+    """Set whether tool results print in full (True) or as a short preview."""
+    _ = _verbose_tool_results.set(enabled)
+
+
+def get_verbose_tool_results() -> bool:
+    return _verbose_tool_results.get()
 
 
 def _preview(text: str, limit: int) -> str:
@@ -41,11 +55,25 @@ def _echo_stream(text: str) -> None:
         pass
 
 
-async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C901, PLR0912
+async def render_events(  # noqa: C901, PLR0912, PLR0915
+    events: AsyncIterator[AgentEvent],
+    *,
+    verbose: bool | None = None,
+) -> None:
     """Print agent events to the terminal (text deltas stream as they arrive)."""
+    show_full = get_verbose_tool_results() if verbose is None else verbose
+    printed_reasoning = False
     printed_text = False
     async for event in events:
-        if isinstance(event, TextDeltaEvent):
+        if isinstance(event, ReasoningDeltaEvent):
+            if not printed_reasoning:
+                click.echo()
+                click.secho("reasoning: ", fg="bright_black", nl=False)
+                printed_reasoning = True
+            _echo_stream(event.content)
+        elif isinstance(event, TextDeltaEvent):
+            if printed_reasoning and not printed_text:
+                click.echo()
             if not printed_text:
                 click.echo()
                 click.secho("assistant: ", fg="cyan", nl=False)
@@ -59,10 +87,14 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
             else:
                 click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
         elif isinstance(event, ToolResultEvent):
-            preview = _preview(event.message.content, _TOOL_RESULT_PREVIEW)
-            # Single-line summary; full result stays in the message history for the model.
-            one_line = preview.replace("\n", " ")
-            click.secho(f"[tool ok] {one_line}", fg="magenta")
+            content = event.message.content
+            if show_full:
+                click.secho(f"[tool ok]\n{content}", fg="magenta")
+            else:
+                preview = _preview(content, _TOOL_RESULT_PREVIEW)
+                # Single-line summary; full result stays in the message history for the model.
+                one_line = preview.replace("\n", " ")
+                click.secho(f"[tool ok] {one_line}", fg="magenta")
         elif isinstance(event, ErrorEvent):
             suffix = ""
             if event.source:
@@ -89,6 +121,6 @@ async def render_events(events: AsyncIterator[AgentEvent]) -> None:  # noqa: C90
         else:
             # AssistantMessageEvent — text already shown via TextDeltaEvent.
             _ = event
-    if printed_text:
+    if printed_text or printed_reasoning:
         click.echo()
     click.echo()

@@ -29,6 +29,8 @@ class ReplState:
     model: str
     tools_enabled: bool
     max_rounds: int = DEFAULT_MAX_ROUNDS
+    stream_enabled: bool = True
+    verbose: bool = False
     client: ChatClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
@@ -38,6 +40,12 @@ class ReplState:
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.agent = self._make_agent()
+        self.sync_display_flags()
+
+    def sync_display_flags(self) -> None:
+        from plyngent.cli.display import set_verbose_tool_results
+
+        set_verbose_tool_results(self.verbose)
 
     def _workspace_key(self) -> str:
         key = normalize_workspace(self.workspace)
@@ -74,7 +82,7 @@ class ReplState:
             session_id=self.session_id,
             max_rounds=self.max_rounds,
             on_limit=prompt_continue_limit_async,
-            stream=True,
+            stream=self.stream_enabled,
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,
             parallel_tools=agent_cfg.parallel_tools,
@@ -84,9 +92,13 @@ class ReplState:
     def rebuild_client(self) -> None:
         """Recreate client and agent after provider/model/tools change."""
         messages = list(self.agent.messages)
+        # Preserve live stream toggle if agent already exists.
+        if hasattr(self, "agent"):
+            self.stream_enabled = self.agent.stream
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.agent = self._make_agent()
         self.agent.messages = messages
+        self.sync_display_flags()
 
     def _set_workspace(self, path: Path) -> None:
         """Update REPL + tool workspace root."""

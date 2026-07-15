@@ -116,6 +116,27 @@ async def test_tools_toggle(state: ReplState) -> None:
     assert state.tools_enabled is False
 
 
+async def test_stream_toggle(state: ReplState) -> None:
+    assert state.agent.stream is True
+    assert await handle_slash(state, "/stream off") is True
+    assert state.agent.stream is False
+    assert state.stream_enabled is False
+    assert await handle_slash(state, "/stream on") is True
+    assert state.agent.stream is True
+
+
+async def test_verbose_toggle(state: ReplState) -> None:
+    from plyngent.cli.display import get_verbose_tool_results
+
+    assert state.verbose is False
+    assert await handle_slash(state, "/verbose on") is True
+    assert state.verbose is True
+    assert get_verbose_tool_results() is True
+    assert await handle_slash(state, "/verbose off") is True
+    assert state.verbose is False
+    assert get_verbose_tool_results() is False
+
+
 async def test_resume(state: ReplState) -> None:
     sid = state.session_id
     assert sid is not None

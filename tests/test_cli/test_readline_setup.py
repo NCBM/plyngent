@@ -77,6 +77,8 @@ def test_completer_commands(tmp_path: object, monkeypatch: object) -> None:
         found.append(item)
         index += 1
     assert "/help" in found
+    assert "/stream" in SLASH_COMMANDS
+    assert "/verbose" in SLASH_COMMANDS
     assert set(found) <= set(SLASH_COMMANDS)
 
 
