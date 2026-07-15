@@ -86,14 +86,22 @@ def _as_nonneg_int(value: object) -> int:
 
 
 def token_usage_from_api(usage: object) -> TokenUsage | None:
-    """Parse OpenAI-style usage dict; return None if missing/empty."""
+    """Parse OpenAI-style usage dict; return None if missing/empty.
+
+    Accepts chat completions fields (``prompt_tokens`` / ``completion_tokens``)
+    and Responses fields (``input_tokens`` / ``output_tokens``).
+    """
     if usage is None or usage is UNSET:
         return None
     if not isinstance(usage, dict):
         return None
     raw = cast("dict[str, object]", usage)
     prompt = _as_nonneg_int(raw.get("prompt_tokens"))
+    if prompt == 0:
+        prompt = _as_nonneg_int(raw.get("input_tokens"))
     completion = _as_nonneg_int(raw.get("completion_tokens"))
+    if completion == 0:
+        completion = _as_nonneg_int(raw.get("output_tokens"))
     total = _as_nonneg_int(raw.get("total_tokens"))
     if total == 0 and (prompt or completion):
         total = prompt + completion

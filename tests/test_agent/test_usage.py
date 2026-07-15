@@ -50,6 +50,14 @@ def test_token_usage_from_api_infers_total() -> None:
     assert u.total_tokens == 5
 
 
+def test_token_usage_from_api_responses_fields() -> None:
+    u = token_usage_from_api({"input_tokens": 7, "output_tokens": 2, "total_tokens": 9})
+    assert u is not None
+    assert u.prompt_tokens == 7
+    assert u.completion_tokens == 2
+    assert u.total_tokens == 9
+
+
 def test_chars_to_tokens() -> None:
     assert chars_to_tokens(0) == 0
     assert chars_to_tokens(1) == 1

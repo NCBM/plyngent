@@ -19,9 +19,11 @@ def test_openai_provider_defaults_base_url() -> None:
     config = provider_to_openai_config(provider)
     assert config.access_key_or_token == "sk-test"
     assert config.base_url == "https://api.openai.com/v1"
+    from plyngent.agent.responses_client import ResponsesChatClient
+
     client = create_client(provider)
-    assert isinstance(client, OpenAIClient)
-    assert hasattr(client, "responses")
+    assert isinstance(client, ResponsesChatClient)
+    assert hasattr(client, "chat_completions")
 
 
 def test_openai_compatible_requires_url() -> None:
