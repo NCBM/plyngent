@@ -58,6 +58,27 @@ def test_deepseek_default_models_on_construct() -> None:
     assert set(provider.models) == {"deepseek-v4-flash", "deepseek-v4-pro"}
 
 
+def test_openai_default_models_on_construct() -> None:
+    provider = OpenAIProvider(access_key_or_token="sk-test")
+    assert set(provider.models) == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+
+
+def test_openai_omitted_preset_and_models_from_toml(tmp_path: Path) -> None:
+    path = tmp_path / "openai-defaults.toml"
+    _ = path.write_text(
+        """
+[providers.oai]
+access_key_or_token = "sk-test"
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert "oai" in config.providers
+    provider = config.providers["oai"]
+    assert isinstance(provider, OpenAIProvider)
+    assert set(provider.models) == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+
+
 def test_deepseek_explicit_models_override_defaults() -> None:
     from plyngent.config import ModelConfig
 

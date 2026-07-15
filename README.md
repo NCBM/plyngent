@@ -58,7 +58,7 @@ confirm_destructive = true
 max_context_tokens = 200000
 ```
 
-Supported provider presets today: `openai`, `openai-compatible`, `deepseek` (OpenAI convention; default models `deepseek-v4-flash` and `deepseek-v4-pro` if `models` is omitted). Anthropic presets are modeled in config but not wired in the runtime client yet.
+Supported provider presets today: `openai` (default if `preset` is omitted; default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted), `openai-compatible`, `deepseek` (OpenAI convention; default models `deepseek-v4-flash` and `deepseek-v4-pro` if `models` is omitted). Anthropic presets are modeled in config but not wired in the runtime client yet.
 
 If `[database]` is omitted (or SQLite `url` is empty/`":memory:"`), chat uses a durable file under the user data dir (e.g. `~/.local/share/plyngent/chat.db` on Linux).
 

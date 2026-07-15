@@ -53,14 +53,27 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
     models: dict[str, ModelConfig] = field(default_factory=dict)
 
 
+def _default_openai_models() -> dict[str, ModelConfig]:
+    """Current OpenAI text catalog when TOML omits ``models``."""
+    return {
+        "gpt-5.4": ModelConfig(text=True),
+        "gpt-5.4-mini": ModelConfig(text=True),
+        "gpt-5.4-nano": ModelConfig(text=True),
+    }
+
+
 class OpenAIProvider(ProviderConfig, tag="openai"):
     """OpenAI platform provider (agent uses Responses API).
 
     ``provider_tools`` are hosted/provider-side tools (e.g. web_search) passed
     through to ``POST /responses`` as opaque dicts. They are **not** local
     ``ToolRegistry`` handlers and are ignored by non-OpenAI clients.
+
+    When ``models`` is omitted in TOML, seeds a small default catalog (same idea
+    as DeepSeek). Explicit ``models = {}`` stays empty (recoverable / free-form).
     """
 
+    models: dict[str, ModelConfig] = field(default_factory=_default_openai_models)
     provider_tools: list[dict[str, Any]] = field(default_factory=list)
 
 

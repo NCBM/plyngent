@@ -32,6 +32,8 @@ access_key_or_token = "sk-replace-me"
 "gpt-4o-mini" = { text = true, cost_factor = 1.0 }
 
 # --- OpenAI platform (Responses API; tag is "openai") ---
+# If ``preset`` is omitted, it defaults to "openai".
+# If ``models`` is omitted, defaults: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano.
 # [providers.openai]
 # preset = "openai"
 # access_key_or_token = "sk-replace-me"

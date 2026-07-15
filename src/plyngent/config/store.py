@@ -60,9 +60,14 @@ def _parse_providers(
             bad_providers[name] = raw_entry
             continue
 
+        entry = cast("dict[str, object]", raw_entry)
+        # Missing preset → OpenAI platform (Responses-capable defaults).
+        if "preset" not in entry:
+            entry = {**entry, "preset": "openai"}
+
         # Try tagged-union dispatch via msgspec
         try:
-            provider: Provider = msgspec.convert(raw_entry, Provider)
+            provider: Provider = msgspec.convert(entry, Provider)
         except msgspec.ValidationError:
             bad_providers[name] = raw_entry
             continue
@@ -72,12 +77,13 @@ def _parse_providers(
         cls = type(provider)
         known = set(cls.__struct_fields__)
         known.add("preset")  # tag_field, excluded from __struct_fields__
-        if set(cast("dict[str, object]", raw_entry).keys()) - known:
+        # Validate against the entry we actually converted (may have injected preset).
+        if set(entry.keys()) - known:
             bad_providers[name] = raw_entry
             continue
 
-        # Empty models: keep as recoverable (DeepSeek seeds defaults when
-        # models is omitted, so only explicit models={} lands here).
+        # Empty models: recoverable. OpenAI/DeepSeek seed defaults when
+        # ``models`` is omitted; only explicit models={} lands here.
         if not provider.models:
             recoverable[name] = provider
             continue
