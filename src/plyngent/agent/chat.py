@@ -87,6 +87,7 @@ class ChatAgent:
         self.last_request_usage = TokenUsage()
         self.last_turn_rounds = 0
         self._ensure_system_prompt()
+        self._sync_pending_from_orphan_user()
 
     @property
     def context_tokens(self) -> int:
@@ -115,14 +116,21 @@ class ChatAgent:
             return
         self.messages.insert(0, SystemChatMessage(content=self.system_prompt))
 
+    def _sync_pending_from_orphan_user(self) -> None:
+        """If history ends with a user message, that turn is incomplete → retryable."""
+        if self.messages and isinstance(self.messages[-1], UserChatMessage):
+            self.pending_retry_text = self.messages[-1].content
+        else:
+            self.pending_retry_text = None
+
     async def load_history(self) -> None:
         """Replace in-memory messages from the bound memory session."""
         if self.memory is None or self.session_id is None:
             msg = "load_history requires memory and session_id"
             raise RuntimeError(msg)
         self.messages = await self.memory.list_messages(self.session_id)
-        self.pending_retry_text = None
         self._ensure_system_prompt()
+        self._sync_pending_from_orphan_user()
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
         """Attach a memory session id; optionally load existing messages."""
@@ -137,16 +145,31 @@ class ChatAgent:
         if self.memory is not None and self.session_id is not None:
             _ = await self.memory.append_message(self.session_id, message)
 
-    def _rollback_turn(self, pre_len: int, user_text: str) -> None:
-        del self.messages[pre_len:]
+    def _user_index(self, user_msg: UserChatMessage) -> int:
+        for i in range(len(self.messages) - 1, -1, -1):
+            if self.messages[i] is user_msg:
+                return i
+        # Fallback: last matching content user message
+        for i in range(len(self.messages) - 1, -1, -1):
+            msg = self.messages[i]
+            if isinstance(msg, UserChatMessage) and msg.content == user_msg.content:
+                return i
+        msg = "user message not found in history"
+        raise RuntimeError(msg)
+
+    def _rollback_partial(self, user_index: int, user_text: str) -> None:
+        """Drop assistant/tool messages after the user; keep user for retry/DB."""
+        del self.messages[user_index + 1 :]
         self.pending_retry_text = user_text
 
     async def _run_from_user_message(self, user_msg: UserChatMessage) -> AsyncIterator[AgentEvent]:
-        """Run the tool loop for an already-appended user message; persist only on success."""
-        pre_len = len(self.messages) - 1
-        if pre_len < 0 or self.messages[pre_len] is not user_msg:
-            pre_len = len(self.messages)
-            self.messages.append(user_msg)
+        """Run the tool loop for an already-appended user message.
+
+        On success, persists assistant/tool messages produced after the user.
+        On failure, keeps the user message (already in memory/DB) and sets
+        ``pending_retry_text`` so ``retry()`` can re-run without duplicating it.
+        """
+        user_index = self._user_index(user_msg)
 
         completed = False
         turn_usage = TokenUsage()
@@ -176,32 +199,53 @@ class ChatAgent:
             completed = True
         except BaseException:
             if not completed:
-                self._rollback_turn(pre_len, user_msg.content)
+                self._rollback_partial(user_index, user_msg.content)
             raise
 
         self.last_turn_usage = turn_usage
         self.last_request_usage = last_request
         self.last_turn_rounds = turn_rounds
-        for message in self.messages[pre_len:]:
+        for message in self.messages[user_index + 1 :]:
             await self._persist(message)
         self.pending_retry_text = None
 
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
-        """Append a user message, run the tool loop, yield events, persist only on success."""
+        """Append a user message (persist immediately), run the tool loop, yield events."""
         self._ensure_system_prompt()
         user_msg = UserChatMessage(content=user_text)
         self.messages.append(user_msg)
+        await self._persist(user_msg)
         async for event in self._run_from_user_message(user_msg):
             yield event
 
     async def retry(self) -> AsyncIterator[AgentEvent]:
-        """Re-run the last failed user turn (no duplicate user message in history/DB)."""
+        """Re-run the incomplete last user turn without appending a new user message.
+
+        Useful after a failed/cancelled turn (user already in memory/DB) or after
+        ``load_history`` when the session ends with an orphan user message.
+        """
         text = self.pending_retry_text
+        if text is None:
+            self._sync_pending_from_orphan_user()
+            text = self.pending_retry_text
         if text is None:
             msg = "nothing to retry"
             raise RuntimeError(msg)
+
         self._ensure_system_prompt()
-        user_msg = UserChatMessage(content=text)
-        self.messages.append(user_msg)
+        if self.messages and isinstance(self.messages[-1], UserChatMessage):
+            user_msg = self.messages[-1]
+            if user_msg.content != text:
+                # Pending text out of sync: replace trailing user
+                user_msg = UserChatMessage(content=text)
+                self.messages[-1] = user_msg
+        else:
+            user_msg = UserChatMessage(content=text)
+            self.messages.append(user_msg)
+            # Already persisted on the original run when memory is bound; only
+            # persist if this is a reconstructed orphan without DB (no memory).
+            if self.memory is None or self.session_id is None:
+                await self._persist(user_msg)
+
         async for event in self._run_from_user_message(user_msg):
             yield event

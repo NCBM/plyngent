@@ -139,22 +139,24 @@ async def run_turn_with_retries(
 ) -> bool:
     """Run a chat turn with automatic retries on failure.
 
-    ``starter`` produces the event stream for the current attempt (``agent.run``
-    or ``agent.retry``). Returns True if the turn completed successfully.
+    ``starter`` produces the event stream for the first attempt (usually
+    ``agent.run``). After a failure that sets ``pending_retry_text``, further
+    attempts use ``agent.retry`` so the user message is not duplicated in
+    history/DB (it is already persisted).
 
-    Ctrl+C during a model/tool turn cancels the in-flight task (level-1 cancel).
-    The agent rolls back the turn and keeps ``pending_retry_text`` for ``/retry``.
+    Ctrl+C cancels the in-flight task; user message stays in DB for ``/retry``.
     """
     max_retries = len(delays)
     attempt = 0
+    current: Callable[[], AsyncIterator[AgentEvent]] = starter
     while True:
         try:
-            await run_cancellable(render_events(starter()))
+            await run_cancellable(render_events(current()))
         except asyncio.CancelledError:
             # Do not auto-retry cancelled turns — user intent was stop, not retry.
             click.echo()
             click.secho(
-                "cancelled (turn not saved); use /retry to try again",
+                "cancelled; user message kept — use /retry to try again",
                 fg="yellow",
             )
             click.echo()
@@ -166,6 +168,8 @@ async def run_turn_with_retries(
             return False
         except Exception as exc:  # noqa: BLE001 — surface and optionally retry
             click.secho(f"error: {exc}", fg="red")
+            if agent.pending_retry_text is not None:
+                current = agent.retry
             if attempt >= max_retries:
                 if agent.pending_retry_text is not None:
                     click.secho(

@@ -505,7 +505,7 @@ async def test_chat_agent_memory_roundtrip() -> None:
     await store.close()
 
 
-async def test_chat_agent_failed_turn_not_persisted() -> None:
+async def test_chat_agent_failed_turn_keeps_user_in_db() -> None:
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")
 
@@ -531,10 +531,13 @@ async def test_chat_agent_failed_turn_not_persisted() -> None:
     with pytest.raises(RuntimeError, match="network down"):
         _ = [e async for e in agent.run("hello")]
 
-    assert agent.messages == []
+    assert len(agent.messages) == 1
+    assert isinstance(agent.messages[0], UserChatMessage)
     assert agent.pending_retry_text == "hello"
     loaded = await store.list_messages(session.sid)
-    assert loaded == []
+    assert len(loaded) == 1
+    assert isinstance(loaded[0], UserChatMessage)
+    assert loaded[0].content == "hello"
     await store.close()
 
 
@@ -581,7 +584,8 @@ async def test_chat_agent_retry_after_failure() -> None:
     with pytest.raises(RuntimeError, match="temporary"):
         _ = [e async for e in agent.run("ping")]
     assert agent.pending_retry_text == "ping"
-    assert await store.list_messages(session.sid) == []
+    # User already in DB after first attempt
+    assert len(await store.list_messages(session.sid)) == 1
 
     events = [e async for e in agent.retry()]
     assert any(isinstance(e, TextDeltaEvent) and e.content == "recovered" for e in events)
@@ -590,7 +594,28 @@ async def test_chat_agent_retry_after_failure() -> None:
     assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "ping"
+    # Single user message (no duplicate on retry)
+    assert sum(1 for m in loaded if isinstance(m, UserChatMessage)) == 1
     await store.close()
+
+
+async def test_retry_after_resume_orphan_user() -> None:
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+    _ = await store.append_message(session.sid, UserChatMessage(content="left hanging"))
+
+    client = ScriptedClient([_response(AssistantChatMessage(content="ok now"))])
+    agent = ChatAgent(client, model="m", memory=store, session_id=session.sid)
+    await agent.load_history()
+    assert agent.pending_retry_text == "left hanging"
+
+    events = [e async for e in agent.retry()]
+    assert any(isinstance(e, TextDeltaEvent) and e.content == "ok now" for e in events)
+    loaded = await store.list_messages(session.sid)
+    assert len(loaded) == 2
+    assert sum(1 for m in loaded if isinstance(m, UserChatMessage)) == 1
+    await store.close()
+
 
 
 async def test_chat_agent_system_prompt_prepended() -> None:

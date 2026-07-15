@@ -36,12 +36,12 @@ Commands:
   /model [id]        Show or switch model
   /tools [on|off]    Show or toggle tools
   /rounds [n]        Show or set max tool-loop rounds
-  /retry             Retry the last failed user turn (after errors)
+  /retry             Re-run incomplete last user turn (DB/orphan user; no retype)
   /status            Show session/provider/tools/rounds status
 
-On network/API errors or Ctrl+C during a turn, the turn is not saved to
-the DB. Auto-retry waits 10s, 20s, then 30s (Ctrl+C cancels waits or the
-in-flight turn; use /retry later). Streaming is on by default.
+User messages are saved immediately. On API errors or Ctrl+C, partial
+assistant/tool output is discarded but the user message stays (so /retry
+works after resume, not only via readline history). Auto-retry: 10s/20s/30s.
 
 Tab completes slash commands and some arguments (provider, model, tools).
 Use --session ID or /resume to continue a prior chat after restart.

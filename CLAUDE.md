@@ -55,7 +55,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`ChatClient`** Protocol for `chat_completions`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
-- **`ChatAgent`**: optional `MemoryStore` (persist on success only); `stream`; system prompt; `pending_retry_text` + `retry()`.
+- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; assistant/tools on success); `stream`; system prompt; `pending_retry_text` + `retry()` for incomplete turns (including orphan user after resume).
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message.
 - Events: text_delta, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.
@@ -81,7 +81,7 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 - **`plyngent chat`**: provider/model selection (flags or interactive), SQLite sessions via config `[database]` (file DB under user data if unset/`:memory:`), sessions bound to workspace dir; resumes **most recently updated** session for cwd/`--workspace` by default (`--new` / `--session`).
 - Slash: `/history`, `/sessions` (newest first), `/resume [id]`, `/compact`, `/status` (incl. context char estimate), `/rounds`, `/retry`, …
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** session path, **update** binding to current, or **abort**.
-- Failed/cancelled turns: not written to DB; Ctrl+C cancels the in-flight turn task; **TTY confirms** (max-rounds / destructive tools) run off-loop via `asyncio.to_thread` + pause cancel so prompts do not abort the turn; auto-retry 10s/20s/30s; `/retry` manual.
+- Failed/cancelled turns: user message kept in DB; partial assistant/tool rolled back; Ctrl+C cancels in-flight turn; **TTY confirms** off-loop; auto-retry 10s/20s/30s then `/retry` (no duplicate user message).
 - **`plyngent providers`**: list config providers.
 - **`plyngent config path|edit`**: print or open config in `$EDITOR` (`shlex`-split, e.g. `codium --wait`).
 - If no providers and `$EDITOR` is set, chat/providers prompt to edit config then reload.

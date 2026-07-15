@@ -173,8 +173,11 @@ async def test_cancel_turn_rolls_back_and_sets_pending() -> None:
         await turn
 
     assert agent.pending_retry_text == "cancel-me"
-    assert agent.messages == []
-    assert await store.list_messages(session.sid) == []
+    assert len(agent.messages) == 1
+    assert isinstance(agent.messages[0], UserChatMessage)
+    loaded = await store.list_messages(session.sid)
+    assert len(loaded) == 1
+    assert isinstance(loaded[0], UserChatMessage)
     await store.close()
 
 
@@ -195,17 +198,16 @@ async def test_manual_retry_after_exhausted(monkeypatch: pytest.MonkeyPatch) -> 
     )
     assert ok is False
     assert agent.pending_retry_text == "hold-me"
-    assert await store.list_messages(session.sid) == []
+    assert len(await store.list_messages(session.sid)) == 1
 
-    # Now succeed on manual /retry path
+    # Now succeed on manual /retry path (no second user message)
     client.fail_times = client.calls  # next call succeeds
     ok2 = await retry_pending_with_retries(agent)
-    # retry_pending uses default delays; force zero-wait already patched
-    # But fail_times set so first attempt of manual retry succeeds immediately
     assert ok2 is True
     assert agent.pending_retry_text is None
     loaded = await store.list_messages(session.sid)
     assert len(loaded) == 2
     assert isinstance(loaded[0], UserChatMessage)
     assert loaded[0].content == "hold-me"
+    assert sum(1 for m in loaded if isinstance(m, UserChatMessage)) == 1
     await store.close()
