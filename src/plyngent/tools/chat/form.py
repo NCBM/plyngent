@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from plyngent.agent import tool
 from plyngent.prompting import FormField, NonInteractiveError, form_async
@@ -21,11 +22,11 @@ def parse_fields(raw: str) -> list[FormField]:
         msg = "fields must be a non-empty JSON array"
         raise ValueError(msg)
     out: list[FormField] = []
-    for item in data:
-        if not isinstance(item, dict):
+    for item_obj in cast("list[object]", data):
+        if not isinstance(item_obj, dict):
             msg = "each field must be a JSON object"
             raise TypeError(msg)
-        raw_map: dict[str, object] = {str(k): v for k, v in item.items()}  # type: ignore[misc]
+        raw_map = {str(key): value for key, value in cast("dict[object, object]", item_obj).items()}
         name = raw_map.get("name")
         prompt = raw_map.get("prompt")
         if not isinstance(name, str) or not name:

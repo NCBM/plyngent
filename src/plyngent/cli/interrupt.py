@@ -55,7 +55,7 @@ def pause_task_cancel_for_prompt() -> Generator[None]:
         yield
     finally:
         with contextlib.suppress(ValueError):
-            _ = signal.signal(signal.SIGINT, previous)  # type: ignore[arg-type]
+            _ = signal.signal(signal.SIGINT, previous)
         reinstall = _reinstall_holder[0]
         if loop_handler_removed and reinstall is not None:
             with contextlib.suppress(RuntimeError, NotImplementedError, ValueError):

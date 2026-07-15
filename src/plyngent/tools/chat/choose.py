@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from plyngent.agent import tool
 from plyngent.prompting import ChoiceOption, NonInteractiveError, choose_async
@@ -20,12 +21,12 @@ def parse_options(raw: str) -> list[ChoiceOption]:
         msg = "options must be a JSON array"
         raise TypeError(msg)
     out: list[ChoiceOption] = []
-    for item in data:
-        if isinstance(item, str):
-            out.append(ChoiceOption(label=item))
+    for item_obj in cast("list[object]", data):
+        if isinstance(item_obj, str):
+            out.append(ChoiceOption(label=item_obj))
             continue
-        if isinstance(item, dict):
-            raw_map: dict[str, object] = {str(k): v for k, v in item.items()}  # type: ignore[misc]
+        if isinstance(item_obj, dict):
+            raw_map = {str(key): value for key, value in cast("dict[object, object]", item_obj).items()}
             label_obj = raw_map.get("label")
             if not isinstance(label_obj, str) or not label_obj:
                 msg = "each option object needs a non-empty string label"
