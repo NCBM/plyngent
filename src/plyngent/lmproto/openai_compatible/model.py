@@ -245,7 +245,8 @@ class DeltaMessage(Struct):
 class ChunkChoice(Struct):
     index: int
     delta: DeltaMessage
-    logprobs: dict[str, Any] | Unset = UNSET
+    # APIs often send logprobs=null on stream choices.
+    logprobs: dict[str, Any] | None | Unset = UNSET
     finish_reason: FinishReason | None | Unset = UNSET
 
 
@@ -255,4 +256,5 @@ class ChatCompletionChunk(Struct):
     created: int
     model: str
     choices: list[ChunkChoice]
-    usage: dict[str, Any] | Unset = UNSET
+    # Final usage chunk may omit or null usage depending on provider.
+    usage: dict[str, Any] | None | Unset = UNSET

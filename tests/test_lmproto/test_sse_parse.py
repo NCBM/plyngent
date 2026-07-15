@@ -47,6 +47,17 @@ def test_delta_accepts_null_content_and_reasoning() -> None:
     assert delta.reasoning_content is None
 
 
+def test_chunk_choice_accepts_null_logprobs() -> None:
+    payload = (
+        b'{"id":"1","object":"chat.completion.chunk","created":0,"model":"m",'
+        b'"choices":[{"index":0,"delta":{"content":"x"},"logprobs":null,'
+        b'"finish_reason":null}],"usage":null}'
+    )
+    chunk = msgspec_decode_chunk(payload)
+    assert chunk.choices[0].logprobs is None
+    assert chunk.usage is None
+
+
 def msgspec_decode_chunk(payload: bytes) -> ChatCompletionChunk:
     import msgspec
 
