@@ -87,10 +87,15 @@ class ResponsesChatClient:
             if etype == "response.output_text.delta" and isinstance(event.delta, str) and event.delta:
                 yield text_delta_chunk(model=model, content=event.delta)
                 continue
-            if etype in {
-                "response.reasoning_summary_text.delta",
-                "response.reasoning_text.delta",
-            } and isinstance(event.delta, str) and event.delta:
+            if (
+                etype
+                in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }
+                and isinstance(event.delta, str)
+                and event.delta
+            ):
                 yield reasoning_delta_chunk(model=model, content=event.delta)
                 continue
             if etype == "response.completed" and event.response is not UNSET:
@@ -101,7 +106,7 @@ class ResponsesChatClient:
 
                 try:
                     final = msgspec.convert(event.response, ResponseModel)
-                except (TypeError, ValueError, msgspec.ValidationError):
+                except TypeError, ValueError, msgspec.ValidationError:
                     final = None
 
         if final is not None:

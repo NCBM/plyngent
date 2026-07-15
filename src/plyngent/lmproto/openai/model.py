@@ -316,7 +316,7 @@ def response_function_calls(response: Response) -> list[ResponseFunctionToolCall
             continue
         try:
             result.append(msgspec_convert_function_call(raw))
-        except (TypeError, ValueError, KeyError, msgspec.ValidationError):
+        except TypeError, ValueError, KeyError, msgspec.ValidationError:
             continue
     return result
 

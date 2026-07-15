@@ -59,10 +59,7 @@ def test_create_param_encode_omits_defaults() -> None:
 
 
 def test_stream_event_decode() -> None:
-    raw = (
-        b'{"type":"response.output_text.delta","item_id":"msg_1",'
-        b'"output_index":0,"content_index":0,"delta":"hel"}'
-    )
+    raw = b'{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"hel"}'
     event = msgspec.json.decode(raw, type=ResponseStreamEvent)
     assert event.type == "response.output_text.delta"
     assert event.delta == "hel"

@@ -22,7 +22,7 @@ async def discover_model_ids(provider: Provider) -> list[str]:
         return []
     try:
         return await fetch_remote_model_ids(client)
-    except (RuntimeError, TypeError, OSError, ValueError):
+    except RuntimeError, TypeError, OSError, ValueError:
         return []
 
 
@@ -79,8 +79,7 @@ async def ensure_provider_ready(
     promoted = await try_promote_provider(store, name, seed_model_ids=seeds or None)
     if promoted is not None:
         click.secho(
-            f"recovered provider {name!r} with {len(promoted.models)} model(s) "
-            f"(was empty models in config)",
+            f"recovered provider {name!r} with {len(promoted.models)} model(s) (was empty models in config)",
             fg="yellow",
             err=True,
         )
@@ -110,8 +109,5 @@ async def ensure_provider_ready(
         )
         return promoted
 
-    msg = (
-        f"provider {name!r} has empty models and could not be recovered "
-        f"(pass --model or fix GET /models)"
-    )
+    msg = f"provider {name!r} has empty models and could not be recovered (pass --model or fix GET /models)"
     raise click.ClickException(msg)

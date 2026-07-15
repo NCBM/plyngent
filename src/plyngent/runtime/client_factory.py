@@ -20,9 +20,7 @@ if TYPE_CHECKING:
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-type ProtocolClient = (
-    OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | ResponsesChatClient
-)
+type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | ResponsesChatClient
 # Backward-compatible name used by older imports/tests.
 type OpenAICompatibleClientUnion = ProtocolClient
 

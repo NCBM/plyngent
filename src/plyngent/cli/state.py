@@ -185,7 +185,7 @@ class ReplState:
         remote: list[str] | None
         try:
             remote = await self.ensure_remote_models(refresh=refresh)
-        except (RuntimeError, TypeError, OSError, ValueError):
+        except RuntimeError, TypeError, OSError, ValueError:
             remote = self.cached_remote_models()
         return model_choices_for_provider(self.provider, remote_ids=remote)
 
@@ -269,13 +269,13 @@ class ReplState:
                 preferred=pname,
                 interactive=False,
             )
-        except (click.ClickException, ProviderNotSupportedError):
+        except click.ClickException, ProviderNotSupportedError:
             return False
         # Session resume: seed empty recoverable with remembered model if any.
         if not provider.models and self.model:
             try:
                 provider = self.config.promote_provider(name, [self.model])
-            except (KeyError, ValueError):
+            except KeyError, ValueError:
                 return False
         if name != self.provider_name or provider is not self.provider:
             self.provider_name = name

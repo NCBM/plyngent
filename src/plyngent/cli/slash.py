@@ -655,8 +655,7 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
         click.secho(f"remote list unavailable: {remote_err}", fg="yellow", err=True)
     elif remote is not None:
         click.echo(
-            f"({len(remote)} remote, {len(config_ids)} config; "
-            f"cache TTL {int(DEFAULT_MODELS_CACHE_TTL)}s)",
+            f"({len(remote)} remote, {len(config_ids)} config; cache TTL {int(DEFAULT_MODELS_CACHE_TTL)}s)",
             err=True,
         )
 

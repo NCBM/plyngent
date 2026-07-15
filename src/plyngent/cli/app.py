@@ -74,8 +74,7 @@ def _warn_recoverable_providers(recoverable: Mapping[str, object]) -> None:
         return
     names = ", ".join(sorted(recoverable.keys()))
     click.secho(
-        f"warning: providers with empty models ({len(recoverable)}): {names} "
-        f"(will try GET /models or --model on use)",
+        f"warning: providers with empty models ({len(recoverable)}): {names} (will try GET /models or --model on use)",
         fg="yellow",
         err=True,
     )

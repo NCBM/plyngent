@@ -66,9 +66,7 @@ class OpenAIClient(BaseOpenAIClient):
         return self.decoder.decode(body)
 
     @overload
-    async def responses(
-        self, param: ResponsesCreateParam, *, stream: Literal[False] = False
-    ) -> Response: ...
+    async def responses(self, param: ResponsesCreateParam, *, stream: Literal[False] = False) -> Response: ...
 
     @overload
     async def responses(

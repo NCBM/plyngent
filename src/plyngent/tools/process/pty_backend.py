@@ -97,7 +97,7 @@ class PosixPtyHandle:
             ready, _, _ = select.select([self.master_fd], [], [], timeout)
             if ready:
                 data = os.read(self.master_fd, max_bytes)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             data = b""
         _ = self.poll_exit()
         return data

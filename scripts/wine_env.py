@@ -187,10 +187,7 @@ def ensure_windows_uv(layout: WineLayout) -> None:
         return
     print(f"Fetching Windows uv {layout.win_uv_version} ...", file=sys.stderr)
     layout.bin_dir.mkdir(parents=True, exist_ok=True)
-    url = (
-        f"https://github.com/astral-sh/uv/releases/download/"
-        f"{layout.win_uv_version}/uv-x86_64-pc-windows-msvc.zip"
-    )
+    url = f"https://github.com/astral-sh/uv/releases/download/{layout.win_uv_version}/uv-x86_64-pc-windows-msvc.zip"
     zip_path = layout.bin_dir / "uv.zip"
     _ = urlretrieve(url, zip_path)
     with zipfile.ZipFile(zip_path) as zf:
@@ -283,9 +280,7 @@ def find_project_venv_scripts(layout: WineLayout) -> Path | None:
     users = layout.prefix / "drive_c" / "users"
     if not users.is_dir():
         return None
-    matches = sorted(
-        p for p in users.glob("**/pdm/pdm/venvs/project-view-*/Scripts") if p.is_dir()
-    )
+    matches = sorted(p for p in users.glob("**/pdm/pdm/venvs/project-view-*/Scripts") if p.is_dir())
     return matches[-1] if matches else None
 
 

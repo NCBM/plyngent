@@ -24,11 +24,7 @@ async def test_client_models_sorted_unique(monkeypatch: pytest.MonkeyPatch) -> N
 
         @property
         def content(self) -> bytes:
-            return (
-                b'{"object":"list","data":['
-                b'{"id":"m2"},{"id":"m1"},{"id":"m2"},{"id":""}'
-                b"]}"
-            )
+            return b'{"object":"list","data":[{"id":"m2"},{"id":"m1"},{"id":"m2"},{"id":""}]}'
 
     async def fake_get(path: str, **kwargs: object) -> _Resp:
         assert path == "/models"
