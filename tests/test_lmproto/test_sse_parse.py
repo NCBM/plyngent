@@ -1,57 +1,71 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
-
-from plyngent.lmproto.openai_compatible.client import BaseOpenAIClient
-from plyngent.lmproto.openai_compatible.config import OpenAIConfig
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from niquests.models import AsyncResponse
+from plyngent.lmproto.openai_compatible.client import http_error_message, sse_data_payload
+from plyngent.lmproto.openai_compatible.model import ChatCompletionChunk
 
 
-class _FakeResp:
-    status_code: int
-    closed: bool
-    content: bytes
-    _lines: list[bytes]
-
-    def __init__(self, lines: list[bytes], *, status_code: int = 200) -> None:
-        self.status_code = status_code
-        self.closed = False
-        self._lines = lines
-        self.content = b""
-
-    async def iter_lines(self) -> AsyncIterator[bytes]:
-        for line in self._lines:
-            yield line
-
-    def close(self) -> None:
-        self.closed = True
+def test_sse_data_payload_done_variants() -> None:
+    assert sse_data_payload(b"data: [DONE]") is False
+    assert sse_data_payload(b"[DONE]") is False
+    assert sse_data_payload(b"data: [DONE]\n") is False
+    assert sse_data_payload(b"data:  [DONE]  ") is False
 
 
-async def test_parse_sse_stops_at_done() -> None:
-    client = BaseOpenAIClient(OpenAIConfig(access_key_or_token="t", base_url="http://x"))
-    # Minimal OpenAI-style chunk payload
-    chunk = (
+def test_sse_data_payload_skip() -> None:
+    assert sse_data_payload(b"") is None
+    assert sse_data_payload(b": comment") is None
+    assert sse_data_payload(b"event: message") is None
+    assert sse_data_payload(b"data: ") is None
+
+
+def test_sse_data_payload_json() -> None:
+    line = (
         b'data: {"id":"1","object":"chat.completion.chunk","created":0,'
         b'"model":"m","choices":[{"index":0,"delta":{"content":"hi"},'
         b'"finish_reason":null}]}'
     )
-    resp = _FakeResp([chunk, b"", b"data: [DONE]", b"data: should-not-parse"])
-    out = [c async for c in client._parse_sse(cast("AsyncResponse", cast("object", resp)))]
-    assert len(out) == 1
-    assert out[0].choices[0].delta.content == "hi"
-    assert resp.closed is True
+    payload = sse_data_payload(line)
+    assert isinstance(payload, bytes)
+    chunk = msgspec_decode_chunk(payload)
+    assert chunk.choices[0].delta.content == "hi"
 
 
-async def test_parse_sse_http_error() -> None:
-    import pytest
+def msgspec_decode_chunk(payload: bytes) -> ChatCompletionChunk:
+    import msgspec
 
-    client = BaseOpenAIClient(OpenAIConfig(access_key_or_token="t", base_url="http://x"))
-    resp = _FakeResp([], status_code=500)
-    resp.content = b'{"error":"boom"}'
-    with pytest.raises(RuntimeError, match="500"):
-        _ = [c async for c in client._parse_sse(cast("AsyncResponse", cast("object", resp)))]
-    assert resp.closed is True
+    return msgspec.json.decode(payload, type=ChatCompletionChunk)
+
+
+def test_sse_stream_stops_at_done() -> None:
+    """Simulate a line iterator: only pre-DONE data lines are decoded."""
+    lines = [
+        b'data: {"id":"1","object":"chat.completion.chunk","created":0,'
+        b'"model":"m","choices":[{"index":0,"delta":{"content":"a"},'
+        b'"finish_reason":null}]}',
+        b"",
+        b"data: [DONE]",
+        b'data: {"id":"1","choices":[{"delta":{"content":"never"}}]}',
+    ]
+    payloads: list[bytes] = []
+    for line in lines:
+        parsed = sse_data_payload(line)
+        if parsed is None:
+            continue
+        if parsed is False:
+            break
+        payloads.append(parsed)
+    assert len(payloads) == 1
+    assert msgspec_decode_chunk(payloads[0]).choices[0].delta.content == "a"
+
+
+def test_http_error_message() -> None:
+    assert http_error_message(200) is None
+    assert http_error_message(399) is None
+    err = http_error_message(500, b'{"error":"boom"}')
+    assert err is not None
+    assert "500" in err
+    assert "boom" in err
+    err503 = http_error_message(503, "unavailable")
+    assert err503 is not None
+    assert "503" in err503
+    assert "unavailable" in err503

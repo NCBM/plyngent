@@ -25,6 +25,10 @@ if TYPE_CHECKING:
     from niquests.models import AsyncResponse
 
 
+_HTTP_ERROR = 400
+_ERROR_BODY_PREVIEW = 500
+
+
 async def _close_async_response(resp: AsyncResponse) -> None:
     """Close a streaming response; support sync or async close()."""
     for name in ("aclose", "close"):
@@ -35,6 +39,43 @@ async def _close_async_response(resp: AsyncResponse) -> None:
         if inspect.isawaitable(result):
             await result
         return
+
+
+def sse_data_payload(line: bytes) -> bytes | None | Literal[False]:
+    """Parse one SSE line.
+
+    Returns:
+        ``bytes`` payload after ``data: ``,
+        ``None`` to skip (comment/empty/non-data),
+        ``False`` when the stream is finished (``[DONE]``).
+    """
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if stripped in {b"data: [DONE]", b"[DONE]"}:
+        return False
+    if not stripped.startswith(b"data: "):
+        return None
+    payload = stripped[6:].strip()
+    if payload == b"[DONE]":
+        return False
+    if not payload:
+        return None
+    return payload
+
+
+def http_error_message(status_code: int, body: bytes | str | None = None) -> str | None:
+    """Return an error string for HTTP ``status_code`` >= 400, else ``None``."""
+    if status_code < _HTTP_ERROR:
+        return None
+    msg = f"chat completions HTTP {status_code}"
+    if body is None:
+        return msg
+    if isinstance(body, (bytes, bytearray)):
+        text = bytes(body[:_ERROR_BODY_PREVIEW]).decode(errors="replace")
+    else:
+        text = str(body)[:_ERROR_BODY_PREVIEW]
+    return f"{msg}: {text}" if text else msg
 
 
 class BaseOpenAIClient:
@@ -54,22 +95,20 @@ class BaseOpenAIClient:
 
     async def _ensure_ok(self, resp: object) -> None:
         """Raise if the HTTP response is an error (stream or non-stream)."""
-        http_error = 400
         status = getattr(resp, "status_code", None)
-        if not isinstance(status, int) or status < http_error:
+        if not isinstance(status, int):
             return
-        body = ""
         content = getattr(resp, "content", None)
-        if content is not None:
-            if isinstance(content, (bytes, bytearray)):
-                body = bytes(content[:500]).decode(errors="replace")
-            else:
-                body = str(content)[:500]
+        body: bytes | str | None = None
+        if isinstance(content, bytes | bytearray):
+            body = bytes(content)
+        elif isinstance(content, str):
+            body = content
+        msg = http_error_message(status, body)
+        if msg is None:
+            return
         if hasattr(resp, "close") or hasattr(resp, "aclose"):
             await _close_async_response(cast("AsyncResponse", resp))
-        msg = f"chat completions HTTP {status}"
-        if body:
-            msg = f"{msg}: {body}"
         raise RuntimeError(msg)
 
     async def _parse_sse(self, resp: AsyncResponse) -> AsyncIterator[ChatCompletionChunk]:
@@ -79,17 +118,12 @@ class BaseOpenAIClient:
             async for raw in resp.iter_lines():
                 if not raw:
                     continue
-                line = bytes(raw).strip()
-                if line in {b"data: [DONE]", b"[DONE]"}:
-                    break
-                if not line.startswith(b"data: "):
+                parsed = sse_data_payload(bytes(raw))
+                if parsed is None:
                     continue
-                payload = line[6:].strip()
-                if payload == b"[DONE]":
+                if parsed is False:
                     break
-                if not payload:
-                    continue
-                yield self.chunk_decoder.decode(payload)
+                yield self.chunk_decoder.decode(parsed)
         finally:
             await _close_async_response(resp)
 
