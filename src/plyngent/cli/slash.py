@@ -56,8 +56,8 @@ class OnOffParam(click.ParamType[bool]):
             return True
         if token in {"off", "0", "false", "no"}:
             return False
-        self.fail("expected on or off", param, ctx)
-        return False
+        msg = "expected on or off"
+        raise click.BadParameter(msg, ctx=ctx, param=param)
 
 
 ON_OFF = OnOffParam()
@@ -95,7 +95,7 @@ def slash_command_names() -> list[str]:
 
 def _await[T](awaitable: Awaitable[T]) -> T:
     # Greenlet parks until the awaitable completes on the running loop.
-    return awaitlet.awaitlet(awaitable)  # pyright: ignore[reportUnknownVariableType]
+    return awaitlet.awaitlet(awaitable)
 
 
 # --- commands -----------------------------------------------------------------
