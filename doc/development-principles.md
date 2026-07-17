@@ -45,7 +45,10 @@ Then for every projects, check the dev dependency group where you can find tools
 
 Type checking: `pdm run basedpyright .`
 Linting: `pdm run ruff check .`
-Formating: `pdm run ruff format .`
+Formatting (apply): `pdm run ruff format .`
+Formatting (CI check): `pdm run ruff format --check .`
+
+CI (`.github/workflows/ci.yml`) runs lint, **format check**, typecheck, then tests. Always run `pdm run ruff format .` before push so `ruff format --check` does not fail on `main` after a release tag has already published.
 
 <!-- Contents in comments are for projects with long-period developments, but this is a new project.
 

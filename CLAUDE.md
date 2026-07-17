@@ -12,11 +12,14 @@ Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Single-us
 pdm install          # first-time dependency setup
 pdm sync             # sync after pulling changes
 
-pdm run basedpyright .   # type checking (basedpyright, "recommended" strictness)
-pdm run ruff check .     # linting
-pdm run ruff format .    # formatting
-pdm run pytest           # tests (pytest-asyncio auto mode)
+pdm run ruff check .           # linting
+pdm run ruff format .          # apply formatting
+pdm run ruff format --check .  # CI: fail if unformatted (do not skip)
+pdm run basedpyright .         # type checking (basedpyright, "recommended" strictness)
+pdm run pytest                 # tests (pytest-asyncio auto mode)
 ```
+
+GitHub Actions runs `ruff check`, `ruff format --check`, `basedpyright`, then `pytest`. Format locally with `pdm run ruff format .` so CI does not fail after publish.
 
 ## Architecture
 

@@ -62,14 +62,16 @@ pdm sync             # after pull
 pdm run plyngent --help
 ```
 
-Dev checks:
+Dev checks (same order as CI):
 
 ```bash
-pdm run basedpyright .
 pdm run ruff check .
-pdm run ruff format .
+pdm run ruff format --check .   # or: pdm run ruff format .  to apply
+pdm run basedpyright .
 pdm run pytest
 ```
+
+CI fails if sources are not Ruff-formatted (`ruff format --check`). Run `pdm run ruff format .` before push.
 
 ## Basic usage
 
