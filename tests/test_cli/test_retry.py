@@ -5,7 +5,14 @@ from typing import TYPE_CHECKING, Literal, overload
 import pytest
 
 from plyngent.agent import ChatAgent
-from plyngent.cli.retry import retry_pending_with_retries, run_turn_with_retries, sleep_cancellable
+from plyngent.cli.retry import (
+    DEFAULT_MAX_AUTO_RETRIES,
+    DEFAULT_RETRY_DELAYS_SECONDS,
+    default_retry_delays,
+    retry_pending_with_retries,
+    run_turn_with_retries,
+    sleep_cancellable,
+)
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -21,6 +28,17 @@ from plyngent.memory import MemoryStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+
+def test_default_retry_delays_schedule() -> None:
+    assert DEFAULT_MAX_AUTO_RETRIES == 10
+    assert default_retry_delays(0) == ()
+    assert default_retry_delays(4) == (5.0, 10.0, 15.0, 20.0)
+    delays = default_retry_delays(10)
+    assert delays[:4] == (5.0, 10.0, 15.0, 20.0)
+    assert delays[4:] == (30.0, 40.0, 50.0, 60.0, 70.0, 80.0)
+    assert delays == DEFAULT_RETRY_DELAYS_SECONDS
+    assert len(DEFAULT_RETRY_DELAYS_SECONDS) == 10
 
 
 def _response(message: AssistantChatMessage) -> ChatCompletionResponse:

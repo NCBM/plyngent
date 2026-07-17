@@ -17,8 +17,23 @@ if TYPE_CHECKING:
     from plyngent.agent import AgentEvent
     from plyngent.agent.chat import ChatAgent
 
-# Wait before retry attempt 1, 2, and 3 (after the first failure).
-DEFAULT_RETRY_DELAYS_SECONDS: tuple[float, ...] = (10.0, 20.0, 30.0)
+# Auto-retry budget after the first failure (10 attempts by default).
+DEFAULT_MAX_AUTO_RETRIES = 10
+# First four waits; each further wait is previous + 10s.
+_RETRY_BASE_DELAYS_SECONDS: tuple[float, ...] = (5.0, 10.0, 15.0, 20.0)
+
+
+def default_retry_delays(max_retries: int = DEFAULT_MAX_AUTO_RETRIES) -> tuple[float, ...]:
+    """Build wait times: 5, 10, 15, 20, then +10s each step, length *max_retries*."""
+    if max_retries <= 0:
+        return ()
+    delays: list[float] = list(_RETRY_BASE_DELAYS_SECONDS)
+    while len(delays) < max_retries:
+        delays.append(delays[-1] + 10.0)
+    return tuple(delays[:max_retries])
+
+
+DEFAULT_RETRY_DELAYS_SECONDS: tuple[float, ...] = default_retry_delays()
 _PREVIEW_LEN = 80
 
 
