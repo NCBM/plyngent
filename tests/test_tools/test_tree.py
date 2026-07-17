@@ -83,3 +83,58 @@ def test_tree_invalid_limits(workspace: object) -> None:
     del workspace
     assert "max_depth" in call_sync(tree, ".", max_depth=0)
     assert "max_entries" in call_sync(tree, ".", max_entries=0)
+
+
+def test_tree_default_noise_dirs(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    (workspace / "src").mkdir()
+    _ = (workspace / "src" / "app.py").write_text("x", encoding="utf-8")
+    (workspace / "node_modules").mkdir()
+    _ = (workspace / "node_modules" / "pkg.js").write_text("x", encoding="utf-8")
+    (workspace / "__pycache__").mkdir()
+    _ = (workspace / "__pycache__" / "x.pyc").write_text("x", encoding="utf-8")
+    out = call_sync(tree, ".")
+    assert "src/" in out
+    assert "app.py" in out
+    assert "node_modules" not in out
+    assert "__pycache__" not in out
+
+
+def test_tree_skip_dirs_empty_shows_noise(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    (workspace / "node_modules").mkdir()
+    _ = (workspace / "node_modules" / "pkg.js").write_text("x", encoding="utf-8")
+    out = call_sync(tree, ".", skip_dirs=[])
+    assert "node_modules/" in out
+    assert "pkg.js" in out
+
+
+def test_tree_skip_dirs_custom(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    (workspace / "keep_me").mkdir()
+    _ = (workspace / "keep_me" / "a.txt").write_text("x", encoding="utf-8")
+    (workspace / "drop_me").mkdir()
+    _ = (workspace / "drop_me" / "b.txt").write_text("x", encoding="utf-8")
+    # Custom list replaces default noise set (node_modules not in list → would show if present).
+    out = call_sync(tree, ".", skip_dirs=["drop_me"])
+    assert "keep_me/" in out
+    assert "drop_me" not in out
+
+
+def test_tree_path_denylist_walk(workspace: object) -> None:
+    from plyngent.tools.workspace import set_path_denylist
+
+    assert isinstance(workspace, Path)
+    (workspace / "ok").mkdir()
+    _ = (workspace / "ok" / "a.txt").write_text("x", encoding="utf-8")
+    (workspace / "secrets").mkdir()
+    _ = (workspace / "secrets" / "key.txt").write_text("x", encoding="utf-8")
+    set_path_denylist(["/secrets"])
+    try:
+        out = call_sync(tree, ".")
+        assert "ok/" in out
+        assert "secrets" not in out
+        out2 = call_sync(tree, ".", apply_path_denylist=False, skip_dirs=[])
+        assert "secrets/" in out2
+    finally:
+        set_path_denylist(None)
