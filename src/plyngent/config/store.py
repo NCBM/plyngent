@@ -200,6 +200,59 @@ class ConfigStore:
         _ = self._bad_providers.pop(name, None)
         return promoted
 
+    def _take_provider(self, name: str) -> Provider:
+        """Return a ready or recoverable provider, promoting recoverable into ready map."""
+        if name in self._providers:
+            return self._providers[name]
+        if name in self._recoverable_providers:
+            provider = self._recoverable_providers.pop(name)
+            self._providers[name] = provider
+            _ = self._bad_providers.pop(name, None)
+            return provider
+        msg = f"unknown provider {name!r}"
+        raise KeyError(msg)
+
+    def ensure_model(self, name: str, model_id: str) -> Provider:
+        """Ensure *model_id* exists under ``providers[name].models`` (in memory).
+
+        Does not write the TOML file unless the caller invokes :meth:`write`.
+        """
+        mid = model_id.strip()
+        if not mid:
+            msg = "model id must not be empty"
+            raise ValueError(msg)
+        provider = self._take_provider(name)
+        if mid in provider.models:
+            return provider
+        models = dict(provider.models)
+        models[mid] = ModelConfig()
+        updated = msgspec.structs.replace(provider, models=models)
+        self._providers[name] = updated
+        return updated
+
+    def merge_models(self, name: str, model_ids: Sequence[str]) -> Provider:
+        """Union *model_ids* into the provider catalog (keep existing configs).
+
+        Does not write the TOML file unless the caller invokes :meth:`write`.
+        """
+        provider = self._take_provider(name)
+        models = dict(provider.models)
+        added = False
+        for raw in model_ids:
+            mid = raw.strip() if raw else ""
+            if not mid or mid in models:
+                continue
+            models[mid] = ModelConfig()
+            added = True
+        if not added and models:
+            return provider
+        if not models:
+            msg = f"cannot merge models for provider {name!r}: no model ids"
+            raise ValueError(msg)
+        updated = msgspec.structs.replace(provider, models=models)
+        self._providers[name] = updated
+        return updated
+
     # -- persistence --
 
     def write(self) -> None:

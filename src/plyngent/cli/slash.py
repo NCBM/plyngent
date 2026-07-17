@@ -642,8 +642,13 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
 
 @slash.command("models")
 @click.option("--refresh", is_flag=True, help="Bypass cache and re-fetch GET /models.")
+@click.option(
+    "--persist",
+    is_flag=True,
+    help="Merge remote (and recovered) model ids into plyngent.toml for this provider.",
+)
 @click.pass_obj
-def models_cmd(state: ReplState, *, refresh: bool) -> None:
+def models_cmd(state: ReplState, *, refresh: bool, persist: bool) -> None:  # noqa: C901
     """List models (remote-first, plus config-only ids). Always tries GET /models."""
     del refresh  # always re-fetch; flag kept for CLI compatibility / docs
     remote: list[str] | None = None
@@ -666,6 +671,17 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
             )
         except (KeyError, ValueError) as exc:
             click.secho(f"could not recover provider: {exc}", fg="yellow", err=True)
+
+    if persist:
+        try:
+            path = state.persist_models_to_config(mode="catalog", catalog_ids=remote or ())
+            click.echo(
+                f"persisted {len(state.provider.models)} model(s) for "
+                f"{state.provider_name!r} to {path}"
+            )
+        except (KeyError, ValueError, OSError) as exc:
+            click.secho(f"error: could not persist models: {exc}", fg="red")
+            return
 
     config_ids = set(state.config_model_ids())
     choices = model_choices_for_provider(state.provider, remote_ids=remote)
@@ -696,24 +712,43 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
 
 @slash.command("model")
 @click.argument("model_id", required=False, type=MODEL_ID)
+@click.option(
+    "--persist",
+    is_flag=True,
+    help="Write the current (or newly selected) model id into plyngent.toml.",
+)
 @click.pass_obj
-def model_cmd(state: ReplState, model_id: str | None) -> None:
-    """Show or switch model (Tab: remote-first plus config; live fetch on pick)."""
-    if not model_id:
+def model_cmd(state: ReplState, model_id: str | None, *, persist: bool) -> None:
+    """Show or switch model (Tab: remote-first plus config; live fetch on pick).
+
+    ``/model --persist`` saves the active model id into the provider catalog in
+    TOML (faster Tab/list on next launch). ``/model <id> --persist`` switches
+    then saves.
+    """
+    if model_id:
+        try:
+            choices = _await(state.merged_model_choices(refresh=True))
+            state.model = select_model(
+                state.provider,
+                preferred=model_id.strip(),
+                choices=choices,
+            )
+            state.rebuild_client()
+            _await(state.persist_llm_selection())
+            click.echo(f"switched model to {state.model}")
+        except click.ClickException as exc:
+            click.echo(f"error: {exc}")
+            return
+    elif not persist:
         click.echo(f"model={state.model}")
         return
-    try:
-        choices = _await(state.merged_model_choices(refresh=True))
-        state.model = select_model(
-            state.provider,
-            preferred=model_id.strip(),
-            choices=choices,
-        )
-        state.rebuild_client()
-        _await(state.persist_llm_selection())
-        click.echo(f"switched model to {state.model}")
-    except click.ClickException as exc:
-        click.echo(f"error: {exc}")
+
+    if persist:
+        try:
+            path = state.persist_models_to_config(mode="current")
+            click.echo(f"persisted model {state.model!r} for {state.provider_name!r} to {path}")
+        except (KeyError, ValueError, OSError) as exc:
+            click.secho(f"error: could not persist model: {exc}", fg="red")
 
 
 @slash.command("tools")

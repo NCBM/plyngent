@@ -179,6 +179,39 @@ def test_write_new_config() -> None:
     assert config.providers["foo2"].access_key_or_token == "sk-00301212"
 
 
+def test_ensure_model_and_merge_models(tmp_path: Path) -> None:
+    path = tmp_path / "models-persist.toml"
+    _ = path.write_text(
+        """
+[providers.local]
+preset = "openai-compatible"
+access_key_or_token = "sk-test"
+url = "https://example/v1"
+
+[providers.local.models.base]
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert "base" in config.providers["local"].models
+    assert "extra" not in config.providers["local"].models
+
+    provider = config.ensure_model("local", "extra")
+    assert "extra" in provider.models
+    assert "base" in provider.models
+    # idempotent
+    _ = config.ensure_model("local", "extra")
+    config.write()
+    config.reload()
+    assert set(config.providers["local"].models) == {"base", "extra"}
+    assert config.providers["local"].access_key_or_token == "sk-test"
+
+    _ = config.merge_models("local", ["extra", "remote-a", "remote-b"])
+    config.write()
+    config.reload()
+    assert set(config.providers["local"].models) == {"base", "extra", "remote-a", "remote-b"}
+
+
 def test_update_config() -> None:
     file = Path(__file__).parent / "plyngent-edit-2.toml"
     _ = shutil.copy(Path(__file__).parent / "plyngent-valid.toml", file)

@@ -341,6 +341,36 @@ async def test_verbose_toggle(state: ReplState) -> None:
     assert get_verbose_tool_results() is False
 
 
+async def test_model_persist_writes_config(
+    state: ReplState, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Seed a TOML-backed store so write() has a real path.
+    path = tmp_path / "plyngent.toml"
+    _ = path.write_text(
+        """
+[providers.local]
+preset = "openai"
+access_key_or_token = "sk-test"
+
+[providers.local.models.gpt-test]
+""",
+        encoding="utf-8",
+    )
+    from plyngent.config import load as load_config
+
+    state.config = load_config(path)
+    state.provider_name = "local"
+    state.provider = state.config.providers["local"]
+    state.model = "gpt-new-id"
+    assert await handle_slash(state, "/model --persist") is True
+    out = capsys.readouterr().out
+    assert "persisted model" in out
+    assert "gpt-new-id" in out
+    state.config.reload()
+    assert "gpt-new-id" in state.config.providers["local"].models
+    assert "gpt-test" in state.config.providers["local"].models
+
+
 async def test_yolo_toggle(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
     assert state.effective_yolo() == "off"
     assert state.soft_confirm_enabled() is True

@@ -20,6 +20,8 @@ from plyngent.runtime import create_client
 from plyngent.tools import DEFAULT_TOOLS, set_workspace_root
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from plyngent.config.models import Provider
     from plyngent.config.store import ConfigStore
     from plyngent.memory import MemoryStore
@@ -291,6 +293,28 @@ class ReplState:
             provider_name=self.provider_name,
             model=self.model,
         )
+
+    def persist_models_to_config(
+        self,
+        *,
+        mode: Literal["current", "catalog"],
+        catalog_ids: Sequence[str] | None = None,
+    ) -> Path:
+        """Merge model id(s) into TOML for the current provider and write disk.
+
+        *mode* ``current``: ensure :attr:`model` is in the provider catalog.
+        *mode* ``catalog``: union *catalog_ids* (or empty) into the catalog.
+
+        Returns the config path written. Raises ``OSError`` / ``ValueError`` /
+        ``KeyError`` on failure.
+        """
+        if mode == "current":
+            self.provider = self.config.ensure_model(self.provider_name, self.model)
+        else:
+            ids = list(catalog_ids) if catalog_ids is not None else []
+            self.provider = self.config.merge_models(self.provider_name, ids)
+        self.config.write()
+        return self.config.path
 
     def _try_set_provider(self, pname: str) -> bool:
         import click
