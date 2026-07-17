@@ -210,7 +210,7 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 ## Tools (when enabled)
 
-Default registry: file ops, `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), and human prompts (`ask_user` / `choose_user` / `form_user`).
+Default registry: file ops, `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), and human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`).
 
 Safety defaults:
 

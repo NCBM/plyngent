@@ -54,13 +54,13 @@ def parse_fields(raw: str) -> list[FormField]:
     return out
 
 
-@tool
+@tool(name="ask_user_form")
 async def form_user(title: str, fields: str, *, confirm_submit: bool = True) -> str:
     """Run a multi-step form with the human; returns JSON object of answers.
 
     ``fields`` is a JSON array of objects:
     ``name``, ``prompt``, optional ``default``, optional ``options`` (same shape
-    as choose_user), optional ``allow_custom`` (default true).
+    as ask_user_choice), optional ``allow_custom`` (default true).
     When ``confirm_submit`` is true, the human reviews a summary before submit.
     """
     try:

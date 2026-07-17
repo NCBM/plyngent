@@ -46,7 +46,7 @@ def parse_options(raw: str) -> list[ChoiceOption]:
     return out
 
 
-@tool
+@tool(name="ask_user_choice")
 async def choose_user(
     question: str,
     options: str,
@@ -54,7 +54,7 @@ async def choose_user(
     *,
     allow_custom: bool = True,
 ) -> str:
-    """Ask the human to pick from options (or type a custom answer).
+    """Ask the human to pick from a list of options (or type a custom answer).
 
     ``options`` is a JSON array of strings, or objects with
     ``label``, optional ``description``, optional ``value``.

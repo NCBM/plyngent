@@ -77,7 +77,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`. Session YOLO: `/yolo on|off|once` and `--yes` (skip soft confirms; hard denylists unchanged; `once` expires after the next user turn).
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
-- **`chat`**: human prompts as tools — `ask_user`, `choose_user`, `form_user` (shared `prompting` core).
+- **`chat`**: human prompts as tools — `ask_user_line` / `ask_user_choice` / `ask_user_form` (shared `prompting` core).
 - **`DEFAULT_TOOLS`**: file + process + vcs + chat tool list for a `ToolRegistry`.
 
 ### Prompting (`prompting.py`)
@@ -112,7 +112,7 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
 - **Phase G (CLI polish + hardening)** — single-user only; multi-tenant stays Phase H.
 
   **Done**
-  - G0: `prompting` (`ask`/`choose`/`form`/`confirm`) + chat tools (`ask_user`/`choose_user`/`form_user`)
+  - G0: `prompting` (`ask`/`choose`/`form`/`confirm`) + chat tools (`ask_user_line`/`ask_user_choice`/`ask_user_form`)
   - G1: `ReasoningDeltaEvent`, `/stream`, `/verbose`
   - G2: `/rename`, `/delete` (confirm), `/export md|json`
   - G2.5: Click slash registry (`cli/slash.py`) + `awaitlet` for sync Click / async memory; auto `/help`; completer from `slash.list_commands`
