@@ -75,7 +75,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (POSIX: `pty`+`fork`; Windows: ConPTY via `pywinpty` env marker dep).
 - PTY: backend in `pty_backend.py`; structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close terminate→kill.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
-- Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`.
+- Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`. Session YOLO: `/yolo on|off|once` and `--yes` (skip soft confirms; hard denylists unchanged; `once` expires after the next user turn).
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
 - **`chat`**: human prompts as tools — `ask_user`, `choose_user`, `form_user` (shared `prompting` core).
 - **`DEFAULT_TOOLS`**: file + process + vcs + chat tool list for a `ToolRegistry`.
@@ -88,8 +88,8 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
-- **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes`, `--stream/--no-stream`, `--quiet`. Root `--log-level`.
-- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`.
+- **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes` (YOLO on), `--stream/--no-stream`, `--quiet`. Root `--log-level`.
+- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
 - Failed/cancelled turns: user kept; **committed tool rounds kept** (side effects not re-run on `/retry`); only unfinished assistant rolled back; Ctrl+C cancels; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
 - **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.

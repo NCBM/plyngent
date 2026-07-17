@@ -152,7 +152,7 @@ plyngent chat --session 3
 | `--max-rounds` | Tool-loop rounds per turn (default 32) |
 | `--stream` / `--no-stream` | Streaming deltas (default on) |
 | `--quiet` | Less status on stderr |
-| `--yes` | Allow destructive tools without confirm (also for one-shot) |
+| `--yes` | YOLO on: skip destructive-tool confirms for this process |
 | `--log-level` | On the root CLI: `DEBUG`, `INFO`, `WARNING`, … |
 
 Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`. Each session remembers the last **provider** and **model** (restored on resume so you are not re-prompted).
@@ -192,6 +192,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/export [md\|json] [path]` | Transcript from DB (no secrets) |
 | `/compact` | Soft-compact + model summary into a **new** session |
 | `/stream` `/verbose` `/markdown` `/tools` `/rounds` | Toggles and limits |
+| `/yolo [on\|off\|once]` | Soft destructive confirms: sticky skip, off, or next turn only |
 
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
 | `/provider` `/model` | Switch without restarting |
@@ -215,7 +216,7 @@ Safety defaults:
 
 - Paths stay under the workspace; optional `path_denylist` substrings.
 - Command basename denylist (e.g. dangerous shells/utilities).
-- Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY).
+- Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.
 
 ## Usage / context (CLI)
