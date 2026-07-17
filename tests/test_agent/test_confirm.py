@@ -56,4 +56,14 @@ async def test_confirm_deny() -> None:
 
 async def test_no_hooks_skips_confirm() -> None:
     registry = ToolRegistry([delete_path])
+    assert registry.soft_confirm is False
     assert await registry.execute("delete_path", '{"path": "a.txt"}') == "deleted a.txt"
+
+
+async def test_soft_confirm_property() -> None:
+    def on_confirm(name: str, args: Mapping[str, object], reason: str) -> bool:
+        del name, args, reason
+        return True
+
+    gated = ToolRegistry([delete_path], danger=classify_danger, on_confirm=on_confirm)
+    assert gated.soft_confirm is True

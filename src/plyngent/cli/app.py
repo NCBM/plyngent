@@ -171,9 +171,12 @@ async def _run_oneshot(state: ReplState, prompt_text: str) -> int:
     try:
         ok = await run_user_text_with_retries(state.agent, prompt_text, delays=())
     except asyncio.CancelledError:
+        state.expire_yolo_once(quiet=True)
         return EXIT_CANCELLED
     except KeyboardInterrupt:
+        state.expire_yolo_once(quiet=True)
         return EXIT_CANCELLED
+    state.expire_yolo_once(quiet=True)
     return EXIT_OK if ok else EXIT_TURN_FAILED
 
 
@@ -206,7 +209,10 @@ async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
             _warn_recoverable_providers(store.recoverable_providers)
 
     _setup_workspace_and_hooks(store, workspace, interactive=interactive)
-    confirm_destructive: bool | None = False if yes else None
+    # --yes forces sticky YOLO; else derive from config.confirm_destructive.
+    from plyngent.cli.state import YoloMode
+
+    yolo: YoloMode | None = "on" if yes else None
 
     memory = await MemoryStore.open(_database_config(store, quiet=quiet or oneshot))
     try:
@@ -255,7 +261,7 @@ async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
             max_rounds=max_rounds,
             stream_enabled=stream,
             interactive_limits=interactive,
-            confirm_destructive=confirm_destructive,
+            yolo=yolo,
         )
         if not quiet and not oneshot:
             click.secho(f"workspace: {state.workspace}", fg="bright_black", err=True)
@@ -367,7 +373,7 @@ def main(ctx: click.Context, log_level: str) -> None:
     "--yes",
     is_flag=True,
     default=False,
-    help="Allow destructive tools without confirm (one-shot / non-interactive).",
+    help="Enable YOLO: skip destructive-tool confirms (sticky for this process).",
 )
 @click.option(
     "--quiet",

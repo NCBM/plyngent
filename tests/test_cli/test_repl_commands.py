@@ -341,6 +341,63 @@ async def test_verbose_toggle(state: ReplState) -> None:
     assert get_verbose_tool_results() is False
 
 
+async def test_yolo_toggle(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert state.effective_yolo() == "off"
+    assert state.soft_confirm_enabled() is True
+    assert await handle_slash(state, "/yolo") is True
+    assert "yolo=off" in capsys.readouterr().out
+
+    assert await handle_slash(state, "/yolo on") is True
+    assert state.effective_yolo() == "on"
+    assert state.soft_confirm_enabled() is False
+    assert "yolo=on" in capsys.readouterr().out
+
+    assert await handle_slash(state, "/yolo once") is True
+    assert state.effective_yolo() == "once"
+    assert state.soft_confirm_enabled() is False
+
+    state.expire_yolo_once(quiet=True)
+    assert state.effective_yolo() == "off"
+    assert state.soft_confirm_enabled() is True
+
+    assert await handle_slash(state, "/yolo once") is True
+    state.expire_yolo_once()
+    err = capsys.readouterr().err
+    assert "yolo=off (once expired)" in err
+    assert state.effective_yolo() == "off"
+
+
+async def test_yolo_rebuilds_tool_registry(tmp_path: Path) -> None:
+    _ = set_workspace_root(tmp_path)
+    memory = await MemoryStore.open(DatabaseConfig())
+    provider = OpenAIProvider(access_key_or_token="sk-test")
+    config = ConfigStore(path=tmp_path / "plyngent.toml", document=tomlkit.document())
+    config.providers = {"local": provider}
+    st = ReplState(
+        config=config,
+        memory=memory,
+        workspace=tmp_path,
+        provider_name="local",
+        provider=provider,
+        model="gpt-test",
+        tools_enabled=True,
+    )
+    try:
+        assert st.agent.tools is not None
+        assert st.agent.tools.soft_confirm is True
+        st.set_yolo("on")
+        assert st.agent.tools is not None
+        assert st.agent.tools.soft_confirm is False
+        st.set_yolo("once")
+        assert st.agent.tools is not None
+        assert st.agent.tools.soft_confirm is False
+        st.set_yolo("off")
+        assert st.agent.tools is not None
+        assert st.agent.tools.soft_confirm is True
+    finally:
+        await memory.close()
+
+
 async def test_resume(state: ReplState) -> None:
     sid = state.session_id
     assert sid is not None
@@ -378,6 +435,7 @@ async def test_status_shows_context_tokens(state: ReplState, capsys: pytest.Capt
     assert "(est)" in out  # no API usage yet
     assert "context_chars=" in out
     assert "tool_result_max=" in out
+    assert "yolo=off" in out
     assert str(state.workspace) in out
 
     state.agent.last_request_usage = TokenUsage(

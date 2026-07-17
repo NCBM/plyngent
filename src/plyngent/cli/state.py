@@ -4,7 +4,7 @@ import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from plyngent.memory import MemoryStore
     from plyngent.memory.database.schema import Session as SessionRow
 
+type YoloMode = Literal["off", "on", "once"]
+
 
 @dataclass
 class ReplState:
@@ -44,8 +46,9 @@ class ReplState:
     markdown_enabled: bool = True
     # One-shot / scripts: never prompt to raise tool-loop limits.
     interactive_limits: bool = True
-    # When False, skip destructive-tool confirms (e.g. --yes).
-    confirm_destructive: bool | None = None
+    # Soft destructive-tool confirms: None → derive from config.confirm_destructive.
+    # off = confirm; on = skip (sticky); once = skip next user turn then off.
+    yolo: YoloMode | None = None
     # Set by /edit; REPL sends as the next user turn then clears.
     pending_user_text: str | None = None
     client: ChatClient = field(init=False)
@@ -77,10 +80,32 @@ class ReplState:
             raise RuntimeError(msg)
         return key
 
-    def _confirm_destructive(self) -> bool:
-        if self.confirm_destructive is not None:
-            return self.confirm_destructive
-        return self.config.agent_config.confirm_destructive
+    def effective_yolo(self) -> YoloMode:
+        """Resolved YOLO mode (session override or config default)."""
+        if self.yolo is not None:
+            return self.yolo
+        return "off" if self.config.agent_config.confirm_destructive else "on"
+
+    def soft_confirm_enabled(self) -> bool:
+        """Whether destructive tools should prompt (or deny non-interactively)."""
+        return self.effective_yolo() == "off"
+
+    def set_yolo(self, mode: YoloMode) -> None:
+        """Set YOLO mode; rebuild tool registry when soft-confirm hooks change."""
+        prev = self.soft_confirm_enabled()
+        self.yolo = mode
+        if prev != self.soft_confirm_enabled():
+            self.rebuild_client()
+
+    def expire_yolo_once(self, *, quiet: bool = False) -> None:
+        """If mode is ``once``, drop back to ``off`` after a user turn."""
+        if self.effective_yolo() != "once":
+            return
+        self.set_yolo("off")
+        if not quiet:
+            import click
+
+            click.secho("yolo=off (once expired)", fg="bright_black", err=True)
 
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
@@ -88,7 +113,7 @@ class ReplState:
         from plyngent.cli.limits import prompt_confirm_tool_async
         from plyngent.tools.danger import classify_danger
 
-        if self._confirm_destructive():
+        if self.soft_confirm_enabled():
             return ToolRegistry(
                 list(DEFAULT_TOOLS),
                 danger=classify_danger,

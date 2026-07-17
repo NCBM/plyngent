@@ -25,12 +25,14 @@ def _echo_user(text: str) -> None:
 async def run_repl(state: ReplState) -> None:
     """Interactive chat loop with readline editing, history, and Tab completion."""
     setup_readline(state)
+    yolo = state.effective_yolo()
+    yolo_part = f"  yolo={yolo}" if yolo != "off" else ""
     click.echo(
         f"plyngent chat  provider={state.provider_name}  model={state.model}  "
         f"session={state.session_id}  tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  messages={len(state.agent.messages)}  "
         f"stream={'on' if state.agent.stream else 'off'}  "
-        f"verbose={'on' if state.verbose else 'off'}"
+        f"verbose={'on' if state.verbose else 'off'}{yolo_part}"
     )
     click.echo('Type /help for commands. Multiline: """ … """. Empty line is ignored.')
 
@@ -52,8 +54,14 @@ async def run_repl(state: ReplState) -> None:
                 text = state.pending_user_text
                 state.pending_user_text = None
                 _echo_user(text)
-                _ = await run_user_text_with_retries(state.agent, text)
+                try:
+                    _ = await run_user_text_with_retries(state.agent, text)
+                finally:
+                    state.expire_yolo_once()
             continue
 
         _echo_user(entry)
-        _ = await run_user_text_with_retries(state.agent, entry)
+        try:
+            _ = await run_user_text_with_retries(state.agent, entry)
+        finally:
+            state.expire_yolo_once()

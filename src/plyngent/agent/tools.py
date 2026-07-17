@@ -191,6 +191,11 @@ class ToolRegistry:
     def __len__(self) -> int:
         return len(self._tools)
 
+    @property
+    def soft_confirm(self) -> bool:
+        """True when dangerous tools are gated by ``on_confirm``."""
+        return self._danger is not None and self._on_confirm is not None
+
     async def _invoke(self, definition: ToolDefinition, args: dict[str, object]) -> str:
         try:
             result = definition.handler(**args)

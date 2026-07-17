@@ -181,3 +181,5 @@ def test_complete_slash_args_from_registry(tmp_path: object) -> None:
     assert complete_slash_args(state, "/model", "a") == ["alpha"]
     assert complete_slash_args(state, "/export", "j") == ["json"]
     assert complete_slash_args(state, "/help", "st") == ["status", "stream"]
+    assert complete_slash_args(state, "/yolo", "") == ["on", "off", "once"]
+    assert complete_slash_args(state, "/yolo", "o") == ["on", "off", "once"]

@@ -23,13 +23,14 @@ from plyngent.runtime import ProviderNotSupportedError
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
 
-    from plyngent.cli.state import ReplState
+    from plyngent.cli.state import ReplState, YoloMode
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
 _DEFAULT_HISTORY_LINES = 20
 _CONTENT_PREVIEW = 200
 _COMPACT_PREVIEW = 400
 _ON_OFF_CHOICES = ("on", "off")
+_YOLO_MODE_CHOICES = ("on", "off", "once")
 _EXPORT_FORMAT_CHOICES = ("md", "json")
 
 HELP_FOOTER = (
@@ -38,7 +39,7 @@ HELP_FOOTER = (
     "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
     "\n"
     "Tab completes slash commands and some arguments (provider, model, tools,\n"
-    "stream, verbose, export). Use --session ID or /resume to continue a prior\n"
+    "stream, verbose, yolo, export). Use --session ID or /resume to continue a prior\n"
     "chat after restart.\n"
     "\n"
     'Multiline: start a message with """ then end a later line with """.\n'
@@ -84,6 +85,30 @@ class OnOffParam(click.ParamType[bool]):
 
 
 ON_OFF = OnOffParam()
+
+
+class YoloModeParam(click.ParamType[str]):
+    """Accept on|off|once for soft destructive-tool confirms."""
+
+    name: str = "yolo_mode"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        if isinstance(value, str) and value in _YOLO_MODE_CHOICES:
+            return value
+        token = str(value).strip().lower()
+        if token in _YOLO_MODE_CHOICES:
+            return token
+        msg = "expected on, off, or once"
+        raise click.BadParameter(msg, ctx=ctx, param=param)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        return _filter_choices(incomplete, _YOLO_MODE_CHOICES)
+
+
+YOLO_MODE = YoloModeParam()
 
 
 class ExportFormatParam(click.ParamType[str]):
@@ -355,7 +380,8 @@ def status_cmd(state: ReplState) -> None:
         f"tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  "
         f"stream={'on' if state.agent.stream else 'off'}  "
-        f"verbose={'on' if state.verbose else 'off'}\n"
+        f"verbose={'on' if state.verbose else 'off'}  "
+        f"yolo={state.effective_yolo()}\n"
         f"context_tokens={ctx_tilde}{ctx_tokens}/{ctx_budget} ({ctx_tag})  "
         f"context_chars={ctx_chars}  "
         f"tool_result_max={state.agent.max_tool_result_chars}\n"
@@ -696,6 +722,24 @@ def tools_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
     state.tools_enabled = enabled
     state.rebuild_client()
     click.echo(f"tools={'on' if enabled else 'off'}")
+
+
+@slash.command("yolo")
+@click.argument("mode", required=False, type=YOLO_MODE, metavar="[on|off|once]")
+@click.pass_obj
+def yolo_cmd(state: ReplState, mode: str | None) -> None:
+    """Show or set YOLO mode for soft destructive-tool confirms.
+
+    ``off`` (default when config ``confirm_destructive`` is true): prompt on
+    delete/move/overwrite (deny in non-TTY). ``on``: skip confirms for the
+    process. ``once``: skip for the next user turn only, then return to ``off``.
+    Path/command denylists still apply. Omit the argument to print the value.
+    """
+    if mode is None:
+        click.echo(f"yolo={state.effective_yolo()}")
+        return
+    state.set_yolo(cast("YoloMode", mode))
+    click.echo(f"yolo={state.effective_yolo()}")
 
 
 @slash.command("stream")
