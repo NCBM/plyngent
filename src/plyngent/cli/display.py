@@ -4,7 +4,7 @@ import contextlib
 import os
 import sys
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import click
 
@@ -31,6 +31,8 @@ _TOOL_ARGS_PREVIEW = 80
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
 _markdown_enabled: ContextVar[bool] = ContextVar("markdown_enabled", default=True)
+
+type StreamSource = Literal["reasoning", "assistant"]
 
 
 def set_verbose_tool_results(enabled: bool) -> None:  # noqa: FBT001
@@ -87,24 +89,38 @@ def _clear_streamed_lines(line_count: int) -> None:
 
 
 def _line_count_for_clear(label: str, body: str) -> int:
-    """Approximate terminal lines used by ``label + body`` for cursor erase."""
+    """Approximate terminal lines used by ``label\\n + body`` for cursor erase."""
     if not body and not label:
         return 0
-    text = label + body
-    # +1 for trailing newline after the stream block in render_events.
+    # Label is on its own line; body may contain newlines.
+    text = f"{label}\n{body}" if label else body
     return text.count("\n") + 1
 
 
-def print_markdown(text: str, *, label: str = "assistant: ") -> None:
-    """Render *text* as markdown via Rich, with a cyan label."""
+def print_markdown(text: str, *, label: str = "assistant:") -> None:
+    """Render *text* as markdown via Rich; *label* on its own line when set."""
     from rich.console import Console
     from rich.markdown import Markdown
     from rich.text import Text
 
     console = Console(file=sys.stdout, highlight=False)
     if label:
-        console.print(Text(label, style="cyan"), end="")
+        console.print(Text(label, style="cyan"))
     console.print(Markdown(text))
+
+
+def _flush_assistant_markdown(body: str, *, pretty: bool) -> None:
+    """Replace the plain assistant stream with markdown when enabled."""
+    if not body.strip():
+        click.echo()
+        return
+    if pretty:
+        lines = _line_count_for_clear("assistant:", body)
+        _clear_streamed_lines(lines)
+        print_markdown(body, label="assistant:")
+        click.echo()
+    else:
+        click.echo()
 
 
 async def render_events(  # noqa: C901, PLR0912, PLR0915
@@ -115,38 +131,65 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
 ) -> None:
     """Print agent events to the terminal (text deltas stream as they arrive).
 
-    When markdown is enabled and stdout is a TTY, the plain streamed assistant
-    text is replaced at end-of-turn with a Rich markdown render.
+    Assistant and reasoning each start on a new line after their label. When the
+    content source changes (reasoning ↔ assistant, or tools/errors), the
+    assistant markdown buffer is flushed so streams do not mix and Rich can
+    re-render completed assistant segments.
     """
     show_full = get_verbose_tool_results() if verbose is None else verbose
     use_markdown = get_markdown_enabled() if markdown is None else markdown
     pretty = bool(use_markdown and markdown_render_available())
 
-    printed_reasoning = False
-    printed_text = False
+    source: StreamSource | None = None
     assistant_buf: list[str] = []
-    # Tools/errors after assistant text: skip replace (would erase tool lines).
-    interrupted_by_other = False
+    printed_reasoning = False
+    printed_assistant = False
+
+    def flush_assistant() -> None:
+        nonlocal source, assistant_buf, printed_assistant
+        if source != "assistant" and not assistant_buf:
+            return
+        body = "".join(assistant_buf)
+        assistant_buf = []
+        if printed_assistant:
+            _flush_assistant_markdown(body, pretty=pretty)
+        printed_assistant = False
+        if source == "assistant":
+            source = None
+
+    def begin_reasoning() -> None:
+        nonlocal source, printed_reasoning
+        if source == "reasoning":
+            return
+        if source == "assistant":
+            flush_assistant()
+        click.echo()
+        click.secho("reasoning:", fg="bright_black")
+        source = "reasoning"
+        printed_reasoning = True
+
+    def begin_assistant() -> None:
+        nonlocal source, printed_assistant
+        if source == "assistant":
+            return
+        if source == "reasoning":
+            click.echo()  # end reasoning stream line
+            source = None
+        click.echo()
+        click.secho("assistant:", fg="cyan")
+        source = "assistant"
+        printed_assistant = True
 
     async for event in events:
         if isinstance(event, ReasoningDeltaEvent):
-            if not printed_reasoning:
-                click.echo()
-                click.secho("reasoning: ", fg="bright_black", nl=False)
-                printed_reasoning = True
+            begin_reasoning()
             _echo_stream(event.content)
         elif isinstance(event, TextDeltaEvent):
-            if printed_reasoning and not printed_text:
-                click.echo()
-            if not printed_text:
-                click.echo()
-                click.secho("assistant: ", fg="cyan", nl=False)
-                printed_text = True
+            begin_assistant()
             assistant_buf.append(event.content)
             _echo_stream(event.content)
         elif isinstance(event, ToolCallEvent):
-            if printed_text:
-                interrupted_by_other = True
+            flush_assistant()
             call = event.tool_call
             if isinstance(call, AssistantFunctionToolCall):
                 args = _preview(call.function.arguments, _TOOL_ARGS_PREVIEW)
@@ -154,8 +197,7 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             else:
                 click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
         elif isinstance(event, ToolResultEvent):
-            if printed_text:
-                interrupted_by_other = True
+            flush_assistant()
             content = event.message.content
             if show_full:
                 click.secho(f"[tool ok]\n{content}", fg="magenta")
@@ -164,8 +206,7 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
                 one_line = preview.replace("\n", " ")
                 click.secho(f"[tool ok] {one_line}", fg="magenta")
         elif isinstance(event, ErrorEvent):
-            if printed_text:
-                interrupted_by_other = True
+            flush_assistant()
             suffix = ""
             if event.source:
                 suffix += f" source={event.source}"
@@ -173,15 +214,13 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
                 suffix += " (fatal)"
             click.secho(f"\n[error]{suffix} {event.message}", fg="bright_red")
         elif isinstance(event, CancelledEvent):
-            if printed_text:
-                interrupted_by_other = True
+            flush_assistant()
             if event.reason:
                 click.secho(f"\n[cancelled] {event.reason}", fg="yellow")
             else:
                 click.secho("\n[cancelled]", fg="yellow")
         elif isinstance(event, MaxRoundsEvent):
-            if printed_text:
-                interrupted_by_other = True
+            flush_assistant()
             if event.continued:
                 click.secho(
                     f"\n[max rounds {event.rounds} reached — continuing with a higher allowance]",
@@ -195,21 +234,9 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             # AssistantMessageEvent — text already shown via TextDeltaEvent.
             _ = event
 
-    full_assistant = "".join(assistant_buf)
-    if pretty and printed_text and full_assistant.strip() and not interrupted_by_other:
-        # Replace plain stream with markdown (assistant block only).
-        lines = _line_count_for_clear("assistant: ", full_assistant)
-        # Also account for blank line before label when reasoning was shown.
-        if printed_reasoning:
-            lines += 1
-        _clear_streamed_lines(lines)
-        if printed_reasoning:
-            # Reasoning already printed above; leave it and only re-print assistant.
-            pass
-        print_markdown(full_assistant, label="assistant: ")
-        click.echo()
-        return
-
-    if printed_text or printed_reasoning:
+    # End-of-turn: flush any open assistant segment; close reasoning stream.
+    if assistant_buf or printed_assistant:
+        flush_assistant()
+    elif printed_reasoning:
         click.echo()
     click.echo()

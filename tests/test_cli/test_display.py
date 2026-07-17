@@ -37,11 +37,45 @@ async def test_render_reasoning_and_text(capsys: pytest.CaptureFixture[str]) -> 
         )
     )
     out = capsys.readouterr().out
-    assert "reasoning: " in out
+    assert "reasoning:" in out
     assert "think" in out
-    assert "assistant: " in out
+    assert "assistant:" in out
     assert "hello" in out
+    # Labels on their own lines (content begins after newline).
+    assert "assistant:\nhello" in out or "assistant:\r\nhello" in out
     set_markdown_enabled(True)
+
+
+async def test_flush_markdown_on_source_change(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assistant segment before tools is flushed so later text is a new segment."""
+    monkeypatch.setattr("plyngent.cli.display.markdown_render_available", lambda: True)
+    set_markdown_enabled(True)
+    from plyngent.agent import ToolCallEvent
+    from plyngent.lmproto.openai_compatible.model import (
+        AssistantFunctionTool,
+        AssistantFunctionToolCall,
+    )
+
+    call = AssistantFunctionToolCall(
+        id="1",
+        function=AssistantFunctionTool(name="read_file", arguments="{}"),
+    )
+    await render_events(
+        _aiter(
+            [
+                TextDeltaEvent(content="before **tool**"),
+                ToolCallEvent(tool_call=call),
+                TextDeltaEvent(content="after"),
+            ]
+        ),
+        markdown=True,
+    )
+    out = capsys.readouterr().out
+    assert "[tool]" in out
+    assert "after" in out
 
 
 async def test_tool_result_preview_vs_verbose(capsys: pytest.CaptureFixture[str]) -> None:
