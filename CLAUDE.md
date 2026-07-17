@@ -81,7 +81,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`. Session YOLO: `/yolo on|off|once` and `--yes` (skip soft confirms; hard denylists unchanged; `once` expires after the next user turn).
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
 - **`chat`**: human prompts as tools — `ask_user_line` / `ask_user_choice` / `ask_user_form` (shared `prompting` core).
-- **`DEFAULT_TOOLS`**: file + process + vcs + chat tool list for a `ToolRegistry`.
+- **`todo`**: session sub-task stack — `todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`; stored on session row; agent injects a review user message if open todos and no todo tool use in the turn.
+- **`DEFAULT_TOOLS`**: file + process + vcs + chat + todo tool list for a `ToolRegistry`.
 
 ### Prompting (`prompting.py`)
 
@@ -92,7 +93,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes` (YOLO on), `--stream/--no-stream`, `--quiet`. Root `--log-level`.
-- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms. `/model --persist` / `/models --persist` write model catalog entries into TOML.
+- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms. `/model --persist` / `/models --persist` write model catalog entries into TOML. `/todos` for human show/push/pop/clear of the todo stack.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
 - Failed/cancelled turns: user kept; **committed tool rounds kept** (side effects not re-run on `/retry`); only unfinished assistant rolled back; Ctrl+C cancels; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
 - **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.

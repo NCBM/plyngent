@@ -879,6 +879,78 @@ def history_cmd(state: ReplState, n: int | None) -> None:
         )
 
 
+@slash.command("todos")
+@click.argument("action", required=False, type=str)
+@click.argument("rest", required=False, nargs=-1, type=str)
+@click.pass_obj
+def todos_cmd(  # noqa: C901, PLR0911, PLR0912
+    state: ReplState, action: str | None, rest: tuple[str, ...]
+) -> None:
+    """Show or edit the todo/task stack (sub-tasks).
+
+    ``/todos`` — list
+    ``/todos push <title>`` — push pending item
+    ``/todos pop`` — remove last open item
+    ``/todos done <id>`` / ``/todos cancel <id>`` — set status
+    ``/todos clear`` — wipe stack
+    """
+    stack = state.todo_stack
+    act = (action or "list").strip().lower()
+    if act in {"list", "show", "ls"}:
+        click.echo(stack.render())
+        return
+    if act == "push":
+        title = " ".join(rest).strip()
+        if not title:
+            click.echo("error: usage: /todos push <title>")
+            return
+        try:
+            item = stack.push(title)
+        except ValueError as exc:
+            click.echo(f"error: {exc}")
+            return
+        _await(state.persist_todo_stack())
+        click.echo(f"pushed {item.id}: {item.title}")
+        click.echo(stack.render())
+        return
+    if act == "pop":
+        item = stack.pop()
+        if item is None:
+            click.echo("todo stack empty")
+            return
+        _await(state.persist_todo_stack())
+        click.echo(f"popped {item.id}: {item.title}")
+        click.echo(stack.render())
+        return
+    if act in {"done", "cancel", "pending", "in_progress"}:
+        if not rest:
+            click.echo(f"error: usage: /todos {act} <id>")
+            return
+        if act == "done":
+            new_status = "done"
+        elif act == "cancel":
+            new_status = "cancelled"
+        elif act == "pending":
+            new_status = "pending"
+        else:
+            new_status = "in_progress"
+        try:
+            item = stack.update(rest[0], status=new_status)
+        except (KeyError, ValueError) as exc:
+            click.echo(f"error: {exc}")
+            return
+        _await(state.persist_todo_stack())
+        click.echo(f"updated {item.id} → {item.status}")
+        click.echo(stack.render())
+        return
+    if act == "clear":
+        n = stack.clear()
+        _await(state.persist_todo_stack())
+        click.echo(f"cleared {n} item(s)")
+        return
+    click.echo("error: usage: /todos [list|push|pop|done|cancel|clear] …")
+
+
 @slash.command("retry")
 @click.pass_obj
 def retry_cmd(state: ReplState) -> None:

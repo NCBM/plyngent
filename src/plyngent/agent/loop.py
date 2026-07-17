@@ -16,6 +16,7 @@ from plyngent.lmproto.openai_compatible.model import (
     StreamOptions,
     StreamToolCallDelta,
     ToolChatMessage,
+    UserChatMessage,
 )
 from plyngent.typedef import Unset  # noqa: TC001
 
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
     from .client import ChatClient
+    from .todo_stack import TodoStack
     from .tools import ToolRegistry
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
@@ -318,6 +320,7 @@ async def run_chat_loop(
     max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
     parallel_tools: bool = True,
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
+    todo_stack: TodoStack | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
@@ -325,6 +328,10 @@ async def run_chat_loop(
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
     Request payloads may shrink older tool results when over ``max_context_tokens``.
+
+    When *todo_stack* is set and still has open items after a natural stop with
+    no ``todo_*`` tool use this turn, injects a review user message and continues
+    once (so the model must check or update the stack).
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -335,6 +342,7 @@ async def run_chat_loop(
     # Calibrate soft-compact from last model call's prompt_tokens (API preferred).
     prompt_tokens_hint: int | None = None
     sent_estimate_tokens: int | None = None
+    todo_review_injected = False
 
     while True:
         while rounds_used < allowance:
@@ -363,6 +371,14 @@ async def run_chat_loop(
             assistant = _last_assistant(messages, pre_len)
             tool_calls = assistant.tool_calls
             if tool_calls is UNSET or not tool_calls or tools is None:
+                if (
+                    todo_stack is not None
+                    and todo_stack.needs_review()
+                    and not todo_review_injected
+                ):
+                    todo_review_injected = True
+                    messages.append(UserChatMessage(content=todo_stack.review_prompt()))
+                    continue
                 return
             async for event in _execute_tool_calls(
                 tools,

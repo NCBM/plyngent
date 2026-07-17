@@ -21,6 +21,14 @@ from .process import open_pty as open_pty
 from .process import read_pty as read_pty
 from .process import run_command as run_command
 from .process import write_pty as write_pty
+from .todo import TODO_TOOLS as TODO_TOOLS
+from .todo import get_todo_stack as get_todo_stack
+from .todo import set_todo_stack as set_todo_stack
+from .todo import todo_clear as todo_clear
+from .todo import todo_list as todo_list
+from .todo import todo_pop as todo_pop
+from .todo import todo_push as todo_push
+from .todo import todo_update as todo_update
 from .vcs import VCS_TOOLS as VCS_TOOLS
 from .vcs import vcs_branch as vcs_branch
 from .vcs import vcs_diff as vcs_diff
@@ -41,4 +49,4 @@ from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_workspace_root as set_workspace_root
 
-DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS]
+DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS]

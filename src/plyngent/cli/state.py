@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
+from plyngent.agent.todo_stack import TodoStack
 from plyngent.cli.models_source import (
     DEFAULT_MODELS_CACHE_TTL,
     client_supports_models,
@@ -17,7 +18,7 @@ from plyngent.cli.models_source import (
 )
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
-from plyngent.tools import DEFAULT_TOOLS, set_workspace_root
+from plyngent.tools import DEFAULT_TOOLS, set_todo_stack, set_workspace_root
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,6 +57,8 @@ class ReplState:
     client: ChatClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
+    todo_stack: TodoStack = field(default_factory=TodoStack)
+    _todo_persist_tasks: set[object] = field(default_factory=set, init=False, repr=False)
     # Remote GET /models cache (per provider base).
     _remote_models: list[str] | None = field(default=None, init=False, repr=False)
     _remote_models_fetched_at: float | None = field(default=None, init=False, repr=False)
@@ -68,6 +71,7 @@ class ReplState:
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.agent = self._make_agent()
         self.sync_display_flags()
+        self._bind_todo_tools()
 
     def sync_display_flags(self) -> None:
         from plyngent.cli.display import set_markdown_enabled, set_verbose_tool_results
@@ -109,6 +113,46 @@ class ReplState:
 
             click.secho("yolo=off (once expired)", fg="bright_black", err=True)
 
+    def _bind_todo_tools(self) -> None:
+        """Point module-level todo tools at this session stack + persist hook."""
+        import asyncio
+
+        def on_change() -> None:
+            if self.session_id is None:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            task = loop.create_task(
+                self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw())
+            )
+            # Keep a strong ref until done so the task is not GC'd mid-flight.
+            self._todo_persist_tasks.add(task)
+            task.add_done_callback(self._todo_persist_tasks.discard)
+
+        set_todo_stack(self.todo_stack, on_change=on_change)
+
+    async def persist_todo_stack(self) -> None:
+        """Write the in-memory todo stack to the active session row."""
+        if self.session_id is None:
+            return
+        _ = await self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw())
+
+    async def load_todo_stack(self) -> None:
+        """Load todo stack from the active session (empty if none)."""
+        if self.session_id is None:
+            self.todo_stack = TodoStack()
+            self._bind_todo_tools()
+            if hasattr(self, "agent"):
+                self.agent.todo_stack = self.todo_stack
+            return
+        raw = await self.memory.get_session_todo_stack(self.session_id)
+        self.todo_stack = TodoStack.from_raw(raw)
+        self._bind_todo_tools()
+        if hasattr(self, "agent"):
+            self.agent.todo_stack = self.todo_stack
+
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
@@ -142,6 +186,7 @@ class ReplState:
             max_tool_result_chars=agent_cfg.max_tool_result_chars,
             parallel_tools=agent_cfg.parallel_tools,
             max_context_tokens=agent_cfg.max_context_tokens,
+            todo_stack=self.todo_stack,
         )
 
     def rebuild_client(self) -> None:
@@ -156,6 +201,7 @@ class ReplState:
         # Restore history without re-marking already-stored messages as dirty.
         self.agent.replace_messages(messages, persist_from=persist_from)
         self.sync_display_flags()
+        self._bind_todo_tools()
         # Drop remote catalog when provider identity/url changed (not on model-only switch).
         if self._remote_models_key is not None and self._remote_models_key != self._models_cache_key():
             self.invalidate_remote_models()
@@ -379,7 +425,9 @@ class ReplState:
             model=self.model,
         )
         self.session_id = session.sid
+        self.todo_stack = TodoStack()
         self.agent = self._make_agent()
+        self._bind_todo_tools()
 
     async def rename_current_session(self, name: str) -> SessionRow:
         if self.session_id is None:
@@ -435,6 +483,7 @@ class ReplState:
         else:
             self.agent = self._make_agent()
         await self.agent.load_history()
+        await self.load_todo_stack()
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
         """Resume most recently updated session for this workspace, or create one."""
@@ -449,6 +498,7 @@ class ReplState:
         else:
             self.agent = self._make_agent()
         await self.agent.load_history()
+        await self.load_todo_stack()
         _ = await self.memory.touch_session(latest.sid)
         return "resume"
 
@@ -456,6 +506,7 @@ class ReplState:
         """Soft-compact + model-summarize current history into a new workspace session.
 
         Returns ``(old_session_id, new_session_id, summary)``.
+        Todo stack is carried into the new session.
         """
         from plyngent.agent.compact import build_compacted_seed_messages, summarize_messages
 
@@ -487,6 +538,7 @@ class ReplState:
             system_prompt=self.config.agent_config.compact_system_prompt or None,
             user_prefix=self.config.agent_config.compact_user_prefix or None,
         )
+        carried_todos = self.todo_stack.to_raw()
         session_name = name or f"compact-from-{old_id}"
         await self.new_session(name=session_name)
         new_id = self.session_id
@@ -508,4 +560,9 @@ class ReplState:
         if not self.agent.messages:
             msg = f"compact session {new_id} has no messages after seed"
             raise RuntimeError(msg)
+        # Carry open/closed todos so multi-step work survives compact.
+        self.todo_stack = TodoStack.from_raw(carried_todos)
+        self._bind_todo_tools()
+        self.agent.todo_stack = self.todo_stack
+        await self.persist_todo_stack()
         return old_id, new_id, summary

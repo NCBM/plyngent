@@ -32,6 +32,8 @@ class Session(PlyngentBase):
     # Last selected provider/model for this session (config provider key + model id).
     provider_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Todo/task stack JSON for multi-step sub-tasks (optional).
+    todo_stack: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

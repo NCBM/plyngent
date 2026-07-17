@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from .client import ChatClient
     from .events import AgentEvent
+    from .todo_stack import TodoStack
     from .tools import ToolRegistry
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
@@ -118,6 +119,7 @@ class ChatAgent:
     max_tool_result_chars: int
     parallel_tools: bool
     max_context_tokens: int
+    todo_stack: TodoStack | None
     messages: list[AnyChatMessage]
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
@@ -143,6 +145,7 @@ class ChatAgent:
         max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
         parallel_tools: bool = True,
         max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
+        todo_stack: TodoStack | None = None,
     ) -> None:
         self.client = client
         self.model = model
@@ -157,6 +160,7 @@ class ChatAgent:
         self.max_tool_result_chars = max_tool_result_chars
         self.parallel_tools = parallel_tools
         self.max_context_tokens = max_context_tokens
+        self.todo_stack = todo_stack
         self.messages = list(messages) if messages is not None else []
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
@@ -289,6 +293,8 @@ class ChatAgent:
         side-effecting tools. Unfinished assistant/stream suffix is rolled back.
         """
         user_index = self._user_index(user_msg)
+        if self.todo_stack is not None:
+            self.todo_stack.begin_turn()
 
         completed = False
         turn_usage = TokenUsage()
@@ -307,6 +313,7 @@ class ChatAgent:
                 max_tool_result_chars=self.max_tool_result_chars,
                 parallel_tools=self.parallel_tools,
                 max_context_tokens=self.max_context_tokens,
+                todo_stack=self.todo_stack,
             ):
                 if isinstance(event, UsageEvent):
                     turn_rounds += 1

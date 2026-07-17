@@ -201,6 +201,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/model --persist` | Save current model id into `plyngent.toml` catalog |
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
+| `/todos` | Todo/task stack: list, push, pop, done, clear |
 | `/config` | Edit `plyngent.toml` in `$EDITOR` and reload |
 | `/quit` | Leave the REPL |
 
@@ -214,7 +215,7 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), and human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`).
+Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
 
 Safety defaults:
 

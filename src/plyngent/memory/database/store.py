@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
 import msgspec
 from sqlalchemy import delete, select, text
@@ -68,6 +68,7 @@ class MemoryStore:
             _ = await conn.run_sync(PlyngentBase.metadata.create_all)
             await conn.run_sync(_migrate_session_workspace)
             await conn.run_sync(_migrate_session_llm)
+            await conn.run_sync(_migrate_session_todo_stack)
 
     async def close(self) -> None:
         """Dispose the underlying engine."""
@@ -208,6 +209,31 @@ class MemoryStore:
             await session.refresh(row)
             return row
 
+    async def get_session_todo_stack(self, sid: int) -> dict[str, object] | None:
+        """Return the stored todo stack JSON for *sid*, or None."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            raw = row.todo_stack
+            if raw is None:
+                return None
+            return {str(k): v for k, v in cast("dict[object, object]", raw).items()}
+
+    async def update_session_todo_stack(self, sid: int, data: dict[str, object] | None) -> Session:
+        """Persist todo stack JSON for a session (None clears)."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            row.todo_stack = data
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
     async def rename_session(self, sid: int, name: str) -> Session:
         """Rename a session (max 64 characters, non-empty after strip)."""
         cleaned = name.strip()
@@ -308,3 +334,14 @@ def _migrate_session_llm(sync_conn: object) -> None:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN provider_name VARCHAR(128)"))
     if "model" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN model VARCHAR(256)"))
+
+
+def _migrate_session_todo_stack(sync_conn: object) -> None:
+    """Add ``session.todo_stack`` JSON for the todo/task sub-task stack."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    columns = _session_columns(sync_conn)
+    if "todo_stack" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN todo_stack JSON"))
