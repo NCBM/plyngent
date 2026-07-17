@@ -8,8 +8,11 @@ from msgspec import UNSET
 
 from plyngent.agent.responses_bridge import (
     chat_param_to_responses_kwargs,
+    finish_reason_chunk,
     reasoning_delta_chunk,
+    response_to_assistant_message,
     response_to_chat_completion,
+    responses_status_to_finish_reason,
     text_delta_chunk,
     tool_call_chunks_from_response,
     usage_chunk_from_response,
@@ -109,12 +112,20 @@ class ResponsesChatClient:
                 except TypeError, ValueError, msgspec.ValidationError:
                     final = None
 
-        if final is not None:
-            for chunk in tool_call_chunks_from_response(final, model=model):
-                yield chunk
-            usage = usage_chunk_from_response(final, model=model)
-            if usage is not None:
-                yield usage
+        if final is None:
+            # Stream ended without response.completed — signal missing terminal.
+            # Loop will treat empty + no finish_reason as a glitch.
+            return
+
+        assistant = response_to_assistant_message(final)
+        has_tools = assistant.tool_calls is not UNSET and bool(assistant.tool_calls)
+        finish = responses_status_to_finish_reason(final, has_tool_calls=has_tools)
+        for chunk in tool_call_chunks_from_response(final, model=model):
+            yield chunk
+        yield finish_reason_chunk(model=model, finish_reason=finish)
+        usage = usage_chunk_from_response(final, model=model)
+        if usage is not None:
+            yield usage
 
 
 def wrap_openai_for_agent(

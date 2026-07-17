@@ -114,6 +114,66 @@ async def _execute_tool_calls(
         yield ToolResultEvent(message=tool_msg)
 
 
+def _assistant_has_payload(assistant: AssistantChatMessage) -> bool:
+    """True if the model produced text, reasoning, or tool calls."""
+    if assistant.tool_calls is not UNSET and assistant.tool_calls:
+        return True
+    if isinstance(assistant.content, str) and assistant.content.strip():
+        return True
+    reasoning = assistant.reasoning_content
+    return bool(isinstance(reasoning, str) and reasoning.strip())
+
+
+def _finish_reason_value(finish: object) -> str | None:
+    if finish is UNSET or finish is None:
+        return None
+    if isinstance(finish, str) and finish.strip():
+        return finish.strip()
+    return None
+
+
+def _validate_assistant_terminal(
+    assistant: AssistantChatMessage,
+    *,
+    finish_reason: str | None,
+    stream_terminal: bool,
+) -> None:
+    """Raise when the round is not a usable agent stop.
+
+    Distinguishes empty generation, truncated/filtered stops, and missing
+    stream terminals (network/client glitch) from a normal stop/tool_calls end.
+    """
+    reason = (finish_reason or "").lower() or None
+
+    if reason in {"length", "content_filter"}:
+        label = "truncated (max tokens)" if reason == "length" else "content filter"
+        detail = ""
+        if isinstance(assistant.content, str) and assistant.content.strip():
+            detail = f"; partial text kept ({len(assistant.content)} chars)"
+        msg = f"model stopped early: {label}{detail}"
+        raise RuntimeError(msg)
+
+    if reason in {"failed", "incomplete", "cancelled"}:
+        msg = f"model response status: {reason}"
+        raise RuntimeError(msg)
+
+    if _assistant_has_payload(assistant):
+        return
+
+    if not stream_terminal and reason is None:
+        msg = (
+            "stream ended without a terminal signal (no finish_reason / response.completed) and empty assistant output"
+        )
+        raise RuntimeError(msg)
+
+    if reason in {"stop", "tool_calls", "function_call"} or reason is None:
+        msg = "empty model completion (no text, reasoning, or tool calls)"
+        raise RuntimeError(msg)
+
+    msg = f"empty model completion (finish_reason={reason})"
+    raise RuntimeError(msg)
+
+
 async def _non_stream_round(
     client: ChatClient,
     param: ChatCompletionsParam,
@@ -122,7 +182,14 @@ async def _non_stream_round(
     if not response.choices:
         msg = "chat completion response contained no choices"
         raise RuntimeError(msg)
-    assistant = response.choices[0].message
+    choice = response.choices[0]
+    assistant = choice.message
+    finish = _finish_reason_value(choice.finish_reason)
+    _validate_assistant_terminal(
+        assistant,
+        finish_reason=finish,
+        stream_terminal=True,
+    )
     reasoning = assistant.reasoning_content
     if isinstance(reasoning, str) and reasoning:
         yield ReasoningDeltaEvent(content=reasoning)
@@ -154,6 +221,8 @@ async def _stream_round(
     reasoning_parts: list[str] = []
     tool_deltas: list[StreamToolCallDelta] = []
     last_api_usage: object = UNSET
+    finish_reason: str | None = None
+    saw_terminal = False
 
     async for chunk in stream:
         parsed = token_usage_from_api(chunk.usage)
@@ -162,6 +231,10 @@ async def _stream_round(
         if not chunk.choices:
             continue
         choice = chunk.choices[0]
+        fr = _finish_reason_value(choice.finish_reason)
+        if fr is not None:
+            finish_reason = fr
+            saw_terminal = True
         delta = choice.delta
         if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
             reasoning_parts.append(delta.reasoning_content)
@@ -184,6 +257,16 @@ async def _stream_round(
         content=full_content or None,
         tool_calls=tool_calls,
         reasoning_content=full_reasoning or UNSET,
+    )
+    # Usage-only final chunks leave choices empty; a non-empty usage after
+    # content still is not a finish_reason. Prefer explicit finish_reason.
+    # If we got payload but no finish_reason, treat as terminal (some providers
+    # omit it); if empty and no finish_reason, flag as missing terminal.
+    stream_terminal = saw_terminal or _assistant_has_payload(assistant)
+    _validate_assistant_terminal(
+        assistant,
+        finish_reason=finish_reason,
+        stream_terminal=stream_terminal,
     )
     yield AssistantMessageEvent(message=assistant)
     yield UsageEvent(

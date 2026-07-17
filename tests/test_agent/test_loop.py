@@ -61,6 +61,28 @@ def _chunks_from_response(response: ChatCompletionResponse) -> list[ChatCompleti
                 ],
             )
         )
+    # Emit terminal finish_reason when content was streamed without one.
+    fr = response.choices[0].finish_reason
+    if (
+        fr
+        and (isinstance(message.content, str) and message.content)
+        and (message.tool_calls is UNSET or not message.tool_calls)
+    ):
+        chunks.append(
+            ChatCompletionChunk(
+                id=response.id,
+                object="chat.completion.chunk",
+                created=response.created,
+                model=response.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(),
+                        finish_reason=fr,
+                    )
+                ],
+            )
+        )
     tool_calls = message.tool_calls
     if tool_calls is not UNSET and tool_calls:
         deltas: list[StreamToolCallDelta] = []
@@ -153,6 +175,7 @@ def _response(
     message: AssistantChatMessage,
     *,
     usage: dict[str, int] | None = None,
+    finish_reason: str | None = "stop",
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id="1",
@@ -164,7 +187,7 @@ def _response(
                 index=0,
                 message=message,
                 logprobs={},
-                finish_reason="stop",
+                finish_reason=finish_reason,
             )
         ],
         system_fingerprint="",
@@ -825,3 +848,118 @@ async def test_tool_result_char_budget() -> None:
     assert len(tool_msgs) == 1
     assert tool_msgs[0].content.startswith("x" * 20)
     assert "truncated" in tool_msgs[0].content
+
+
+async def test_empty_completion_raises() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content=None))])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    with pytest.raises(RuntimeError, match="empty model completion"):
+        _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+
+
+async def test_length_finish_raises() -> None:
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(content="partial"),
+                finish_reason="length",
+            )
+        ]
+    )
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    with pytest.raises(RuntimeError, match="truncated"):
+        _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+
+
+async def test_content_filter_finish_raises() -> None:
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(content=""),
+                finish_reason="content_filter",
+            )
+        ]
+    )
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    with pytest.raises(RuntimeError, match="content filter"):
+        _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+
+
+async def test_stream_missing_terminal_empty_raises() -> None:
+    class EmptyStreamClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param
+            if not stream:
+                return _response(AssistantChatMessage(content="x"))
+
+            async def chunks() -> AsyncIterator[ChatCompletionChunk]:
+                # Usage-only style chunk with no finish_reason and no content.
+                yield ChatCompletionChunk(
+                    id="1",
+                    object="chat.completion.chunk",
+                    created=0,
+                    model="t",
+                    choices=[],
+                    usage={"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+                )
+
+            return chunks()
+
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    with pytest.raises(RuntimeError, match="stream ended without a terminal"):
+        _ = [e async for e in run_chat_loop(EmptyStreamClient(), messages, model="m", stream=True)]
+
+
+async def test_stream_payload_without_finish_reason_ok() -> None:
+    """Some providers omit finish_reason; non-empty text still counts as terminal."""
+
+    class PayloadNoFinishClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param
+            if not stream:
+                return _response(AssistantChatMessage(content="ok"))
+
+            async def chunks() -> AsyncIterator[ChatCompletionChunk]:
+                yield ChatCompletionChunk(
+                    id="1",
+                    object="chat.completion.chunk",
+                    created=0,
+                    model="t",
+                    choices=[
+                        ChunkChoice(
+                            index=0,
+                            delta=DeltaMessage(content="ok"),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+
+            return chunks()
+
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(PayloadNoFinishClient(), messages, model="m", stream=True)]
+    assert any(isinstance(e, TextDeltaEvent) and e.content == "ok" for e in events)

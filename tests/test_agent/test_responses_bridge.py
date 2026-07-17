@@ -8,6 +8,7 @@ from plyngent.agent.responses_bridge import (
     chat_param_to_responses_kwargs,
     response_to_assistant_message,
     response_to_chat_completion,
+    responses_status_to_finish_reason,
     tool_items_to_response_tools,
 )
 from plyngent.agent.responses_client import ResponsesChatClient
@@ -100,6 +101,31 @@ def test_response_to_assistant_with_tools() -> None:
     assert completion.choices[0].message.content == "done"
     assert isinstance(completion.usage, dict)
     assert completion.usage["input_tokens"] == 10
+    assert completion.choices[0].finish_reason == "tool_calls"
+
+
+def test_responses_status_to_finish_reason_incomplete() -> None:
+    body = {
+        "id": "resp_i",
+        "object": "response",
+        "created_at": 1,
+        "model": "gpt-test",
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output": [
+            {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "status": "incomplete",
+                "content": [{"type": "output_text", "text": "partial", "annotations": []}],
+            }
+        ],
+    }
+    resp = msgspec.convert(body, Response)
+    assert responses_status_to_finish_reason(resp, has_tool_calls=False) == "length"
+    completion = response_to_chat_completion(resp)
+    assert completion.choices[0].finish_reason == "length"
 
 
 def test_chat_param_to_responses_kwargs() -> None:

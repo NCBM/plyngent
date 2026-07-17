@@ -158,10 +158,36 @@ def _reasoning_summary_text(response: Response) -> str:
     return "".join(parts)
 
 
+def responses_status_to_finish_reason(
+    response: Response,
+    *,
+    has_tool_calls: bool,
+) -> str:
+    """Map Responses ``status`` to a chat-style finish_reason for the agent loop."""
+    status = response.status
+    status_s = status if isinstance(status, str) else None
+    if status_s == "incomplete":
+        details = response.incomplete_details
+        reason = None
+        if details is not UNSET and details is not None:
+            raw_reason = details.reason
+            if raw_reason is not UNSET and isinstance(raw_reason, str):
+                reason = raw_reason
+        if reason == "content_filter":
+            return "content_filter"
+        return "length"
+    if status_s in {"failed", "cancelled"}:
+        return status_s
+    if has_tool_calls:
+        return "tool_calls"
+    return "stop"
+
+
 def response_to_chat_completion(response: Response) -> ChatCompletionResponse:
     """Wrap Responses result as a synthetic chat completion for the agent loop."""
     assistant = response_to_assistant_message(response)
-    finish: str | None = "tool_calls" if assistant.tool_calls is not UNSET else "stop"
+    has_tools = assistant.tool_calls is not UNSET and bool(assistant.tool_calls)
+    finish = responses_status_to_finish_reason(response, has_tool_calls=has_tools)
     usage = response.usage if response.usage is not UNSET else UNSET
     created = int(response.created_at)
     return ChatCompletionResponse(
@@ -177,6 +203,28 @@ def response_to_chat_completion(response: Response) -> ChatCompletionResponse:
             )
         ],
         usage=cast("Any", usage) if usage is not UNSET else UNSET,
+    )
+
+
+def finish_reason_chunk(
+    *,
+    model: str,
+    finish_reason: str,
+    created: int = 0,
+) -> ChatCompletionChunk:
+    """Terminal stream chunk carrying only ``finish_reason`` (no delta text)."""
+    return ChatCompletionChunk(
+        id="resp-stream",
+        object="chat.completion.chunk",
+        created=created,
+        model=model,
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=DeltaMessage(),
+                finish_reason=cast("Any", finish_reason),
+            )
+        ],
     )
 
 
