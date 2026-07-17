@@ -77,6 +77,27 @@ def bind_tab_complete(readline_mod: object) -> None:
         _ = parse("python:bind ^I rl_complete")
 
 
+def bind_utf8_input(readline_mod: object) -> None:
+    """Best-effort 8-bit / UTF-8 settings for GNU readline (CJK backspace).
+
+    GNU readline can mishandle wide characters when meta conversion is on.
+    These binds are no-ops or ignored on libedit. Full grapheme editing still
+    depends on the terminal and readline version (see CPython #142162).
+    """
+    parse = getattr(readline_mod, "parse_and_bind", None)
+    if not callable(parse):
+        return
+    for cmd in (
+        "set input-meta on",
+        "set output-meta on",
+        "set convert-meta off",
+        "set enable-meta-key on",
+        "set horizontal-scroll-mode off",
+    ):
+        with contextlib.suppress(Exception):
+            _ = parse(cmd)
+
+
 def setup_readline(state: ReplState) -> None:
     """Configure Tab completion and persistent history when readline is available."""
     try:
@@ -85,6 +106,7 @@ def setup_readline(state: ReplState) -> None:
         return
 
     bind_tab_complete(readline)
+    bind_utf8_input(readline)
     # Treat path-like chars as part of a token so /help completes as one word.
     readline.set_completer_delims(" \t\n")
     readline.set_completer(build_completer(state))
