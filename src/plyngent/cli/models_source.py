@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 # Cache remote catalog this long (seconds) unless /models --refresh.
 DEFAULT_MODELS_CACHE_TTL = 300.0
+
+type ModelListPrefer = Literal["remote", "union", "config"]
 
 
 @runtime_checkable
@@ -25,12 +27,30 @@ def config_model_ids(provider: Provider) -> list[str]:
 def merge_model_choices(
     config_ids: Iterable[str],
     remote_ids: Iterable[str] | None = None,
+    *,
+    prefer: ModelListPrefer = "remote",
 ) -> list[str]:
-    """Union config and remote ids (sorted, unique)."""
-    merged: set[str] = {i for i in config_ids if i}
-    if remote_ids is not None:
-        merged.update(i for i in remote_ids if i)
-    return sorted(merged)
+    """Merge config and remote model ids.
+
+    *prefer*:
+    - ``remote`` (default): remote catalog first (sorted), then config-only ids
+    - ``union``: sorted unique union
+    - ``config``: config first, then remote-only ids
+    """
+    config_list = [i for i in config_ids if i]
+    remote_list = [i for i in (remote_ids or ()) if i]
+    if not remote_list:
+        return sorted(set(config_list))
+    if prefer == "union":
+        return sorted(set(config_list) | set(remote_list))
+    remote_sorted = sorted(set(remote_list))
+    config_only = sorted(set(config_list) - set(remote_sorted))
+    if prefer == "remote":
+        return [*remote_sorted, *config_only]
+    # config first
+    config_sorted = sorted(set(config_list))
+    remote_only = sorted(set(remote_list) - set(config_sorted))
+    return [*config_sorted, *remote_only]
 
 
 def client_supports_models(client: object) -> bool:
@@ -57,6 +77,7 @@ def model_choices_for_provider(
     provider: Provider,
     *,
     remote_ids: Sequence[str] | None = None,
+    prefer: ModelListPrefer = "remote",
 ) -> list[str]:
-    """Config plus remote catalog for selection / Tab complete."""
-    return merge_model_choices(config_model_ids(provider), remote_ids)
+    """Config plus remote catalog for selection / Tab complete (remote-first)."""
+    return merge_model_choices(config_model_ids(provider), remote_ids, prefer=prefer)

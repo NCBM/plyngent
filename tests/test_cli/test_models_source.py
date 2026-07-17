@@ -12,10 +12,14 @@ from plyngent.cli.models_source import (
 from plyngent.config.models import ModelConfig, OpenAICompatibleProvider
 
 
-def test_merge_model_choices_union() -> None:
-    assert merge_model_choices(["b", "a"], ["a", "c"]) == ["a", "b", "c"]
+def test_merge_model_choices_remote_first() -> None:
+    # remote-first: remote sorted, then config-only
+    assert merge_model_choices(["b", "a"], ["a", "c"]) == ["a", "c", "b"]
     assert merge_model_choices(["a"], None) == ["a"]
     assert merge_model_choices([], ["z"]) == ["z"]
+    assert merge_model_choices(["cfg"], ["remote", "cfg"], prefer="remote") == ["cfg", "remote"]
+    assert merge_model_choices(["b", "a"], ["a", "c"], prefer="union") == ["a", "b", "c"]
+    assert merge_model_choices(["b", "a"], ["a", "c"], prefer="config") == ["a", "b", "c"]
 
 
 def test_model_choices_for_provider() -> None:
@@ -26,6 +30,7 @@ def test_model_choices_for_provider() -> None:
     )
     assert config_model_ids(provider) == ["cfg"]
     assert model_choices_for_provider(provider, remote_ids=["remote", "cfg"]) == ["cfg", "remote"]
+    assert model_choices_for_provider(provider, remote_ids=["remote"]) == ["remote", "cfg"]
 
 
 def test_client_supports_models() -> None:

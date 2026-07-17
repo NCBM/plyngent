@@ -607,7 +607,8 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
         state.provider_name = pname
         state.provider = provider
         state.rebuild_client()
-        choices = _await(state.merged_model_choices(refresh=False))
+        # Always request remote catalog for the new provider (bypass stale cache).
+        choices = _await(state.merged_model_choices(refresh=True))
         if prev_model and (prev_model in choices or prev_model in provider.models):
             state.model = prev_model
         else:
@@ -638,11 +639,12 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
 @click.option("--refresh", is_flag=True, help="Bypass cache and re-fetch GET /models.")
 @click.pass_obj
 def models_cmd(state: ReplState, *, refresh: bool) -> None:
-    """List models (config plus remote GET /models)."""
+    """List models (remote-first, plus config-only ids). Always tries GET /models."""
+    del refresh  # always re-fetch; flag kept for CLI compatibility / docs
     remote: list[str] | None = None
     remote_err: str | None = None
     try:
-        remote = _await(state.ensure_remote_models(refresh=refresh))
+        remote = _await(state.ensure_remote_models(refresh=True))
     except (RuntimeError, TypeError, OSError, ValueError) as exc:
         remote_err = str(exc)
         remote = state.cached_remote_models()
@@ -669,10 +671,10 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
         remote_set = set(remote or ())
         for mid in choices:
             tags: list[str] = []
-            if mid in config_ids:
-                tags.append("config")
             if mid in remote_set:
                 tags.append("remote")
+            if mid in config_ids:
+                tags.append("config")
             suffix = f"  ({', '.join(tags)})" if tags else ""
             mark = " *" if mid == state.model else ""
             click.echo(f"{mid}{mark}{suffix}")
@@ -681,7 +683,8 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
         click.secho(f"remote list unavailable: {remote_err}", fg="yellow", err=True)
     elif remote is not None:
         click.echo(
-            f"({len(remote)} remote, {len(config_ids)} config; cache TTL {int(DEFAULT_MODELS_CACHE_TTL)}s)",
+            f"(remote-first: {len(remote)} remote, {len(config_ids)} config; "
+            f"cache TTL {int(DEFAULT_MODELS_CACHE_TTL)}s)",
             err=True,
         )
 
@@ -690,12 +693,12 @@ def models_cmd(state: ReplState, *, refresh: bool) -> None:
 @click.argument("model_id", required=False, type=MODEL_ID)
 @click.pass_obj
 def model_cmd(state: ReplState, model_id: str | None) -> None:
-    """Show or switch model (Tab: config plus cached remote)."""
+    """Show or switch model (Tab: remote-first plus config; live fetch on pick)."""
     if not model_id:
         click.echo(f"model={state.model}")
         return
     try:
-        choices = _await(state.merged_model_choices(refresh=False))
+        choices = _await(state.merged_model_choices(refresh=True))
         state.model = select_model(
             state.provider,
             preferred=model_id.strip(),

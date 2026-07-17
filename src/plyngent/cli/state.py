@@ -167,6 +167,13 @@ class ReplState:
         self._remote_models_key = None
         self._remote_models_error = None
 
+    def seed_remote_models(self, ids: list[str]) -> None:
+        """Install a freshly fetched remote catalog into the session cache."""
+        self._remote_models = list(ids)
+        self._remote_models_fetched_at = time.monotonic()
+        self._remote_models_key = self._models_cache_key()
+        self._remote_models_error = None
+
     def cached_remote_models(self) -> list[str] | None:
         """Return cached remote ids if still valid for the current provider."""
         if self._remote_models is None or self._remote_models_fetched_at is None:

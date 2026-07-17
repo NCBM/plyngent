@@ -180,7 +180,7 @@ async def _run_oneshot(state: ReplState, prompt_text: str) -> int:
     return EXIT_OK if ok else EXIT_TURN_FAILED
 
 
-async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
+async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
     *,
     config_path: Path | None,
     provider_name: str | None,
@@ -245,8 +245,27 @@ async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
                 preferred_model=preferred_model,
                 interactive=interactive,
             )
-            model_id = select_model(provider, preferred=preferred_model, interactive=interactive)
-            _ = create_client(provider)
+            # Build client early so we can always try GET /models for remote-first lists.
+            from plyngent.cli.models_source import (
+                client_supports_models,
+                fetch_remote_model_ids,
+                model_choices_for_provider,
+            )
+
+            client = create_client(provider)
+            remote_ids: list[str] | None = None
+            try:
+                if client_supports_models(client):
+                    remote_ids = await fetch_remote_model_ids(client)
+            except (RuntimeError, TypeError, OSError, ValueError):
+                remote_ids = None
+            choices = model_choices_for_provider(provider, remote_ids=remote_ids)
+            model_id = select_model(
+                provider,
+                preferred=preferred_model,
+                interactive=interactive,
+                choices=choices,
+            )
         except ProviderNotSupportedError as exc:
             raise click.ClickException(str(exc)) from exc
 
@@ -263,6 +282,9 @@ async def _run_chat(  # noqa: C901, PLR0912 — chat orchestration
             interactive_limits=interactive,
             yolo=yolo,
         )
+        # Seed remote model cache from startup fetch so Tab/complete stays warm.
+        if remote_ids is not None:
+            state.seed_remote_models(remote_ids)
         if not quiet and not oneshot:
             click.secho(f"workspace: {state.workspace}", fg="bright_black", err=True)
 
