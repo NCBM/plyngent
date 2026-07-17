@@ -198,7 +198,9 @@ Type `/help` in the REPL for the live list. Common ones:
 
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
 | `/provider` `/model` | Switch without restarting |
-| `/models` | List config + remote `GET /models` (`--refresh` bypasses cache) |
+| `/model --persist` | Save current model id into `plyngent.toml` catalog |
+| `/models` | List config + remote `GET /models` (always re-fetches) |
+| `/models --persist` | Merge remote catalog into TOML for this provider |
 | `/config` | Edit `plyngent.toml` in `$EDITOR` and reload |
 | `/quit` | Leave the REPL |
 
@@ -212,11 +214,11 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 ## Tools (when enabled)
 
-Default registry: file ops, `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), and human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`).
+Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), and human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`).
 
 Safety defaults:
 
-- Paths stay under the workspace; optional `path_denylist` substrings.
+- Paths stay under the workspace; optional `path_denylist` substrings (`tree` also skips denylisted children by default).
 - Command basename denylist (e.g. dangerous shells/utilities).
 - Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.

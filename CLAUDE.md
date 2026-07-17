@@ -74,7 +74,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
 - **`workspace`**: path resolve under root; path substring denylist; command basename denylist; clearer deny messages.
-- **`file`**: `read_file`, `write_file`, `listdir`, `tree`, `glob_paths`, `grep_files` (regex, skip VCS/binary), `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
+- **`file`**: `read_file`, `write_file`, `listdir`, `tree` (VCS + default noise dirs + optional `skip_dirs` / denylist walk), `glob_paths`, `grep_files` (regex, skip VCS/binary), `edit_replace`, `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`.
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); PTY `open_pty` / `read_pty` / `write_pty` / `close_pty` (POSIX: `pty`+`fork`; Windows: ConPTY via `pywinpty` env marker dep).
 - PTY: backend in `pty_backend.py`; structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)`; session limit/idle TTL/output budget; close terminate→kill.
 - CLI limit hooks: interactive confirm to raise tool-loop rounds, PTY session cap, or PTY output budget.
@@ -92,7 +92,7 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data if unset/`:memory:`); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes` (YOLO on), `--stream/--no-stream`, `--quiet`. Root `--log-level`.
-- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms.
+- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms. `/model --persist` / `/models --persist` write model catalog entries into TOML.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
 - Failed/cancelled turns: user kept; **committed tool rounds kept** (side effects not re-run on `/retry`); only unfinished assistant rolled back; Ctrl+C cancels; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
 - **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.
