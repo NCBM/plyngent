@@ -145,12 +145,14 @@ class ReplState:
     def rebuild_client(self) -> None:
         """Recreate client and agent after provider/model/tools change."""
         messages = list(self.agent.messages)
+        persist_from = self.agent.persist_from
         # Preserve live stream toggle if agent already exists.
         if hasattr(self, "agent"):
             self.stream_enabled = self.agent.stream
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.agent = self._make_agent()
-        self.agent.messages = messages
+        # Restore history without re-marking already-stored messages as dirty.
+        self.agent.replace_messages(messages, persist_from=persist_from)
         self.sync_display_flags()
         # Drop remote catalog when provider identity/url changed (not on model-only switch).
         if self._remote_models_key is not None and self._remote_models_key != self._models_cache_key():
@@ -474,7 +476,12 @@ class ReplState:
             source_session_id=old_id,
             seed_text=self.config.agent_config.compact_seed_text or None,
         )
-        self.agent.messages = list(seed)
         for message in seed:
             _ = await self.memory.append_message(new_id, message)
+        # Reload from DB so RAM matches stored rows and the persist cursor is correct
+        # (assigning messages alone left _persist_from at 0 and broke later checkpoints).
+        await self.agent.load_history()
+        if not self.agent.messages:
+            msg = f"compact session {new_id} has no messages after seed"
+            raise RuntimeError(msg)
         return old_id, new_id, summary

@@ -99,11 +99,63 @@ async def test_compact_to_new_session(tmp_path: Path) -> None:
         assert "compacted goals" in summary
         loaded = await memory.list_messages(new_id)
         assert any("compacted goals" in getattr(m, "content", "") for m in loaded)
+        # After compact, RAM matches DB and the persist cursor treats seed as stored.
+        assert len(state.agent.messages) == len(loaded)
+        assert state.agent.persist_from == len(state.agent.messages)
         # Old session still exists and is listable
         sessions = await memory.list_sessions(workspace=tmp_path)
         ids = {s.sid for s in sessions}
         assert old_id in ids
         assert new_id in ids
+
+        # Simulate restart: resume compact session, continue without duplicating seed.
+        state2 = ReplState(
+            config=config,
+            memory=memory,
+            workspace=tmp_path,
+            provider_name="local",
+            provider=provider,
+            model="gpt-test",
+            tools_enabled=False,
+        )
+        state2.client = SummaryClient()
+        await state2.resume_session(new_id)
+        assert len(state2.agent.messages) == len(loaded)
+        assert state2.agent.persist_from == len(state2.agent.messages)
+        assert any("compacted goals" in getattr(m, "content", "") for m in state2.agent.messages)
+        # Full original conversation still only on the old session.
+        old_loaded = await memory.list_messages(old_id)
+        assert any(isinstance(m, UserChatMessage) and m.content == "do work" for m in old_loaded)
+    finally:
+        await memory.close()
+
+
+async def test_rebuild_client_preserves_persist_cursor(tmp_path: Path) -> None:
+    _ = set_workspace_root(tmp_path)
+    memory = await MemoryStore.open(DatabaseConfig())
+    try:
+        provider = OpenAIProvider(access_key_or_token="sk-test")
+        config = ConfigStore(path=tmp_path / "plyngent.toml", document=tomlkit.document())
+        config.providers = {"local": provider}
+        state = ReplState(
+            config=config,
+            memory=memory,
+            workspace=tmp_path,
+            provider_name="local",
+            provider=provider,
+            model="gpt-test",
+            tools_enabled=False,
+        )
+        state.client = SummaryClient()
+        await state.new_session("s")
+        state.agent.replace_messages(
+            [UserChatMessage(content="hi"), AssistantChatMessage(content="yo")],
+            persisted=True,
+        )
+        assert state.agent.persist_from == 2
+        state.rebuild_client()
+        assert len(state.agent.messages) == 2
+        assert state.agent.persist_from == 2
     finally:
         await memory.close()
 

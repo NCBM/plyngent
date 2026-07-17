@@ -576,6 +576,11 @@ def compact_cmd(state: ReplState, name: str | None) -> None:
         return
     preview = summary if len(summary) <= _COMPACT_PREVIEW else summary[:_COMPACT_PREVIEW] + "…"
     click.echo(f"compacted session {old_id} -> new session {new_id}")
+    click.secho(
+        f"active session is summary-only ({len(state.agent.messages)} messages); "
+        f"full history remains on /resume {old_id}",
+        fg="bright_black",
+    )
     click.secho(preview, fg="bright_black")
 
 

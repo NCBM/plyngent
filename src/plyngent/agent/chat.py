@@ -200,14 +200,38 @@ class ChatAgent:
         if self._persist_from == 0:
             self._persist_from = 1
 
+    def replace_messages(
+        self,
+        messages: Sequence[AnyChatMessage],
+        *,
+        persisted: bool = True,
+        persist_from: int | None = None,
+    ) -> None:
+        """Replace in-memory history and align the persistence checkpoint.
+
+        When *persist_from* is set, it is used as the checkpoint cursor
+        (clamped to ``[0, len(messages)]``). Otherwise *persisted* true means
+        all messages are already stored; false means none are.
+        """
+        self.messages = list(messages)
+        if persist_from is not None:
+            self._persist_from = max(0, min(persist_from, len(self.messages)))
+        else:
+            self._persist_from = len(self.messages) if persisted else 0
+        self._ensure_system_prompt()
+
+    @property
+    def persist_from(self) -> int:
+        """Index of the first unpersisted message (checkpoint cursor)."""
+        return self._persist_from
+
     async def load_history(self) -> None:
         """Replace in-memory messages from the bound memory session."""
         if self.memory is None or self.session_id is None:
             msg = "load_history requires memory and session_id"
             raise RuntimeError(msg)
-        self.messages = await self.memory.list_messages(self.session_id)
-        self._persist_from = len(self.messages)
-        self._ensure_system_prompt()
+        loaded = await self.memory.list_messages(self.session_id)
+        self.replace_messages(loaded, persisted=True)
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
         """Attach a memory session id; optionally load existing messages."""
