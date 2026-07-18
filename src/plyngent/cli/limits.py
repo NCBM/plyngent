@@ -6,6 +6,8 @@ from plyngent.cli.interrupt import pause_task_cancel_for_prompt
 from plyngent.prompting import (
     ChoiceOption,
     NonInteractiveError,
+    ask,
+    ask_async,
     choose,
     choose_async,
     configure_prompting,
@@ -44,33 +46,55 @@ async def prompt_continue_limit_async(reason: str) -> bool:
         return False
 
 
-def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool:
+def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | str:
+    """True allow; False deny; non-empty str = deny with comment for the model."""
     del args
     try:
-        return confirm(
-            f"[confirm] tool {name!r}: {reason}\nAllow this tool call?",
-            default=False,
-        )
+        prompt = f"[confirm] tool {name!r}:\n{reason}\nAllow this tool call?"
+        allowed = confirm(prompt, default=False)
     except NonInteractiveError:
         return False
+    if allowed:
+        return True
+    try:
+        comment = ask(
+            "Optional comment for the agent (why denied; empty to skip):",
+            default="",
+        ).strip()
+    except NonInteractiveError:
+        return False
+    return comment or False
 
 
-def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> bool:
-    """Ask whether to allow a destructive tool call (TTY). Default is deny."""
+def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> bool | str:
+    """Ask whether to allow a dangerous tool call (TTY). Default is deny.
+
+    On deny, optionally collect a free-text comment for the model.
+    """
     with pause_task_cancel_for_prompt():
         return _prompt_confirm_tool_sync(name, args, reason)
 
 
-async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool:
-    """Async variant: confirm off the event loop."""
+async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:
+    """Async confirm: True allow, False deny, str = deny with user comment."""
     del args
     try:
-        return await confirm_async(
-            f"[confirm] tool {name!r}: {reason}\nAllow this tool call?",
-            default=False,
-        )
+        prompt = f"[confirm] tool {name!r}:\n{reason}\nAllow this tool call?"
+        allowed = await confirm_async(prompt, default=False)
     except NonInteractiveError:
         return False
+    if allowed:
+        return True
+    try:
+        comment = (
+            await ask_async(
+                "Optional comment for the agent (why denied; empty to skip):",
+                default="",
+            )
+        ).strip()
+    except NonInteractiveError:
+        return False
+    return comment or False
 
 
 def _prompt_workspace_mismatch_sync(

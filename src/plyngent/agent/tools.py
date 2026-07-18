@@ -13,9 +13,11 @@ from plyngent.typedef import JSONSchema  # noqa: TC001
 
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
 type DangerClassifier = Callable[[str, Mapping[str, object]], str | None]
+# Returns True to allow, False to deny, or a non-empty str as denial reason for the model.
+type ToolConfirmResult = bool | str
 type ToolConfirmHook = Callable[
     [str, Mapping[str, object], str],
-    bool | Awaitable[bool],
+    ToolConfirmResult | Awaitable[ToolConfirmResult],
 ]
 
 _PRIMITIVE_SCHEMA: dict[type, JSONSchema] = {
@@ -212,7 +214,11 @@ class ToolRegistry:
         return msgspec.json.encode(result).decode()
 
     async def _maybe_confirm(self, name: str, args: dict[str, object]) -> str | None:
-        """Return an error string if the user denies a dangerous tool, else None."""
+        """If confirm is required and denied, return an error string for the model.
+
+        The confirm hook may return ``True`` (allow), ``False`` (deny), or a
+        non-empty string (deny with user comment for the model).
+        """
         if self._danger is None or self._on_confirm is None:
             return None
         reason = self._danger(name, args)
@@ -223,12 +229,14 @@ class ToolRegistry:
             reason = self._danger(name, args)
             if reason is None:
                 return None
-            allowed = self._on_confirm(name, args, reason)
-            if inspect.isawaitable(allowed):
-                allowed = await allowed
-            if allowed:
+            decision = self._on_confirm(name, args, reason)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            if decision is True:
                 return None
-        return f"error: user denied tool {name!r} ({reason})"
+            if isinstance(decision, str) and decision.strip():
+                return f"error: tool {name!r} denied by user confirm ({reason}); user comment: {decision.strip()}"
+            return f"error: tool {name!r} denied by user confirm ({reason})"
 
     async def execute(self, name: str, arguments_json: str) -> str:
         """Run a tool by name; returns a string result (errors become error text)."""

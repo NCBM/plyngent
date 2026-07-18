@@ -1,11 +1,107 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from plyngent.tools.workspace import WorkspaceError, resolve_path
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+
+_DISPLAY_ARGV_MAX = 200
+_CODE_PREVIEW_MAX = 120
+
+_SHELL_BASENAMES: frozenset[str] = frozenset(
+    {
+        "bash",
+        "sh",
+        "zsh",
+        "fish",
+        "dash",
+        "ksh",
+        "csh",
+        "tcsh",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "cmd.exe",
+        "python",
+        "python3",
+        "python2",
+        "ipython",
+        "ipython3",
+        "node",
+        "nodejs",
+        "deno",
+        "bun",
+        "ruby",
+        "perl",
+        "php",
+        "lua",
+        "r",
+        "julia",
+        "irb",
+        "pry",
+        "ghci",
+        "scala",
+        "jshell",
+        "sqlite3",
+        "psql",
+        "mysql",
+        "mongo",
+        "redis-cli",
+    }
+)
+
+
+def _basename(argv0: str) -> str:
+    name = argv0.replace("\\", "/").rsplit("/", 1)[-1]
+    name = name.removesuffix(".exe")
+    return name.lower()
+
+
+def _as_argv(args: Mapping[str, object]) -> list[str] | None:
+    command = args.get("command")
+    if not isinstance(command, list) or not command:
+        return None
+    out: list[str] = []
+    for part_obj in cast("list[object]", command):
+        if not isinstance(part_obj, str):
+            return None
+        out.append(part_obj)
+    return out
+
+
+def _find_dash_c_code(argv: Sequence[str]) -> str | None:
+    """Return the argument after ``-c`` / ``-c…`` if present (python/bash/node style)."""
+    for index, part in enumerate(argv[1:], start=1):
+        if part == "-c":
+            return argv[index + 1] if index + 1 < len(argv) else ""
+        # Combined short forms are uncommon; only exact -c is supported.
+    return None
+
+
+def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
+    """Confirm interactive shells/REPLs and ``-c`` one-liners so the user can inspect argv."""
+    if not argv:
+        return None
+    base = _basename(argv[0])
+    display = " ".join(argv)
+    if len(display) > _DISPLAY_ARGV_MAX:
+        display = display[:_DISPLAY_ARGV_MAX] + "…"
+
+    code = _find_dash_c_code(argv)
+    if code is not None:
+        preview = code if len(code) <= _CODE_PREVIEW_MAX else code[:_CODE_PREVIEW_MAX] + "…"
+        return f"{via}: {base} -c (review code before allow)\n  argv: {display}\n  -c: {preview!r}"
+
+    if base in _SHELL_BASENAMES and len(argv) == 1:
+        return f"{via}: interactive {base!r} (review before allow)\n  argv: {display}"
+
+    # e.g. python -i, bash --login without -c still needs a glance.
+    if base in _SHELL_BASENAMES:
+        return f"{via}: shell/runtime {base!r} (review before allow)\n  argv: {display}"
+
+    return None
 
 
 def _write_file_reason(args: Mapping[str, object]) -> str | None:
@@ -15,32 +111,80 @@ def _write_file_reason(args: Mapping[str, object]) -> str | None:
     try:
         target = resolve_path(path)
     except WorkspaceError:
+        return f"write file {path!r}"
+    return f"write file {path!r} ({target})"
+
+
+def _edit_replace_reason(args: Mapping[str, object]) -> str | None:
+    path = args.get("path")
+    if not isinstance(path, str) or not path:
         return None
-    if target.exists() or target.is_symlink():
-        return f"overwrite existing file {path!r}"
-    return None
+    return f"edit (replace) in {path!r}"
 
 
-def classify_danger(name: str, args: Mapping[str, object]) -> str | None:
+def _edit_lineno_reason(args: Mapping[str, object]) -> str | None:
+    path = args.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    start = args.get("start_line")
+    end = args.get("end_line")
+    return f"edit lines {start}-{end} in {path!r}"
+
+
+def _copy_path_reason(args: Mapping[str, object]) -> str | None:
+    src = args.get("src")
+    dst = args.get("dst")
+    return f"copy {src!r} → {dst!r}"
+
+
+def _move_path_reason(args: Mapping[str, object]) -> str | None:
+    src = args.get("src")
+    dst = args.get("dst")
+    return f"move {src!r} → {dst!r}"
+
+
+def _delete_path_reason(args: Mapping[str, object]) -> str | None:
+    path = args.get("path")
+    recursive = bool(args.get("recursive", False))
+    extra = " recursively" if recursive else ""
+    return f"delete path {path!r}{extra}"
+
+
+def _run_command_reason(args: Mapping[str, object]) -> str | None:
+    argv = _as_argv(args)
+    if argv is None:
+        return None
+    return _shell_or_dash_c_reason(argv, via="run_command")
+
+
+def _open_pty_reason(args: Mapping[str, object]) -> str | None:
+    argv = _as_argv(args)
+    if argv is None:
+        return None
+    return _shell_or_dash_c_reason(argv, via="open_pty")
+
+
+def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noqa: PLR0911
     """Return a short reason if ``name``/``args`` need user confirm, else ``None``.
 
     Hard denylists (paths/commands) still raise independently. This only covers
-    soft confirms for mutating tools that policy otherwise allows.
+    soft confirms for mutating tools and risky shell/REPL launches
+    (interactive shells and ``python -c`` / ``bash -c`` one-liners).
     """
-    reasons: dict[str, str | None] = {
-        "delete_path": (
-            f"delete path {args.get('path', '')!r} recursively"
-            if bool(args.get("recursive", False))
-            else f"delete path {args.get('path', '')!r}"
-        ),
-        "move_path": f"move {args.get('src', '')!r} -> {args.get('dst', '')!r}",
-        "copy_path": (
-            f"copy with overwrite {args.get('src', '')!r} -> {args.get('dst', '')!r}"
-            if bool(args.get("overwrite", False))
-            else None
-        ),
-        "write_file": _write_file_reason(args),
-    }
-    if name not in reasons:
-        return None
-    return reasons[name]
+    if name == "delete_path":
+        return _delete_path_reason(args)
+    if name == "move_path":
+        return _move_path_reason(args)
+    if name == "copy_path":
+        return _copy_path_reason(args)
+    if name == "write_file":
+        return _write_file_reason(args)
+    if name == "edit_replace":
+        return _edit_replace_reason(args)
+    if name == "edit_lineno":
+        return _edit_lineno_reason(args)
+    if name == "run_command":
+        return _run_command_reason(args)
+    if name == "open_pty":
+        return _open_pty_reason(args)
+    return None
