@@ -224,6 +224,29 @@ class ReplState:
         self._remote_models_key = self._models_cache_key()
         self._remote_models_error = None
 
+    def schedule_remote_models_warm(self) -> None:
+        """Fire-and-forget ``GET /models`` so Tab complete warms without blocking ready."""
+        import asyncio
+
+        async def _warm() -> None:
+            try:
+                _ = await self.ensure_remote_models(refresh=False)
+            except RuntimeError, TypeError, OSError, ValueError, TimeoutError:
+                return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(_warm(), name="plyngent-warm-remote-models")
+        # Keep a strong ref until done (same pattern as todo persist tasks).
+        self._todo_persist_tasks.add(task)
+
+        def _done(t: object) -> None:
+            _ = self._todo_persist_tasks.discard(t)
+
+        task.add_done_callback(_done)
+
     def remember_session_ids(self, ids: Sequence[int]) -> None:
         """Cache session ids for Tab completion (``/resume`` / ``/delete``)."""
         self._session_id_cache = [int(i) for i in ids]
@@ -272,7 +295,7 @@ class ReplState:
             raise TypeError(msg)
         try:
             ids = await fetch_remote_model_ids(self.client)
-        except (RuntimeError, TypeError, OSError, ValueError) as exc:
+        except (RuntimeError, TypeError, OSError, ValueError, TimeoutError) as exc:
             self._remote_models_error = str(exc)
             raise
         self._remote_models = list(ids)
@@ -286,7 +309,7 @@ class ReplState:
         remote: list[str] | None
         try:
             remote = await self.ensure_remote_models(refresh=refresh)
-        except RuntimeError, TypeError, OSError, ValueError:
+        except RuntimeError, TypeError, OSError, ValueError, TimeoutError:
             remote = self.cached_remote_models()
         return model_choices_for_provider(self.provider, remote_ids=remote)
 

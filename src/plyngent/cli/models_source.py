@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import TYPE_CHECKING, Literal, Protocol, cast, runtime_checkable
 
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
 
 # Cache remote catalog this long (seconds) unless /models --refresh.
 DEFAULT_MODELS_CACHE_TTL = 300.0
+# Bound startup/interactive GET /models so a dead API cannot hang the CLI.
+DEFAULT_MODELS_FETCH_TIMEOUT = 5.0
 
 type ModelListPrefer = Literal["remote", "union", "config"]
 
@@ -58,19 +61,48 @@ def client_supports_models(client: object) -> bool:
     return isinstance(client, SupportsModels) or callable(getattr(client, "models", None))
 
 
-async def fetch_remote_model_ids(client: object) -> list[str]:
-    """Call ``client.models()``; raise if missing or the call fails."""
+async def fetch_remote_model_ids(
+    client: object,
+    *,
+    timeout_seconds: float = DEFAULT_MODELS_FETCH_TIMEOUT,
+) -> list[str]:
+    """Call ``client.models()``; raise if missing or the call fails.
+
+    *timeout_seconds* bounds the await; use ``0`` or less to wait indefinitely.
+    """
     method = getattr(client, "models", None)
     if not callable(method):
         msg = "client does not support listing models"
         raise TypeError(msg)
     result = method()
     if inspect.isawaitable(result):
-        result = await result
+        if timeout_seconds > 0:
+            async with asyncio.timeout(timeout_seconds):
+                result = await result
+        else:
+            result = await result
     if not isinstance(result, list):
         msg = f"models() returned unexpected type {type(result)!r}"
         raise TypeError(msg)
     return [str(item) for item in cast("list[object]", result) if item]
+
+
+def needs_remote_models_for_selection(
+    provider: Provider,
+    *,
+    preferred_model: str | None,
+    interactive: bool,
+) -> bool:
+    """True when interactive model pick needs a remote catalog for a better list.
+
+    Skip network when the model is already known (``--model`` / session) or when
+    config has exactly one model (auto-selected).
+    """
+    if preferred_model is not None and preferred_model.strip():
+        return False
+    if not interactive:
+        return False
+    return len(config_model_ids(provider)) != 1
 
 
 def model_choices_for_provider(

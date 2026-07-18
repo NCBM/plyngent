@@ -22,7 +22,7 @@ async def discover_model_ids(provider: Provider) -> list[str]:
         return []
     try:
         return await fetch_remote_model_ids(client)
-    except RuntimeError, TypeError, OSError, ValueError:
+    except RuntimeError, TypeError, OSError, ValueError, TimeoutError:
         return []
 
 

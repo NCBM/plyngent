@@ -245,20 +245,26 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
                 preferred_model=preferred_model,
                 interactive=interactive,
             )
-            # Build client early so we can always try GET /models for remote-first lists.
+            # Avoid blocking ready on GET /models unless interactive pick needs it.
             from plyngent.cli.models_source import (
                 client_supports_models,
                 fetch_remote_model_ids,
                 model_choices_for_provider,
+                needs_remote_models_for_selection,
             )
 
-            client = create_client(provider)
             remote_ids: list[str] | None = None
-            try:
-                if client_supports_models(client):
-                    remote_ids = await fetch_remote_model_ids(client)
-            except RuntimeError, TypeError, OSError, ValueError:
-                remote_ids = None
+            if needs_remote_models_for_selection(
+                provider,
+                preferred_model=preferred_model,
+                interactive=interactive,
+            ):
+                client = create_client(provider)
+                try:
+                    if client_supports_models(client):
+                        remote_ids = await fetch_remote_model_ids(client)
+                except RuntimeError, TypeError, OSError, ValueError, TimeoutError:
+                    remote_ids = None
             choices = model_choices_for_provider(provider, remote_ids=remote_ids)
             model_id = select_model(
                 provider,
@@ -282,9 +288,11 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             interactive_limits=interactive,
             yolo=yolo,
         )
-        # Seed remote model cache from startup fetch so Tab/complete stays warm.
+        # Seed cache if we already fetched; else warm in background for Tab.
         if remote_ids is not None:
             state.seed_remote_models(remote_ids)
+        elif not oneshot and interactive:
+            state.schedule_remote_models_warm()
         if not quiet and not oneshot:
             click.secho(f"workspace: {state.workspace}", fg="bright_black", err=True)
 
