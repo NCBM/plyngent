@@ -12,18 +12,32 @@ def test_classify_delete_and_move() -> None:
 
 
 def test_classify_copy() -> None:
-    assert "copy" in (classify_danger("copy_path", {"src": "a", "dst": "b"}) or "")
+    # Without overwrite flag, copy is not soft-confirmed.
+    assert classify_danger("copy_path", {"src": "a", "dst": "b"}) is None
+    assert classify_danger(
+        "copy_path", {"src": "a", "dst": "b", "overwrite": False}
+    ) is None
 
 
-def test_classify_write_and_edits(tmp_path: Path) -> None:
+def test_classify_write_overwrite_only(tmp_path: Path) -> None:
     from plyngent.tools.workspace import clear_workspace_root, set_workspace_root
 
     set_workspace_root(tmp_path)
     try:
+        # New file: no soft-confirm
+        assert classify_danger("write_file", {"path": "new.txt"}) is None
+        # Partial edits: never soft-confirm
+        assert classify_danger("edit_replace", {"path": "x.txt"}) is None
+        assert classify_danger("edit_lineno", {"path": "x.txt", "start_line": 1, "end_line": 2}) is None
+        # Existing file write: confirm total overwrite
+        (tmp_path / "x.txt").write_text("old", encoding="utf-8")
         reason = classify_danger("write_file", {"path": "x.txt"})
-        assert reason is not None and "write file" in reason
-        assert "edit" in (classify_danger("edit_replace", {"path": "x.txt"}) or "")
-        assert "lines" in (classify_danger("edit_lineno", {"path": "x.txt", "start_line": 1, "end_line": 2}) or "")
+        assert reason is not None and "overwrite" in reason
+        (tmp_path / "dst.txt").write_text("d", encoding="utf-8")
+        (tmp_path / "src.txt").write_text("s", encoding="utf-8")
+        assert classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": False}) is None
+        creason = classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": True})
+        assert creason is not None and "overwrite" in creason
     finally:
         clear_workspace_root()
 

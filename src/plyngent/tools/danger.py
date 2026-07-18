@@ -110,36 +110,37 @@ def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
 
 
 def _write_file_reason(args: Mapping[str, object]) -> str | None:
+    """Confirm only when write_file would replace an existing file."""
     path = args.get("path")
     if not isinstance(path, str) or not path:
         return None
     try:
         target = resolve_path(path)
     except WorkspaceError:
-        return f"write file {path!r}"
-    return f"write file {path!r} ({target})"
-
-
-def _edit_replace_reason(args: Mapping[str, object]) -> str | None:
-    path = args.get("path")
-    if not isinstance(path, str) or not path:
+        # Path policy will fail later; no soft-confirm without a resolved target.
         return None
-    return f"edit (replace) in {path!r}"
-
-
-def _edit_lineno_reason(args: Mapping[str, object]) -> str | None:
-    path = args.get("path")
-    if not isinstance(path, str) or not path:
-        return None
-    start = args.get("start_line")
-    end = args.get("end_line")
-    return f"edit lines {start}-{end} in {path!r}"
+    if target.is_file():
+        return f"overwrite existing file {path!r} ({target})"
+    # New file or directory path: no total-overwrite risk for soft-confirm.
+    return None
 
 
 def _copy_path_reason(args: Mapping[str, object]) -> str | None:
+    """Confirm copy only when it would replace an existing destination path."""
     src = args.get("src")
     dst = args.get("dst")
-    return f"copy {src!r} → {dst!r}"
+    overwrite = bool(args.get("overwrite", False))
+    if not overwrite:
+        return None
+    if not isinstance(dst, str) or not dst:
+        return f"copy {src!r} → {dst!r} (overwrite)"
+    try:
+        target = resolve_path(dst)
+    except WorkspaceError:
+        return None
+    if target.exists():
+        return f"copy {src!r} → overwrite existing {dst!r} ({target})"
+    return None
 
 
 def _move_path_reason(args: Mapping[str, object]) -> str | None:
@@ -222,10 +223,6 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _copy_path_reason(args)
     if name == "write_file":
         return _write_file_reason(args)
-    if name == "edit_replace":
-        return _edit_replace_reason(args)
-    if name == "edit_lineno":
-        return _edit_lineno_reason(args)
     if name == "run_command":
         return _run_command_reason(args)
     if name == "run_command_batch":
