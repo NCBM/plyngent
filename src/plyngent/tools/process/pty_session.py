@@ -330,7 +330,7 @@ class PtyManager:
                 message="unknown session",
             )
         if session.closed:
-            restore_host_terminal()
+            # No host restore: no child was torn down this call.
             return PtyCloseResult(
                 session_id=session_id,
                 closed=True,
@@ -387,14 +387,16 @@ class PtyManager:
 
     @classmethod
     def close_all(cls) -> None:
-        """Close every session (each close restores the host TTY best-effort)."""
+        """Close every open session.
+
+        Host TTY restore runs only when at least one session was actually closed
+        (via :meth:`close`). Empty registry is a no-op — important so Ctrl-D /
+        chat exit does not flash-reset the terminal when no PTY was used.
+        """
         with cls._lock:
             ids = list(cls._sessions.keys())
         for session_id in ids:
             _ = cls.close(session_id)
-        # Extra restore if the registry was already empty.
-        if not ids:
-            restore_host_terminal()
 
 
 def format_read_result(result: PtyReadResult) -> str:

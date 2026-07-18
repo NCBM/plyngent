@@ -321,6 +321,20 @@ def test_sanitize_pty_output_escapes_csi() -> None:
     assert "hello" in safe
 
 
+def test_close_all_empty_does_not_restore(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-D / chat exit calls close_all with no sessions — must not flash TTY."""
+    import plyngent.tools.process.pty_session as ps
+
+    calls: list[int] = []
+
+    def fake_restore() -> None:
+        calls.append(1)
+
+    monkeypatch.setattr(ps, "restore_host_terminal", fake_restore)
+    PtyManager.close_all()
+    assert calls == []
+
+
 def test_restore_host_terminal_noop_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
 
