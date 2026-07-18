@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from typing import TYPE_CHECKING, Literal
 
 from plyngent.cli.interrupt import pause_task_cancel_for_prompt
@@ -13,6 +14,7 @@ from plyngent.prompting import (
     configure_prompting,
     confirm,
     confirm_async,
+    get_prompt_backend,
 )
 from plyngent.tools.process.pty_session import PtyManager
 
@@ -20,6 +22,78 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
+
+_BOX_MIN_WIDTH = 40
+_BOX_MAX_WIDTH = 100
+_BOX_PAD = 2  # spaces inside left/right borders
+
+
+def _terminal_width() -> int:
+    try:
+        return max(_BOX_MIN_WIDTH, min(_BOX_MAX_WIDTH, shutil.get_terminal_size(fallback=(80, 24)).columns))
+    except OSError:
+        return 80
+
+
+def _wrap_line(text: str, width: int) -> list[str]:
+    """Hard-wrap a single logical line to *width* (no word-break library)."""
+    width = max(width, 8)
+    if not text:
+        return [""]
+    if len(text) <= width:
+        return [text]
+    out: list[str] = []
+    rest = text
+    while rest:
+        if len(rest) <= width:
+            out.append(rest)
+            break
+        # Prefer break at last space in the window.
+        window = rest[:width]
+        break_at = window.rfind(" ")
+        if break_at >= width // 2:
+            out.append(rest[:break_at])
+            rest = rest[break_at + 1 :]
+        else:
+            out.append(rest[:width])
+            rest = rest[width:]
+    return out
+
+
+def format_tool_confirm_box(name: str, reason: str) -> str:
+    """Multi-line boxed confirm body (header + reason lines).
+
+    Printed with :meth:`PromptBackend.echo` before a short ``confirm()`` prompt
+    so terminals keep newlines (unlike a single jammed readline line).
+    """
+    term = _terminal_width()
+    inner = max(20, term - 4)  # room for ``│ `` + `` │``
+    header = f"confirm · tool {name!r}"
+    body_lines: list[str] = []
+    for raw in reason.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        body_lines.extend(_wrap_line(raw, inner - _BOX_PAD))
+    content = [header, "─" * min(inner, max(len(header), 12)), *body_lines]
+    width = min(inner, max(len(line) for line in content) + _BOX_PAD)
+    width = max(width, min(inner, len(header) + _BOX_PAD))
+    top = "┌" + "─" * (width + 2) + "┐"
+    bottom = "└" + "─" * (width + 2) + "┘"
+    rows = [top]
+    for line in content:
+        # Second line is a separator drawn with box dashes already in content.
+        if line.startswith("─") and set(line) <= {"─"}:
+            rows.append("├" + "─" * (width + 2) + "┤")
+            continue
+        padded = line[:width].ljust(width)
+        rows.append(f"│ {padded} │")
+    rows.append(bottom)
+    return "\n".join(rows)
+
+
+def _echo_tool_confirm(name: str, reason: str) -> None:
+    backend = get_prompt_backend()
+    backend.echo()
+    backend.secho(format_tool_confirm_box(name, reason), fg="yellow")
+    backend.echo()
 
 
 def _prompt_continue_limit_sync(reason: str) -> bool:
@@ -50,8 +124,8 @@ def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str
     """True allow; False deny; non-empty str = deny with comment for the model."""
     del args
     try:
-        prompt = f"[confirm] tool {name!r}:\n{reason}\nAllow this tool call?"
-        allowed = confirm(prompt, default=False)
+        _echo_tool_confirm(name, reason)
+        allowed = confirm("Allow this tool call?", default=False)
     except NonInteractiveError:
         return False
     if allowed:
@@ -69,7 +143,8 @@ def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str
 def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """Ask whether to allow a dangerous tool call (TTY). Default is deny.
 
-    On deny, optionally collect a free-text comment for the model.
+    Prints a multi-line boxed summary, then a short y/N prompt. On deny,
+    optionally collect a free-text comment for the model.
     """
     with pause_task_cancel_for_prompt():
         return _prompt_confirm_tool_sync(name, args, reason)
@@ -79,8 +154,14 @@ async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reaso
     """Async confirm: True allow, False deny, str = deny with user comment."""
     del args
     try:
-        prompt = f"[confirm] tool {name!r}:\n{reason}\nAllow this tool call?"
-        allowed = await confirm_async(prompt, default=False)
+        # Box is printed inside the worker thread via confirm's backend.
+        def _run() -> bool:
+            _echo_tool_confirm(name, reason)
+            return confirm("Allow this tool call?", default=False)
+
+        from plyngent.prompting import run_prompt_async
+
+        allowed = await run_prompt_async(_run)
     except NonInteractiveError:
         return False
     if allowed:

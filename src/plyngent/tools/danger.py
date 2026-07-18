@@ -7,8 +7,8 @@ from plyngent.tools.workspace import WorkspaceError, resolve_path
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-_DISPLAY_ARGV_MAX = 200
-_CODE_PREVIEW_MAX = 120
+_DISPLAY_ARGV_MAX = 400
+_CODE_PREVIEW_MAX = 240
 
 _SHELL_BASENAMES: frozenset[str] = frozenset(
     {
@@ -81,7 +81,11 @@ def _find_dash_c_code(argv: Sequence[str]) -> str | None:
 
 
 def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
-    """Confirm interactive shells/REPLs and ``-c`` one-liners so the user can inspect argv."""
+    """Confirm interactive shells/REPLs and ``-c`` one-liners so the user can inspect argv.
+
+    Multi-line reason (shown inside the CLI confirm box). ``via`` is a short
+    label (tool name), not repeated on every line.
+    """
     if not argv:
         return None
     base = _basename(argv[0])
@@ -92,14 +96,14 @@ def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
     code = _find_dash_c_code(argv)
     if code is not None:
         preview = code if len(code) <= _CODE_PREVIEW_MAX else code[:_CODE_PREVIEW_MAX] + "…"
-        return f"{via}: {base} -c (review code before allow)\n  argv: {display}\n  -c: {preview!r}"
+        return f"{via}: {base} -c (review code before allow)\nargv:\n  {display}\n-c code:\n  {preview}"
 
     if base in _SHELL_BASENAMES and len(argv) == 1:
-        return f"{via}: interactive {base!r} (review before allow)\n  argv: {display}"
+        return f"{via}: interactive {base!r} (review before allow)\nargv:\n  {display}"
 
     # e.g. python -i, bash --login without -c still needs a glance.
     if base in _SHELL_BASENAMES:
-        return f"{via}: shell/runtime {base!r} (review before allow)\n  argv: {display}"
+        return f"{via}: shell/runtime {base!r} (review before allow)\nargv:\n  {display}"
 
     return None
 
