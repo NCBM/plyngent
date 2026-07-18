@@ -1,3 +1,5 @@
+from plyngent.tools.temp_workspace import new_temporary_workspace as new_temporary_workspace
+
 from .edit_lineno import edit_lineno as edit_lineno
 from .edit_replace import edit_replace as edit_replace
 from .fs_ops import copy_path as copy_path
@@ -22,4 +24,5 @@ FILE_TOOLS = [
     copy_path,
     move_path,
     delete_path,
+    new_temporary_workspace,
 ]

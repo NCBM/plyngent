@@ -22,6 +22,8 @@ from .process import read_pty as read_pty
 from .process import run_command as run_command
 from .process import write_pty as write_pty
 from .process import write_pty_keys as write_pty_keys
+from .temp_workspace import cleanup_temporary_workspaces as cleanup_temporary_workspaces
+from .temp_workspace import new_temporary_workspace as new_temporary_workspace
 from .todo import TODO_TOOLS as TODO_TOOLS
 from .todo import get_todo_stack as get_todo_stack
 from .todo import set_todo_stack as set_todo_stack
@@ -40,11 +42,16 @@ from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )
 from .workspace import WorkspaceError as WorkspaceError
+from .workspace import add_workspace_allowlist as add_workspace_allowlist
 from .workspace import check_command_allowed as check_command_allowed
+from .workspace import clear_workspace_allowlist as clear_workspace_allowlist
 from .workspace import clear_workspace_root as clear_workspace_root
 from .workspace import get_command_denylist as get_command_denylist
 from .workspace import get_path_denylist as get_path_denylist
 from .workspace import get_workspace_root as get_workspace_root
+from .workspace import list_workspace_allowlist as list_workspace_allowlist
+from .workspace import pop_owned_temporary_workspaces as pop_owned_temporary_workspaces
+from .workspace import remove_workspace_allowlist as remove_workspace_allowlist
 from .workspace import resolve_path as resolve_path
 from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist

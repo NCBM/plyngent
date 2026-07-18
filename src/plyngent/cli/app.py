@@ -307,8 +307,10 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
     finally:
         await memory.close()
         from plyngent.tools.process.pty_session import PtyManager
+        from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
 
         PtyManager.close_all()
+        _ = cleanup_temporary_workspaces()
 
 
 def _configure_logging(level: str) -> None:
