@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, cast
 
 from plyngent.tools.workspace import WorkspaceError, resolve_path
@@ -161,6 +162,44 @@ def _run_command_reason(args: Mapping[str, object]) -> str | None:
     return _shell_or_dash_c_reason(argv, via="run_command")
 
 
+def _batch_step_argv(item: object) -> list[str] | None:
+    if not isinstance(item, dict):
+        return None
+    step = cast("dict[str, object]", item)
+    command = step.get("command")
+    if not isinstance(command, list) or not command:
+        return None
+    argv: list[str] = []
+    for part in command:
+        if not isinstance(part, str):
+            return None
+        argv.append(part)
+    return argv or None
+
+
+def _run_command_batch_reason(args: Mapping[str, object]) -> str | None:
+    """One confirm for the whole batch if any step is shell/REPL/-c."""
+    raw = args.get("commands")
+    if isinstance(raw, str):
+        try:
+            loaded: object = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        raw = loaded
+    if not isinstance(raw, list):
+        return None
+    risky = [
+        reason
+        for index, item in enumerate(cast("list[object]", raw))
+        if (argv := _batch_step_argv(item)) is not None
+        and (reason := _shell_or_dash_c_reason(argv, via=f"run_command_batch[{index}]")) is not None
+    ]
+    if not risky:
+        return None
+    header = f"run_command_batch: {len(risky)} risky step(s) (review before allow)"
+    return header + "\n" + "\n".join(risky)
+
+
 def _open_pty_reason(args: Mapping[str, object]) -> str | None:
     argv = _as_argv(args)
     if argv is None:
@@ -189,6 +228,8 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _edit_lineno_reason(args)
     if name == "run_command":
         return _run_command_reason(args)
+    if name == "run_command_batch":
+        return _run_command_batch_reason(args)
     if name == "open_pty":
         return _open_pty_reason(args)
     return None

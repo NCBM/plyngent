@@ -9,6 +9,7 @@ from plyngent.tools.process import (
     open_pty,
     read_pty,
     run_command,
+    run_command_batch,
     write_pty,
     write_pty_keys,
 )
@@ -44,6 +45,85 @@ async def test_run_command_echo(workspace: object) -> None:
     out = await call_async(run_command, _py("print('hi')"))
     assert "exit_code=0" in out
     assert "hi" in out
+
+
+async def test_run_command_batch_serial(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command_batch,
+        [
+            {"command": _py("print('a')")},
+            {"command": _py("print('b')")},
+        ],
+    )
+    assert "steps=2" in out
+    assert "ran=2" in out
+    assert "stopped_early=false" in out
+    assert "--- step 0 ---" in out
+    assert "--- step 1 ---" in out
+    assert "a" in out and "b" in out
+
+
+async def test_run_command_batch_stop_on_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command_batch,
+        [
+            {"command": _py("import sys; sys.exit(2)")},
+            {"command": _py("print('should-not-run')")},
+        ],
+        stop_on_error=True,
+    )
+    assert "ran=1" in out
+    assert "stopped_early=true" in out
+    assert "should-not-run" not in out
+
+
+async def test_run_command_batch_pipe_out(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command_batch,
+        [
+            {
+                "command": _py("print('piped-payload', end='')"),
+                "pipe_out": True,
+            },
+            {
+                "command": _py("import sys; print(sys.stdin.read())"),
+            },
+        ],
+    )
+    assert "ran=2" in out
+    assert "piped-payload" in out
+    assert "pipe_out=true" in out
+
+
+async def test_run_command_batch_last_pipe_out_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command_batch,
+        [{"command": _py("print(1)"), "pipe_out": True}],
+    )
+    assert "error:" in out
+    assert "pipe_out" in out
+
+
+async def test_run_command_batch_mix_stderr(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_command_batch,
+        [
+            {
+                "command": _py("import sys; sys.stdout.write('out'); sys.stderr.write('err')"),
+                "mix_stderr": True,
+                "pipe_out": True,
+            },
+            {"command": _py("import sys; print(repr(sys.stdin.read()))")},
+        ],
+    )
+    assert "ran=2" in out
+    # Merged capture should include both (order depends on OS scheduling).
+    assert "out" in out and "err" in out
 
 
 async def test_run_command_denied(workspace: object) -> None:

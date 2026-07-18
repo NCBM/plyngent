@@ -36,6 +36,28 @@ def test_classify_safe_tools() -> None:
     assert classify_danger("run_command", {"command": ["ls", "-la"]}) is None
 
 
+def test_classify_run_command_batch_risky() -> None:
+    reason = classify_danger(
+        "run_command_batch",
+        {
+            "commands": [
+                {"command": ["echo", "ok"]},
+                {"command": ["bash", "-c", "echo risky"]},
+            ]
+        },
+    )
+    assert reason is not None
+    assert "run_command_batch" in reason
+    assert "risky" in reason or "bash" in reason
+    assert (
+        classify_danger(
+            "run_command_batch",
+            {"commands": [{"command": ["echo", "ok"]}]},
+        )
+        is None
+    )
+
+
 def test_classify_shell_and_dash_c() -> None:
     r = classify_danger("run_command", {"command": ["bash", "-c", "rm -rf /"]})
     assert r is not None
