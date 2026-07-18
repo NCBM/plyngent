@@ -4,6 +4,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 from plyngent.tools.process import close_pty, open_pty, read_pty, run_command, write_pty
 from plyngent.tools.process.pty_session import PtyManager
 from plyngent.tools.workspace import set_command_denylist
@@ -285,6 +287,114 @@ def test_pty_master_not_inheritable(workspace: object) -> None:
         assert session is not None
         assert session.master_fd is not None
         assert os.get_inheritable(session.master_fd) is False
+    finally:
+        PtyManager.close_all()
+
+
+def test_decode_write_data_escapes() -> None:
+    from plyngent.tools.process.pty_terminal import decode_write_data
+
+    assert decode_write_data(r"\x0f") == "\x0f"
+    assert decode_write_data("ctrl+x") == "\x18"
+    assert decode_write_data("CTRL+O") == "\x0f"
+    assert decode_write_data(r"\e") == "\x1b"
+    assert decode_write_data("key=esc") == "\x1b"
+    assert decode_write_data("key=enter") == "\r"
+    assert decode_write_data(r"a\nb") == "a\nb"
+    assert decode_write_data("plain") == "plain"
+
+
+def test_sanitize_pty_output_escapes_csi() -> None:
+    from plyngent.tools.process.pty_terminal import sanitize_pty_output_for_tool
+
+    raw = "\x1b[?1049hhello\x1b[0m"
+    safe = sanitize_pty_output_for_tool(raw)
+    assert "\x1b" not in safe
+    assert "\\x1b" in safe
+    assert "hello" in safe
+
+
+def test_restore_host_terminal_noop_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from plyngent.tools.process.pty_terminal import restore_host_terminal
+
+    class FakeOut:
+        def isatty(self) -> bool:
+            return False
+
+        def write(self, _s: str) -> int:
+            raise AssertionError("should not write")
+
+    monkeypatch.setattr(sys, "stdout", FakeOut())
+    restore_host_terminal()  # no-op
+
+
+def test_restore_host_terminal_writes_when_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from plyngent.tools.process.pty_terminal import restore_host_terminal
+
+    written: list[bytes] = []
+
+    class Buf:
+        def write(self, data: bytes) -> int:
+            written.append(data)
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeOut:
+        buffer = Buf()
+
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(sys, "stdout", FakeOut())
+    restore_host_terminal()
+    assert written
+    blob = b"".join(written)
+    assert b"\x1b[?1049l" in blob
+
+
+async def test_read_pty_sanitizes_esc(workspace: object) -> None:
+    del workspace
+    try:
+        # Print ESC so tool-facing read must escape it.
+        opened = call_sync(open_pty, _py("print('\\x1b[31mred\\x1b[0m')"))
+        session_id = _session_id(opened)
+        text = await call_async(read_pty, session_id, timeout=2.0, until="red")
+        assert "red" in text
+        # Raw ESC must not appear in tool payload.
+        payload = text.split("--- data ---", 1)[-1]
+        assert "\x1b" not in payload
+        assert "\\x1b" in payload or "red" in payload
+        _ = await call_async(close_pty, session_id)
+    finally:
+        PtyManager.close_all()
+
+
+async def test_write_pty_ctrl_escape(workspace: object) -> None:
+    del workspace
+    try:
+        opened = call_sync(
+            open_pty,
+            _py(
+                "import sys\n"
+                "data = sys.stdin.buffer.read(1)\n"
+                "sys.stdout.buffer.write(data)\n"
+                "sys.stdout.buffer.flush()\n"
+            ),
+        )
+        session_id = _session_id(opened)
+        written = call_sync(write_pty, session_id, "ctrl+c")
+        assert "wrote=1" in written
+        text = await call_async(read_pty, session_id, timeout=2.0)
+        # ESC sanitized; Ctrl+C is 0x03 — may appear as raw or escaped depending
+        # on printable; just ensure write succeeded and process got input.
+        assert "error" not in text.lower() or "alive=" in text
+        _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
 

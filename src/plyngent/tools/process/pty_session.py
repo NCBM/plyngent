@@ -8,6 +8,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, ClassVar
 
 from plyngent.tools.process.pty_backend import PtyHandle, pty_available, spawn_pty
+from plyngent.tools.process.pty_terminal import restore_host_terminal, sanitize_pty_output_for_tool
 from plyngent.tools.workspace import WorkspaceError, check_command_allowed, resolve_path
 
 if TYPE_CHECKING:
@@ -286,6 +287,8 @@ class PtyManager:
         truncated = len(data) > max_bytes
         if truncated:
             data = data[:max_bytes]
+        # Escape CSI so tool results echoed to the host TTY cannot reprogram it.
+        data = sanitize_pty_output_for_tool(data)
         budget_exhausted = cls._maybe_raise_budget(session)
         return PtyReadResult(
             session_id=session_id,
@@ -327,6 +330,7 @@ class PtyManager:
                 message="unknown session",
             )
         if session.closed:
+            restore_host_terminal()
             return PtyCloseResult(
                 session_id=session_id,
                 closed=True,
@@ -354,6 +358,8 @@ class PtyManager:
         with cls._lock:
             _ = cls._sessions.pop(session_id, None)
 
+        # Host TTY may have been reprogrammed if tool results echoed CSI.
+        restore_host_terminal()
         return PtyCloseResult(
             session_id=session_id,
             closed=True,
@@ -381,10 +387,14 @@ class PtyManager:
 
     @classmethod
     def close_all(cls) -> None:
+        """Close every session (each close restores the host TTY best-effort)."""
         with cls._lock:
             ids = list(cls._sessions.keys())
         for session_id in ids:
             _ = cls.close(session_id)
+        # Extra restore if the registry was already empty.
+        if not ids:
+            restore_host_terminal()
 
 
 def format_read_result(result: PtyReadResult) -> str:

@@ -232,6 +232,9 @@ Safety defaults:
 - Command basename denylist (e.g. dangerous shells/utilities).
 - Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.
+  Prefer file tools over full-screen editors (`vim`/`nano`) for edits. `read_pty` escapes CSI so tool
+  results cannot reprogram the host TTY; `close_pty` / chat exit also restore the host terminal.
+  `write_pty` accepts escapes: `\xHH`, `ctrl+x`, `key=esc|enter|…`.
 
 ## Usage / context (CLI)
 

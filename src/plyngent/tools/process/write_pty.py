@@ -4,13 +4,20 @@ from plyngent.agent import tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_session import PtyManager
+from .pty_terminal import decode_write_data
 
 
 @tool
 def write_pty(session_id: int, data: str) -> str:
-    """Write text to a PTY session (interactive input). Does not append a newline."""
+    """Write text to a PTY session (interactive input). Does not append a newline.
+
+    Escapes (literal backslash sequences in ``data``): ``\\n`` ``\\r`` ``\\t``
+    ``\\e``/``\\E`` (ESC), ``\\xHH``, ``\\uHHHH``, ``ctrl+x`` / ``ctrl+c``, and
+    ``key=esc|enter|tab|up|down|left|right``.
+    """
     try:
-        PtyManager.write(session_id, data)
+        raw = decode_write_data(data)
+        PtyManager.write(session_id, raw)
         session = PtyManager.refresh(session_id)
     except WorkspaceError as exc:
         return f"error: {exc}"
@@ -22,6 +29,6 @@ def write_pty(session_id: int, data: str) -> str:
             f"session_id={session_id}",
             f"alive={'true' if session.alive else 'false'}",
             f"exit_code={exit_disp}",
-            f"wrote={len(data)}",
+            f"wrote={len(raw.encode())}",
         ]
     )
