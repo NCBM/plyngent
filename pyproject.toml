@@ -1,6 +1,6 @@
 [project]
 name = "plyngent"
-version = "0.1.1"
+version = "0.1.2"
 description = "LLM chat and agent toolkit"
 authors = [
   { name = "HivertMoZara", email = "worldmozara@163.com" },
