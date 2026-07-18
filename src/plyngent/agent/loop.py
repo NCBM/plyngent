@@ -371,11 +371,7 @@ async def run_chat_loop(
             assistant = _last_assistant(messages, pre_len)
             tool_calls = assistant.tool_calls
             if tool_calls is UNSET or not tool_calls or tools is None:
-                if (
-                    todo_stack is not None
-                    and todo_stack.needs_review()
-                    and not todo_review_injected
-                ):
+                if todo_stack is not None and todo_stack.needs_review() and not todo_review_injected:
                     todo_review_injected = True
                     # Non-user control identity so retry/history don't treat this as human input.
                     messages.append(DeveloperChatMessage(content=todo_stack.review_prompt()))

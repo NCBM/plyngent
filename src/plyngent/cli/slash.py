@@ -62,11 +62,7 @@ class HistoryLimitType(click.ParamType):
     def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
         del ctx, param
         tokens = ("last", "1", "5", "10", "20")
-        return [
-            CompletionItem(token)
-            for token in tokens
-            if incomplete == "" or token.startswith(incomplete.lower())
-        ]
+        return [CompletionItem(token) for token in tokens if incomplete == "" or token.startswith(incomplete.lower())]
 
 
 HELP_FOOTER = (

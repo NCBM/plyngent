@@ -191,12 +191,7 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
         async for _event in agent.run("do stuff"):
             pass
         assert client.calls >= 2
-        assert any(
-            isinstance(m, DeveloperChatMessage) and "Todo stack review" in m.content
-            for m in agent.messages
-        )
-        assert not any(
-            isinstance(m, UserChatMessage) and "Todo stack review" in m.content for m in agent.messages
-        )
+        assert any(isinstance(m, DeveloperChatMessage) and "Todo stack review" in m.content for m in agent.messages)
+        assert not any(isinstance(m, UserChatMessage) and "Todo stack review" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)

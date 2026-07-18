@@ -98,11 +98,11 @@ class TodoStack:
                         frame_items = msgspec.convert(frame.get("items"), type=list[TodoItem])
                         items.extend(frame_items)
                 return cls(TodoStackData(items=items, next_id=next_id))
-            except (msgspec.ValidationError, TypeError, ValueError):
+            except msgspec.ValidationError, TypeError, ValueError:
                 return cls()
         try:
             data = msgspec.convert(raw, type=TodoStackData)
-        except (msgspec.ValidationError, TypeError, ValueError):
+        except msgspec.ValidationError, TypeError, ValueError:
             return cls()
         if data.next_id < 1:
             data = msgspec.structs.replace(data, next_id=1)
@@ -234,14 +234,10 @@ def parse_push_titles(raw: str) -> list[str]:
     if text.startswith("["):
         try:
             data: object = msgspec.json.decode(text.encode())
-        except (msgspec.DecodeError, UnicodeEncodeError):
+        except msgspec.DecodeError, UnicodeEncodeError:
             data = None
         if isinstance(data, list):
-            out = [
-                item.strip()
-                for item in cast("list[object]", data)
-                if isinstance(item, str) and item.strip()
-            ]
+            out = [item.strip() for item in cast("list[object]", data) if isinstance(item, str) and item.strip()]
             if out:
                 return out
     parts: list[str] = []

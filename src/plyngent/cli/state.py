@@ -124,9 +124,7 @@ class ReplState:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return
-            task = loop.create_task(
-                self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw())
-            )
+            task = loop.create_task(self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw()))
             # Keep a strong ref until done so the task is not GC'd mid-flight.
             self._todo_persist_tasks.add(task)
             task.add_done_callback(self._todo_persist_tasks.discard)
