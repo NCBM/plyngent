@@ -35,6 +35,18 @@ def test_read_offset_limit(workspace: object) -> None:
     assert call_sync(read_file, "lines.txt", offset=1, limit=2) == "b\nc\n"
 
 
+def test_read_with_lineno(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "num.txt", "a\nb\nc\n")
+    out = call_sync(read_file, "num.txt", with_lineno=True)
+    assert "     1|a\n" in out
+    assert "     2|b\n" in out
+    assert "     3|c\n" in out
+    # offset is 0-based; line numbers stay absolute 1-based file lines
+    mid = call_sync(read_file, "num.txt", offset=1, limit=1, with_lineno=True)
+    assert mid == "     2|b\n"
+
+
 def test_listdir_missing(workspace: object) -> None:
     del workspace
     assert "error" in call_sync(listdir, "nope")
