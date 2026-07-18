@@ -30,29 +30,46 @@ def test_parse_push_titles() -> None:
     assert parse_push_titles('["A", "B"]') == ["A", "B"]
 
 
-def test_nested_push_pop_pattern() -> None:
-    """(push)[T1,T2] (push)[T1.1,T1.2] (pop) (push)[T2.1] …"""
+def test_lifo_not_queue() -> None:
+    """Stack is LIFO: push A then B → top is B; pop is B then A — never FIFO."""
+    stack = TodoStack()
+    _ = stack.push("A")
+    _ = stack.push("B")
+    assert stack.top is not None
+    assert stack.top.title == "B"
+    first = stack.pop()
+    second = stack.pop()
+    assert first is not None and first.title == "B"
+    assert second is not None and second.title == "A"
+    assert stack.pop() is None
+
+
+def test_dfs_breakdown_pattern() -> None:
+    """push [T1,T2] → top T1; push [T1.1,T1.2] → top T1.1; pop children; then T2.1."""
     stack = TodoStack()
     root = stack.push_titles(["T1", "T2"])
     assert [i.title for i in root] == ["T1", "T2"]
-    assert stack.depth == 1
+    assert stack.top is not None
+    assert stack.top.title == "T1"
+    # bottom→top: T2, T1
+    assert [i.title for i in stack.items] == ["T2", "T1"]
 
     children = stack.push_titles(["T1.1", "T1.2"])
-    assert stack.depth == 2
     assert [i.title for i in children] == ["T1.1", "T1.2"]
-    stack.update(children[0].id, status="done")
-    stack.update(children[1].id, status="done")
+    assert stack.top is not None and stack.top.title == "T1.1"
+    # bottom→top: T2, T1, T1.2, T1.1
+    assert [i.title for i in stack.items] == ["T2", "T1", "T1.2", "T1.1"]
 
-    popped = stack.pop()
-    assert popped is not None
-    assert [i.title for i in popped.items] == ["T1.1", "T1.2"]
-    assert stack.depth == 1
-    assert [i.title for i in stack.frames[0].items] == ["T1", "T2"]
-
-    stack.update(root[0].id, status="done")
+    p1 = stack.pop()
+    p2 = stack.pop()
+    assert p1 is not None and p1.title == "T1.1"
+    assert p2 is not None and p2.title == "T1.2"
+    p3 = stack.pop()
+    assert p3 is not None and p3.title == "T1"
+    assert stack.top is not None and stack.top.title == "T2"
     _ = stack.push_titles(["T2.1"])
-    assert stack.depth == 2
-    assert stack.frames[-1].items[0].title == "T2.1"
+    assert stack.top is not None and stack.top.title == "T2.1"
+    assert [i.title for i in stack.items] == ["T2", "T2.1"]
 
 
 def test_todo_stack_needs_review() -> None:
@@ -65,17 +82,18 @@ def test_todo_stack_needs_review() -> None:
     assert not stack.needs_review()
 
 
-def test_todo_stack_legacy_flat_raw() -> None:
+def test_legacy_frames_flatten() -> None:
     stack = TodoStack.from_raw(
         {
-            "items": [{"id": "t1", "title": "old", "status": "pending", "notes": ""}],
-            "next_id": 2,
+            "frames": [
+                {"items": [{"id": "t1", "title": "T1", "status": "pending", "notes": ""}]},
+                {"items": [{"id": "t2", "title": "T1.1", "status": "pending", "notes": ""}]},
+            ],
+            "next_id": 3,
         }
     )
-    assert stack.depth == 1
-    assert stack.all_items()[0].title == "old"
-    raw = stack.to_raw()
-    assert "frames" in raw
+    assert [i.title for i in stack.items] == ["T1", "T1.1"]
+    assert stack.top is not None and stack.top.title == "T1.1"
 
 
 def test_todo_stack_roundtrip_raw() -> None:
@@ -83,8 +101,8 @@ def test_todo_stack_roundtrip_raw() -> None:
     _ = stack.push_titles(["x", "y"], notes="n")
     raw = stack.to_raw()
     restored = TodoStack.from_raw(raw)
-    assert restored.depth == 1
-    assert [i.title for i in restored.frames[0].items] == ["x", "y"]
+    assert [i.title for i in restored.items] == ["y", "x"]  # bottom y, top x
+    assert restored.top is not None and restored.top.title == "x"
 
 
 async def test_todo_tools_and_persist(tmp_path: object) -> None:
@@ -96,20 +114,18 @@ async def test_todo_tools_and_persist(tmp_path: object) -> None:
         set_todo_stack(stack, on_change=None)
         registry = ToolRegistry(list(TODO_TOOLS))
         out = await registry.execute("todo_push", '{"titles": "T1\\nT2"}')
-        assert "pushed frame" in out
-        assert stack.depth == 1
-        out2 = await registry.execute("todo_push", '{"titles": "T1.1; T1.2"}')
-        assert stack.depth == 2
-        assert "T1.1" in out2
+        assert "top" in out.lower() or "pushed" in out
+        assert stack.top is not None and stack.top.title == "T1"
+        _ = await registry.execute("todo_push", '{"titles": "T1.1; T1.2"}')
+        assert stack.top is not None and stack.top.title == "T1.1"
         out3 = await registry.execute("todo_pop", "{}")
-        assert "popped frame" in out3
-        assert stack.depth == 1
+        assert "popped" in out3
+        assert stack.top is not None and stack.top.title == "T1.2"
         _ = await memory.update_session_todo_stack(session.sid, stack.to_raw())
         loaded = await memory.get_session_todo_stack(session.sid)
         assert loaded is not None
         again = TodoStack.from_raw(loaded)
-        assert again.depth == 1
-        assert [i.title for i in again.frames[0].items] == ["T1", "T2"]
+        assert again.top is not None and again.top.title == "T1.2"
     finally:
         set_todo_stack(None)
         await memory.close()

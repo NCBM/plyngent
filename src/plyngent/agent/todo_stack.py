@@ -11,7 +11,7 @@ _OPEN: frozenset[str] = frozenset({"pending", "in_progress"})
 
 
 class TodoItem(Struct, omit_defaults=True):
-    """One sub-task within a stack frame."""
+    """One entry on the todo stack (top of stack = next to work)."""
 
     id: str
     title: str
@@ -19,29 +19,28 @@ class TodoItem(Struct, omit_defaults=True):
     notes: str = ""
 
 
-class TodoFrame(Struct, omit_defaults=True):
-    """One nesting level: sibling tasks pushed together."""
+class TodoStackData(Struct, omit_defaults=True):
+    """Serializable stack: ``items[0]`` is bottom, ``items[-1]`` is **top** (LIFO)."""
 
     items: list[TodoItem] = field(default_factory=list)
-
-
-class TodoStackData(Struct, omit_defaults=True):
-    """Serializable stack body (session storage).
-
-    ``frames`` is bottom→top: root plan first, deepest breakdown last.
-    Pattern: push [T1,T2] → push [T1.1,T1.2] → pop → push [T2.1] → …
-    """
-
-    frames: list[TodoFrame] = field(default_factory=list)
     next_id: int = 1
 
 
 class TodoStack:
-    """Nested todo stack for hierarchical sub-task breakdown.
+    """True LIFO stack of sub-tasks (not a queue, not a flat checklist).
 
-    Each ``push`` of one or more titles creates a **new frame** (deeper level).
-    ``pop`` removes the **top frame** (leave a breakdown level).
-    Model tools maintain the stack; humans use ``/todos``.
+    - **Top** = last element = next work item.
+    - ``push`` / multi-push: new items go on the **top**. When pushing several
+      titles at once, the **first** title becomes the top (worked first); the
+      rest sit under it in order (DFS: children first, then later siblings).
+    - ``pop``: remove **only the top** item.
+
+    Breakdown pattern::
+
+        push T1, T2          # top=T1, under=T2
+        push T1.1, T1.2      # top=T1.1, then T1.2, then T1, then T2
+        pop / done …         # clear T1.1, T1.2, then T1
+        push T2.1            # top=T2.1 over T2
     """
 
     def __init__(self, data: TodoStackData | None = None) -> None:
@@ -49,35 +48,33 @@ class TodoStack:
         self._touched_this_turn: bool = False
 
     @property
-    def frames(self) -> list[TodoFrame]:
-        return self._data.frames
+    def items(self) -> list[TodoItem]:
+        """Bottom → top order (last is top)."""
+        return self._data.items
 
     @property
-    def depth(self) -> int:
-        return len(self._data.frames)
+    def top(self) -> TodoItem | None:
+        if not self._data.items:
+            return None
+        return self._data.items[-1]
 
     @property
     def touched_this_turn(self) -> bool:
         return self._touched_this_turn
 
     def begin_turn(self) -> None:
-        """Reset the per-turn touch flag (call at start of each user turn)."""
         self._touched_this_turn = False
 
     def mark_touched(self) -> None:
         self._touched_this_turn = True
 
-    def all_items(self) -> list[TodoItem]:
-        return [item for frame in self._data.frames for item in frame.items]
-
     def open_items(self) -> list[TodoItem]:
-        return [item for item in self.all_items() if item.status in _OPEN]
+        return [item for item in self._data.items if item.status in _OPEN]
 
     def is_empty(self) -> bool:
-        return not self._data.frames
+        return not self._data.items
 
     def needs_review(self) -> bool:
-        """True when open work exists but no todo tool ran this turn."""
         return bool(self.open_items()) and not self._touched_this_turn
 
     def to_data(self) -> TodoStackData:
@@ -87,20 +84,22 @@ class TodoStack:
     def from_raw(cls, raw: object | None) -> TodoStack:
         if raw is None:
             return cls()
-        # Legacy flat shape: {items: [...], next_id: N} → single root frame.
-        if isinstance(raw, dict) and "frames" not in raw and "items" in raw:
+        # Nested-frame shape (brief intermediate design) → flatten bottom→top.
+        if isinstance(raw, dict) and "frames" in raw:
             try:
-                flat = cast("dict[str, object]", raw)
-                items = msgspec.convert(flat.get("items"), type=list[TodoItem])
-                next_raw = flat.get("next_id", 1)
+                frames_raw = cast("dict[str, object]", raw).get("frames")
+                next_raw = cast("dict[str, object]", raw).get("next_id", 1)
                 next_id = max(1, int(next_raw) if isinstance(next_raw, int | str) else 1)
+                items: list[TodoItem] = []
+                if isinstance(frames_raw, list):
+                    for frame in cast("list[object]", frames_raw):
+                        if not isinstance(frame, dict):
+                            continue
+                        frame_items = msgspec.convert(frame.get("items"), type=list[TodoItem])
+                        items.extend(frame_items)
+                return cls(TodoStackData(items=items, next_id=next_id))
             except (msgspec.ValidationError, TypeError, ValueError):
                 return cls()
-            data = TodoStackData(
-                frames=[TodoFrame(items=items)] if items else [],
-                next_id=next_id,
-            )
-            return cls(data)
         try:
             data = msgspec.convert(raw, type=TodoStackData)
         except (msgspec.ValidationError, TypeError, ValueError):
@@ -112,41 +111,44 @@ class TodoStack:
     def to_raw(self) -> dict[str, object]:
         out: object = msgspec.to_builtins(self._data)
         if not isinstance(out, dict):
-            return {"frames": [], "next_id": 1}
+            return {"items": [], "next_id": 1}
         raw = cast("dict[object, object]", out)
         return {str(key): value for key, value in raw.items()}
 
     def render(self) -> str:
-        if not self._data.frames:
-            return "(todo stack empty)"
-        lines: list[str] = [f"(depth={self.depth})"]
-        for depth, frame in enumerate(self._data.frames):
-            indent = "  " * depth
-            lines.append(f"{indent}frame {depth}:")
-            if not frame.items:
-                lines.append(f"{indent}  (empty frame)")
-                continue
-            for item in frame.items:
-                mark = {
-                    "pending": "[ ]",
-                    "in_progress": "[~]",
-                    "done": "[x]",
-                    "cancelled": "[-]",
-                }.get(item.status, "[?]")
-                note = f" — {item.notes}" if item.notes else ""
-                lines.append(f"{indent}  {mark} {item.id}: {item.title}{note}")
+        if not self._data.items:
+            return "(todo stack empty — top is empty)"
+        lines: list[str] = ["(LIFO stack: TOP = next to work)"]
+        # Show top first so the model sees work order.
+        for offset, item in enumerate(reversed(self._data.items)):
+            mark = {
+                "pending": "[ ]",
+                "in_progress": "[~]",
+                "done": "[x]",
+                "cancelled": "[-]",
+            }.get(item.status, "[?]")
+            note = f" — {item.notes}" if item.notes else ""
+            tag = " TOP" if offset == 0 else ""
+            lines.append(f"{mark}{tag} {item.id}: {item.title}{note}")
         return "\n".join(lines)
 
     def review_prompt(self) -> str:
-        """Control-message body (developer role) when the model finishes without todo ops."""
         return (
             "Todo stack review (internal control — not a human message).\n"
-            "Open sub-tasks remain and you did not call any todo_* tools this turn.\n"
-            "Use nested push/pop for breakdown: push [T1,T2], push [T1.1,T1.2], "
-            "finish children, pop frame, then push children of T2, etc. "
-            "Mark done/cancelled, push new frames, or pop a finished level.\n\n"
+            "This is a LIFO stack (not a queue): TOP is the only pop target and "
+            "the next sub-task to execute. Open work remains and you did not call "
+            "any todo_* tools this turn.\n"
+            "Breakdown: push children onto the top, finish/pop them, then the "
+            "parent (or next sibling under it) becomes top again. "
+            "push [T1,T2] then push [T1.1,T1.2] then pop finished tops, then "
+            "push [T2.1]…\n\n"
             f"Current stack:\n{self.render()}"
         )
+
+    def _alloc(self, title: str, *, notes: str, status: TodoStatus) -> TodoItem:
+        item_id = f"t{self._data.next_id}"
+        self._data.next_id += 1
+        return TodoItem(id=item_id, title=title, status=status, notes=notes)
 
     def push_titles(
         self,
@@ -155,43 +157,46 @@ class TodoStack:
         notes: str = "",
         status: TodoStatus = "pending",
     ) -> list[TodoItem]:
-        """Push a new frame containing *titles* (one or more siblings at this depth)."""
+        """Push one or more tasks onto the top (LIFO).
+
+        Titles are pushed so the **first** listed title becomes the new **top**
+        (worked first). Example: ``push_titles(["T1","T2"])`` → top=T1, under=T2.
+        """
         cleaned = [t.strip() for t in titles if t and t.strip()]
         if not cleaned:
             msg = "at least one non-empty title is required"
             raise ValueError(msg)
         note = notes.strip()
-        created: list[TodoItem] = []
-        for title in cleaned:
-            item_id = f"t{self._data.next_id}"
-            self._data.next_id += 1
-            created.append(TodoItem(id=item_id, title=title, status=status, notes=note))
-        self._data.frames.append(TodoFrame(items=created))
+        # Push last→first so first title ends on top.
+        created_rev: list[TodoItem] = []
+        for title in reversed(cleaned):
+            item = self._alloc(title, notes=note, status=status)
+            self._data.items.append(item)
+            created_rev.append(item)
         self.mark_touched()
-        return created
+        # Return in the same order as *titles* (first = top).
+        return list(reversed(created_rev))
 
     def push(self, title: str, *, notes: str = "", status: TodoStatus = "pending") -> TodoItem:
-        """Push a new frame with a single task (convenience for one title)."""
-        items = self.push_titles([title], notes=notes, status=status)
-        return items[0]
+        return self.push_titles([title], notes=notes, status=status)[0]
 
-    def pop(self) -> TodoFrame | None:
-        """Pop and return the top frame (leave the current breakdown level)."""
-        if not self._data.frames:
+    def pop(self) -> TodoItem | None:
+        """Remove and return the **top** item only (classic stack pop)."""
+        if not self._data.items:
             return None
-        frame = self._data.frames.pop()
+        item = self._data.items.pop()
         self.mark_touched()
-        return frame
+        return item
 
     def clear(self) -> int:
-        n = sum(len(frame.items) for frame in self._data.frames)
-        self._data.frames.clear()
+        n = len(self._data.items)
+        self._data.items.clear()
         if n:
             self.mark_touched()
         return n
 
     def get(self, item_id: str) -> TodoItem | None:
-        for item in self.all_items():
+        for item in self._data.items:
             if item.id == item_id:
                 return item
         return None
@@ -204,26 +209,25 @@ class TodoStack:
         status: TodoStatus | None = None,
         notes: str | None = None,
     ) -> TodoItem:
-        for frame in self._data.frames:
-            for index, item in enumerate(frame.items):
-                if item.id != item_id:
-                    continue
-                new_title = title.strip() if title is not None else item.title
-                if not new_title:
-                    msg = "title must not be empty"
-                    raise ValueError(msg)
-                new_status = status if status is not None else item.status
-                new_notes = notes if notes is not None else item.notes
-                updated = TodoItem(id=item.id, title=new_title, status=new_status, notes=new_notes)
-                frame.items[index] = updated
-                self.mark_touched()
-                return updated
+        for index, item in enumerate(self._data.items):
+            if item.id != item_id:
+                continue
+            new_title = title.strip() if title is not None else item.title
+            if not new_title:
+                msg = "title must not be empty"
+                raise ValueError(msg)
+            new_status = status if status is not None else item.status
+            new_notes = notes if notes is not None else item.notes
+            updated = TodoItem(id=item.id, title=new_title, status=new_status, notes=new_notes)
+            self._data.items[index] = updated
+            self.mark_touched()
+            return updated
         msg = f"unknown todo id {item_id!r}"
         raise KeyError(msg)
 
 
 def parse_push_titles(raw: str) -> list[str]:
-    """Parse multi-title push input: JSON array, or newline/semicolon-separated."""
+    """Parse multi-title push: JSON array, newlines, or ``;``-separated."""
     text = raw.strip()
     if not text:
         return []
@@ -233,10 +237,13 @@ def parse_push_titles(raw: str) -> list[str]:
         except (msgspec.DecodeError, UnicodeEncodeError):
             data = None
         if isinstance(data, list):
-            out = [item.strip() for item in cast("list[object]", data) if isinstance(item, str) and item.strip()]
+            out = [
+                item.strip()
+                for item in cast("list[object]", data)
+                if isinstance(item, str) and item.strip()
+            ]
             if out:
                 return out
-    # Newlines, then ``;`` as separators.
     parts: list[str] = []
     for line in text.replace(";", "\n").splitlines():
         token = line.strip()

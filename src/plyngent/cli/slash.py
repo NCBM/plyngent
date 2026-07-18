@@ -957,11 +957,11 @@ def history_cmd(
 def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
     state: ReplState, action: str | None, rest: tuple[str, ...]
 ) -> None:
-    """Show or edit the nested todo/task stack.
+    """Show or edit the LIFO todo stack (TOP = next work / only pop target).
 
-    ``/todos`` — list frames
-    ``/todos push <title>`` or ``/todos push T1; T2`` — new frame of siblings
-    ``/todos pop`` — pop top breakdown frame
+    ``/todos`` — list (top first)
+    ``/todos push <title>`` or ``T1; T2`` — push (first title becomes TOP)
+    ``/todos pop`` — pop TOP only
     ``/todos done <id>`` / ``/todos cancel <id>`` — set status
     ``/todos clear`` — wipe stack
     """
@@ -988,17 +988,20 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
             return
         _await(state.persist_todo_stack())
         ids = ", ".join(i.id for i in items)
-        click.echo(f"pushed frame depth={stack.depth} items=[{ids}]")
+        top = stack.top
+        top_s = f"{top.id}:{top.title}" if top else "?"
+        click.echo(f"pushed [{ids}] (top now {top_s})")
         click.echo(stack.render())
         return
     if act == "pop":
-        frame = stack.pop()
-        if frame is None:
+        item = stack.pop()
+        if item is None:
             click.echo("todo stack empty")
             return
         _await(state.persist_todo_stack())
-        titles = ", ".join(f"{i.id}:{i.title}" for i in frame.items) or "(empty)"
-        click.echo(f"popped frame ({titles})")
+        top = stack.top
+        top_s = f"{top.id}:{top.title}" if top else "(empty)"
+        click.echo(f"popped TOP {item.id}: {item.title}; new top={top_s}")
         click.echo(stack.render())
         return
     if act in {"done", "cancel", "pending", "in_progress"}:

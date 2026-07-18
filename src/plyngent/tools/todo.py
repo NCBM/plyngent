@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
     from plyngent.agent.todo_stack import TodoStack, TodoStatus
 
-# Module-level bind (same pattern as workspace root) for @tool handlers.
 _stack: TodoStack | None = None
 _on_change: Callable[[], None] | None = None
 
@@ -42,9 +41,10 @@ def _notify() -> None:
 
 @tool(name="todo_list")
 def todo_list() -> str:
-    """List the nested todo stack (frames = breakdown levels).
+    """Show the LIFO todo stack (TOP = next sub-task to work / pop).
 
-    Pattern: push [T1,T2] → push [T1.1,T1.2] → finish children → pop → push [T2.1]…
+    Not a queue: only the top is popped. Breakdown: push children on top of a
+    parent, finish and pop them, then the parent (or next sibling) is top again.
     """
     stack = _require_stack()
     stack.mark_touched()
@@ -54,11 +54,11 @@ def todo_list() -> str:
 
 @tool(name="todo_push")
 def todo_push(titles: str, notes: str = "") -> str:
-    """Push a new breakdown frame with one or more sibling tasks.
+    """Push task(s) onto the **top** of the LIFO stack.
 
-    ``titles``: single title, newline-separated list, ``;``-separated, or JSON
-    string array. Creates a **new nesting level** (does not append to the current
-    frame). Example sequence: push ``T1\\nT2`` then push ``T1.1\\nT1.2``.
+    ``titles``: one title, newlines, ``;``, or JSON array. First title becomes
+    the new TOP (worked first). Example: ``T1\\nT2`` → top=T1, under=T2; then
+    ``T1.1\\nT1.2`` → top=T1.1 over T1.2 over T1 over T2.
     """
     stack = _require_stack()
     parsed = parse_push_titles(titles)
@@ -69,24 +69,23 @@ def todo_push(titles: str, notes: str = "") -> str:
     except ValueError as exc:
         return f"error: {exc}"
     _notify()
+    top = stack.top
+    top_s = f"{top.id}:{top.title}" if top else "?"
     ids = ", ".join(i.id for i in items)
-    return f"pushed frame depth={stack.depth} items=[{ids}]\n{stack.render()}"
+    return f"pushed [{ids}] (top now {top_s})\n{stack.render()}"
 
 
 @tool(name="todo_pop")
 def todo_pop() -> str:
-    """Pop the top breakdown frame (leave the current nesting level).
-
-    Use after finishing children of a task (e.g. after T1.1/T1.2, pop back to
-    the T1/T2 frame). Does not delete sibling frames below.
-    """
+    """Pop the **top** item only (classic stack). Does not remove items under it."""
     stack = _require_stack()
-    frame = stack.pop()
-    if frame is None:
+    item = stack.pop()
+    if item is None:
         return "todo stack empty"
     _notify()
-    titles = ", ".join(f"{i.id}:{i.title}" for i in frame.items) or "(empty)"
-    return f"popped frame ({len(frame.items)} item(s): {titles})\n{stack.render()}"
+    top = stack.top
+    top_s = f"{top.id}:{top.title}" if top else "(empty)"
+    return f"popped TOP {item.id}: {item.title} ({item.status}); new top={top_s}\n{stack.render()}"
 
 
 @tool(name="todo_update")
@@ -96,7 +95,7 @@ def todo_update(
     title: str = "",
     notes: str = "",
 ) -> str:
-    """Update a todo by id. ``status``: pending|in_progress|done|cancelled."""
+    """Update a todo by id (any depth). Prefer pop when the top task is finished."""
     stack = _require_stack()
     status_arg: TodoStatus | None = None
     if status.strip():
@@ -119,7 +118,7 @@ def todo_update(
 
 @tool(name="todo_clear")
 def todo_clear() -> str:
-    """Clear the entire todo stack (all frames)."""
+    """Clear the entire stack."""
     stack = _require_stack()
     n = stack.clear()
     _notify()

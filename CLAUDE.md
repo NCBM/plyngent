@@ -81,7 +81,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`. Session YOLO: `/yolo on|off|once` and `--yes` (skip soft confirms; hard denylists unchanged; `once` expires after the next user turn).
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
 - **`chat`**: human prompts as tools — `ask_user_line` / `ask_user_choice` / `ask_user_form` (shared `prompting` core).
-- **`todo`**: nested session sub-task stack (frames) — `todo_list` / `todo_push` (multi-title = new frame) / `todo_pop` (leave frame) / `todo_update` / `todo_clear`; pattern push[T1,T2]→push[T1.1…]→pop→push[T2.1…]; stored on session row; agent injects a developer review message if open todos and no todo tool use in the turn.
+- **`todo`**: LIFO session sub-task **stack** (not a queue) — `todo_list` / `todo_push` (first title becomes TOP) / `todo_pop` (TOP only) / `todo_update` / `todo_clear`; DFS breakdown push[T1,T2]→push[T1.1…]→pop tops→push[T2.1…]; stored on session row; agent injects a developer review message if open todos and no todo tool use in the turn.
 - **`DEFAULT_TOOLS`**: file + process + vcs + chat + todo tool list for a `ToolRegistry`.
 
 ### Prompting (`prompting.py`)
