@@ -99,9 +99,9 @@ class TodoStack:
         return "\n".join(lines)
 
     def review_prompt(self) -> str:
-        """User-message body injected when the model finishes without todo ops."""
+        """Control-message body (developer role) when the model finishes without todo ops."""
         return (
-            "[system: todo stack review]\n"
+            "Todo stack review (internal control — not a human message).\n"
             "Open sub-tasks remain and you did not call any todo_* tools this turn.\n"
             "Review the stack: mark finished items done, update in_progress, "
             "push new sub-tasks, or pop/cancel obsolete ones. Then continue the user work.\n\n"

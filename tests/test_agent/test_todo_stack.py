@@ -13,6 +13,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    DeveloperChatMessage,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -102,7 +103,7 @@ class ScriptedClient:
         text = "ok" if self.calls > 1 else "done without todos"
         # Detect review message in history
         for msg in param.messages:
-            if isinstance(msg, UserChatMessage) and "todo stack review" in msg.content:
+            if isinstance(msg, DeveloperChatMessage) and "Todo stack review" in msg.content:
                 text = "reviewed stack"
                 break
         return ChatCompletionResponse(
@@ -142,7 +143,11 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
             pass
         assert client.calls >= 2
         assert any(
-            isinstance(m, UserChatMessage) and "todo stack review" in m.content for m in agent.messages
+            isinstance(m, DeveloperChatMessage) and "Todo stack review" in m.content
+            for m in agent.messages
+        )
+        assert not any(
+            isinstance(m, UserChatMessage) and "Todo stack review" in m.content for m in agent.messages
         )
     finally:
         set_todo_stack(None)

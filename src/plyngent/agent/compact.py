@@ -8,6 +8,7 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    DeveloperChatMessage,
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
@@ -43,12 +44,14 @@ _SEED_MESSAGE_TEMPLATE = (
 )
 
 
-def format_transcript(messages: Sequence[AnyChatMessage]) -> str:
+def format_transcript(messages: Sequence[AnyChatMessage]) -> str:  # noqa: C901
     """Render messages as plain text for a summarization prompt."""
     lines: list[str] = []
     for msg in messages:
         if isinstance(msg, SystemChatMessage):
             lines.append(f"[system] {msg.content}")
+        elif isinstance(msg, DeveloperChatMessage):
+            lines.append(f"[developer] {msg.content}")
         elif isinstance(msg, UserChatMessage):
             lines.append(f"[user] {msg.content}")
         elif isinstance(msg, AssistantChatMessage):

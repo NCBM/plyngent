@@ -13,10 +13,10 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    DeveloperChatMessage,
     StreamOptions,
     StreamToolCallDelta,
     ToolChatMessage,
-    UserChatMessage,
 )
 from plyngent.typedef import Unset  # noqa: TC001
 
@@ -377,7 +377,8 @@ async def run_chat_loop(
                     and not todo_review_injected
                 ):
                     todo_review_injected = True
-                    messages.append(UserChatMessage(content=todo_stack.review_prompt()))
+                    # Non-user control identity so retry/history don't treat this as human input.
+                    messages.append(DeveloperChatMessage(content=todo_stack.review_prompt()))
                     continue
                 return
             async for event in _execute_tool_calls(

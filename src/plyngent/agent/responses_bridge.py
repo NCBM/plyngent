@@ -29,6 +29,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionsParam,
     ChunkChoice,
     DeltaMessage,
+    DeveloperChatMessage,
     StreamFunctionDelta,
     StreamToolCallDelta,
     SystemChatMessage,
@@ -97,6 +98,10 @@ def chat_messages_to_responses_input(
         if isinstance(message, SystemChatMessage):
             if message.content.strip():
                 instructions_parts.append(message.content)
+        elif isinstance(message, DeveloperChatMessage):
+            # Keep mid-turn control as input developer messages (not folded into instructions).
+            if message.content.strip():
+                items.append(ResponseEasyInputMessage(role="developer", content=message.content))
         elif isinstance(message, UserChatMessage):
             items.append(ResponseEasyInputMessage(role="user", content=message.content))
         elif isinstance(message, AssistantChatMessage):

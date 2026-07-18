@@ -15,6 +15,8 @@ from plyngent.cli.selection import select_model, select_provider
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
+    DeveloperChatMessage,
+    SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
 )
@@ -973,6 +975,10 @@ def _preview_content(text: str | None) -> str:
 def _format_history_message(index: int, message: AnyChatMessage) -> str:
     if isinstance(message, UserChatMessage):
         return f"{index}. user: {_preview_content(message.content)}"
+    if isinstance(message, DeveloperChatMessage):
+        return f"{index}. developer: {_preview_content(message.content)}"
+    if isinstance(message, SystemChatMessage):
+        return f"{index}. system: {_preview_content(message.content)}"
     if isinstance(message, AssistantChatMessage):
         parts: list[str] = []
         if isinstance(message.content, str) and message.content:
