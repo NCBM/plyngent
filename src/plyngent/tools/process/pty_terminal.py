@@ -1,34 +1,16 @@
-"""Host-terminal safety helpers for agent PTY sessions.
+"""PTY payload helpers for agent tools.
 
-Child PTY I/O is isolated on the master FD. The practical leak is that
-``read_pty`` returns raw CSI/alt-screen sequences which the CLI then echoes
-to the *user's* stdout as tool results — those bytes reprogram the host TTY.
+Child PTY I/O stays on the master FD. Tool results are printed on the *user*
+TTY by the CLI, so any CSI/control bytes in ``read_pty`` data would reprogram
+the host terminal. We sanitize on the tool boundary instead of resetting the
+host after close (which flashes the screen on every chat exit).
 """
 
 from __future__ import annotations
 
-import contextlib
 import re
-import sys
-from typing import Final
 
-# Leave alt-screen, restore cursor visibility, reset SGR, keypad, mouse, etc.
-# Intentional over-reset: cheap and safe after TUI children.
-_HOST_RESTORE: Final[str] = (
-    "\x1b[?1049l"  # leave alternate screen buffer
-    "\x1b[?47l"  # leave alt screen (legacy)
-    "\x1b[?25h"  # show cursor
-    "\x1b[0m"  # reset SGR
-    "\x1b[?1l"  # normal cursor keys
-    "\x1b[?1000l"  # mouse off
-    "\x1b[?1002l"
-    "\x1b[?1003l"
-    "\x1b[?1006l"
-    "\x1b[?2004l"  # bracketed paste off
-    "\x1b[?7h"  # wraparound on
-    "\r\n"
-)
-
+# Match common \xNN / \uNNNN / named ctrl+ / esc sequences in write_pty_keys data.
 _HEX_BYTE = re.compile(r"\\x([0-9A-Fa-f]{2})")
 _HEX_U = re.compile(r"\\u([0-9A-Fa-f]{4})")
 _CTRL = re.compile(r"ctrl\+([a-z@\[\\\]\^_])", re.IGNORECASE)
@@ -54,39 +36,30 @@ _KEY_MAP = {
 }
 _SIMPLE_ESCAPE_LEN = 2
 
-
-def restore_host_terminal() -> None:
-    """Best-effort reset of the *user* terminal (stdout), if it is a TTY."""
-    try:
-        out = sys.stdout
-        if not out.isatty():
-            return
-        buffer = getattr(out, "buffer", None)
-        if buffer is not None:
-            with contextlib.suppress(OSError, ValueError):
-                _ = buffer.write(_HOST_RESTORE.encode("ascii", errors="replace"))
-                _ = buffer.flush()
-                return
-        with contextlib.suppress(OSError, ValueError):
-            _ = out.write(_HOST_RESTORE)
-            _ = out.flush()
-    except AttributeError, OSError, ValueError:
-        return
+# C0 controls except TAB/LF/CR (those stay for readable logs).
+_UNSAFE_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def sanitize_pty_output_for_tool(data: str) -> str:
     """Make PTY bytes safe to print on the host as tool/chat text.
 
-    Escapes ESC (``\\\\x1b``) so CSI sequences are visible text instead of
-    control codes when the CLI echoes tool results.
+    - ESC becomes the two-character sequence ``\\\\x1b`` so CSI is not executed
+      when the CLI echoes tool results.
+    - Other C0 controls (except tab/LF/CR) become ``\\\\xHH``.
     """
-    if not data or "\x1b" not in data:
+    if not data:
         return data
-    return data.replace("\x1b", "\\x1b")
+
+    def _esc_ctrl(match: re.Match[str]) -> str:
+        return f"\\x{ord(match.group(0)):02x}"
+
+    # ESC first as a stable, readable form used in docs/tests.
+    out = data.replace("\x1b", "\\x1b")
+    return _UNSAFE_CTRL.sub(_esc_ctrl, out)
 
 
 def decode_write_data(data: str) -> str:
-    """Expand agent-friendly escapes into raw PTY input.
+    """Expand agent-friendly escapes into raw PTY input (for ``write_pty_keys`` only).
 
     Supported (as literal characters in ``data``):
 
@@ -98,7 +71,6 @@ def decode_write_data(data: str) -> str:
     if not data:
         return data
 
-    # Order: multi-char named tokens first, then hex, then simple backslash pairs.
     out: list[str] = []
     i = 0
     n = len(data)

@@ -8,7 +8,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, ClassVar
 
 from plyngent.tools.process.pty_backend import PtyHandle, pty_available, spawn_pty
-from plyngent.tools.process.pty_terminal import restore_host_terminal, sanitize_pty_output_for_tool
+from plyngent.tools.process.pty_terminal import sanitize_pty_output_for_tool
 from plyngent.tools.workspace import WorkspaceError, check_command_allowed, resolve_path
 
 if TYPE_CHECKING:
@@ -330,7 +330,6 @@ class PtyManager:
                 message="unknown session",
             )
         if session.closed:
-            # No host restore: no child was torn down this call.
             return PtyCloseResult(
                 session_id=session_id,
                 closed=True,
@@ -358,8 +357,8 @@ class PtyManager:
         with cls._lock:
             _ = cls._sessions.pop(session_id, None)
 
-        # Host TTY may have been reprogrammed if tool results echoed CSI.
-        restore_host_terminal()
+        # No host TTY reset: tool-facing read_pty sanitizes CSI so chat echo
+        # cannot reprogram the user terminal.
         return PtyCloseResult(
             session_id=session_id,
             closed=True,
@@ -387,12 +386,7 @@ class PtyManager:
 
     @classmethod
     def close_all(cls) -> None:
-        """Close every open session.
-
-        Host TTY restore runs only when at least one session was actually closed
-        (via :meth:`close`). Empty registry is a no-op — important so Ctrl-D /
-        chat exit does not flash-reset the terminal when no PTY was used.
-        """
+        """Close every open session (no host TTY reset)."""
         with cls._lock:
             ids = list(cls._sessions.keys())
         for session_id in ids:

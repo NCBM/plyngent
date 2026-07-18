@@ -4,8 +4,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 from plyngent.tools.process import (
     close_pty,
     open_pty,
@@ -314,82 +312,28 @@ def test_decode_write_data_escapes() -> None:
 def test_sanitize_pty_output_escapes_csi() -> None:
     from plyngent.tools.process.pty_terminal import sanitize_pty_output_for_tool
 
-    raw = "\x1b[?1049hhello\x1b[0m"
+    raw = chr(0x1B) + "[?1049hhello" + chr(0x1B) + "[0m" + chr(7)
     safe = sanitize_pty_output_for_tool(raw)
-    assert "\x1b" not in safe
+    assert chr(0x1B) not in safe
     assert "\\x1b" in safe
     assert "hello" in safe
+    assert "\\x07" in safe
 
 
-def test_close_all_empty_does_not_restore(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ctrl-D / chat exit calls close_all with no sessions — must not flash TTY."""
-    import plyngent.tools.process.pty_session as ps
-
-    calls: list[int] = []
-
-    def fake_restore() -> None:
-        calls.append(1)
-
-    monkeypatch.setattr(ps, "restore_host_terminal", fake_restore)
+def test_close_all_empty_is_noop() -> None:
+    """Ctrl-D / chat exit with no sessions must not touch the host TTY."""
     PtyManager.close_all()
-    assert calls == []
-
-
-def test_restore_host_terminal_noop_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    from plyngent.tools.process.pty_terminal import restore_host_terminal
-
-    class FakeOut:
-        def isatty(self) -> bool:
-            return False
-
-        def write(self, _s: str) -> int:
-            raise AssertionError("should not write")
-
-    monkeypatch.setattr(sys, "stdout", FakeOut())
-    restore_host_terminal()  # no-op
-
-
-def test_restore_host_terminal_writes_when_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    from plyngent.tools.process.pty_terminal import restore_host_terminal
-
-    written: list[bytes] = []
-
-    class Buf:
-        def write(self, data: bytes) -> int:
-            written.append(data)
-            return len(data)
-
-        def flush(self) -> None:
-            return None
-
-    class FakeOut:
-        buffer = Buf()
-
-        def isatty(self) -> bool:
-            return True
-
-    monkeypatch.setattr(sys, "stdout", FakeOut())
-    restore_host_terminal()
-    assert written
-    blob = b"".join(written)
-    assert b"\x1b[?1049l" in blob
 
 
 async def test_read_pty_sanitizes_esc(workspace: object) -> None:
     del workspace
     try:
-        # Print ESC so tool-facing read must escape it.
-        opened = call_sync(open_pty, _py("print('\\x1b[31mred\\x1b[0m')"))
+        opened = call_sync(open_pty, _py("print(chr(0x1B)+'[31mred'+chr(0x1B)+'[0m')"))
         session_id = _session_id(opened)
         text = await call_async(read_pty, session_id, timeout=2.0, until="red")
         assert "red" in text
-        # Raw ESC must not appear in tool payload.
         payload = text.split("--- data ---", 1)[-1]
-        assert "\x1b" not in payload
+        assert chr(0x1B) not in payload
         assert "\\x1b" in payload or "red" in payload
         _ = await call_async(close_pty, session_id)
     finally:
@@ -424,8 +368,7 @@ def test_write_pty_is_literal() -> None:
 
     from plyngent.tools.process.pty_terminal import decode_write_data
 
-    # Decoder is intentionally aggressive; that is why write_pty stays literal.
-    assert decode_write_data("press ctrl+c to cancel") == "press \x03 to cancel"
+    assert decode_write_data("press ctrl+c to cancel") == "press " + chr(3) + " to cancel"
     src = inspect.getsource(write_pty.handler)
     assert "decode_write_data" not in src
     doc = write_pty.description or write_pty.handler.__doc__ or ""
