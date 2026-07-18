@@ -1,0 +1,27 @@
+# Commit gateway via prek (https://prek.j178.dev/) — drop-in pre-commit compatible.
+# Install: uv tool install prek  (or: pipx install prek)
+# Wire git: prek install
+# Manual:  prek run --all-files
+
+default_install_hook_types = ["pre-commit"]
+default_stages = ["pre-commit"]
+default_language_version = { python = "python3.14" }
+
+# Ruff: lint (with autofix) then format — order matters (fix before format).
+# https://docs.astral.sh/ruff/integrations/#pre-commit
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.15.22"
+hooks = [
+  { id = "ruff-check", args = ["--fix"], types_or = ["python", "pyi"] },
+  { id = "ruff-format", types_or = ["python", "pyi"] },
+]
+
+# basedpyright: full-project typecheck (same as CI `pdm run basedpyright .`).
+# Mirror hook: https://docs.basedpyright.com/latest/installation/prek-hook/
+# Uses system+PDM so imports resolve from the project venv (isolated hook envs lack deps).
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "basedpyright", name = "basedpyright", language = "system", entry = "pdm run basedpyright .", pass_filenames = false, files = "\\.pyi?$" },
+]

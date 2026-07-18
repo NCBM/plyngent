@@ -33,7 +33,6 @@ from plyngent.lmproto.openai_compatible.model import (
     StreamFunctionDelta,
     StreamToolCallDelta,
     SystemChatMessage,
-    ToolChatMessage,
     ToolFunctionItem,
     UserChatMessage,
 )
@@ -106,17 +105,14 @@ def chat_messages_to_responses_input(
             items.append(ResponseEasyInputMessage(role="user", content=message.content))
         elif isinstance(message, AssistantChatMessage):
             items.extend(_assistant_to_input_items(message))
-        elif isinstance(message, ToolChatMessage):
+        else:
+            # ToolChatMessage (remaining AnyChatMessage arm)
             items.append(
                 ResponseFunctionToolCallOutput(
                     call_id=message.tool_call_id,
                     output=message.content,
                 )
             )
-        else:
-            content = getattr(message, "content", None)
-            if isinstance(content, str) and content:
-                items.append(ResponseEasyInputMessage(role="user", content=content))
 
     instructions = "\n\n".join(instructions_parts) if instructions_parts else None
     return instructions, items
@@ -173,13 +169,10 @@ def responses_status_to_finish_reason(
     status_s = status if isinstance(status, str) else None
     if status_s == "incomplete":
         details = response.incomplete_details
-        reason = None
         if details is not UNSET and details is not None:
             raw_reason = details.reason
-            if raw_reason is not UNSET and isinstance(raw_reason, str):
-                reason = raw_reason
-        if reason == "content_filter":
-            return "content_filter"
+            if raw_reason is not UNSET and raw_reason == "content_filter":
+                return "content_filter"
         return "length"
     if status_s in {"failed", "cancelled"}:
         return status_s

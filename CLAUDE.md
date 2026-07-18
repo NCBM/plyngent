@@ -17,9 +17,14 @@ pdm run ruff format .          # apply formatting
 pdm run ruff format --check .  # CI: fail if unformatted (do not skip)
 pdm run basedpyright .         # type checking (basedpyright, "recommended" strictness)
 pdm run pytest                 # tests (pytest-asyncio auto mode)
+
+# Commit gateway (prek — https://prek.j178.dev/): ruff check/format + basedpyright
+uv tool install prek           # once
+prek install                   # wire git pre-commit hook (once per clone)
+prek run --all-files           # run all hooks on demand
 ```
 
-GitHub Actions runs `ruff check`, `ruff format --check`, `basedpyright`, then `pytest`. Format locally with `pdm run ruff format .` so CI does not fail after publish.
+GitHub Actions runs `ruff check`, `ruff format --check`, `basedpyright`, then `pytest`. Local commits run the same checks via `prek.toml` so `ruff format` is not forgotten.
 
 ## Architecture
 

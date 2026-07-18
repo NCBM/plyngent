@@ -95,7 +95,8 @@ class TodoStack:
                     for frame in cast("list[object]", frames_raw):
                         if not isinstance(frame, dict):
                             continue
-                        frame_items = msgspec.convert(frame.get("items"), type=list[TodoItem])
+                        frame_map = cast("dict[str, object]", frame)
+                        frame_items = msgspec.convert(frame_map.get("items"), type=list[TodoItem])
                         items.extend(frame_items)
                 return cls(TodoStackData(items=items, next_id=next_id))
             except msgspec.ValidationError, TypeError, ValueError:

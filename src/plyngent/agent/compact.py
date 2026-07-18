@@ -10,7 +10,6 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionsParam,
     DeveloperChatMessage,
     SystemChatMessage,
-    ToolChatMessage,
     UserChatMessage,
 )
 
@@ -44,7 +43,7 @@ _SEED_MESSAGE_TEMPLATE = (
 )
 
 
-def format_transcript(messages: Sequence[AnyChatMessage]) -> str:  # noqa: C901
+def format_transcript(messages: Sequence[AnyChatMessage]) -> str:
     """Render messages as plain text for a summarization prompt."""
     lines: list[str] = []
     for msg in messages:
@@ -65,10 +64,9 @@ def format_transcript(messages: Sequence[AnyChatMessage]) -> str:  # noqa: C901
                         lines.append(f"[assistant tool_call] {call.function.name}({call.function.arguments})")
                     else:
                         lines.append(f"[assistant tool_call] custom id={call.id}")
-        elif isinstance(msg, ToolChatMessage):
-            lines.append(f"[tool {msg.tool_call_id}] {msg.content}")
         else:
-            lines.append(f"[message] {msg!r}")
+            # ToolChatMessage (remaining AnyChatMessage arm)
+            lines.append(f"[tool {msg.tool_call_id}] {msg.content}")
     return "\n".join(lines)
 
 

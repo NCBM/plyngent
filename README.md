@@ -71,7 +71,15 @@ pdm run basedpyright .
 pdm run pytest
 ```
 
-CI fails if sources are not Ruff-formatted (`ruff format --check`). Run `pdm run ruff format .` before push.
+**Commit gateway** ([prek](https://prek.j178.dev/)): runs ruff check + format and basedpyright on `git commit` so format is not forgotten.
+
+```bash
+uv tool install prek    # once
+prek install            # once per clone (installs .git/hooks/pre-commit)
+prek run --all-files    # run all hooks on demand
+```
+
+Config: `prek.toml`. CI still runs the same checks in GitHub Actions.
 
 ## Basic usage
 

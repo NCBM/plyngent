@@ -30,6 +30,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionsParam,
     ChunkChoice,
     DeltaMessage,
+    FinishReason,
     StreamFunctionDelta,
     StreamToolCallDelta,
     ToolChatMessage,
@@ -174,8 +175,8 @@ class ScriptedClient:
 def _response(
     message: AssistantChatMessage,
     *,
-    usage: dict[str, int] | None = None,
-    finish_reason: str | None = "stop",
+    usage: dict[str, object] | None = None,
+    finish_reason: FinishReason | None = "stop",
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id="1",

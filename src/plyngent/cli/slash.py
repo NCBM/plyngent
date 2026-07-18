@@ -17,7 +17,6 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionToolCall,
     DeveloperChatMessage,
     SystemChatMessage,
-    ToolChatMessage,
     UserChatMessage,
 )
 from plyngent.runtime import ProviderNotSupportedError
@@ -36,7 +35,7 @@ _YOLO_MODE_CHOICES = ("on", "off", "once")
 _EXPORT_FORMAT_CHOICES = ("md", "json")
 
 
-class HistoryLimitType(click.ParamType):
+class HistoryLimitType(click.ParamType[int]):
     """``N`` (int >= 1) or the shortcut ``last`` (equivalent to ``1``)."""
 
     name: str = "history_limit"
@@ -1100,15 +1099,9 @@ def _print_history_message_full(index: int, message: AnyChatMessage) -> None:
     if isinstance(message, AssistantChatMessage):
         _print_history_assistant_full(index, message)
         return
-    if isinstance(message, ToolChatMessage):
-        click.secho(f"{index}. tool({message.tool_call_id}):", fg="magenta")
-        click.echo(message.content or "")
-        click.echo()
-        return
-    role = getattr(message, "role", type(message).__name__)
-    content = getattr(message, "content", "")
-    click.echo(f"{index}. {role}:")
-    click.echo(str(content))
+    # ToolChatMessage (remaining AnyChatMessage arm)
+    click.secho(f"{index}. tool({message.tool_call_id}):", fg="magenta")
+    click.echo(message.content or "")
     click.echo()
 
 
@@ -1134,11 +1127,8 @@ def _format_history_message(index: int, message: AnyChatMessage) -> str:
             parts.append(f"tool_calls=[{', '.join(names)}]")
         body = " ".join(parts) if parts else "(empty)"
         return f"{index}. assistant: {body}"
-    if isinstance(message, ToolChatMessage):
-        return f"{index}. tool({message.tool_call_id}): {_preview_content(message.content)}"
-    role = getattr(message, "role", type(message).__name__)
-    content = getattr(message, "content", "")
-    return f"{index}. {role}: {_preview_content(str(content))}"
+    # ToolChatMessage
+    return f"{index}. tool({message.tool_call_id}): {_preview_content(message.content)}"
 
 
 def _run_slash_argv(args: Sequence[str], state: ReplState) -> None:
