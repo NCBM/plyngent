@@ -30,6 +30,26 @@ def test_parse_push_titles() -> None:
     assert parse_push_titles('["A", "B"]') == ["A", "B"]
 
 
+def test_ids_reuse_after_clear() -> None:
+    stack = TodoStack()
+    g = stack.push_group(["A", "B"])
+    assert [i.id for i in g.items] == ["t1", "t2"]
+    assert stack.clear() == 2
+    g2 = stack.push_group(["C"])
+    assert [i.id for i in g2.items] == ["t1"]
+
+
+def test_ids_reuse_after_pop() -> None:
+    stack = TodoStack()
+    _ = stack.push_group(["A", "B"])  # t1, t2
+    g2 = stack.push_group(["C"])  # t3
+    assert g2.items[0].id == "t3"
+    _ = stack.pop()  # drop t3
+    g3 = stack.push_group(["D"])
+    # Highest live id is t2 → next is t3 again
+    assert g3.items[0].id == "t3"
+
+
 def test_push_is_group_not_per_task_stack() -> None:
     """Multi-title push is one group; pop removes the whole group."""
     stack = TodoStack()

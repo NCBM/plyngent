@@ -184,6 +184,20 @@ class TodoStack:
             f"Current stack:\n{self.render()}"
         )
 
+    def _existing_numeric_ids(self) -> list[int]:
+        """Numeric suffixes of ids that look like ``tN`` (for counter reuse)."""
+        return [
+            int(item.id[1:])
+            for group in self._data.groups
+            for item in group.items
+            if item.id.startswith("t") and item.id[1:].isdigit()
+        ]
+
+    def _sync_next_id(self) -> None:
+        """Set ``next_id`` to one past the highest live id (or 1 if empty)."""
+        nums = self._existing_numeric_ids()
+        self._data.next_id = max(nums) + 1 if nums else 1
+
     def _alloc(self, title: str, *, notes: str, status: TodoStatus) -> TodoItem:
         item_id = f"t{self._data.next_id}"
         self._data.next_id += 1
@@ -202,6 +216,8 @@ class TodoStack:
             msg = "at least one non-empty title is required"
             raise ValueError(msg)
         note = notes.strip()
+        # Rebase counter on live ids so clear/pop do not leave a high watermark.
+        self._sync_next_id()
         items = [self._alloc(title, notes=note, status=status) for title in cleaned]
         group = TodoGroup(items=items)
         self._data.groups.append(group)
@@ -218,12 +234,14 @@ class TodoStack:
         if not self._data.groups:
             return None
         group = self._data.groups.pop()
+        self._sync_next_id()
         self.mark_touched()
         return group
 
     def clear(self) -> int:
         n = sum(len(g.items) for g in self._data.groups)
         self._data.groups.clear()
+        self._sync_next_id()
         if n:
             self.mark_touched()
         return n

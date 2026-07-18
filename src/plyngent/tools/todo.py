@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import tool
-from plyngent.agent.todo_stack import parse_push_titles
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,17 +52,17 @@ def todo_list() -> str:
 
 
 @tool(name="todo_push")
-def todo_push(titles: str, notes: str = "") -> str:
+def todo_push(titles: list[str], notes: str = "") -> str:
     """Push **one task group** (siblings) onto the stack — not one level per title.
 
-    ``titles``: one title, newlines, ``;``, or JSON array. All listed titles
-    become members of a single new TOP group. Example: ``T1\\nT2`` pushes one
-    group {T1, T2}; a later ``T1.1\\nT1.2`` pushes a child group above it.
+    ``titles``: JSON array of strings (tool schema type ``array``). All entries
+    become members of a single new TOP group. Example: ``[\"T1\", \"T2\"]`` pushes
+    one group {T1, T2}; a later ``[\"T1.1\", \"T1.2\"]`` pushes a child group above it.
     """
     stack = _require_stack()
-    parsed = parse_push_titles(titles)
+    parsed = [t.strip() for t in titles if t and t.strip()]
     if not parsed:
-        return "error: titles must contain at least one non-empty title"
+        return "error: titles must be a non-empty array of strings"
     try:
         group = stack.push_group(parsed, notes=notes)
     except ValueError as exc:

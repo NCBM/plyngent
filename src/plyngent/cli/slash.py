@@ -970,11 +970,11 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
     if act == "push":
         raw = " ".join(rest).strip()
         if not raw:
-            click.echo("error: usage: /todos push <title> | /todos push T1; T2")
+            click.echo('error: usage: /todos push <title> | /todos push ["T1","T2"] | T1; T2')
             return
         titles = parse_push_titles(raw)
         if not titles:
-            click.echo("error: no titles to push")
+            click.echo("error: no titles to push (use a JSON array or ; / newlines)")
             return
         try:
             group = stack.push_group(titles)
