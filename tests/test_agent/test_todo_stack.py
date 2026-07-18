@@ -152,11 +152,11 @@ async def test_todo_tools_and_persist(tmp_path: object) -> None:
         stack = TodoStack()
         set_todo_stack(stack, on_change=None)
         registry = ToolRegistry(list(TODO_TOOLS))
-        out = await registry.execute("todo_push", '{"titles": "T1\\nT2"}')
+        out = await registry.execute("todo_push", '{"titles": ["T1", "T2"]}')
         assert "group" in out.lower() or "pushed" in out
         assert stack.depth == 1
         assert [i.title for i in stack.groups[0].items] == ["T1", "T2"]
-        _ = await registry.execute("todo_push", '{"titles": "T1.1; T1.2"}')
+        out = await registry.execute("todo_push", '{"titles": ["T1", "T2"]}')
         assert stack.depth == 2
         out3 = await registry.execute("todo_pop", "{}")
         assert "popped" in out3
@@ -193,7 +193,7 @@ class ScriptedClient:
         self.calls += 1
         text = "ok" if self.calls > 1 else "done without todos"
         for msg in param.messages:
-            if isinstance(msg, DeveloperChatMessage) and "Todo stack review" in msg.content:
+            if isinstance(msg, DeveloperChatMessage) and "[TODO OPEN]" in msg.content:
                 text = "reviewed stack"
                 break
         return ChatCompletionResponse(
@@ -232,7 +232,7 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
         async for _event in agent.run("do stuff"):
             pass
         assert client.calls >= 2
-        assert any(isinstance(m, DeveloperChatMessage) and "Todo stack review" in m.content for m in agent.messages)
-        assert not any(isinstance(m, UserChatMessage) and "Todo stack review" in m.content for m in agent.messages)
+        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
+        assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)

@@ -174,15 +174,19 @@ class TodoStack:
         return "\n".join(lines)
 
     def review_prompt(self) -> str:
-        return (
-            "Todo stack review (internal control — not a human message).\n"
-            "This is a LIFO stack of **task groups** (not a queue of single tasks).\n"
-            "push([T1,T2]) creates one group of siblings; push([T1.1,T1.2]) pushes a "
-            "child group; pop removes the whole top group. Update items by id; "
-            "pop when a breakdown level is finished. Open work remains and you "
-            "did not call any todo_* tools this turn.\n\n"
-            f"Current stack:\n{self.render()}"
-        )
+        """Compact, model-facing nag: open work still exists this turn."""
+        open_items = self.open_items()
+        n_open = len(open_items)
+        n_groups = self.depth
+        lines = [
+            f"[TODO OPEN] {n_open} open item(s) across {n_groups} group(s) "
+            f"(not empty). You did not call todo_* this turn.",
+            "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
+            "Rules: TOP group = current level; push=one sibling group; pop=remove whole TOP group.",
+            "Act on open work before ending (finish/pop TOP, or push child tasks). Stack:",
+            self.render(),
+        ]
+        return "\n".join(lines)
 
     def _existing_numeric_ids(self) -> list[int]:
         """Numeric suffixes of ids that look like ``tN`` (for counter reuse)."""
