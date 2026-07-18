@@ -33,6 +33,19 @@ _COMPACT_PREVIEW = 400
 _ON_OFF_CHOICES = ("on", "off")
 _YOLO_MODE_CHOICES = ("on", "off", "once")
 _EXPORT_FORMAT_CHOICES = ("md", "json")
+_TODO_ACTION_CHOICES = (
+    "list",
+    "show",
+    "ls",
+    "push",
+    "pop",
+    "done",
+    "cancel",
+    "pending",
+    "in_progress",
+    "clear",
+)
+_ROUNDS_CHOICES = ("8", "16", "32", "64", "128")
 
 
 class HistoryLimitType(click.ParamType[int]):
@@ -69,9 +82,9 @@ HELP_FOOTER = (
     "assistant/tool output is discarded but the user message stays (so /retry\n"
     "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
     "\n"
-    "Tab completes slash commands and some arguments (provider, model, tools,\n"
-    "stream, verbose, yolo, export). Use --session ID or /resume to continue a prior\n"
-    "chat after restart.\n"
+    "Tab completes slash commands and arguments (provider, model, session ids,\n"
+    "todos actions, on/off, yolo, export, flags). Use --session ID or /resume to\n"
+    "continue a prior chat after restart.\n"
     "\n"
     'Multiline: start a message with """ then end a later line with """.\n'
     "Long prompts: /edit opens $EDITOR.\n"
@@ -159,6 +172,80 @@ class ExportFormatParam(click.ParamType[str]):
 
 
 EXPORT_FORMAT = ExportFormatParam()
+
+
+class TodosActionParam(click.ParamType[str]):
+    """First token of ``/todos``: list|push|pop|done|…"""
+
+    name: str = "todos_action"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        del param, ctx
+        return str(value)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        return _filter_choices(incomplete, _TODO_ACTION_CHOICES)
+
+
+TODOS_ACTION = TodosActionParam()
+
+
+class SessionIdParam(click.ParamType[int]):
+    """Session id for ``/resume`` / ``/delete`` (from ReplState cache + current)."""
+
+    name: str = "session_id"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> int:
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        try:
+            return int(text, 10)
+        except ValueError:
+            self.fail("expected a session id (integer)", param, ctx)
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del param
+        state = _repl_state(ctx)
+        if state is None:
+            return []
+        # Sync cache only — no async from readline Tab (no awaitlet greenlet).
+        return _filter_choices(incomplete, state.session_ids_for_complete())
+
+
+SESSION_ID = SessionIdParam()
+
+
+class RoundsParam(click.ParamType[int]):
+    """Max tool-loop rounds (int >= 1); Tab suggests common values."""
+
+    name: str = "rounds"
+
+    @override
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> int:
+        if isinstance(value, int):
+            n = value
+        else:
+            try:
+                n = int(str(value).strip(), 10)
+            except ValueError:
+                self.fail("expected an integer >= 1", param, ctx)
+        if n < 1:
+            self.fail("max_rounds must be >= 1", param, ctx)
+        return n
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        return _filter_choices(incomplete, _ROUNDS_CHOICES)
+
+
+ROUNDS = RoundsParam()
 
 
 class ProviderNameParam(click.ParamType[str]):
@@ -263,21 +350,55 @@ def slash_command_names() -> list[str]:
     return sorted(f"/{name}" for name in slash.list_commands(ctx))
 
 
-def complete_slash_args(state: ReplState, command: str, incomplete: str) -> list[str]:
-    """Tab-complete arguments for ``command`` (e.g. ``/stream``) from ParamTypes.
+def complete_slash_args(
+    state: ReplState,
+    command: str,
+    incomplete: str,
+    *,
+    prior_args: Sequence[str] | None = None,
+) -> list[str]:
+    """Tab-complete arguments/options for ``command`` from ParamTypes.
 
-    Uses the first :class:`click.Argument` on the registered command whose type
-    implements :meth:`~click.ParamType.shell_complete` with candidates.
+    *prior_args* are tokens already typed after the command name (so
+    ``/todos done t`` can complete todo ids). Options are completed when
+    *incomplete* starts with ``-``.
     """
     name = command.lstrip("/").lower()
     ctx = click.Context(slash, obj=state)
     cmd = slash.get_command(ctx, name)
     if cmd is None:
         return []
+    prior = list(prior_args or ())
+
     with click.Context(cmd, info_name=name, parent=ctx, obj=state) as sub:
-        for param in cmd.params:
-            if not isinstance(param, click.Argument):
-                continue
+        # Flag / option completion (e.g. --persist, --full).
+        if incomplete.startswith("-"):
+            flags = [
+                opt
+                for param in cmd.params
+                if isinstance(param, click.Option)
+                for opt in param.opts
+                if opt.startswith(incomplete)
+            ]
+            if flags:
+                return sorted(set(flags))
+
+        # Contextual /todos second token: todo ids after done|cancel|pending|in_progress.
+        if name == "todos" and prior:
+            action = prior[0].lower()
+            if action in {"done", "cancel", "pending", "in_progress"} and len(prior) == 1:
+                ids = [item.id for item in state.todo_stack.all_items()]
+                return [i for i in ids if i.startswith(incomplete)]
+
+        # Positional arguments: complete the next unset argument.
+        arg_params = [p for p in cmd.params if isinstance(p, click.Argument)]
+        arg_index = len(prior)
+        if arg_index < len(arg_params):
+            param = arg_params[arg_index]
+            items = param.type.shell_complete(sub, param, incomplete)
+            if items:
+                return [item.value for item in items]
+        for param in arg_params:
             items = param.type.shell_complete(sub, param, incomplete)
             if items:
                 return [item.value for item in items]
@@ -429,6 +550,7 @@ def status_cmd(state: ReplState) -> None:
 def sessions_cmd(state: ReplState) -> None:
     """List sessions for this workspace (newest first)."""
     sessions = _await(state.memory.list_sessions(workspace=state.workspace))
+    state.remember_session_ids([s.sid for s in sessions])
     if not sessions:
         click.echo(f"(no sessions for workspace {state.workspace})")
         return
@@ -466,7 +588,7 @@ def rename_cmd(state: ReplState, name: tuple[str, ...]) -> None:
 
 
 @slash.command("delete")
-@click.argument("session_id", type=int, required=False)
+@click.argument("session_id", type=SESSION_ID, required=False)
 @click.pass_obj
 def delete_cmd(state: ReplState, session_id: int | None) -> None:
     """Hard-delete a session (confirm; current → new empty)."""
@@ -569,7 +691,7 @@ def export_cmd(state: ReplState, parts: tuple[str, ...]) -> None:
 
 
 @slash.command("resume")
-@click.argument("session_id", type=int, required=False)
+@click.argument("session_id", type=SESSION_ID, required=False)
 @click.pass_obj
 def resume_cmd(state: ReplState, session_id: int | None) -> None:
     """Resume session id, or latest for this workspace if omitted."""
@@ -868,16 +990,13 @@ def markdown_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT00
 
 
 @slash.command("rounds")
-@click.argument("n", required=False, type=int)
+@click.argument("n", required=False, type=ROUNDS)
 @click.pass_obj
 def rounds_cmd(state: ReplState, n: int | None) -> None:
     """Show or set max tool-loop rounds."""
     if n is None:
         click.echo(f"max_rounds={state.max_rounds}")
         return
-    if n < 1:
-        msg = "max_rounds must be >= 1"
-        raise click.UsageError(msg)
     state.max_rounds = n
     state.agent.max_rounds = n
     click.echo(f"max_rounds={state.max_rounds}")
@@ -946,7 +1065,7 @@ def history_cmd(
 
 
 @slash.command("todos")
-@click.argument("action", required=False, type=str)
+@click.argument("action", required=False, type=TODOS_ACTION)
 @click.argument("rest", required=False, nargs=-1, type=str)
 @click.pass_obj
 def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915

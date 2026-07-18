@@ -183,3 +183,20 @@ def test_complete_slash_args_from_registry(tmp_path: object) -> None:
     assert complete_slash_args(state, "/help", "st") == ["status", "stream"]
     assert complete_slash_args(state, "/yolo", "") == ["on", "off", "once"]
     assert complete_slash_args(state, "/yolo", "o") == ["on", "off", "once"]
+    assert "push" in complete_slash_args(state, "/todos", "p")
+    assert "pop" in complete_slash_args(state, "/todos", "p")
+    assert "--persist" in complete_slash_args(state, "/model", "--p")
+    assert "--full" in complete_slash_args(state, "/history", "--f")
+    assert "32" in complete_slash_args(state, "/rounds", "3")
+
+    from plyngent.agent.todo_stack import TodoStack
+
+    state.todo_stack = TodoStack()
+    _ = state.todo_stack.push_group(["alpha", "beta"])
+    ids = complete_slash_args(state, "/todos", "t", prior_args=["done"])
+    assert "t1" in ids
+    assert "t2" in ids
+
+    state.remember_session_ids([3, 12, 40])
+    assert complete_slash_args(state, "/resume", "1") == ["12"]
+    assert complete_slash_args(state, "/delete", "4") == ["40"]

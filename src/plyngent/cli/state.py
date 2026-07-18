@@ -59,6 +59,8 @@ class ReplState:
     session_id: int | None = None
     todo_stack: TodoStack = field(default_factory=TodoStack)
     _todo_persist_tasks: set[object] = field(default_factory=set, init=False, repr=False)
+    # Session ids for Tab complete (updated when listing/creating/resuming).
+    _session_id_cache: list[int] = field(default_factory=list, init=False, repr=False)
     # Remote GET /models cache (per provider base).
     _remote_models: list[str] | None = field(default=None, init=False, repr=False)
     _remote_models_fetched_at: float | None = field(default=None, init=False, repr=False)
@@ -221,6 +223,22 @@ class ReplState:
         self._remote_models_fetched_at = time.monotonic()
         self._remote_models_key = self._models_cache_key()
         self._remote_models_error = None
+
+    def remember_session_ids(self, ids: Sequence[int]) -> None:
+        """Cache session ids for Tab completion (``/resume`` / ``/delete``)."""
+        self._session_id_cache = [int(i) for i in ids]
+
+    def session_ids_for_complete(self) -> list[str]:
+        """String session ids for completers (cache + current session if any)."""
+        seen: set[int] = set()
+        out: list[str] = []
+        for sid in self._session_id_cache:
+            if sid not in seen:
+                seen.add(sid)
+                out.append(str(sid))
+        if self.session_id is not None and self.session_id not in seen:
+            out.insert(0, str(self.session_id))
+        return out
 
     def cached_remote_models(self) -> list[str] | None:
         """Return cached remote ids if still valid for the current provider."""
@@ -423,6 +441,8 @@ class ReplState:
             model=self.model,
         )
         self.session_id = session.sid
+        if session.sid not in self._session_id_cache:
+            self._session_id_cache.insert(0, session.sid)
         self.todo_stack = TodoStack()
         self.agent = self._make_agent()
         self._bind_todo_tools()
@@ -476,6 +496,8 @@ class ReplState:
                     raise ValueError(msg) from exc
 
         self.session_id = session_id
+        if session_id not in self._session_id_cache:
+            self._session_id_cache.insert(0, session_id)
         if self.apply_session_llm(row):
             self.rebuild_client()
         else:

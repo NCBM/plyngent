@@ -54,8 +54,10 @@ def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
             options = filter_prefix(text, slash_commands())
         else:
             head = buffer[:begidx].strip()
-            command = head.split()[0] if head else ""
-            options = complete_slash_args(state, command, text)
+            tokens = head.split() if head else []
+            command = tokens[0] if tokens else ""
+            prior_args = tokens[1:] if len(tokens) > 1 else []
+            options = complete_slash_args(state, command, text, prior_args=prior_args)
         if state_index < len(options):
             return options[state_index]
         return None
