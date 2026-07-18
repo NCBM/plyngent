@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import signal
 from contextlib import contextmanager
-from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,13 +12,16 @@ if TYPE_CHECKING:
 
     type SigHandler = Callable[[int, FrameType | None], None] | int | None
 
-_allow_task_cancel: ContextVar[bool] = ContextVar("allow_task_cancel", default=True)
+# Depth of nested pause_task_cancel_for_prompt. Must be a plain int (not ContextVar):
+# asyncio.add_signal_handler freezes the ContextVar snapshot at install time, so a
+# ContextVar reset after reinstall would leave SIGINT permanently non-cancelling.
+_prompt_depth: int = 0
 _reinstall_holder: list[Callable[[], None] | None] = [None]
 
 
 def allow_task_cancel() -> bool:
     """Whether the CLI SIGINT handler should cancel the in-flight turn task."""
-    return _allow_task_cancel.get()
+    return _prompt_depth == 0
 
 
 def set_sigint_reinstall(callback: Callable[[], None] | None) -> None:
@@ -34,8 +36,14 @@ def pause_task_cancel_for_prompt() -> Generator[None]:
     Must run on the main thread (signal handlers are main-thread only).
     Restores the default SIGINT handler so ``click.confirm`` can receive
     KeyboardInterrupt / Abort instead of the asyncio turn being cancelled.
+
+    Nested prompts are supported via a depth counter. The asyncio SIGINT
+    handler is reinstalled only after depth returns to 0, and only after
+    cancel is re-enabled, so the handler never freezes ``allow=False``.
     """
-    token = _allow_task_cancel.set(False)
+
+    global _prompt_depth  # noqa: PLW0603
+    _prompt_depth += 1
     loop_handler_removed = False
     previous: SigHandler = signal.SIG_DFL
     try:
@@ -56,11 +64,15 @@ def pause_task_cancel_for_prompt() -> Generator[None]:
     finally:
         with contextlib.suppress(ValueError):
             _ = signal.signal(signal.SIGINT, previous)
-        reinstall = _reinstall_holder[0]
-        if loop_handler_removed and reinstall is not None:
-            with contextlib.suppress(RuntimeError, NotImplementedError, ValueError):
-                reinstall()
-        _allow_task_cancel.reset(token)
+        _prompt_depth = max(0, _prompt_depth - 1)
+        # Reinstall only when fully out of prompts and cancel is allowed again.
+        # Order matters: decrement depth first so allow_task_cancel() is True
+        # before reinstall (and handlers never freeze allow=False).
+        if _prompt_depth == 0 and loop_handler_removed:
+            reinstall = _reinstall_holder[0]
+            if reinstall is not None:
+                with contextlib.suppress(RuntimeError, NotImplementedError, ValueError):
+                    reinstall()
 
 
 async def run_in_prompt_thread[**P, R](func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:

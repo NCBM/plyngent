@@ -66,6 +66,9 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     installed = False
 
     def _on_sigint() -> None:
+        # allow_task_cancel() uses a process-level depth counter (not ContextVar)
+        # so this remains correct even if the handler was installed under a
+        # frozen context (asyncio signal handles capture contextvars).
         if allow_task_cancel() and not task.done():
             _ = task.cancel()
 
