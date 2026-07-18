@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from plyngent.tools.process import close_pty, open_pty, read_pty, run_command, write_pty
+from plyngent.tools.process import (
+    close_pty,
+    open_pty,
+    read_pty,
+    run_command,
+    write_pty,
+    write_pty_keys,
+)
 from plyngent.tools.process.pty_session import PtyManager
 from plyngent.tools.workspace import set_command_denylist
 from tests.test_tools.helpers import call_async, call_sync
@@ -375,7 +382,7 @@ async def test_read_pty_sanitizes_esc(workspace: object) -> None:
         PtyManager.close_all()
 
 
-async def test_write_pty_ctrl_escape(workspace: object) -> None:
+async def test_write_pty_keys_ctrl_escape(workspace: object) -> None:
     del workspace
     try:
         opened = call_sync(
@@ -388,15 +395,27 @@ async def test_write_pty_ctrl_escape(workspace: object) -> None:
             ),
         )
         session_id = _session_id(opened)
-        written = call_sync(write_pty, session_id, "ctrl+c")
+        written = call_sync(write_pty_keys, session_id, "ctrl+c")
         assert "wrote=1" in written
         text = await call_async(read_pty, session_id, timeout=2.0)
-        # ESC sanitized; Ctrl+C is 0x03 — may appear as raw or escaped depending
-        # on printable; just ensure write succeeded and process got input.
         assert "error" not in text.lower() or "alive=" in text
         _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
+
+
+def test_write_pty_is_literal() -> None:
+    """Plain write_pty must not call the keys decoder."""
+    import inspect
+
+    from plyngent.tools.process.pty_terminal import decode_write_data
+
+    # Decoder is intentionally aggressive; that is why write_pty stays literal.
+    assert decode_write_data("press ctrl+c to cancel") == "press \x03 to cancel"
+    src = inspect.getsource(write_pty.handler)
+    assert "decode_write_data" not in src
+    doc = write_pty.description or write_pty.handler.__doc__ or ""
+    assert "literal" in doc.lower()
 
 
 def test_pty_backend_available() -> None:

@@ -4,25 +4,12 @@ from plyngent.agent import tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_session import PtyManager
-from .pty_terminal import decode_write_data
 
 
-@tool
-def write_pty(session_id: int, data: str) -> str:
-    """Write text to a PTY session (interactive input). Does not append a newline.
-
-    Escapes (literal backslash sequences in ``data``): ``\\n`` ``\\r`` ``\\t``
-    ``\\e``/``\\E`` (ESC), ``\\xHH``, ``\\uHHHH``, ``ctrl+x`` / ``ctrl+c``, and
-    ``key=esc|enter|tab|up|down|left|right``.
-    """
-    try:
-        raw = decode_write_data(data)
-        PtyManager.write(session_id, raw)
-        session = PtyManager.refresh(session_id)
-    except WorkspaceError as exc:
-        return f"error: {exc}"
-    except OSError as exc:
-        return f"error: failed to write PTY: {exc}"
+def write_pty_payload(session_id: int, raw: str) -> str:
+    """Write raw bytes (as str) to the PTY and format the tool status string."""
+    PtyManager.write(session_id, raw)
+    session = PtyManager.refresh(session_id)
     exit_disp = "" if session.exit_code is None else str(session.exit_code)
     return "\n".join(
         [
@@ -32,3 +19,18 @@ def write_pty(session_id: int, data: str) -> str:
             f"wrote={len(raw.encode())}",
         ]
     )
+
+
+@tool
+def write_pty(session_id: int, data: str) -> str:
+    """Write **literal** text to a PTY session. Does not append a newline.
+
+    ``data`` is sent unchanged (no ``ctrl+x`` / ``\\\\xHH`` expansion). For
+    control sequences use :func:`write_pty_keys`.
+    """
+    try:
+        return write_pty_payload(session_id, data)
+    except WorkspaceError as exc:
+        return f"error: {exc}"
+    except OSError as exc:
+        return f"error: failed to write PTY: {exc}"

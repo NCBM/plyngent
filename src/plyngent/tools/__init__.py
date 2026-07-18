@@ -21,6 +21,7 @@ from .process import open_pty as open_pty
 from .process import read_pty as read_pty
 from .process import run_command as run_command
 from .process import write_pty as write_pty
+from .process import write_pty_keys as write_pty_keys
 from .todo import TODO_TOOLS as TODO_TOOLS
 from .todo import get_todo_stack as get_todo_stack
 from .todo import set_todo_stack as set_todo_stack

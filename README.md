@@ -234,7 +234,7 @@ Safety defaults:
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.
   Prefer file tools over full-screen editors (`vim`/`nano`) for edits. `read_pty` escapes CSI so tool
   results cannot reprogram the host TTY; `close_pty` / chat exit also restore the host terminal.
-  `write_pty` accepts escapes: `\xHH`, `ctrl+x`, `key=esc|enter|…`.
+  `write_pty` is literal text only; use `write_pty_keys` for `\xHH`, `ctrl+x`, `key=esc|enter|…`.
 
 ## Usage / context (CLI)
 
