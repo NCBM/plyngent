@@ -35,6 +35,40 @@ _ON_OFF_CHOICES = ("on", "off")
 _YOLO_MODE_CHOICES = ("on", "off", "once")
 _EXPORT_FORMAT_CHOICES = ("md", "json")
 
+
+class HistoryLimitType(click.ParamType):
+    """``N`` (int >= 1) or the shortcut ``last`` (equivalent to ``1``)."""
+
+    name: str = "history_limit"
+
+    @override
+    def convert(self, value: object, param: click.Parameter | None, ctx: click.Context | None) -> int:
+        if isinstance(value, int):
+            if value < 1:
+                self.fail("must be >= 1", param, ctx)
+            return value
+        text = str(value).strip().lower()
+        if text == "last":
+            return 1
+        try:
+            n = int(text, 10)
+        except ValueError:
+            self.fail("expected an integer N or 'last'", param, ctx)
+        if n < 1:
+            self.fail("must be >= 1", param, ctx)
+        return n
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del ctx, param
+        tokens = ("last", "1", "5", "10", "20")
+        return [
+            CompletionItem(token)
+            for token in tokens
+            if incomplete == "" or token.startswith(incomplete.lower())
+        ]
+
+
 HELP_FOOTER = (
     "User messages are saved immediately. On API errors or Ctrl+C, partial\n"
     "assistant/tool output is discarded but the user message stays (so /retry\n"
@@ -677,10 +711,7 @@ def models_cmd(state: ReplState, *, refresh: bool, persist: bool) -> None:  # no
     if persist:
         try:
             path = state.persist_models_to_config(mode="catalog", catalog_ids=remote or ())
-            click.echo(
-                f"persisted {len(state.provider.models)} model(s) for "
-                f"{state.provider_name!r} to {path}"
-            )
+            click.echo(f"persisted {len(state.provider.models)} model(s) for {state.provider_name!r} to {path}")
         except (KeyError, ValueError, OSError) as exc:
             click.secho(f"error: could not persist models: {exc}", fg="red")
             return
@@ -858,27 +889,65 @@ def rounds_cmd(state: ReplState, n: int | None) -> None:
 
 
 @slash.command("history")
-@click.argument("n", required=False, type=int)
+@click.argument("n", required=False, type=HistoryLimitType())
+@click.option(
+    "--full",
+    "mode_full",
+    is_flag=True,
+    default=False,
+    help="Print full message bodies (markdown for assistant when TTY).",
+)
+@click.option(
+    "--preview",
+    "mode_preview",
+    is_flag=True,
+    default=False,
+    help="Force short previews even for a single message.",
+)
 @click.pass_obj
-def history_cmd(state: ReplState, n: int | None) -> None:
-    """Show last n messages in this session (default 20)."""
-    limit = _DEFAULT_HISTORY_LINES if n is None else n
-    if limit < 1:
-        msg = "n must be >= 1"
+def history_cmd(
+    state: ReplState,
+    n: int | None,
+    *,
+    mode_full: bool,
+    mode_preview: bool,
+) -> None:
+    """Show recent messages (default: last 20 as short previews).
+
+    ``/history last`` or ``/history 1`` shows the last message in full with Rich
+    markdown when available. Use ``--full`` for multiple messages in full;
+    ``--preview`` forces the short form even for a single message.
+    """
+    if mode_full and mode_preview:
+        msg = "use only one of --full / --preview"
         raise click.UsageError(msg)
+    limit = _DEFAULT_HISTORY_LINES if n is None else n
     messages = state.agent.messages
     if not messages:
         click.echo("(no messages in this session)")
         return
     start = max(0, len(messages) - limit)
-    click.echo(f"session={state.session_id}  messages={len(messages)}  showing={len(messages) - start}")
-    for offset, message in enumerate(messages[start:]):
-        click.echo(_format_history_message(start + offset, message))
+    slice_msgs = messages[start:]
+    # Full: --full, or single-message window (last / 1) unless --preview.
+    full = mode_full or (len(slice_msgs) == 1 and not mode_preview)
+    mode_tag = "full" if full else "preview"
+    click.echo(f"session={state.session_id}  messages={len(messages)}  showing={len(slice_msgs)}  mode={mode_tag}")
+    for offset, message in enumerate(slice_msgs):
+        idx = start + offset
+        if full:
+            _print_history_message_full(idx, message)
+        else:
+            click.echo(_format_history_message(idx, message))
     if state.agent.pending_retry_text is not None:
-        click.secho(
-            f"(pending retry) user: {_preview_content(state.agent.pending_retry_text)}",
-            fg="yellow",
-        )
+        pending = state.agent.pending_retry_text
+        if full:
+            click.secho("(pending retry) user:", fg="yellow")
+            click.echo(pending)
+        else:
+            click.secho(
+                f"(pending retry) user: {_preview_content(pending)}",
+                fg="yellow",
+            )
 
 
 @slash.command("todos")
@@ -970,6 +1039,70 @@ def _preview_content(text: str | None) -> str:
     if len(text) <= _CONTENT_PREVIEW:
         return text
     return text[:_CONTENT_PREVIEW] + "…"
+
+
+def _print_history_assistant_full(index: int, message: AssistantChatMessage) -> None:
+    from plyngent.cli.display import markdown_render_available, print_markdown
+
+    click.secho(f"{index}. assistant:", fg="cyan")
+    content = message.content
+    has_text = isinstance(content, str) and content.strip()
+    if has_text and isinstance(content, str):
+        if markdown_render_available():
+            print_markdown(content, label="")
+        else:
+            click.echo(content)
+    reasoning = message.reasoning_content
+    has_reason = isinstance(reasoning, str) and reasoning.strip()
+    if has_reason and isinstance(reasoning, str):
+        click.secho("reasoning:", fg="bright_black")
+        click.echo(reasoning)
+    tool_calls = message.tool_calls
+    has_tools = tool_calls is not UNSET and bool(tool_calls)
+    if has_tools and tool_calls is not UNSET:
+        for call in tool_calls:
+            if isinstance(call, AssistantFunctionToolCall):
+                click.secho(
+                    f"  tool_call {call.id}: {call.function.name}({call.function.arguments})",
+                    fg="yellow",
+                )
+            else:
+                click.secho(f"  tool_call custom id={call.id}", fg="yellow")
+    if not (has_text or has_reason or has_tools):
+        click.echo("(empty)")
+    click.echo()
+
+
+def _print_history_message_full(index: int, message: AnyChatMessage) -> None:
+    """Print one history message with full body; Rich markdown for assistant text."""
+    if isinstance(message, UserChatMessage):
+        click.secho(f"{index}. user:", fg="green")
+        click.echo(message.content or "")
+        click.echo()
+        return
+    if isinstance(message, DeveloperChatMessage):
+        click.secho(f"{index}. developer:", fg="blue")
+        click.echo(message.content or "")
+        click.echo()
+        return
+    if isinstance(message, SystemChatMessage):
+        click.secho(f"{index}. system:", fg="bright_black")
+        click.echo(message.content or "")
+        click.echo()
+        return
+    if isinstance(message, AssistantChatMessage):
+        _print_history_assistant_full(index, message)
+        return
+    if isinstance(message, ToolChatMessage):
+        click.secho(f"{index}. tool({message.tool_call_id}):", fg="magenta")
+        click.echo(message.content or "")
+        click.echo()
+        return
+    role = getattr(message, "role", type(message).__name__)
+    content = getattr(message, "content", "")
+    click.echo(f"{index}. {role}:")
+    click.echo(str(content))
+    click.echo()
 
 
 def _format_history_message(index: int, message: AnyChatMessage) -> str:

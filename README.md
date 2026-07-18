@@ -188,7 +188,8 @@ Type `/help` in the REPL for the live list. Common ones:
 | Command | Purpose |
 |---------|---------|
 | `/status` | Provider, session, context/usage estimates |
-| `/history [n]` | Recent messages |
+| `/history [n\|last]` | Recent messages (default preview; `last`/`1` = full + markdown) |
+| `/history --full` | Full bodies for the selected window |
 | `/sessions` | Sessions for this workspace |
 | `/new` `/resume` `/rename` `/delete` | Session lifecycle (`/delete` confirms) |
 | `/export [md\|json] [path]` | Transcript from DB (no secrets) |
