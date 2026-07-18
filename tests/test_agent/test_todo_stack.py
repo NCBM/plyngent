@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import pytest
 
 from plyngent.agent import ChatAgent, ToolRegistry
-from plyngent.agent.todo_stack import TodoStack
+from plyngent.agent.todo_stack import TodoStack, parse_push_titles
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -23,38 +23,68 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-def test_todo_stack_push_pop_update() -> None:
+def test_parse_push_titles() -> None:
+    assert parse_push_titles("only") == ["only"]
+    assert parse_push_titles("T1\nT2") == ["T1", "T2"]
+    assert parse_push_titles("T1; T2; T3") == ["T1", "T2", "T3"]
+    assert parse_push_titles('["A", "B"]') == ["A", "B"]
+
+
+def test_nested_push_pop_pattern() -> None:
+    """(push)[T1,T2] (push)[T1.1,T1.2] (pop) (push)[T2.1] …"""
     stack = TodoStack()
-    a = stack.push("one")
-    b = stack.push("two")
-    assert a.id == "t1"
-    assert b.id == "t2"
-    assert "one" in stack.render()
-    stack.update("t1", status="done")
+    root = stack.push_titles(["T1", "T2"])
+    assert [i.title for i in root] == ["T1", "T2"]
+    assert stack.depth == 1
+
+    children = stack.push_titles(["T1.1", "T1.2"])
+    assert stack.depth == 2
+    assert [i.title for i in children] == ["T1.1", "T1.2"]
+    stack.update(children[0].id, status="done")
+    stack.update(children[1].id, status="done")
+
     popped = stack.pop()
     assert popped is not None
-    assert popped.id == "t2"
-    assert stack.open_items() == []
+    assert [i.title for i in popped.items] == ["T1.1", "T1.2"]
+    assert stack.depth == 1
+    assert [i.title for i in stack.frames[0].items] == ["T1", "T2"]
+
+    stack.update(root[0].id, status="done")
+    _ = stack.push_titles(["T2.1"])
+    assert stack.depth == 2
+    assert stack.frames[-1].items[0].title == "T2.1"
 
 
 def test_todo_stack_needs_review() -> None:
     stack = TodoStack()
     assert not stack.needs_review()
-    stack.push("work")
+    _ = stack.push("work")
     stack.begin_turn()
     assert stack.needs_review()
     stack.mark_touched()
     assert not stack.needs_review()
 
 
+def test_todo_stack_legacy_flat_raw() -> None:
+    stack = TodoStack.from_raw(
+        {
+            "items": [{"id": "t1", "title": "old", "status": "pending", "notes": ""}],
+            "next_id": 2,
+        }
+    )
+    assert stack.depth == 1
+    assert stack.all_items()[0].title == "old"
+    raw = stack.to_raw()
+    assert "frames" in raw
+
+
 def test_todo_stack_roundtrip_raw() -> None:
     stack = TodoStack()
-    _ = stack.push("x", notes="n")
+    _ = stack.push_titles(["x", "y"], notes="n")
     raw = stack.to_raw()
     restored = TodoStack.from_raw(raw)
-    assert len(restored.items) == 1
-    assert restored.items[0].title == "x"
-    assert restored.items[0].notes == "n"
+    assert restored.depth == 1
+    assert [i.title for i in restored.frames[0].items] == ["x", "y"]
 
 
 async def test_todo_tools_and_persist(tmp_path: object) -> None:
@@ -65,16 +95,21 @@ async def test_todo_tools_and_persist(tmp_path: object) -> None:
         stack = TodoStack()
         set_todo_stack(stack, on_change=None)
         registry = ToolRegistry(list(TODO_TOOLS))
-        assert "pushed t1" in await registry.execute("todo_push", '{"title": "ship it"}')
-        assert "t1" in await registry.execute("todo_list", "{}")
-        assert "done" in await registry.execute(
-            "todo_update", '{"item_id": "t1", "status": "done"}'
-        )
+        out = await registry.execute("todo_push", '{"titles": "T1\\nT2"}')
+        assert "pushed frame" in out
+        assert stack.depth == 1
+        out2 = await registry.execute("todo_push", '{"titles": "T1.1; T1.2"}')
+        assert stack.depth == 2
+        assert "T1.1" in out2
+        out3 = await registry.execute("todo_pop", "{}")
+        assert "popped frame" in out3
+        assert stack.depth == 1
         _ = await memory.update_session_todo_stack(session.sid, stack.to_raw())
         loaded = await memory.get_session_todo_stack(session.sid)
         assert loaded is not None
         again = TodoStack.from_raw(loaded)
-        assert again.items[0].status == "done"
+        assert again.depth == 1
+        assert [i.title for i in again.frames[0].items] == ["T1", "T2"]
     finally:
         set_todo_stack(None)
         await memory.close()
@@ -99,9 +134,7 @@ class ScriptedClient:
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         del stream
         self.calls += 1
-        # First call: finish without tools; second: after review inject.
         text = "ok" if self.calls > 1 else "done without todos"
-        # Detect review message in history
         for msg in param.messages:
             if isinstance(msg, DeveloperChatMessage) and "Todo stack review" in msg.content:
                 text = "reviewed stack"

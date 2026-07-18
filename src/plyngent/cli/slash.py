@@ -954,43 +954,51 @@ def history_cmd(
 @click.argument("action", required=False, type=str)
 @click.argument("rest", required=False, nargs=-1, type=str)
 @click.pass_obj
-def todos_cmd(  # noqa: C901, PLR0911, PLR0912
+def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
     state: ReplState, action: str | None, rest: tuple[str, ...]
 ) -> None:
-    """Show or edit the todo/task stack (sub-tasks).
+    """Show or edit the nested todo/task stack.
 
-    ``/todos`` — list
-    ``/todos push <title>`` — push pending item
-    ``/todos pop`` — remove last open item
+    ``/todos`` — list frames
+    ``/todos push <title>`` or ``/todos push T1; T2`` — new frame of siblings
+    ``/todos pop`` — pop top breakdown frame
     ``/todos done <id>`` / ``/todos cancel <id>`` — set status
     ``/todos clear`` — wipe stack
     """
+    from plyngent.agent.todo_stack import parse_push_titles
+
     stack = state.todo_stack
     act = (action or "list").strip().lower()
     if act in {"list", "show", "ls"}:
         click.echo(stack.render())
         return
     if act == "push":
-        title = " ".join(rest).strip()
-        if not title:
-            click.echo("error: usage: /todos push <title>")
+        raw = " ".join(rest).strip()
+        if not raw:
+            click.echo("error: usage: /todos push <title> | /todos push T1; T2")
+            return
+        titles = parse_push_titles(raw)
+        if not titles:
+            click.echo("error: no titles to push")
             return
         try:
-            item = stack.push(title)
+            items = stack.push_titles(titles)
         except ValueError as exc:
             click.echo(f"error: {exc}")
             return
         _await(state.persist_todo_stack())
-        click.echo(f"pushed {item.id}: {item.title}")
+        ids = ", ".join(i.id for i in items)
+        click.echo(f"pushed frame depth={stack.depth} items=[{ids}]")
         click.echo(stack.render())
         return
     if act == "pop":
-        item = stack.pop()
-        if item is None:
+        frame = stack.pop()
+        if frame is None:
             click.echo("todo stack empty")
             return
         _await(state.persist_todo_stack())
-        click.echo(f"popped {item.id}: {item.title}")
+        titles = ", ".join(f"{i.id}:{i.title}" for i in frame.items) or "(empty)"
+        click.echo(f"popped frame ({titles})")
         click.echo(stack.render())
         return
     if act in {"done", "cancel", "pending", "in_progress"}:
