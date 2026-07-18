@@ -41,10 +41,10 @@ def _notify() -> None:
 
 @tool(name="todo_list")
 def todo_list() -> str:
-    """Show the LIFO todo stack (TOP = next sub-task to work / pop).
+    """Show the LIFO stack of **task groups** (TOP group = current breakdown level).
 
-    Not a queue: only the top is popped. Breakdown: push children on top of a
-    parent, finish and pop them, then the parent (or next sibling) is top again.
+    Push creates one group of siblings; pop removes the whole top group.
+    Pattern: push [T1,T2] → push [T1.1,T1.2] → finish children → pop → push [T2.1]…
     """
     stack = _require_stack()
     stack.mark_touched()
@@ -54,38 +54,37 @@ def todo_list() -> str:
 
 @tool(name="todo_push")
 def todo_push(titles: str, notes: str = "") -> str:
-    """Push task(s) onto the **top** of the LIFO stack.
+    """Push **one task group** (siblings) onto the stack — not one level per title.
 
-    ``titles``: one title, newlines, ``;``, or JSON array. First title becomes
-    the new TOP (worked first). Example: ``T1\\nT2`` → top=T1, under=T2; then
-    ``T1.1\\nT1.2`` → top=T1.1 over T1.2 over T1 over T2.
+    ``titles``: one title, newlines, ``;``, or JSON array. All listed titles
+    become members of a single new TOP group. Example: ``T1\\nT2`` pushes one
+    group {T1, T2}; a later ``T1.1\\nT1.2`` pushes a child group above it.
     """
     stack = _require_stack()
     parsed = parse_push_titles(titles)
     if not parsed:
         return "error: titles must contain at least one non-empty title"
     try:
-        items = stack.push_titles(parsed, notes=notes)
+        group = stack.push_group(parsed, notes=notes)
     except ValueError as exc:
         return f"error: {exc}"
     _notify()
-    top = stack.top
-    top_s = f"{top.id}:{top.title}" if top else "?"
-    ids = ", ".join(i.id for i in items)
-    return f"pushed [{ids}] (top now {top_s})\n{stack.render()}"
+    ids = ", ".join(i.id for i in group.items)
+    return f"pushed group (depth={stack.depth}) items=[{ids}]\n{stack.render()}"
 
 
 @tool(name="todo_pop")
 def todo_pop() -> str:
-    """Pop the **top** item only (classic stack). Does not remove items under it."""
+    """Pop the entire **top group** (all siblings from that push)."""
     stack = _require_stack()
-    item = stack.pop()
-    if item is None:
+    group = stack.pop()
+    if group is None:
         return "todo stack empty"
     _notify()
-    top = stack.top
-    top_s = f"{top.id}:{top.title}" if top else "(empty)"
-    return f"popped TOP {item.id}: {item.title} ({item.status}); new top={top_s}\n{stack.render()}"
+    titles = ", ".join(f"{i.id}:{i.title}" for i in group.items) or "(empty)"
+    top = stack.top_group
+    top_s = "(empty)" if top is None else ", ".join(i.id for i in top.items)
+    return f"popped TOP group ({titles}); new top group=[{top_s}]\n{stack.render()}"
 
 
 @tool(name="todo_update")
@@ -95,7 +94,7 @@ def todo_update(
     title: str = "",
     notes: str = "",
 ) -> str:
-    """Update a todo by id (any depth). Prefer pop when the top task is finished."""
+    """Update a task by id inside any group. Pop the group when that level is done."""
     stack = _require_stack()
     status_arg: TodoStatus | None = None
     if status.strip():
@@ -118,7 +117,7 @@ def todo_update(
 
 @tool(name="todo_clear")
 def todo_clear() -> str:
-    """Clear the entire stack."""
+    """Clear all groups on the stack."""
     stack = _require_stack()
     n = stack.clear()
     _notify()

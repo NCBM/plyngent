@@ -952,11 +952,11 @@ def history_cmd(
 def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
     state: ReplState, action: str | None, rest: tuple[str, ...]
 ) -> None:
-    """Show or edit the LIFO todo stack (TOP = next work / only pop target).
+    """Show or edit the LIFO stack of **task groups**.
 
-    ``/todos`` — list (top first)
-    ``/todos push <title>`` or ``T1; T2`` — push (first title becomes TOP)
-    ``/todos pop`` — pop TOP only
+    ``/todos`` — list (top group first)
+    ``/todos push T1; T2`` — one new group of siblings
+    ``/todos pop`` — pop entire top group
     ``/todos done <id>`` / ``/todos cancel <id>`` — set status
     ``/todos clear`` — wipe stack
     """
@@ -977,26 +977,23 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
             click.echo("error: no titles to push")
             return
         try:
-            items = stack.push_titles(titles)
+            group = stack.push_group(titles)
         except ValueError as exc:
             click.echo(f"error: {exc}")
             return
         _await(state.persist_todo_stack())
-        ids = ", ".join(i.id for i in items)
-        top = stack.top
-        top_s = f"{top.id}:{top.title}" if top else "?"
-        click.echo(f"pushed [{ids}] (top now {top_s})")
+        ids = ", ".join(i.id for i in group.items)
+        click.echo(f"pushed group depth={stack.depth} items=[{ids}]")
         click.echo(stack.render())
         return
     if act == "pop":
-        item = stack.pop()
-        if item is None:
+        group = stack.pop()
+        if group is None:
             click.echo("todo stack empty")
             return
         _await(state.persist_todo_stack())
-        top = stack.top
-        top_s = f"{top.id}:{top.title}" if top else "(empty)"
-        click.echo(f"popped TOP {item.id}: {item.title}; new top={top_s}")
+        titles = ", ".join(f"{i.id}:{i.title}" for i in group.items) or "(empty)"
+        click.echo(f"popped TOP group ({titles})")
         click.echo(stack.render())
         return
     if act in {"done", "cancel", "pending", "in_progress"}:
