@@ -2,11 +2,13 @@
 # Copy to the path shown by: plyngent config path
 # Then set access_key_or_token and adjust models.
 
-# Optional. If omitted (or SQLite url is empty / ":memory:"), the CLI uses a
-# durable file under the platform user data dir (e.g. ~/.local/share/plyngent/chat.db).
+# Optional. If omitted (or SQLite url unset/empty), the CLI uses a durable file under
+# the platform user data dir (e.g. ~/.local/share/plyngent/chat.db).
+# url = ":memory:" → true in-memory SQLite (CLI warns; useful for tests).
 # [database]
 # implementation = "sqlite"
 # url = "/path/to/chat.db"
+# # url = ":memory:"
 
 [agent]
 system_prompt = "You are a careful coding assistant. Prefer small, verified edits."

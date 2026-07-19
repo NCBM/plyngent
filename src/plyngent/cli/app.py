@@ -82,12 +82,21 @@ def _warn_recoverable_providers(recoverable: Mapping[str, object]) -> None:
 
 def _database_config(store: ConfigStore, *, quiet: bool = False) -> DatabaseConfig:
     raw = dict(store.database)
-    # Prefer a durable file DB so sessions survive CLI restarts.
-    if raw.get("url") in {None, "", ":memory:"} and raw.get("implementation", "sqlite") == "sqlite":
+    url = raw.get("url")
+    impl = raw.get("implementation", "sqlite")
+    # Unset/empty → durable user-data chat.db so interactive sessions persist.
+    # Explicit ``:memory:`` is kept as-is (ephemeral; warn so it is not accidental).
+    if impl == "sqlite" and url in {None, ""}:
         db_path = user_data_path("plyngent", ensure_exists=True) / _DEFAULT_DB_FILENAME
         raw = {**raw, "implementation": "sqlite", "url": str(db_path)}
         if not quiet:
             click.secho(f"using database: {db_path}", fg="bright_black", err=True)
+    elif not quiet and impl == "sqlite" and url == ":memory:":
+        click.secho(
+            "warning: database url is :memory: — sessions are not persisted to disk",
+            fg="yellow",
+            err=True,
+        )
     return msgspec.convert(raw, DatabaseConfig)
 
 

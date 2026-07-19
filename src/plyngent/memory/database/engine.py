@@ -20,7 +20,7 @@ def build_async_url(config: DatabaseConfig) -> str:
         raise UnsupportedDatabaseError(msg)
 
     url = config.url
-    if url in {":memory:", ""}:
+    if url is None or url in {":memory:", ""}:
         return "sqlite+aiosqlite:///:memory:"
     if url.startswith("sqlite+aiosqlite://"):
         return url

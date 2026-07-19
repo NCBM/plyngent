@@ -4,10 +4,15 @@ from msgspec import Struct, field
 
 
 class DatabaseConfig(Struct, omit_defaults=True):
-    """Database connection configuration."""
+    """Database connection configuration.
+
+    ``url`` is ``None`` when unset. The CLI fills a durable user-data
+    ``chat.db`` only for unset/empty url. Explicit ``":memory:"`` is a true
+    in-memory SQLite (no rewrite).
+    """
 
     implementation: str = "sqlite"
-    url: str = ":memory:"
+    url: str | None = None
     username: str | None = None
     password: str | None = None
 

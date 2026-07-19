@@ -18,10 +18,12 @@ _MINIMAL_CONFIG = """\
 # plyngent configuration
 # edit providers below
 
-# Optional: omit [database] to use ~/.local/share/plyngent/chat.db (Linux).
+# Optional: omit [database] (or leave url unset) → ~/.local/share/plyngent/chat.db.
+# url = ":memory:" keeps a true in-memory SQLite (CLI warns; nothing on disk).
 # [database]
 # implementation = "sqlite"
 # url = "/path/to/chat.db"
+# # url = ":memory:"
 
 # [agent]
 # system_prompt = "You are a careful coding assistant."
