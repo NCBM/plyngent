@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from msgspec import UNSET
 
 from plyngent.lmproto.openai_compatible.model import (
+    AnyAssistantToolCall,
     AssistantChatMessage,
     AssistantFunctionTool,
     AssistantFunctionToolCall,
@@ -17,8 +18,6 @@ from plyngent.lmproto.openai_compatible.model import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
     from .events import AgentEvent
@@ -47,9 +46,19 @@ def parse_todo_nag_strategy(raw: str | None) -> TodoNagStrategy:
 
 
 def nag_body(stack: TodoStack, kind: TodoNagKind) -> str:
+    """Prose OPEN WORK / HYGIENE prompt (developer / user strategies)."""
     if kind == "turn_start":
         return stack.turn_reminder_prompt()
     return stack.review_prompt()
+
+
+def synthetic_todo_list_result(stack: TodoStack) -> str:
+    """Body for synthetic_tool: same text as a real ``todo_list`` tool result.
+
+    No OPEN WORK lecture — just the stack dump the model would get from
+    ``todo_list``. The call remains forged; the payload is authentic render.
+    """
+    return stack.render()
 
 
 def _append_synthetic_todo_list(messages: list[AnyChatMessage], body: str) -> str:
@@ -125,12 +134,23 @@ def inject_todo_nag_with_events(
         tool_calls = assistant.tool_calls
         if tool_calls is not UNSET and tool_calls:
             for call in tool_calls:
-                if getattr(call, "id", None) == call_id:
-                    events.append(ToolCallEvent(tool_call=call))
+                if isinstance(call, AssistantFunctionToolCall) and call.id == call_id:
+                    events.append(ToolCallEvent(tool_call=cast("AnyAssistantToolCall", call)))
                     break
     if isinstance(tool_msg, ToolChatMessage):
         events.append(ToolResultEvent(message=tool_msg))
     return True, events
+
+
+def body_for_strategy(
+    stack: TodoStack,
+    kind: TodoNagKind,
+    strategy: TodoNagStrategy,
+) -> str:
+    """Choose inject payload: prose nag vs real todo_list render."""
+    if strategy == "synthetic_tool":
+        return synthetic_todo_list_result(stack)
+    return nag_body(stack, kind)
 
 
 def inject_todo_nag_for_stack(
@@ -141,7 +161,11 @@ def inject_todo_nag_for_stack(
     strategy: TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
 ) -> bool:
     """Build body from *stack* and inject with *strategy*."""
-    return inject_todo_nag(messages, nag_body(stack, kind), strategy=strategy)
+    return inject_todo_nag(
+        messages,
+        body_for_strategy(stack, kind, strategy),
+        strategy=strategy,
+    )
 
 
 def inject_todo_nag_for_stack_with_events(
@@ -154,11 +178,6 @@ def inject_todo_nag_for_stack_with_events(
     """Build body from *stack*; inject and return CLI-facing events."""
     return inject_todo_nag_with_events(
         messages,
-        nag_body(stack, kind),
+        body_for_strategy(stack, kind, strategy),
         strategy=strategy,
     )
-
-
-def iter_synthetic_nag_events(events: list[AgentEvent]) -> Iterator[AgentEvent]:
-    """Yield events for the agent loop (empty if strategy was non-synthetic)."""
-    yield from events

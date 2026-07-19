@@ -132,7 +132,11 @@ def test_parse_todo_nag_strategy() -> None:
 
 def test_inject_todo_nag_strategies() -> None:
     from plyngent.agent.events import ToolCallEvent, ToolResultEvent
-    from plyngent.agent.todo_nag import inject_todo_nag_with_events
+    from plyngent.agent.todo_nag import (
+        inject_todo_nag_for_stack_with_events,
+        inject_todo_nag_with_events,
+        synthetic_todo_list_result,
+    )
 
     body = "[TODO OPEN WORK] test"
     messages: list[AnyChatMessage] = []
@@ -148,20 +152,49 @@ def test_inject_todo_nag_strategies() -> None:
     assert inject_todo_nag(messages, body, strategy="user") is True
     assert isinstance(messages[0], UserChatMessage)
 
+    # synthetic_tool: real todo_list-shaped body (stack.render), not OPEN WORK prose
+    stack = TodoStack()
+    _ = stack.push("synthetic body item")
+    real = synthetic_todo_list_result(stack)
+    assert real == stack.render()
+    assert "[TODO OPEN WORK]" not in real
+    assert "synthetic body item" in real
+
     messages = []
-    ok, events = inject_todo_nag_with_events(messages, body, strategy="synthetic_tool")
+    ok, events = inject_todo_nag_for_stack_with_events(
+        messages,
+        stack,
+        kind="end_of_turn",
+        strategy="synthetic_tool",
+    )
     assert ok is True
     assert len(messages) == 2
     assert isinstance(messages[0], AssistantChatMessage)
     tool_calls = messages[0].tool_calls
     assert tool_calls is not UNSET and tool_calls
     assert isinstance(messages[1], ToolChatMessage)
-    assert body in messages[1].content
+    tool_content = messages[1].content
+    assert isinstance(tool_content, str)
+    assert tool_content == real
     assert messages[1].tool_call_id.startswith("todo-nag-")
     assert len(events) == 2
     assert isinstance(events[0], ToolCallEvent)
     assert isinstance(events[1], ToolResultEvent)
-    assert body in events[1].message.content
+    result_event = events[1]
+    assert isinstance(result_event, ToolResultEvent)
+    result_content = result_event.message.content
+    assert isinstance(result_content, str)
+    assert result_content == real
+
+    # Raw inject still accepts an explicit body (e.g. tests / custom)
+    messages = []
+    ok2, events2 = inject_todo_nag_with_events(messages, body, strategy="synthetic_tool")
+    assert ok2
+    assert len(events2) == 2
+    assert isinstance(events2[1], ToolResultEvent)
+    raw_content = events2[1].message.content
+    assert isinstance(raw_content, str)
+    assert body in raw_content
 
 
 def test_todo_prompts_signal_undone_work() -> None:
@@ -360,7 +393,11 @@ async def test_loop_synthetic_tool_nag_strategy() -> None:
     try:
         async for _event in agent.run("do stuff"):
             pass
-        assert any(isinstance(m, ToolChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+        # Result body is real todo_list shape (render), not OPEN WORK prose.
+        assert any(
+            isinstance(m, ToolChatMessage) and "open work" in m.content and "[TODO OPEN WORK]" not in m.content
+            for m in agent.messages
+        )
         assert not any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)
