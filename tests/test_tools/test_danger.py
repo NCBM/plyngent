@@ -114,6 +114,7 @@ async def test_confirm_deny_with_comment() -> None:
     assert "user comment:" in out
     assert "too destructive" in out
 
+
 def test_shell_confirm_formats_command_placeholder() -> None:
     script = chr(10).join(["line1", "line2", "line3"])
     reason = classify_danger(
@@ -130,4 +131,3 @@ def test_shell_confirm_formats_command_placeholder() -> None:
     body = lines[idx + 1 :]
     assert body
     assert all(ln.startswith("  ") for ln in body)
-

@@ -27,8 +27,8 @@ plyngent = "plyngent.cli:main"
 
 [dependency-groups]
 dev = [
-    "basedpyright>=1.39.7",
-    "ruff>=0.15.17",
+    "basedpyright==1.39.9",
+    "ruff==0.15.22",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]

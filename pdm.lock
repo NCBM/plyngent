@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:b849e1647ce0ec47b61889ae0e66863acce020cd1f2e3deaeb9e2e92becf9da5"
+content_hash = "sha256:94dc16bf6ed12e2fcd7a109b500e9b2d7e39f224b60472d64ecb1d3436ddbb82"
 
 [[metadata.targets]]
 requires_python = "~=3.14"
@@ -527,13 +527,13 @@ files = [
 
 [[package]]
 name = "tomlkit"
-version = "0.15.0"
+version = "0.15.1"
 requires_python = ">=3.9"
 summary = "Style preserving TOML library"
 groups = ["default"]
 files = [
-    {file = "tomlkit-0.15.0-py3-none-any.whl", hash = "sha256:4dbc8f0fc024412b57ced8757ac7461305126a648ff8c2c807fcb8e133a78738"},
-    {file = "tomlkit-0.15.0.tar.gz", hash = "sha256:7d1a9ecba3086638211b13814ea79c90dd54dd11993564376f3aa92271f5c7a3"},
+    {file = "tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304"},
+    {file = "tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97"},
 ]
 
 [[package]]
@@ -549,7 +549,7 @@ files = [
 
 [[package]]
 name = "urllib3-future"
-version = "2.22.901"
+version = "2.23.900"
 requires_python = ">=3.7"
 summary = "urllib3.future is a powerful HTTP 1.1, 2, and 3 client with both sync and async interfaces"
 groups = ["default"]
@@ -559,8 +559,8 @@ dependencies = [
     "qh3<2.0.0,>=1.5.4; (platform_system == \"Darwin\" or platform_system == \"Windows\" or platform_system == \"Linux\") and platform_python_implementation == \"PyPy\" and (platform_machine == \"x86_64\" or platform_machine == \"s390x\" or platform_machine == \"armv7l\" or platform_machine == \"ppc64le\" or platform_machine == \"ppc64\" or platform_machine == \"AMD64\" or platform_machine == \"aarch64\" or platform_machine == \"arm64\" or platform_machine == \"ARM64\" or platform_machine == \"x86\" or platform_machine == \"i686\" or platform_machine == \"riscv64\" or platform_machine == \"riscv64gc\") and python_version < \"3.12\" or (platform_system == \"Darwin\" or platform_system == \"Windows\" or platform_system == \"Linux\") and python_full_version > \"3.7.10\" and (platform_machine == \"x86_64\" or platform_machine == \"s390x\" or platform_machine == \"armv7l\" or platform_machine == \"ppc64le\" or platform_machine == \"ppc64\" or platform_machine == \"AMD64\" or platform_machine == \"aarch64\" or platform_machine == \"arm64\" or platform_machine == \"ARM64\" or platform_machine == \"x86\" or platform_machine == \"i686\" or platform_machine == \"riscv64\" or platform_machine == \"riscv64gc\") and platform_python_implementation == \"CPython\"",
 ]
 files = [
-    {file = "urllib3_future-2.22.901-py3-none-any.whl", hash = "sha256:dc2d4572ba612be69e3f6db87d1f469b7d08f107e80fd8749081d7e6a5a2fe10"},
-    {file = "urllib3_future-2.22.901.tar.gz", hash = "sha256:fbece0ff51299a213c926897ffbed61d820ab5ef2ba81cece361c049fe2f51a9"},
+    {file = "urllib3_future-2.23.900-py3-none-any.whl", hash = "sha256:4303dc9a5d8c4c810f3fcd3b13bd62d69c3a4f63bb7e62089410907c34aeaf6b"},
+    {file = "urllib3_future-2.23.900.tar.gz", hash = "sha256:f488f22983f96cd8c733640b47e6a32def462d33c59bcc4bea6d97a8568b70c8"},
 ]
 
 [[package]]

@@ -2,26 +2,47 @@
 # Install: uv tool install prek  (or: pipx install prek)
 # Wire git: prek install
 # Manual:  prek run --all-files
+#
+# Pin additional_dependencies to the same versions as pdm.lock (dev group).
+# Bump these when you pdm update ruff / basedpyright.
 
 default_install_hook_types = ["pre-commit"]
 default_stages = ["pre-commit"]
 default_language_version = { python = "python3.14" }
 
-# Ruff: lint (with autofix) then format — order matters (fix before format).
-# https://docs.astral.sh/ruff/integrations/#pre-commit
-[[repos]]
-repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.15.22"
-hooks = [
-  { id = "ruff-check", args = ["--fix"], types_or = ["python", "pyi"] },
-  { id = "ruff-format", types_or = ["python", "pyi"] },
-]
-
-# basedpyright: full-project typecheck (same as CI `pdm run basedpyright .`).
-# Mirror hook: https://docs.basedpyright.com/latest/installation/prek-hook/
-# Uses system+PDM so imports resolve from the project venv (isolated hook envs lack deps).
-[[repos]]
-repo = "local"
-hooks = [
-  { id = "basedpyright", name = "basedpyright", language = "system", entry = "pdm run basedpyright .", pass_filenames = false, files = "\\.pyi?$" },
+# Match CI / local pdm env (see pdm.lock).
+repos = [
+  {
+    repo = "local",
+    hooks = [
+      {
+        id = "ruff-check",
+        name = "ruff check",
+        entry = "ruff check",
+        language = "python",
+        types_or = ["python", "pyi"],
+        args = [],
+        require_serial = true,
+        additional_dependencies = ["ruff==0.15.22"],
+      },
+      {
+        id = "ruff-format",
+        name = "ruff format",
+        entry = "ruff format --check --force-exclude",
+        language = "python",
+        types_or = ["python", "pyi"],
+        require_serial = true,
+        additional_dependencies = ["ruff==0.15.22"],
+      },
+      {
+        id = "basedpyright",
+        name = "basedpyright",
+        entry = "basedpyright",
+        language = "python",
+        pass_filenames = false,
+        require_serial = true,
+        additional_dependencies = ["basedpyright==1.39.9"],
+      },
+    ],
+  },
 ]
