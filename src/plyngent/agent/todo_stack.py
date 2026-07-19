@@ -88,7 +88,17 @@ class TodoStack:
         return not self._data.groups
 
     def needs_review(self) -> bool:
-        return bool(self.open_items()) and not self._touched_this_turn
+        """True when the stack still signals unfinished or unreconciled work.
+
+        Open (pending/in_progress) items always need attention. A non-empty stack
+        with only terminal items still needs a pop/clear if the agent ignored
+        todos this turn.
+        """
+        if self.is_empty():
+            return False
+        if self.open_items():
+            return True
+        return not self._touched_this_turn
 
     def to_data(self) -> TodoStackData:
         return self._data
@@ -173,17 +183,64 @@ class TodoStack:
                 lines.append(f"  {mark} {item.id}: {item.title}{note}")
         return "\n".join(lines)
 
+    def turn_reminder_prompt(self) -> str:
+        """Short mid-context nudge when a turn starts with a non-empty stack."""
+        n_open = len(self.open_items())
+        n_groups = self.depth
+        if n_open:
+            headline = (
+                f"[TODO REMINDER] Stack not empty: {n_open} open item(s) across "
+                f"{n_groups} group(s). Open items usually mean unfinished work from "
+                "earlier in the session — continue them, update status, or clear only "
+                "if intentionally abandoned."
+            )
+        else:
+            headline = (
+                f"[TODO REMINDER] Stack not empty: {n_groups} group(s) with no open "
+                "items (all done/cancelled). Pop finished TOP groups or todo_clear if "
+                "the plan is complete — do not leave stale groups behind."
+            )
+        lines = [
+            headline,
+            "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
+            "Rules: TOP = current level; push = one sibling group; pop = whole TOP group.",
+            "Stack:",
+            self.render(),
+        ]
+        return "\n".join(lines)
+
     def review_prompt(self) -> str:
-        """Compact, model-facing nag: open work still exists this turn."""
+        """End-of-turn nag: non-empty stack still signals unfinished work."""
         open_items = self.open_items()
         n_open = len(open_items)
         n_groups = self.depth
+        if n_open:
+            headline = (
+                f"[TODO OPEN] Stack not empty: {n_open} open item(s) across "
+                f"{n_groups} group(s). You stopped while work may still be incomplete."
+            )
+            action = (
+                "Do not end the turn with open tasks unaddressed: mark done/cancelled, "
+                "pop finished TOP groups, push a child breakdown, or clear only if the "
+                "user no longer wants the plan. Open stack items are a strong signal of "
+                "undone work."
+            )
+        else:
+            headline = (
+                f"[TODO OPEN] Stack not empty: {n_groups} group(s) remain but every "
+                "item is done/cancelled. Bookkeeping is unfinished."
+            )
+            action = (
+                "Pop finished TOP groups (or todo_clear when the whole plan is done). "
+                "A non-empty stack after all items are terminal still means unfinished "
+                "task hygiene."
+            )
         lines = [
-            f"[TODO OPEN] {n_open} open item(s) across {n_groups} group(s) "
-            f"(not empty). You did not call todo_* this turn.",
+            headline,
+            action,
             "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
             "Rules: TOP group = current level; push=one sibling group; pop=remove whole TOP group.",
-            "Act on open work before ending (finish/pop TOP, or push child tasks). Stack:",
+            "Stack:",
             self.render(),
         ]
         return "\n".join(lines)

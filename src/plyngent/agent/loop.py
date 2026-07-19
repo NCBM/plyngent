@@ -329,9 +329,9 @@ async def run_chat_loop(
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
     Request payloads may shrink older tool results when over ``max_context_tokens``.
 
-    When *todo_stack* is set and still has open items after a natural stop with
-    no ``todo_*`` tool use this turn, injects a review user message and continues
-    once (so the model must check or update the stack).
+    When *todo_stack* is set and still needs review after a natural stop
+    (open items, or non-empty stack untouched this turn), injects a developer
+    review message and continues once so the model reconciles unfinished work.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:

@@ -7,6 +7,7 @@ from msgspec import UNSET
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
+    DeveloperChatMessage,
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
@@ -295,6 +296,9 @@ class ChatAgent:
         user_index = self._user_index(user_msg)
         if self.todo_stack is not None:
             self.todo_stack.begin_turn()
+            # Non-empty stack at turn start → remind the model before first completion.
+            if not self.todo_stack.is_empty():
+                self.messages.append(DeveloperChatMessage(content=self.todo_stack.turn_reminder_prompt()))
 
         completed = False
         turn_usage = TokenUsage()

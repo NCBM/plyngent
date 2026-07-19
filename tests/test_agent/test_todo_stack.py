@@ -103,11 +103,38 @@ def test_single_title_still_one_group() -> None:
 def test_todo_stack_needs_review() -> None:
     stack = TodoStack()
     assert not stack.needs_review()
-    _ = stack.push("work")
+    item = stack.push("work")
     stack.begin_turn()
+    # Open items always need review, even if todo_* was used this turn.
+    assert stack.needs_review()
+    stack.mark_touched()
+    assert stack.needs_review()
+    stack.update(item.id, status="done")
+    stack.begin_turn()
+    # Terminal-only stack: review only when untouched this turn.
     assert stack.needs_review()
     stack.mark_touched()
     assert not stack.needs_review()
+
+
+def test_todo_prompts_signal_undone_work() -> None:
+    stack = TodoStack()
+    item = stack.push("open work")
+    reminder = stack.turn_reminder_prompt()
+    assert "[TODO REMINDER]" in reminder
+    assert "Stack not empty" in reminder
+    assert "unfinished" in reminder.lower()
+    assert "open work" in reminder
+
+    review = stack.review_prompt()
+    assert "[TODO OPEN]" in review
+    assert "Stack not empty" in review
+    assert "undone" in review.lower() or "incomplete" in review.lower()
+    assert "open work" in review
+
+    stack.update(item.id, status="done")
+    terminal_review = stack.review_prompt()
+    assert "done/cancelled" in terminal_review or "Bookkeeping" in terminal_review
 
 
 def test_legacy_flat_and_frames_migrate() -> None:
@@ -232,7 +259,35 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
         async for _event in agent.run("do stuff"):
             pass
         assert client.calls >= 2
+        assert any(isinstance(m, DeveloperChatMessage) and "[TODO REMINDER]" in m.content for m in agent.messages)
         assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
         assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
+    finally:
+        set_todo_stack(None)
+
+
+@pytest.mark.asyncio
+async def test_loop_injects_todo_review_when_open_after_touch() -> None:
+    """Open items still trigger end-of-turn review even if todo_* ran this turn."""
+    stack = TodoStack()
+    _ = stack.push("still open")
+    stack.begin_turn()
+    stack.mark_touched()  # simulates todo_list earlier in the turn
+    assert stack.needs_review()
+
+    client = ScriptedClient()
+    agent = ChatAgent(
+        client,  # type: ignore[arg-type]
+        model="m",
+        tools=ToolRegistry(list(TODO_TOOLS)),
+        stream=False,
+        todo_stack=stack,
+    )
+    set_todo_stack(stack)
+    try:
+        async for _event in agent.run("do stuff"):
+            pass
+        assert client.calls >= 2
+        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)
