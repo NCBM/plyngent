@@ -258,6 +258,34 @@ else:
             raise OSError(msg)
         return _spawn_posix(command, cwd=cwd)
 
+    def _claim_controlling_tty(slave_fd: int) -> None:
+        """Make *slave_fd* the controlling terminal (session leader must call this).
+
+        Best-effort: required for programs like ``sudo`` that open ``/dev/tty``
+        and refuse a non-controlling PTY. Failures are ignored so plain tools
+        still run if the ioctl is unavailable.
+        """
+        import fcntl
+        import termios
+
+        # Linux: arg 0 = become controlling tty of this session.
+        tio_csctty = getattr(termios, "TIOCSCTTY", None)
+        if tio_csctty is not None:
+            with contextlib.suppress(OSError):
+                _ = fcntl.ioctl(slave_fd, tio_csctty, 0)
+                return
+        # Fallback: reopen slave device path (some BSDs / older kernels).
+        with contextlib.suppress(OSError):
+            name = os.ttyname(slave_fd)
+            reopened = os.open(name, os.O_RDWR)
+            try:
+                if reopened != slave_fd:
+                    _ = os.dup2(reopened, slave_fd)
+            finally:
+                if reopened != slave_fd:
+                    with contextlib.suppress(OSError):
+                        os.close(reopened)
+
     def _spawn_posix(command: list[str], *, cwd: Path) -> PosixPtyHandle:
         import pty
 
@@ -269,6 +297,8 @@ else:
             try:
                 os.close(master_fd)
                 _ = os.setsid()
+                # Claim slave as controlling TTY before wiring stdio (sudo / PAM).
+                _claim_controlling_tty(slave_fd)
                 _ = os.dup2(slave_fd, 0)
                 _ = os.dup2(slave_fd, 1)
                 _ = os.dup2(slave_fd, _STDERR_FD)
