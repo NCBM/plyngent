@@ -121,20 +121,23 @@ def test_todo_prompts_signal_undone_work() -> None:
     stack = TodoStack()
     item = stack.push("open work")
     reminder = stack.turn_reminder_prompt()
-    assert "[TODO REMINDER]" in reminder
+    assert "[TODO OPEN WORK]" in reminder
     assert "Stack not empty" in reminder
-    assert "unfinished" in reminder.lower()
+    assert "unfinished work" in reminder.lower()
     assert "open work" in reminder
 
     review = stack.review_prompt()
-    assert "[TODO OPEN]" in review
-    assert "Stack not empty" in review
-    assert "undone" in review.lower() or "incomplete" in review.lower()
+    assert "[TODO OPEN WORK]" in review
+    assert "undone work" in review.lower() or "open item" in review.lower()
     assert "open work" in review
+    assert "t1:open work" in review or "open work" in review
 
     stack.update(item.id, status="done")
     terminal_review = stack.review_prompt()
-    assert "done/cancelled" in terminal_review or "Bookkeeping" in terminal_review
+    assert "[TODO HYGIENE]" in terminal_review
+    assert "done/cancelled" in terminal_review
+    terminal_reminder = stack.turn_reminder_prompt()
+    assert "[TODO HYGIENE]" in terminal_reminder
 
 
 def test_legacy_flat_and_frames_migrate() -> None:
@@ -259,9 +262,8 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
         async for _event in agent.run("do stuff"):
             pass
         assert client.calls >= 2
-        assert any(isinstance(m, DeveloperChatMessage) and "[TODO REMINDER]" in m.content for m in agent.messages)
-        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
-        assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
+        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+        assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)
 
@@ -288,6 +290,6 @@ async def test_loop_injects_todo_review_when_open_after_touch() -> None:
         async for _event in agent.run("do stuff"):
             pass
         assert client.calls >= 2
-        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN]" in m.content for m in agent.messages)
+        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
     finally:
         set_todo_stack(None)

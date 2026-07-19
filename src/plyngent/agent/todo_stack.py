@@ -8,6 +8,7 @@ from msgspec import Struct, field
 type TodoStatus = Literal["pending", "in_progress", "done", "cancelled"]
 
 _OPEN: frozenset[str] = frozenset({"pending", "in_progress"})
+_REVIEW_OPEN_TITLE_LIMIT = 8
 
 
 class TodoItem(Struct, omit_defaults=True):
@@ -184,24 +185,38 @@ class TodoStack:
         return "\n".join(lines)
 
     def turn_reminder_prompt(self) -> str:
-        """Short mid-context nudge when a turn starts with a non-empty stack."""
+        """Mid-context nudge when a turn starts with a non-empty stack.
+
+        A non-empty stack usually means unfinished work (open items) or unfinished
+        stack hygiene (terminal items still grouped). Prefer finishing real work
+        over pure bookkeeping when both exist.
+        """
         n_open = len(self.open_items())
         n_groups = self.depth
         if n_open:
             headline = (
-                f"[TODO REMINDER] Stack not empty: {n_open} open item(s) across "
-                f"{n_groups} group(s). Open items usually mean unfinished work from "
-                "earlier in the session — continue them, update status, or clear only "
-                "if intentionally abandoned."
+                f"[TODO OPEN WORK] Stack not empty: {n_open} open item(s) across "
+                f"{n_groups} group(s). This is unfinished work from earlier in the "
+                "session — not optional decoration."
+            )
+            action = (
+                "Treat open items as active commitments: continue them, mark "
+                "done/cancelled when finished, or push a child breakdown for the "
+                "current TOP item. Only todo_clear if the user abandoned the plan. "
+                "Do not ignore the stack while answering unrelated chatter."
             )
         else:
             headline = (
-                f"[TODO REMINDER] Stack not empty: {n_groups} group(s) with no open "
-                "items (all done/cancelled). Pop finished TOP groups or todo_clear if "
-                "the plan is complete — do not leave stale groups behind."
+                f"[TODO HYGIENE] Stack not empty: {n_groups} group(s) with no open "
+                "items (all done/cancelled). Work may be finished; the stack is not."
+            )
+            action = (
+                "Pop finished TOP groups (or todo_clear when the whole plan is done). "
+                "Leaving only-terminal groups wastes context; clean up when you can."
             )
         lines = [
             headline,
+            action,
             "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
             "Rules: TOP = current level; push = one sibling group; pop = whole TOP group.",
             "Stack:",
@@ -215,25 +230,27 @@ class TodoStack:
         n_open = len(open_items)
         n_groups = self.depth
         if n_open:
+            open_titles = "; ".join(f"{item.id}:{item.title}" for item in open_items[:_REVIEW_OPEN_TITLE_LIMIT])
+            if n_open > _REVIEW_OPEN_TITLE_LIMIT:
+                open_titles += f"; …(+{n_open - _REVIEW_OPEN_TITLE_LIMIT} more)"
             headline = (
-                f"[TODO OPEN] Stack not empty: {n_open} open item(s) across "
-                f"{n_groups} group(s). You stopped while work may still be incomplete."
+                f"[TODO OPEN WORK] You stopped with {n_open} open item(s) still on "
+                f"the stack ({n_groups} group(s)). That usually means undone work."
             )
             action = (
-                "Do not end the turn with open tasks unaddressed: mark done/cancelled, "
-                "pop finished TOP groups, push a child breakdown, or clear only if the "
-                "user no longer wants the plan. Open stack items are a strong signal of "
-                "undone work."
+                "Do not end the turn while open tasks remain unaddressed. Next: "
+                "resume an open item, mark done/cancelled, pop a finished TOP group, "
+                "or push a child breakdown. Clear only if the user no longer wants "
+                f"the plan. Open: {open_titles}"
             )
         else:
             headline = (
-                f"[TODO OPEN] Stack not empty: {n_groups} group(s) remain but every "
-                "item is done/cancelled. Bookkeeping is unfinished."
+                f"[TODO HYGIENE] Stack still has {n_groups} group(s) but every item "
+                "is done/cancelled. Real work looks finished; stack cleanup does not."
             )
             action = (
                 "Pop finished TOP groups (or todo_clear when the whole plan is done). "
-                "A non-empty stack after all items are terminal still means unfinished "
-                "task hygiene."
+                "A non-empty all-terminal stack is unfinished task hygiene, not new work."
             )
         lines = [
             headline,

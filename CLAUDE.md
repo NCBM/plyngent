@@ -86,7 +86,7 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - Destructive confirms: `classify_danger` + `ToolRegistry(on_confirm=…)`; CLI default deny; config `confirm_destructive` / `path_denylist`. Soft confirm also for shells/REPLs and `python|bash -c` one-liners (argv + code preview); deny may include a user comment for the model. Session YOLO: `/yolo on|off|once` and `--yes` (skip soft confirms; hard denylists unchanged; `once` expires after the next user turn).
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
 - **`chat`**: human prompts as tools — `ask_user_line` / `ask_user_choice` / `ask_user_form` (shared `prompting` core).
-- **`todo`**: LIFO stack of **task groups** (not a queue of tasks) — `todo_push` creates one group of siblings; `todo_pop` removes the whole top group; `todo_update` by id; DFS breakdown push[T1,T2]→push[T1.1…]→pop→push[T2.1…]; stored on session row; non-empty stack = unfinished/unreconciled work (turn-start developer reminder + end-of-turn review if still open or untouched).
+- **`todo`**: LIFO stack of **task groups** (not a queue of tasks) — `todo_push` creates one group of siblings; `todo_pop` removes the whole top group; `todo_update` by id; DFS breakdown push[T1,T2]→push[T1.1…]→pop→push[T2.1…]; stored on session row; open items = unfinished work (`[TODO OPEN WORK]` turn-start + end-of-turn review); all-terminal non-empty = hygiene (`[TODO HYGIENE]`).
 - **`DEFAULT_TOOLS`**: file + process + vcs + chat + todo tool list for a `ToolRegistry`.
 
 ### Prompting (`prompting.py`)

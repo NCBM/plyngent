@@ -42,9 +42,9 @@ def _notify() -> None:
 def todo_list() -> str:
     """Show the LIFO stack of **task groups** (TOP group = current breakdown level).
 
-    A non-empty stack usually means unfinished or unreconciled work — keep
-    updating statuses, pop finished TOP groups, or clear only when abandoning.
-    Push creates one group of siblings; pop removes the whole top group.
+    Non-empty stack with open (pending/in_progress) items = unfinished work.
+    All-terminal but non-empty = hygiene only (pop/clear). Push creates one
+    group of siblings; pop removes the whole top group.
     Pattern: push [T1,T2] → push [T1.1,T1.2] → finish children → pop → push [T2.1]…
     """
     stack = _require_stack()
@@ -101,8 +101,9 @@ def todo_update(
 ) -> str:
     """Update a task by id inside any group.
 
-    Open (pending/in_progress) items signal unfinished work — mark done/cancelled
-    when finished. Pop the TOP group when that breakdown level is complete.
+    Open items are unfinished work: mark done/cancelled when the work is truly
+    finished (not just deferred). Pop the TOP group when that breakdown level
+    is complete so the stack does not linger as false open work.
     """
     stack = _require_stack()
     status_arg: TodoStatus | None = None
