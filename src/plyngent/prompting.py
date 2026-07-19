@@ -55,6 +55,10 @@ class PromptBackend(Protocol):
         completions: Sequence[str] | None = None,
     ) -> str: ...
 
+    def read_secret_line(self, prompt: str) -> str:
+        """Read a line without echo (passwords). Cancel raises NonInteractiveError."""
+        ...
+
     def confirm(self, prompt: str, *, default: bool = False) -> bool: ...
 
     def echo(self, message: str = "", *, err: bool = False) -> None: ...
@@ -117,6 +121,16 @@ class ClickPromptBackend:
             return default
         return raw
 
+    def read_secret_line(self, prompt: str) -> str:
+        import getpass
+
+        try:
+            display = f"{prompt}: " if not prompt.endswith(": ") else prompt
+            return getpass.getpass(display)
+        except (KeyboardInterrupt, EOFError) as exc:
+            msg = "prompt cancelled"
+            raise NonInteractiveError(msg) from exc
+
     def confirm(self, prompt: str, *, default: bool = False) -> bool:
         try:
             return bool(click.confirm(prompt, default=default))
@@ -148,6 +162,10 @@ class NonInteractiveBackend:
         if default is not None:
             return default
         msg = f"non-interactive: cannot prompt for {prompt!r}"
+        raise NonInteractiveError(msg)
+
+    def read_secret_line(self, prompt: str) -> str:
+        msg = f"non-interactive: cannot prompt for secret {prompt!r}"
         raise NonInteractiveError(msg)
 
     def confirm(self, prompt: str, *, default: bool = False) -> bool:
@@ -253,6 +271,19 @@ def ask(
         raise NonInteractiveError(msg)
     backend.secho(prompt, fg="yellow")
     return backend.read_line("Answer", default=default, completions=completions).strip()
+
+
+def ask_secret(prompt: str) -> str:
+    """Prompt for a secret line (no echo). Never use for values that return to the model.
+
+    Cancel (Ctrl+C / EOF) raises :class:`NonInteractiveError`.
+    """
+    backend = get_prompt_backend()
+    if not backend.is_interactive():
+        msg = f"non-interactive: cannot prompt for secret {prompt!r}"
+        raise NonInteractiveError(msg)
+    backend.secho(prompt, fg="yellow")
+    return backend.read_secret_line("Secret")
 
 
 def choose(
@@ -361,6 +392,10 @@ async def run_prompt_async[**P, R](func: Callable[P, R], *args: P.args, **kwargs
 
 async def ask_async(prompt: str, *, default: str | None = None) -> str:
     return await run_prompt_async(ask, prompt, default=default)
+
+
+async def ask_secret_async(prompt: str) -> str:
+    return await run_prompt_async(ask_secret, prompt)
 
 
 async def choose_async(

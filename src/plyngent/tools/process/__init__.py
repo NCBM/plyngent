@@ -1,3 +1,4 @@
+from .ask_into_pty import ask_into_pty as ask_into_pty
 from .close_pty import close_pty as close_pty
 from .open_pty import open_pty as open_pty
 from .pty_terminal import decode_write_data as decode_write_data
@@ -15,5 +16,6 @@ PROCESS_TOOLS = [
     read_pty,
     write_pty,
     write_pty_keys,
+    ask_into_pty,
     close_pty,
 ]

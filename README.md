@@ -235,6 +235,7 @@ Safety defaults:
   Prefer file tools over full-screen editors (`vim`/`nano`) for edits. `read_pty` sanitizes CSI/controls
   so tool results cannot reprogram the host TTY (no host terminal reset on exit).
   `write_pty` is literal text only; use `write_pty_keys` for `\xHH`, `ctrl+x`, `key=esc|enter|…`.
+  For passwords/sudo/ssh prompts use `ask_into_pty` (human types locally; answer never returns to the model).
 
 ## Usage / context (CLI)
 

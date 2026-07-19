@@ -16,6 +16,7 @@ from .file import read_file as read_file
 from .file import tree as tree
 from .file import write_file as write_file
 from .process import PROCESS_TOOLS as PROCESS_TOOLS
+from .process import ask_into_pty as ask_into_pty
 from .process import close_pty as close_pty
 from .process import open_pty as open_pty
 from .process import read_pty as read_pty

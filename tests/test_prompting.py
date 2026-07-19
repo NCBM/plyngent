@@ -18,9 +18,16 @@ from plyngent.prompting import (
 class ScriptedBackend:
     """Deterministic backend for unit tests."""
 
-    def __init__(self, lines: list[str], *, confirms: list[bool] | None = None) -> None:
+    def __init__(
+        self,
+        lines: list[str],
+        *,
+        confirms: list[bool] | None = None,
+        secrets: list[str] | None = None,
+    ) -> None:
         self.lines = list(lines)
         self.confirms = list(confirms or [])
+        self.secrets = list(secrets or [])
         self.interactive = True
         self.echoes: list[str] = []
 
@@ -42,6 +49,13 @@ class ScriptedBackend:
         msg = "no scripted lines left"
         raise NonInteractiveError(msg)
 
+    def read_secret_line(self, prompt: str) -> str:
+        del prompt
+        if self.secrets:
+            return self.secrets.pop(0)
+        msg = "no scripted secrets left"
+        raise NonInteractiveError(msg)
+
     def confirm(self, prompt: str, *, default: bool = False) -> bool:
         del prompt
         if self.confirms:
@@ -61,6 +75,14 @@ def test_ask_free_text() -> None:
     backend = ScriptedBackend(["hello world"])
     with temporary_backend(backend):
         assert ask("Name?") == "hello world"
+
+
+def test_ask_secret() -> None:
+    from plyngent.prompting import ask_secret
+
+    backend = ScriptedBackend([], secrets=["s3cret"])
+    with temporary_backend(backend):
+        assert ask_secret("Password?") == "s3cret"
 
 
 def test_ask_default_when_empty_uses_backend_default() -> None:

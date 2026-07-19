@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from plyngent.tools.process import (
+    ask_into_pty,
     close_pty,
     open_pty,
     read_pty,
@@ -246,6 +247,92 @@ async def test_write_pty(workspace: object) -> None:
 def test_write_pty_unknown_session(workspace: object) -> None:
     del workspace
     assert "error" in call_sync(write_pty, 999_999, "x")
+
+
+async def test_ask_into_pty_writes_without_leaking_secret(workspace: object) -> None:
+    """Human answer goes to PTY only; tool result must not contain the secret."""
+    del workspace
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    secret = "super-secret-password-xyz"
+    backend = ScriptedBackend([], secrets=[secret])
+    try:
+        opened = call_sync(
+            open_pty,
+            _py(
+                "import sys\n"
+                "while True:\n"
+                "    line = sys.stdin.readline()\n"
+                "    if not line:\n"
+                "        break\n"
+                "    sys.stdout.write(line)\n"
+                "    sys.stdout.flush()\n"
+            ),
+        )
+        session_id = _session_id(opened)
+        with temporary_backend(backend):
+            result = await call_async(
+                ask_into_pty,
+                session_id,
+                "Enter password",
+                secret=True,
+            )
+        assert "error:" not in result
+        assert "wrote=true" in result
+        assert "secret=true" in result
+        assert "source=human" in result
+        assert secret not in result
+        # Length of secret must not appear as wrote=N either.
+        assert f"wrote={len(secret)}" not in result
+        assert f"wrote={len(secret) + 1}" not in result
+
+        echoed = await call_async(read_pty, session_id, timeout=2.0, until=secret)
+        assert secret in echoed
+        closed = await call_async(close_pty, session_id)
+        assert "session_id=" in closed
+    finally:
+        PtyManager.close_all()
+
+
+async def test_ask_into_pty_empty_cancels(workspace: object) -> None:
+    del workspace
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    backend = ScriptedBackend([], secrets=[""])
+    try:
+        opened = call_sync(open_pty, _py("import time; time.sleep(30)"))
+        session_id = _session_id(opened)
+        with temporary_backend(backend):
+            result = await call_async(ask_into_pty, session_id, "Pass?", secret=True)
+        assert "error:" in result
+        assert "empty" in result.lower() or "cancel" in result.lower()
+    finally:
+        PtyManager.close_all()
+
+
+async def test_ask_into_pty_nonsecret_line(workspace: object) -> None:
+    del workspace
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    backend = ScriptedBackend(["yes"])
+    try:
+        opened = call_sync(
+            open_pty,
+            _py("import sys\nline = sys.stdin.readline()\nsys.stdout.write(line)\nsys.stdout.flush()\n"),
+        )
+        session_id = _session_id(opened)
+        with temporary_backend(backend):
+            result = await call_async(ask_into_pty, session_id, "Continue?", secret=False)
+        assert "wrote=true" in result
+        assert "secret=false" in result
+        assert "yes" not in result  # answer not in tool result even for non-secret
+        text = await call_async(read_pty, session_id, timeout=2.0, until="yes")
+        assert "yes" in text
+    finally:
+        PtyManager.close_all()
 
 
 async def test_pty_exec_failure_surfaces(workspace: object) -> None:
