@@ -67,7 +67,7 @@ async def test_fetch_remote_model_ids_timeout() -> None:
             await asyncio.sleep(10)
             return ["late"]
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(RuntimeError, match="timed out"):
         _ = await fetch_remote_model_ids(Slow(), timeout_seconds=0.05)
 
 

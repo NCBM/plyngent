@@ -305,7 +305,11 @@ class ReplState:
         return list(ids)
 
     async def merged_model_choices(self, *, refresh: bool = False) -> list[str]:
-        """Config plus remote catalog; remote fetch best-effort when refresh/missing."""
+        """Config plus remote catalog; remote fetch best-effort when refresh/missing.
+
+        Network / timeout / cancel failures fall back to cache or config-only ids
+        so ``/provider`` switches never hang or fail solely on GET /models.
+        """
         remote: list[str] | None
         try:
             remote = await self.ensure_remote_models(refresh=refresh)

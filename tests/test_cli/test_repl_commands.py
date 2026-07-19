@@ -234,6 +234,13 @@ async def test_provider_switch_prompts_when_model_missing(
     state.model = "only-a"
     state.rebuild_client()
 
+    # No real GET /models — catalog is config-only for unit tests.
+    async def _no_remote(*, refresh: bool = False) -> list[str]:
+        del refresh
+        return []
+
+    monkeypatch.setattr(state, "ensure_remote_models", _no_remote)
+
     # When switching to b, only-a is missing → select_model is invoked interactively.
     monkeypatch.setattr(
         "plyngent.cli.slash.select_model",
@@ -250,7 +257,10 @@ async def test_provider_switch_prompts_when_model_missing(
     assert row.model == "only-b"
 
 
-async def test_provider_switch_keeps_shared_model(state: ReplState) -> None:
+async def test_provider_switch_keeps_shared_model(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from plyngent.config.models import ModelConfig, OpenAICompatibleProvider, OpenAIProvider
 
     state.config.providers = {
@@ -268,6 +278,12 @@ async def test_provider_switch_keeps_shared_model(state: ReplState) -> None:
     state.provider = state.config.providers["a"]
     state.model = "shared"
     state.rebuild_client()
+
+    async def _no_remote(*, refresh: bool = False) -> list[str]:
+        del refresh
+        return []
+
+    monkeypatch.setattr(state, "ensure_remote_models", _no_remote)
     assert await handle_slash(state, "/provider b") is True
     assert state.provider_name == "b"
     assert state.model == "shared"

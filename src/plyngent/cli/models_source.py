@@ -76,11 +76,19 @@ async def fetch_remote_model_ids(
         raise TypeError(msg)
     result = method()
     if inspect.isawaitable(result):
-        if timeout_seconds > 0:
-            async with asyncio.timeout(timeout_seconds):
+        try:
+            if timeout_seconds > 0:
+                async with asyncio.timeout(timeout_seconds):
+                    result = await result
+            else:
                 result = await result
-        else:
-            result = await result
+        except TimeoutError as exc:
+            msg = f"models() timed out after {timeout_seconds}s"
+            raise RuntimeError(msg) from exc
+        except asyncio.CancelledError as exc:
+            # SSL/HTTP stacks may surface cancel instead of TimeoutError; treat as soft fail.
+            msg = "models() was cancelled or timed out"
+            raise RuntimeError(msg) from exc
     if not isinstance(result, list):
         msg = f"models() returned unexpected type {type(result)!r}"
         raise TypeError(msg)
