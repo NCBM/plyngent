@@ -13,7 +13,6 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
-    DeveloperChatMessage,
     StreamOptions,
     StreamToolCallDelta,
     ToolChatMessage,
@@ -38,6 +37,7 @@ from .events import (
     ToolResultEvent,
     UsageEvent,
 )
+from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack
 from .usage import resolve_round_usage, token_usage_from_api
 
 if TYPE_CHECKING:
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
     from .client import ChatClient
+    from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
     from .tools import ToolRegistry
 
@@ -307,7 +308,7 @@ def _last_assistant(messages: list[AnyChatMessage], pre_len: int) -> AssistantCh
     return last
 
 
-async def run_chat_loop(
+async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     client: ChatClient,
     messages: list[AnyChatMessage],
     *,
@@ -321,6 +322,7 @@ async def run_chat_loop(
     parallel_tools: bool = True,
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     todo_stack: TodoStack | None = None,
+    todo_nag_strategy: TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
@@ -330,8 +332,8 @@ async def run_chat_loop(
     Request payloads may shrink older tool results when over ``max_context_tokens``.
 
     When *todo_stack* is set and still needs review after a natural stop
-    (open items, or non-empty stack untouched this turn), injects a developer
-    review message and continues once so the model reconciles unfinished work.
+    (open items, or non-empty stack untouched this turn), injects a review nag
+    (channel from *todo_nag_strategy*) once so the model reconciles unfinished work.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -373,9 +375,14 @@ async def run_chat_loop(
             if tool_calls is UNSET or not tool_calls or tools is None:
                 if todo_stack is not None and todo_stack.needs_review() and not todo_review_injected:
                     todo_review_injected = True
-                    # Non-user control identity so retry/history don't treat this as human input.
-                    messages.append(DeveloperChatMessage(content=todo_stack.review_prompt()))
-                    continue
+                    injected = inject_todo_nag_for_stack(
+                        messages,
+                        todo_stack,
+                        kind="end_of_turn",
+                        strategy=todo_nag_strategy,
+                    )
+                    if injected:
+                        continue
                 return
             async for event in _execute_tool_calls(
                 tools,

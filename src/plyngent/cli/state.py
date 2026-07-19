@@ -187,6 +187,7 @@ class ReplState:
             parallel_tools=agent_cfg.parallel_tools,
             max_context_tokens=agent_cfg.max_context_tokens,
             todo_stack=self.todo_stack,
+            todo_nag_strategy=agent_cfg.todo_nag_strategy,
         )
 
     def rebuild_client(self) -> None:

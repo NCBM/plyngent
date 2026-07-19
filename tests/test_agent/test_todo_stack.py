@@ -3,17 +3,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, overload
 
 import pytest
+from msgspec import UNSET
 
 from plyngent.agent import ChatAgent, ToolRegistry
+from plyngent.agent.todo_nag import inject_todo_nag, parse_todo_nag_strategy
 from plyngent.agent.todo_stack import TodoStack, parse_push_titles
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
+    AnyChatMessage,
     AssistantChatMessage,
     ChatCompletionChoice,
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
     DeveloperChatMessage,
+    SystemChatMessage,
+    ToolChatMessage,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -115,6 +120,43 @@ def test_todo_stack_needs_review() -> None:
     assert stack.needs_review()
     stack.mark_touched()
     assert not stack.needs_review()
+
+
+def test_parse_todo_nag_strategy() -> None:
+    assert parse_todo_nag_strategy("developer") == "developer"
+    assert parse_todo_nag_strategy("SYNTHETIC-TOOL") == "synthetic_tool"
+    assert parse_todo_nag_strategy("nope") == "developer"
+    assert parse_todo_nag_strategy(None) == "developer"
+
+
+def test_inject_todo_nag_strategies() -> None:
+    body = "[TODO OPEN WORK] test"
+    messages: list[AnyChatMessage] = []
+    assert inject_todo_nag(messages, body, strategy="none") is False
+    assert messages == []
+
+    messages = []
+    assert inject_todo_nag(messages, body, strategy="developer") is True
+    assert isinstance(messages[0], DeveloperChatMessage)
+    assert body in messages[0].content
+
+    messages = []
+    assert inject_todo_nag(messages, body, strategy="system") is True
+    assert isinstance(messages[0], SystemChatMessage)
+
+    messages = []
+    assert inject_todo_nag(messages, body, strategy="user") is True
+    assert isinstance(messages[0], UserChatMessage)
+
+    messages = []
+    assert inject_todo_nag(messages, body, strategy="synthetic_tool") is True
+    assert len(messages) == 2
+    assert isinstance(messages[0], AssistantChatMessage)
+    tool_calls = messages[0].tool_calls
+    assert tool_calls is not UNSET and tool_calls
+    assert isinstance(messages[1], ToolChatMessage)
+    assert body in messages[1].content
+    assert messages[1].tool_call_id.startswith("todo-nag-")
 
 
 def test_todo_prompts_signal_undone_work() -> None:
@@ -291,5 +333,57 @@ async def test_loop_injects_todo_review_when_open_after_touch() -> None:
             pass
         assert client.calls >= 2
         assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+    finally:
+        set_todo_stack(None)
+
+
+@pytest.mark.asyncio
+async def test_loop_synthetic_tool_nag_strategy() -> None:
+    stack = TodoStack()
+    _ = stack.push("open work")
+    stack.begin_turn()
+    client = ScriptedClient()
+    agent = ChatAgent(
+        client,  # type: ignore[arg-type]
+        model="m",
+        tools=ToolRegistry(list(TODO_TOOLS)),
+        stream=False,
+        todo_stack=stack,
+        todo_nag_strategy="synthetic_tool",
+    )
+    set_todo_stack(stack)
+    try:
+        async for _event in agent.run("do stuff"):
+            pass
+        assert any(isinstance(m, ToolChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+        assert not any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+    finally:
+        set_todo_stack(None)
+
+
+@pytest.mark.asyncio
+async def test_loop_none_nag_strategy_skips_inject() -> None:
+    stack = TodoStack()
+    _ = stack.push("open work")
+    stack.begin_turn()
+    client = ScriptedClient()
+    agent = ChatAgent(
+        client,  # type: ignore[arg-type]
+        model="m",
+        tools=ToolRegistry(list(TODO_TOOLS)),
+        stream=False,
+        todo_stack=stack,
+        todo_nag_strategy="none",
+    )
+    set_todo_stack(stack)
+    try:
+        async for _event in agent.run("do stuff"):
+            pass
+        # One completion only — no end-of-turn continue from nag.
+        assert client.calls == 1
+        assert not any(
+            isinstance(m, (DeveloperChatMessage, ToolChatMessage)) and "[TODO OPEN WORK]" in getattr(m, "content", "")
+            for m in agent.messages
+        )
     finally:
         set_todo_stack(None)

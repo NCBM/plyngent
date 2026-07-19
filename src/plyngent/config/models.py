@@ -27,6 +27,10 @@ class AgentConfig(Struct, omit_defaults=True):
     path_denylist: list[str] = field(default_factory=list)
     max_context_tokens: int = 200_000
 
+    # How to inject todo stack nags into model context (see agent/todo_nag.py).
+    # developer | system | user | synthetic_tool | none
+    todo_nag_strategy: str = "developer"
+
     # Compact / summarisation prompts (empty = use built-in defaults).
     compact_system_prompt: str = ""
     compact_user_prefix: str = ""

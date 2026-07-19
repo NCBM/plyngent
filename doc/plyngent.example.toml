@@ -18,6 +18,9 @@ confirm_destructive = true
 path_denylist = ["/secrets/", ".ssh/", ".gnupg/"]
 # Soft context budget in estimated tokens (~4 chars/token when API usage missing).
 max_context_tokens = 200000
+# How open-todo nags are injected into model context:
+# developer (default) | system | user | synthetic_tool | none
+# todo_nag_strategy = "developer"
 
 # Optional: custom compact/summarisation prompts (empty = built-in defaults).
 # compact_system_prompt = ""

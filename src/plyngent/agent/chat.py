@@ -7,7 +7,6 @@ from msgspec import UNSET
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
-    DeveloperChatMessage,
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
@@ -20,6 +19,7 @@ from .budget import (
 )
 from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
+from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack, parse_todo_nag_strategy
 from .usage import TokenUsage
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from .client import ChatClient
     from .events import AgentEvent
+    from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
     from .tools import ToolRegistry
 
@@ -121,6 +122,7 @@ class ChatAgent:
     parallel_tools: bool
     max_context_tokens: int
     todo_stack: TodoStack | None
+    todo_nag_strategy: TodoNagStrategy
     messages: list[AnyChatMessage]
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
@@ -147,6 +149,7 @@ class ChatAgent:
         parallel_tools: bool = True,
         max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
         todo_stack: TodoStack | None = None,
+        todo_nag_strategy: str | TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
     ) -> None:
         self.client = client
         self.model = model
@@ -162,6 +165,7 @@ class ChatAgent:
         self.parallel_tools = parallel_tools
         self.max_context_tokens = max_context_tokens
         self.todo_stack = todo_stack
+        self.todo_nag_strategy = parse_todo_nag_strategy(str(todo_nag_strategy))
         self.messages = list(messages) if messages is not None else []
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
@@ -298,7 +302,12 @@ class ChatAgent:
             self.todo_stack.begin_turn()
             # Non-empty stack at turn start → remind the model before first completion.
             if not self.todo_stack.is_empty():
-                self.messages.append(DeveloperChatMessage(content=self.todo_stack.turn_reminder_prompt()))
+                _ = inject_todo_nag_for_stack(
+                    self.messages,
+                    self.todo_stack,
+                    kind="turn_start",
+                    strategy=self.todo_nag_strategy,
+                )
 
         completed = False
         turn_usage = TokenUsage()
@@ -318,6 +327,7 @@ class ChatAgent:
                 parallel_tools=self.parallel_tools,
                 max_context_tokens=self.max_context_tokens,
                 todo_stack=self.todo_stack,
+                todo_nag_strategy=self.todo_nag_strategy,
             ):
                 if isinstance(event, UsageEvent):
                     turn_rounds += 1
