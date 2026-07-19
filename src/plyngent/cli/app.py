@@ -525,10 +525,21 @@ def config_path_cmd(config_path: Path | None) -> None:
     help="Path to plyngent.toml (default: platform config dir).",
 )
 def config_edit_cmd(config_path: Path | None) -> None:
-    """Open the config file in $EDITOR (supports e.g. ``codium --wait``)."""
+    """Open the config file in $VISUAL/$EDITOR, or system default if unset.
+
+    Blocking editors (e.g. ``codium --wait``) wait for exit. Without VISUAL/EDITOR,
+    falls back to xdg-open / open / startfile (non-blocking).
+    """
     path = resolve_config_path(config_path)
-    open_in_editor(path)
-    click.echo(f"edited {path}")
+    outcome = open_in_editor(path, allow_system_open=True)
+    if outcome == "system":
+        click.secho(
+            f"opened {path} with system default (not waiting for the app to exit)",
+            fg="yellow",
+            err=True,
+        )
+    else:
+        click.echo(f"edited {path}")
 
 
 if __name__ == "__main__":

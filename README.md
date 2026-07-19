@@ -86,7 +86,7 @@ Config: `prek.toml`. CI still runs the same checks in GitHub Actions.
 ```bash
 # 1) Create / open config
 plyngent config path
-plyngent config edit    # needs $EDITOR
+plyngent config edit    # $VISUAL/$EDITOR, else system open (xdg-open/open/startfile)
 
 # Minimal provider (OpenAI platform — Responses API; preset defaults to openai):
 # [providers.oai]
@@ -111,7 +111,7 @@ Default config path (platformdirs):
 
 ```bash
 plyngent config path
-plyngent config edit    # opens $EDITOR (e.g. codium --wait)
+plyngent config edit    # $VISUAL/$EDITOR (e.g. codium --wait), else system default
 ```
 
 Copy the example and fill in a real token:
@@ -186,7 +186,7 @@ Exit codes (one-shot):
 ### Input ergonomics
 
 - **Multiline**: start a message with `"""`, end a later line with `"""`.
-- **`/edit`**: compose a turn in `$EDITOR` (empty buffer cancels).
+- **`/edit`**: compose a turn in `$VISUAL`/`$EDITOR` (blocking only; empty cancels).
 - **Tab**: completes slash commands and some arguments (provider, model, on/off, export, `/help` targets).
 
 ### Slash commands
@@ -211,7 +211,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
 | `/todos` | Todo/task stack: list, push, pop, done, clear |
-| `/config` | Edit `plyngent.toml` in `$EDITOR` and reload |
+| `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |
 
 User messages are saved immediately. On API error or Ctrl+C, partial assistant/tool output is discarded but the user message stays so `/retry` works after resume. Interactive auto-retry uses 10s / 20s / 30s delays.

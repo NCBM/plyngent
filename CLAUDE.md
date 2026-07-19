@@ -98,10 +98,10 @@ Shared interactive I/O: `ask` / `choose` / `form` / `confirm` with pluggable bac
 Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 - **`plyngent chat`**: provider/model (flags or interactive; Tab via readline in `prompting`); sessions store `provider_name`/`model` and restore on resume; SQLite via `[database]` (file DB under user data when url unset; explicit `url = ":memory:"` kept + warn); workspace-bound; resume latest for cwd/`--workspace` by default (`--new` / `--session`). One-shot: `-p/--prompt` and non-TTY stdin; exit codes 0/1/2/3; `--yes` (YOLO on), `--stream/--no-stream`, `--quiet`. Root `--log-level`.
-- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$EDITOR`. `/yolo on|off|once` for soft destructive confirms. `/model --persist` / `/models --persist` write model catalog entries into TOML. `/todos` for human show/push/pop/clear of the todo stack.
+- Slash: Click group in `cli/slash.py` + `awaitlet` for async work; Tab completer from registry + ParamType `shell_complete`. Multiline `"""` … `"""`; `/edit` via `$VISUAL`/`$EDITOR` (blocking only). `/yolo on|off|once` for soft destructive confirms. `/model --persist` / `/models --persist` write model catalog entries into TOML. `/todos` for human show/push/pop/clear of the todo stack.
 - Explicit `/resume` or `--session` from another workspace prompts: **keep** / **update** / **abort**.
 - Failed/cancelled turns: user kept; **committed tool rounds kept** (side effects not re-run on `/retry`); only unfinished assistant rolled back; Ctrl+C cancels; TTY confirms off-loop; auto-retry 10s/20s/30s then `/retry`.
-- **`plyngent providers`**, **`config path|edit`**. No providers + `$EDITOR` → optional edit then reload.
+- **`plyngent providers`**, **`config path|edit`**. Config open: `$VISUAL`/`$EDITOR` (wait), else system default (`xdg-open` / `open` / `startfile`, non-blocking). `/edit` stays blocking-only. No providers → optional edit then reload when waited.
 - Tools default on; workspace defaults to cwd; `--max-rounds` default 32. Readline history under platformdirs (`repl_history`). PTY: `close_all` on chat exit.
 
 ### Composition utility: `Forward` descriptor

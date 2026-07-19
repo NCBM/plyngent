@@ -87,7 +87,7 @@ HELP_FOOTER = (
     "continue a prior chat after restart.\n"
     "\n"
     'Multiline: start a message with """ then end a later line with """.\n'
-    "Long prompts: /edit opens $EDITOR.\n"
+    "Long prompts: /edit opens $VISUAL/$EDITOR (blocking).\n"
 )
 
 
@@ -453,10 +453,10 @@ def clear_cmd(state: ReplState) -> None:
 @slash.command("edit")
 @click.pass_obj
 def edit_cmd(state: ReplState) -> None:
-    """Compose a user message in ``$EDITOR``, then send it.
+    """Compose a user message in ``$VISUAL``/``$EDITOR``, then send it.
 
     Opens a temporary buffer; save and quit the editor to submit.
-    Empty buffer cancels. Requires ``EDITOR`` (e.g. ``codium --wait``).
+    Empty buffer cancels. Requires a blocking editor (no system-open fallback).
     """
     from plyngent.cli.editor import edit_text_in_editor
 
@@ -475,19 +475,26 @@ def edit_cmd(state: ReplState) -> None:
 @slash.command("config")
 @click.pass_obj
 def config_cmd(state: ReplState) -> None:
-    """Open plyngent.toml in ``$EDITOR``, then reload providers/agent settings.
+    """Open plyngent.toml in ``$VISUAL``/``$EDITOR`` (or system default), then reload.
 
-    Same file as ``plyngent config edit``. After the editor exits, config is
-    re-read; current provider/model are kept when still valid.
+    Same file as ``plyngent config edit``. After a **blocking** editor exits,
+    config is re-read. System-open fallback does not wait — reload is skipped
+    with a hint to re-run ``/config`` after saving.
     """
     from plyngent import config as config_mod
     from plyngent.cli.editor import open_in_editor
 
     path = state.config.path
     try:
-        open_in_editor(path)
+        outcome = open_in_editor(path, allow_system_open=True)
     except click.ClickException as exc:
         click.echo(f"error: {exc}")
+        return
+    if outcome == "system":
+        click.secho(
+            f"opened {path} with system default (not waiting). Save the file, then run /config again to reload.",
+            fg="yellow",
+        )
         return
     try:
         state.reload_config_from_disk()
