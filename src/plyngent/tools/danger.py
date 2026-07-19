@@ -84,9 +84,7 @@ def _indent_block(text: str, *, prefix: str = "  ") -> str:
     """Indent every line of *text* (for multi-line -c bodies in confirm prompts)."""
     if not text:
         return prefix
-    return "\n".join(
-        prefix + line if line else prefix.rstrip() for line in text.splitlines()
-    )
+    return "\n".join(prefix + line if line else prefix.rstrip() for line in text.splitlines())
 
 
 def _format_argv_for_confirm(argv: Sequence[str], *, code: str | None) -> str:
@@ -198,7 +196,7 @@ def _batch_step_argv(item: object) -> list[str] | None:
     if not isinstance(command, list) or not command:
         return None
     argv: list[str] = []
-    for part in command:
+    for part in cast("list[object]", command):
         if not isinstance(part, str):
             return None
         argv.append(part)

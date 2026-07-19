@@ -57,8 +57,9 @@ def _parse_step(raw: object, index: int) -> dict[str, Any]:
     if not isinstance(command, list) or not command:
         msg = f"commands[{index}].command must be a non-empty argv list"
         raise WorkspaceError(msg)
-    argv = [part for part in command if isinstance(part, str)]
-    if len(argv) != len(command):
+    command_parts = cast("list[object]", command)
+    argv = [part for part in command_parts if isinstance(part, str)]
+    if len(argv) != len(command_parts):
         msg = f"commands[{index}].command must be a list of strings"
         raise WorkspaceError(msg)
     cwd = data.get("cwd")
