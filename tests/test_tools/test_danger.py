@@ -14,9 +14,7 @@ def test_classify_delete_and_move() -> None:
 def test_classify_copy() -> None:
     # Without overwrite flag, copy is not soft-confirmed.
     assert classify_danger("copy_path", {"src": "a", "dst": "b"}) is None
-    assert classify_danger(
-        "copy_path", {"src": "a", "dst": "b", "overwrite": False}
-    ) is None
+    assert classify_danger("copy_path", {"src": "a", "dst": "b", "overwrite": False}) is None
 
 
 def test_classify_write_overwrite_only(tmp_path: Path) -> None:
@@ -115,3 +113,22 @@ async def test_confirm_deny_with_comment() -> None:
     assert "denied" in out
     assert "user comment:" in out
     assert "too destructive" in out
+
+def test_shell_confirm_formats_command_placeholder() -> None:
+    script = "line1" + "
+" + "line2" + "
+" + "line3"
+    reason = classify_danger(
+        "run_command",
+        {"command": ["bash", "-c", script]},
+    )
+    assert reason is not None
+    assert "$(command)" in reason
+    assert "line1" in reason and "line2" in reason and "line3" in reason
+    argv_line = next(ln for ln in reason.splitlines() if "argv:" in ln)
+    assert "line1" not in argv_line
+    lines = reason.splitlines()
+    idx = lines.index("  command:")
+    body = lines[idx + 1 :]
+    assert body
+    assert all(ln.startswith("  ") for ln in body)

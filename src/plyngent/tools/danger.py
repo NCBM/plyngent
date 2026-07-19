@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import TYPE_CHECKING, cast
 
 from plyngent.tools.workspace import WorkspaceError, resolve_path
@@ -8,8 +9,6 @@ from plyngent.tools.workspace import WorkspaceError, resolve_path
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-_DISPLAY_ARGV_MAX = 400
-_CODE_PREVIEW_MAX = 240
 
 _SHELL_BASENAMES: frozenset[str] = frozenset(
     {
@@ -81,30 +80,58 @@ def _find_dash_c_code(argv: Sequence[str]) -> str | None:
     return None
 
 
+def _indent_block(text: str, *, prefix: str = "  ") -> str:
+    """Indent every line of *text* (for multi-line -c bodies in confirm prompts)."""
+    if not text:
+        return prefix
+    return "\n".join(
+        prefix + line if line else prefix.rstrip() for line in text.splitlines()
+    )
+
+
+def _format_argv_for_confirm(argv: Sequence[str], *, code: str | None) -> str:
+    """One-line argv summary; replace -c payload with ``$(command)`` when present."""
+    if code is None:
+        return shlex.join(list(argv))
+    parts: list[str] = []
+    skip_next = False
+    for part in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if part == "-c":
+            parts.append("-c")
+            parts.append("$(command)")
+            skip_next = True
+            continue
+        parts.append(part)
+    return shlex.join(parts)
+
+
 def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
-    """Confirm interactive shells/REPLs and ``-c`` one-liners so the user can inspect argv.
+    """Confirm interactive shells and ``*-c`` one-liners so the user can inspect argv.
 
     Multi-line reason (shown inside the CLI confirm box). ``via`` is a short
-    label (tool name), not repeated on every line.
+    label such as ``run_command`` or ``open_pty``.
+
+    For ``-c`` scripts, argv shows ``$(command)`` instead of inlining the body;
+    the full script is printed below untruncated, with every line indented.
     """
     if not argv:
         return None
     base = _basename(argv[0])
-    display = " ".join(argv)
-    if len(display) > _DISPLAY_ARGV_MAX:
-        display = display[:_DISPLAY_ARGV_MAX] + "…"
-
     code = _find_dash_c_code(argv)
+    display = _format_argv_for_confirm(argv, code=code)
+
     if code is not None:
-        preview = code if len(code) <= _CODE_PREVIEW_MAX else code[:_CODE_PREVIEW_MAX] + "…"
-        return f"{via}: {base} -c (review code before allow)\nargv:\n  {display}\n-c code:\n  {preview}"
+        body = _indent_block(code, prefix="  ")
+        return f"{via}: {base} -c (review code before allow)\n  argv: {display}\n  command:\n{body}"
 
     if base in _SHELL_BASENAMES and len(argv) == 1:
-        return f"{via}: interactive {base!r} (review before allow)\nargv:\n  {display}"
+        return f"{via}: interactive {base!r} (review before allow)\n  argv: {display}"
 
-    # e.g. python -i, bash --login without -c still needs a glance.
-    if base in _SHELL_BASENAMES:
-        return f"{via}: shell/runtime {base!r} (review before allow)\nargv:\n  {display}"
+    if base in _SHELL_BASENAMES and "-c" not in argv[1:]:
+        return f"{via}: shell/runtime {base!r} without -c (review before allow)\n  argv: {display}"
 
     return None
 
