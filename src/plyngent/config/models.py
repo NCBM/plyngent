@@ -28,7 +28,7 @@ class AgentConfig(Struct, omit_defaults=True):
     max_context_tokens: int = 200_000
 
     # How to inject todo stack nags into model context (see agent/todo_nag.py).
-    # developer | system | user | synthetic_tool | none
+    # developer | user | synthetic_tool | none  (legacy "system" → developer)
     todo_nag_strategy: str = "developer"
 
     # Compact / summarisation prompts (empty = use built-in defaults).

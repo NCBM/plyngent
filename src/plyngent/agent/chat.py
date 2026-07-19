@@ -19,7 +19,11 @@ from .budget import (
 )
 from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
-from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack, parse_todo_nag_strategy
+from .todo_nag import (
+    DEFAULT_TODO_NAG_STRATEGY,
+    inject_todo_nag_for_stack_with_events,
+    parse_todo_nag_strategy,
+)
 from .usage import TokenUsage
 
 if TYPE_CHECKING:
@@ -300,20 +304,24 @@ class ChatAgent:
         user_index = self._user_index(user_msg)
         if self.todo_stack is not None:
             self.todo_stack.begin_turn()
-            # Non-empty stack at turn start → remind the model before first completion.
-            if not self.todo_stack.is_empty():
-                _ = inject_todo_nag_for_stack(
-                    self.messages,
-                    self.todo_stack,
-                    kind="turn_start",
-                    strategy=self.todo_nag_strategy,
-                )
 
         completed = False
         turn_usage = TokenUsage()
         turn_rounds = 0
         last_request = TokenUsage()
         try:
+            # Turn-start nag before first completion; yield events so CLI flushes
+            # (synthetic_tool → ToolCall/Result chrome, not glued to text).
+            if self.todo_stack is not None and not self.todo_stack.is_empty():
+                _injected, nag_events = inject_todo_nag_for_stack_with_events(
+                    self.messages,
+                    self.todo_stack,
+                    kind="turn_start",
+                    strategy=self.todo_nag_strategy,
+                )
+                for nag_event in nag_events:
+                    yield nag_event
+
             async for event in run_chat_loop(
                 self.client,
                 self.messages,

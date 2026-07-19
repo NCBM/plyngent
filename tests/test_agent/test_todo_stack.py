@@ -17,7 +17,6 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionResponse,
     ChatCompletionsParam,
     DeveloperChatMessage,
-    SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
 )
@@ -127,9 +126,14 @@ def test_parse_todo_nag_strategy() -> None:
     assert parse_todo_nag_strategy("SYNTHETIC-TOOL") == "synthetic_tool"
     assert parse_todo_nag_strategy("nope") == "developer"
     assert parse_todo_nag_strategy(None) == "developer"
+    # Legacy alias — mid-turn system was not a useful Responses channel.
+    assert parse_todo_nag_strategy("system") == "developer"
 
 
 def test_inject_todo_nag_strategies() -> None:
+    from plyngent.agent.events import ToolCallEvent, ToolResultEvent
+    from plyngent.agent.todo_nag import inject_todo_nag_with_events
+
     body = "[TODO OPEN WORK] test"
     messages: list[AnyChatMessage] = []
     assert inject_todo_nag(messages, body, strategy="none") is False
@@ -141,15 +145,12 @@ def test_inject_todo_nag_strategies() -> None:
     assert body in messages[0].content
 
     messages = []
-    assert inject_todo_nag(messages, body, strategy="system") is True
-    assert isinstance(messages[0], SystemChatMessage)
-
-    messages = []
     assert inject_todo_nag(messages, body, strategy="user") is True
     assert isinstance(messages[0], UserChatMessage)
 
     messages = []
-    assert inject_todo_nag(messages, body, strategy="synthetic_tool") is True
+    ok, events = inject_todo_nag_with_events(messages, body, strategy="synthetic_tool")
+    assert ok is True
     assert len(messages) == 2
     assert isinstance(messages[0], AssistantChatMessage)
     tool_calls = messages[0].tool_calls
@@ -157,6 +158,10 @@ def test_inject_todo_nag_strategies() -> None:
     assert isinstance(messages[1], ToolChatMessage)
     assert body in messages[1].content
     assert messages[1].tool_call_id.startswith("todo-nag-")
+    assert len(events) == 2
+    assert isinstance(events[0], ToolCallEvent)
+    assert isinstance(events[1], ToolResultEvent)
+    assert body in events[1].message.content
 
 
 def test_todo_prompts_signal_undone_work() -> None:

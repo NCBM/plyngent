@@ -37,7 +37,7 @@ from .events import (
     ToolResultEvent,
     UsageEvent,
 )
-from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack
+from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack_with_events
 from .usage import resolve_round_usage, token_usage_from_api
 
 if TYPE_CHECKING:
@@ -375,12 +375,14 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
             if tool_calls is UNSET or not tool_calls or tools is None:
                 if todo_stack is not None and todo_stack.needs_review() and not todo_review_injected:
                     todo_review_injected = True
-                    injected = inject_todo_nag_for_stack(
+                    injected, nag_events = inject_todo_nag_for_stack_with_events(
                         messages,
                         todo_stack,
                         kind="end_of_turn",
                         strategy=todo_nag_strategy,
                     )
+                    for nag_event in nag_events:
+                        yield nag_event
                     if injected:
                         continue
                 return
