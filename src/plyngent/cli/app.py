@@ -327,6 +327,10 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
 
         PtyManager.close_all()
+        from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+        set_policy_confirm_hook(None)
+        clear_policy_allowed_commands()
         _ = cleanup_temporary_workspaces()
 
 

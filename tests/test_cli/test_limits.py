@@ -41,8 +41,20 @@ def test_format_tool_confirm_box_multiline() -> None:
 
 
 def test_install_cli_limit_hooks() -> None:
+    from plyngent.tools.workspace import get_policy_confirm_hook, set_policy_confirm_hook
+
     install_cli_limit_hooks()
     assert callable(getattr(PtyManager, "_limit_continue", None))
+    assert get_policy_confirm_hook() is not None
     PtyManager.set_limit_continue_hook(None)
+    set_policy_confirm_hook(None)
     # Backend remains usable after install.
     assert get_prompt_backend().is_interactive() or True
+
+
+def test_policy_confirm_noninteractive_denies() -> None:
+    from plyngent.cli.limits import prompt_policy_command_confirm
+    from plyngent.prompting import NonInteractiveBackend
+
+    with temporary_backend(NonInteractiveBackend()):
+        assert prompt_policy_command_confirm("sudo", ["sudo", "id"], 1.0) is False

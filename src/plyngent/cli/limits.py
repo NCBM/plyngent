@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import selectors
 import shutil
+import sys
 from typing import TYPE_CHECKING, Literal
 
 from plyngent.cli.interrupt import pause_task_cancel_for_prompt
@@ -19,8 +22,7 @@ from plyngent.prompting import (
 from plyngent.tools.process.pty_session import PtyManager
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
+    from collections.abc import Mapping, Sequence
 type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
 
 _BOX_MIN_WIDTH = 40
@@ -150,6 +152,86 @@ def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> b
         return _prompt_confirm_tool_sync(name, args, reason)
 
 
+def _try_readline() -> str | None:
+    try:
+        return sys.stdin.readline()
+    except OSError, EOFError:
+        return None
+
+
+def _read_yes_no_line_with_timeout(timeout_seconds: float) -> str | None:
+    """Read one line from stdin with *timeout_seconds*; ``None`` on timeout/EOF.
+
+    Uses :mod:`selectors` on the process stdin FD. On Windows without selector
+    support, falls back to blocking readline (no true timeout).
+    """
+    try:
+        if not sys.stdin.isatty():
+            return None
+        fd = sys.stdin.fileno()
+    except OSError, ValueError, AttributeError:
+        return _try_readline()
+
+    try:
+        selector = selectors.DefaultSelector()
+        _ = selector.register(fd, selectors.EVENT_READ)
+    except OSError, ValueError, AttributeError:
+        return _try_readline()
+
+    try:
+        events = selector.select(timeout_seconds)
+        if not events:
+            return None
+        return sys.stdin.readline()
+    except OSError, ValueError, EOFError:
+        return None
+    finally:
+        selector.close()
+
+
+def prompt_policy_command_confirm(
+    basename: str,
+    argv: Sequence[str],
+    timeout_seconds: float,
+) -> bool:
+    """Ask whether to allow a denylisted command for this session (timed).
+
+    Independent of YOLO: always prompts when interactive. Default is **deny**.
+    Timeout, cancel, or non-interactive → False.
+    """
+    argv_preview = " ".join(str(part) for part in argv)
+    reason = (
+        f"policy denylist blocks basename {basename!r}\n"
+        f"argv: {argv_preview}\n"
+        f"Allow this basename for the rest of this process?\n"
+        f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)"
+    )
+    try:
+        with pause_task_cancel_for_prompt():
+            backend = get_prompt_backend()
+            if not backend.is_interactive():
+                return False
+            backend.echo()
+            backend.secho(format_tool_confirm_box("policy", reason), fg="yellow")
+            backend.echo()
+            prompt = f"[policy] allow {basename!r}? [y/N] (timeout {timeout_seconds:g}s): "
+            with contextlib.suppress(OSError):
+                _ = sys.stderr.write(prompt)
+                _ = sys.stderr.flush()
+            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            if raw is None:
+                with contextlib.suppress(OSError, NonInteractiveError):
+                    backend.secho(
+                        f"[policy] timed out after {timeout_seconds:g}s — denied",
+                        fg="red",
+                        err=True,
+                    )
+                return False
+            return raw.strip().lower() in {"y", "yes"}
+    except NonInteractiveError, KeyboardInterrupt, EOFError:
+        return False
+
+
 async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """Async confirm: True allow, False deny, str = deny with user comment."""
     del args
@@ -268,6 +350,9 @@ async def prompt_workspace_mismatch_async(
 
 
 def install_cli_limit_hooks() -> None:
-    """Register interactive continue hooks and prompt cancel-pause for the CLI."""
+    """Register interactive continue hooks, policy confirm, and prompt cancel-pause."""
     configure_prompting(pause_factory=pause_task_cancel_for_prompt)
     PtyManager.set_limit_continue_hook(prompt_continue_limit)
+    from plyngent.tools.workspace import set_policy_confirm_hook
+
+    set_policy_confirm_hook(prompt_policy_command_confirm)

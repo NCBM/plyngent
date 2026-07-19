@@ -43,20 +43,26 @@ from .vcs import vcs_status as vcs_status
 from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )
+from .workspace import DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS as DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
 from .workspace import WorkspaceError as WorkspaceError
 from .workspace import add_workspace_allowlist as add_workspace_allowlist
 from .workspace import check_command_allowed as check_command_allowed
+from .workspace import clear_policy_allowed_commands as clear_policy_allowed_commands
 from .workspace import clear_workspace_allowlist as clear_workspace_allowlist
 from .workspace import clear_workspace_root as clear_workspace_root
 from .workspace import get_command_denylist as get_command_denylist
 from .workspace import get_path_denylist as get_path_denylist
+from .workspace import get_policy_confirm_timeout as get_policy_confirm_timeout
 from .workspace import get_workspace_root as get_workspace_root
+from .workspace import grant_policy_command as grant_policy_command
 from .workspace import list_workspace_allowlist as list_workspace_allowlist
 from .workspace import pop_owned_temporary_workspaces as pop_owned_temporary_workspaces
 from .workspace import remove_workspace_allowlist as remove_workspace_allowlist
 from .workspace import resolve_path as resolve_path
 from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist
+from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
+from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
 from .workspace import set_workspace_root as set_workspace_root
 
 DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS]

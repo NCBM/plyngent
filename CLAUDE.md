@@ -78,7 +78,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 
 Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 
-- **`workspace`**: path resolve under primary root **or** temporary allowlist roots; path substring denylist; command basename denylist; clearer deny messages.
+- **`workspace`**: path resolve under primary root **or** temporary allowlist roots; path substring denylist; command basename denylist (CLI: timed human allow override, default deny on timeout; **not** skipped by YOLO); clearer deny messages.
 - **`file`**: `read_file` (`with_lineno`), `write_file`, `listdir`, `tree` (VCS + default noise dirs + optional `skip_dirs` / denylist walk), `glob_paths`, `grep_files` (regex, skip VCS/binary), `edit_replace` (`max_replaces`, reports remaining matches), `edit_lineno` (1-based range), `copy_path` / `move_path` / `delete_path`, `new_temporary_workspace` (system temp allowlist; cleanup on chat exit; no session rebind).
 - **`process`**: `run_command` (argv, no shell, timeout, optional stdin/env); `run_command_batch` (serial steps, `pipe_out` on provider, `mix_stderr`, `stop_on_error`); PTY `open_pty` / `read_pty` / `write_pty` (literal) / `write_pty_keys` (escapes) / `ask_into_pty` (human→PTY only; `secret` no-echo; answer never in tool result) / `close_pty` (POSIX: `pty`+`fork`; Windows: ConPTY via `pywinpty` env marker dep).
 - PTY: backend in `pty_backend.py`; structured status (`alive`/`exit_code`/`data`); `read_pty(..., until=)` (**CSI sanitized** so host TTY is never reset); keys via `write_pty_keys` only (`\xHH`, `ctrl+x`, `key=esc`); secrets via `ask_into_pty` (not `write_pty` data); session limit/idle TTL/output budget; close terminate→kill.
