@@ -1,10 +1,19 @@
+# Single pipeline: CI on main/PRs; on v* tags, publish only after CI succeeds.
+# Retagging the same commit (delete + push tag) re-triggers this workflow.
+
 name: CI
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. force-push / retag races).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -18,15 +27,14 @@ jobs:
           python-version: "3.14"
 
       - name: Install PDM
-        uses: pdm-project/setup-pdm@v4
-        with:
-          python-version: "3.14"
+        run: pip install pdm
 
       - name: Install dependencies
-        run: pdm sync --dev
+        # Locked install so CI matches prek pins / pdm.lock.
+        run: pdm install --check -G :all
 
       - name: Ruff check
-        run: pdm run ruff check --output-format=github .
+        run: pdm run ruff check .
 
       - name: Ruff format
         run: pdm run ruff format --check .
@@ -34,5 +42,39 @@ jobs:
       - name: basedpyright
         run: pdm run basedpyright .
 
-      - name: pytest
+      - name: Pytest
         run: pdm run pytest
+
+  # Only on version tags, and only after check is green (no publish on red CI).
+  publish:
+    needs: check
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install PDM
+        run: pip install pdm
+
+      - name: Build package
+        run: pdm build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
