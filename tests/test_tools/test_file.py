@@ -19,8 +19,33 @@ def test_write_read_listdir_edit(workspace: object) -> None:
 def test_edit_replace_first_only(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "t.txt", "aa aa")
-    _ = call_sync(edit_replace, "t.txt", "aa", "bb")
+    result = call_sync(edit_replace, "t.txt", "aa", "bb")
     assert call_sync(read_file, "t.txt") == "bb aa"
+    assert "1 of 2" in result or "1 of 2 matches" in result
+    assert "remain" in result
+
+
+def test_edit_replace_max_replaces(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "t.txt", "aa aa aa")
+    result = call_sync(edit_replace, "t.txt", "aa", "bb", max_replaces=2)
+    assert call_sync(read_file, "t.txt") == "bb bb aa"
+    assert "2 of 3" in result
+    assert "1 remain" in result
+
+
+def test_edit_replace_all_matches(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "t.txt", "aa aa")
+    result = call_sync(edit_replace, "t.txt", "aa", "bb", max_replaces=10)
+    assert call_sync(read_file, "t.txt") == "bb bb"
+    assert "all 2 matches" in result
+
+
+def test_edit_replace_max_replaces_invalid(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "t.txt", "aa")
+    assert "max_replaces" in call_sync(edit_replace, "t.txt", "aa", "bb", max_replaces=0)
 
 
 def test_edit_missing_old_string(workspace: object) -> None:
