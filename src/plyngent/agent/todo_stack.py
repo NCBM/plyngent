@@ -89,16 +89,18 @@ class TodoStack:
         return not self._data.groups
 
     def needs_review(self) -> bool:
-        """True when the stack still signals unfinished or unreconciled work.
+        """True when end-of-turn should inject a todo nag.
 
-        Open (pending/in_progress) items always need attention. A non-empty stack
-        with only terminal items still needs a pop/clear if the agent ignored
-        todos this turn.
+        Only when the stack is non-empty **and** no ``todo_*`` tool ran this
+        turn (list/push/pop/update/clear all call :meth:`mark_touched`).
+
+        Open items alone must not re-nag after the model already accessed the
+        stack — that caused improper ``synthetic_tool`` injects mid-flow.
+        Hygiene (all-terminal non-empty) and open work share the same gate:
+        ignore todos for the whole turn → nag once; touch once → no end nag.
         """
         if self.is_empty():
             return False
-        if self.open_items():
-            return True
         return not self._touched_this_turn
 
     def to_data(self) -> TodoStackData:

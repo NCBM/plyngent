@@ -12,6 +12,8 @@ from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
     AnyChatMessage,
     AssistantChatMessage,
+    AssistantFunctionTool,
+    AssistantFunctionToolCall,
     ChatCompletionChoice,
     ChatCompletionChunk,
     ChatCompletionResponse,
@@ -109,13 +111,14 @@ def test_todo_stack_needs_review() -> None:
     assert not stack.needs_review()
     item = stack.push("work")
     stack.begin_turn()
-    # Open items always need review, even if todo_* was used this turn.
+    # Non-empty + untouched → nag (open or hygiene).
     assert stack.needs_review()
+    # Any todo_* access this turn suppresses end-of-turn nag, even with open items.
     stack.mark_touched()
-    assert stack.needs_review()
+    assert not stack.needs_review()
     stack.update(item.id, status="done")
     stack.begin_turn()
-    # Terminal-only stack: review only when untouched this turn.
+    # Terminal-only stack: same gate (untouched only).
     assert stack.needs_review()
     stack.mark_touched()
     assert not stack.needs_review()
@@ -348,29 +351,94 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
         set_todo_stack(None)
 
 
+class ScriptedClientWithTodoListThenStop:
+    """First completion: todo_list tool call; second: stop (no further nag round)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @overload
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+    ) -> ChatCompletionResponse: ...
+
+    @overload
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: Literal[True]
+    ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: bool = False
+    ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+        del stream, param
+        self.calls += 1
+        if self.calls == 1:
+            message = AssistantChatMessage(
+                content="",
+                tool_calls=[
+                    AssistantFunctionToolCall(
+                        id="tl1",
+                        function=AssistantFunctionTool(name="todo_list", arguments="{}"),
+                    )
+                ],
+            )
+            finish: str = "tool_calls"
+        else:
+            message = AssistantChatMessage(content="done after list")
+            finish = "stop"
+        return ChatCompletionResponse(
+            id="1",
+            object="chat.completion",
+            created=0,
+            model="m",
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=message,
+                    logprobs={},
+                    finish_reason=finish,
+                )
+            ],
+            system_fingerprint="",
+            usage={},
+        )
+
+
 @pytest.mark.asyncio
-async def test_loop_injects_todo_review_when_open_after_touch() -> None:
-    """Open items still trigger end-of-turn review even if todo_* ran this turn."""
+async def test_loop_skips_todo_review_when_touched_even_if_open() -> None:
+    """todo_* access this turn suppresses end-of-turn nag despite open items.
+
+    begin_turn() resets touch at run start, so the model must actually call a
+    todo tool mid-turn; then stop without a third (nag) completion.
+    """
     stack = TodoStack()
     _ = stack.push("still open")
-    stack.begin_turn()
-    stack.mark_touched()  # simulates todo_list earlier in the turn
-    assert stack.needs_review()
 
-    client = ScriptedClient()
+    client = ScriptedClientWithTodoListThenStop()
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
         tools=ToolRegistry(list(TODO_TOOLS)),
         stream=False,
         todo_stack=stack,
+        # Avoid turn-start synthetic inject muddying counts; developer turn-start
+        # is fine (prose only). End-of-turn is what we assert against.
+        todo_nag_strategy="developer",
     )
     set_todo_stack(stack)
     try:
         async for _event in agent.run("do stuff"):
             pass
-        assert client.calls >= 2
-        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+        # call1: tool_calls todo_list; call2: stop — no call3 from end-of-turn nag.
+        assert client.calls == 2
+        assert stack.touched_this_turn
+        assert not stack.needs_review()
+        # End-of-turn OPEN WORK prose must not appear after a natural stop.
+        # (turn_start may still inject once at the beginning of the run.)
+        end_nags = [
+            m for m in agent.messages if isinstance(m, DeveloperChatMessage) and "You stopped with" in m.content
+        ]
+        assert end_nags == []
     finally:
         set_todo_stack(None)
 
