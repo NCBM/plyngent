@@ -21,7 +21,8 @@ DEFAULT_TOOL_RESULT_MAX_CHARS = 32_000
 # Soft context budget in tokens (API-calibrated when possible; else ~4 chars/token).
 DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
-DEFAULT_RECENT_TOOL_RESULTS = 4
+# Soft-compact: leave this many most-recent tool results at full size.
+DEFAULT_RECENT_TOOL_RESULTS = 12
 
 # Backward-compat alias (older code/docs may still import this name).
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
