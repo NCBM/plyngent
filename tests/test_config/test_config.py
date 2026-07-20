@@ -83,6 +83,46 @@ access_key_or_token = "sk-test"
     provider = config.providers["oai"]
     assert isinstance(provider, OpenAIProvider)
     assert set(provider.models) == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+    assert provider.timeout is None
+
+
+def test_provider_timeout_float_from_toml(tmp_path: Path) -> None:
+    path = tmp_path / "timeout-float.toml"
+    _ = path.write_text(
+        """
+[providers.local]
+preset = "openai-compatible"
+url = "https://example.com/v1"
+access_key_or_token = "sk-test"
+timeout = 90
+models = { "m" = { text = true } }
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    provider = config.providers["local"]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.timeout == 90
+
+
+def test_provider_timeout_table_from_toml(tmp_path: Path) -> None:
+    from plyngent.config import HttpTimeoutConfig
+
+    path = tmp_path / "timeout-table.toml"
+    _ = path.write_text(
+        """
+[providers.oai]
+access_key_or_token = "sk-test"
+timeout = { connect = 5, read = 120 }
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    provider = config.providers["oai"]
+    assert isinstance(provider, OpenAIProvider)
+    assert isinstance(provider.timeout, HttpTimeoutConfig)
+    assert provider.timeout.connect == 5
+    assert provider.timeout.read == 120
 
 
 def test_deepseek_explicit_models_override_defaults() -> None:

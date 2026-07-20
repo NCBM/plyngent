@@ -50,6 +50,23 @@ class ModelConfig(Struct, omit_defaults=True):
     cost_factor: float = 1.0
 
 
+class HttpTimeoutConfig(Struct, omit_defaults=True):
+    """Per-provider HTTP timeouts (seconds) for the LLM API client.
+
+    TOML examples::
+
+        timeout = 120
+        timeout = { connect = 10, read = 600 }
+
+    ``connect`` bounds TCP/TLS setup; ``read`` bounds idle wait between response
+    bytes (SSE streams can run longer than *read* as long as chunks keep arriving).
+    Omitted fields use product defaults (10s connect / 600s read).
+    """
+
+    connect: float | None = None
+    read: float | None = None
+
+
 class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
     """Base config for all LLM providers.
 
@@ -60,6 +77,8 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
     access_key_or_token: str
     url: str = ""
     models: dict[str, ModelConfig] = field(default_factory=dict)
+    # float = single timeout for the session; table = connect/read split; omit = defaults.
+    timeout: float | HttpTimeoutConfig | None = None
 
 
 def _default_openai_models() -> dict[str, ModelConfig]:

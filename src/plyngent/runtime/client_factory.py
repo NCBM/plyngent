@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from plyngent.config.models import (
     DeepseekProvider,
+    HttpTimeoutConfig,
     OpenAICompatibleProvider,
     OpenAIProvider,
     Provider,
@@ -11,6 +13,11 @@ from plyngent.config.models import (
 from plyngent.lmproto.deepseek import DeepseekOpenAIClient
 from plyngent.lmproto.openai import OpenAIClient
 from plyngent.lmproto.openai_compatible import OpenAICompatibleClient, OpenAIConfig
+from plyngent.lmproto.openai_compatible.config import (
+    DEFAULT_HTTP_CONNECT_TIMEOUT,
+    DEFAULT_HTTP_READ_TIMEOUT,
+    HttpTimeout,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -29,6 +36,44 @@ class ProviderNotSupportedError(NotImplementedError):
     """Raised when a provider preset cannot be turned into a runtime client."""
 
 
+class InvalidHttpTimeoutError(ValueError):
+    """Raised when a provider ``timeout`` value is not usable for HTTP clients."""
+
+
+def normalize_http_timeout(timeout: float | HttpTimeoutConfig | None) -> HttpTimeout:
+    """Normalize TOML/provider timeout into a niquests session timeout.
+
+    * ``None`` → product defaults ``(connect=10, read=600)``
+    * ``float`` / ``int`` → single timeout (niquests applies to the request)
+    * :class:`HttpTimeoutConfig` → ``(connect, read)`` with defaults for omitted fields
+
+    All finite values must be ``> 0``.
+    """
+    if timeout is None:
+        return (DEFAULT_HTTP_CONNECT_TIMEOUT, DEFAULT_HTTP_READ_TIMEOUT)
+    if isinstance(timeout, bool):
+        # ``bool`` is an ``int`` subclass; reject before the numeric branch.
+        msg = "timeout must be a positive number or { connect, read }, not a boolean"
+        raise InvalidHttpTimeoutError(msg)
+    if isinstance(timeout, int | float):
+        value = float(timeout)
+        if not math.isfinite(value) or value <= 0:
+            msg = f"timeout must be a finite number > 0, got {timeout!r}"
+            raise InvalidHttpTimeoutError(msg)
+        return value
+
+    # Remaining union member: HttpTimeoutConfig
+    connect = DEFAULT_HTTP_CONNECT_TIMEOUT if timeout.connect is None else float(timeout.connect)
+    read = DEFAULT_HTTP_READ_TIMEOUT if timeout.read is None else float(timeout.read)
+    if not math.isfinite(connect) or connect <= 0:
+        msg = f"timeout.connect must be a finite number > 0, got {timeout.connect!r}"
+        raise InvalidHttpTimeoutError(msg)
+    if not math.isfinite(read) or read <= 0:
+        msg = f"timeout.read must be a finite number > 0, got {timeout.read!r}"
+        raise InvalidHttpTimeoutError(msg)
+    return (connect, read)
+
+
 def provider_to_openai_config(provider: OpenAIProvider | OpenAICompatibleProvider | DeepseekProvider) -> OpenAIConfig:
     """Map a provider config entry to :class:`OpenAIConfig`."""
     if isinstance(provider, OpenAIProvider):
@@ -40,9 +85,14 @@ def provider_to_openai_config(provider: OpenAIProvider | OpenAICompatibleProvide
         if not base_url:
             msg = "openai-compatible provider requires a non-empty url"
             raise ProviderNotSupportedError(msg)
+    try:
+        http_timeout = normalize_http_timeout(provider.timeout)
+    except InvalidHttpTimeoutError as exc:
+        raise ProviderNotSupportedError(str(exc)) from exc
     return OpenAIConfig(
         access_key_or_token=provider.access_key_or_token,
         base_url=base_url,
+        timeout=http_timeout,
     )
 
 

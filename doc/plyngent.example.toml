@@ -33,6 +33,9 @@ max_context_tokens = 200000
 preset = "openai-compatible"
 url = "https://api.openai.com/v1"
 access_key_or_token = "sk-replace-me"
+# HTTP timeouts for LLM API calls (seconds). Default if omitted: connect=10, read=600.
+# timeout = 120
+# timeout = { connect = 10, read = 600 }
 
 [providers.openai_compat.models]
 "gpt-4o-mini" = { text = true, cost_factor = 1.0 }

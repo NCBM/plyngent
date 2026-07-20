@@ -113,6 +113,7 @@ class BaseOpenAIClient:
         self.session = niquests.AsyncSession(
             base_url=config.base_url,
             auth=BearerTokenAuth(config.access_key_or_token),
+            timeout=config.timeout,
         )
         self.encoder = msgspec.json.Encoder()
         self.decoder = msgspec.json.Decoder(ChatCompletionResponse)

@@ -51,11 +51,11 @@ lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 
 ### Config (`config/`)
 
-TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]` section. Default path via platformdirs.
+TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]` section. Default path via platformdirs. Providers may set `timeout` as a float or `{ connect, read }` (`HttpTimeoutConfig`); omitted → product defaults (10s connect / 600s read).
 
 ### Runtime (`runtime/`)
 
-`create_client(provider)` maps config `Provider` → protocol client. OpenAI → `lmproto.openai.OpenAIClient` (Responses-capable); openai-compatible / deepseek(openai convention) → chat-completions clients; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
+`create_client(provider)` maps config `Provider` → protocol client. `provider_to_openai_config` normalizes `timeout` via `normalize_http_timeout` into `OpenAIConfig.timeout` for `niquests.AsyncSession`. OpenAI → `lmproto.openai.OpenAIClient` (Responses-capable); openai-compatible / deepseek(openai convention) → chat-completions clients; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
 
 ### Memory (`memory/`)
 

@@ -128,6 +128,9 @@ Minimal shape:
 preset = "openai-compatible"
 url = "https://api.openai.com/v1"
 access_key_or_token = "sk-..."
+# Optional HTTP timeouts (seconds). Default: connect=10, read=600.
+# timeout = 120
+# timeout = { connect = 10, read = 600 }
 
 [providers.local.models]
 "gpt-4o-mini" = { text = true }
@@ -137,6 +140,8 @@ system_prompt = "You are a careful coding assistant."
 confirm_destructive = true
 max_context_tokens = 200000
 ```
+
+Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_command`, PTY, policy confirm) are separate.
 
 Supported provider presets today: `openai` (default if `preset` is omitted; default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted), `openai-compatible`, `deepseek` (OpenAI convention; default models `deepseek-v4-flash` and `deepseek-v4-pro` if `models` is omitted). Anthropic presets are modeled in config but not wired in the runtime client yet.
 

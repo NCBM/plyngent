@@ -9,6 +9,7 @@ from .models import AgentConfig as AgentConfig
 from .models import AnthropicProvider as AnthropicProvider
 from .models import DatabaseConfig as DatabaseConfig
 from .models import DeepseekProvider as DeepseekProvider
+from .models import HttpTimeoutConfig as HttpTimeoutConfig
 from .models import ModelConfig as ModelConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
