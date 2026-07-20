@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
+from .models import DEFAULT_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
 from .models import AgentConfig as AgentConfig
 from .models import AnthropicProvider as AnthropicProvider
 from .models import DatabaseConfig as DatabaseConfig

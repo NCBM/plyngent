@@ -136,7 +136,10 @@ access_key_or_token = "sk-..."
 "gpt-4o-mini" = { text = true }
 
 [agent]
-system_prompt = "You are a careful coding assistant."
+# system_prompt defaults to a built-in coding-agent guide (omit to use it).
+# system_prompt = ""   # disable
+# Or multi-line override (prefer '''...'''):
+# system_prompt = '''Your custom prompt...'''
 confirm_destructive = true
 max_context_tokens = 200000
 ```

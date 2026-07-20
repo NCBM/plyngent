@@ -72,7 +72,7 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 - **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message. Soft-compact keeps the last **12** tool results full-size by default (`DEFAULT_RECENT_TOOL_RESULTS`); older tool payloads shrink first.
 - Events: text_delta, **reasoning_delta**, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.
-- Config ``[agent]``: `system_prompt`, `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_tokens` (default 200k est. tokens).
+- Config ``[agent]``: `system_prompt` (default: built-in coding-agent guide `DEFAULT_SYSTEM_PROMPT`; `""` disables), `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_tokens` (default 200k est. tokens).
 
 ### Tools (`tools/`)
 

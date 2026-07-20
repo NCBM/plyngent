@@ -29,7 +29,8 @@ _MINIMAL_CONFIG = """\
 # # url = ":memory:"
 
 # [agent]
-# system_prompt = "You are a careful coding assistant."
+# # system_prompt defaults to the built-in coding-agent guide when omitted.
+# # system_prompt = ""  # disable; or multi-line '''...''' to override
 # max_tool_result_chars = 32000
 # parallel_tools = true
 # confirm_destructive = true
