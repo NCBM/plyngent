@@ -69,15 +69,22 @@ access_key_or_token = "sk"
 
 def test_chat_oneshot_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = tmp_path / "plyngent.toml"
+    # Ephemeral file DB under tmp_path — never the user's durable chat.db.
+    # (Unset/empty [database].url is rewritten to ~/.local/share/plyngent/chat.db.)
+    db_path = tmp_path / "test-chat.db"
     _ = config.write_text(
-        """
+        f"""
+[database]
+implementation = "sqlite"
+url = "{db_path.as_posix()}"
+
 [providers.local]
 preset = "openai-compatible"
 url = "https://example.com/v1"
 access_key_or_token = "sk"
 
 [providers.local.models]
-"tiny" = {}
+"tiny" = {{}}
 """,
         encoding="utf-8",
     )
@@ -128,6 +135,11 @@ access_key_or_token = "sk"
         lambda _p: DummyClient(),
     )
 
+    from platformdirs import user_data_path
+
+    global_db = user_data_path("plyngent") / "chat.db"
+    global_mtime = global_db.stat().st_mtime if global_db.exists() else None
+
     runner = CliRunner()
     result = runner.invoke(
         main,
@@ -149,6 +161,9 @@ access_key_or_token = "sk"
     )
     assert result.exit_code == EXIT_OK
     assert "pong" in result.output
+    assert db_path.is_file()
+    if global_mtime is not None:
+        assert global_db.stat().st_mtime == global_mtime
 
 
 def test_chat_help_mentions_prompt() -> None:
