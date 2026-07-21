@@ -23,6 +23,7 @@ from .todo_nag import (
     DEFAULT_TODO_NAG_STRATEGY,
     inject_todo_nag_for_stack_with_events,
     parse_todo_nag_strategy,
+    refresh_synthetic_todo_nags,
 )
 from .usage import TokenUsage
 
@@ -304,6 +305,9 @@ class ChatAgent:
         user_index = self._user_index(user_msg)
         if self.todo_stack is not None:
             self.todo_stack.begin_turn()
+            # Keep forged synthetic_tool nags aligned with the live stack so a
+            # previously dirty stack does not re-surface after it was cleaned.
+            _ = refresh_synthetic_todo_nags(self.messages, self.todo_stack)
 
         completed = False
         turn_usage = TokenUsage()

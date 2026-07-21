@@ -37,7 +37,11 @@ from .events import (
     ToolResultEvent,
     UsageEvent,
 )
-from .todo_nag import DEFAULT_TODO_NAG_STRATEGY, inject_todo_nag_for_stack_with_events
+from .todo_nag import (
+    DEFAULT_TODO_NAG_STRATEGY,
+    inject_todo_nag_for_stack_with_events,
+    refresh_synthetic_todo_nags,
+)
 from .usage import resolve_round_usage, token_usage_from_api
 
 if TYPE_CHECKING:
@@ -349,12 +353,16 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     while True:
         while rounds_used < allowance:
             rounds_used += 1
+            # Request copy: shrink old tool dumps, then rewrite forged todo nags
+            # so cleaned stacks do not re-appear with stale OPEN WORK text.
             request_messages = compact_messages_for_request(
                 messages,
                 max_tokens=max_context_tokens,
                 prompt_tokens_hint=prompt_tokens_hint,
                 sent_estimate_tokens=sent_estimate_tokens,
             )
+            if todo_stack is not None:
+                _ = refresh_synthetic_todo_nags(request_messages, todo_stack)
             sent_est = estimate_messages_tokens(request_messages)
             param = ChatCompletionsParam(
                 messages=request_messages,

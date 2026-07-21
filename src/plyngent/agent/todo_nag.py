@@ -29,6 +29,8 @@ type TodoNagKind = Literal["turn_start", "end_of_turn"]
 TODO_NAG_STRATEGIES: frozenset[str] = frozenset({"developer", "user", "synthetic_tool", "none"})
 DEFAULT_TODO_NAG_STRATEGY: TodoNagStrategy = "developer"
 _SYNTHETIC_TOOL_NAME = "todo_list"
+# Forged call ids from :func:`_append_synthetic_todo_list` (not model-authored).
+_SYNTHETIC_CALL_ID_PREFIX = "todo-nag-"
 
 
 def parse_todo_nag_strategy(raw: str | None) -> TodoNagStrategy:
@@ -63,7 +65,7 @@ def synthetic_todo_list_result(stack: TodoStack) -> str:
 
 def _append_synthetic_todo_list(messages: list[AnyChatMessage], body: str) -> str:
     """Append forged todo_list call + result. Returns the synthetic tool_call id."""
-    call_id = f"todo-nag-{uuid.uuid4().hex[:12]}"
+    call_id = f"{_SYNTHETIC_CALL_ID_PREFIX}{uuid.uuid4().hex[:12]}"
     messages.append(
         AssistantChatMessage(
             content=UNSET,
@@ -80,6 +82,55 @@ def _append_synthetic_todo_list(messages: list[AnyChatMessage], body: str) -> st
     )
     messages.append(ToolChatMessage(tool_call_id=call_id, content=body))
     return call_id
+
+
+def is_synthetic_todo_nag_call_id(call_id: str) -> bool:
+    """True for forged ``todo_list`` nag tool_call ids (not model-authored)."""
+    return call_id.startswith(_SYNTHETIC_CALL_ID_PREFIX)
+
+
+def refresh_synthetic_todo_nags(
+    messages: list[AnyChatMessage],
+    stack: TodoStack,
+) -> int:
+    """Rewrite forged ``todo_list`` nag results to the live stack render.
+
+    Synthetic nags are append-only snapshots. After the stack is cleaned (or
+    otherwise mutated), older nag results still sit in history and re-surface
+    on later model requests with stale OPEN WORK. Call this on a **request
+    copy** (not necessarily durable history) before each completion so the
+    model always sees the current stack for forged nags.
+
+    Real model-authored ``todo_list`` results are left unchanged.
+    Returns the number of tool messages updated.
+    """
+    body = stack.render()
+    synth_ids: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, AssistantChatMessage):
+            continue
+        tool_calls = msg.tool_calls
+        if tool_calls is UNSET or not tool_calls:
+            continue
+        for call in tool_calls:
+            if (
+                isinstance(call, AssistantFunctionToolCall)
+                and is_synthetic_todo_nag_call_id(call.id)
+                and call.function.name == _SYNTHETIC_TOOL_NAME
+            ):
+                synth_ids.add(call.id)
+
+    updated = 0
+    for index, msg in enumerate(messages):
+        if not isinstance(msg, ToolChatMessage):
+            continue
+        if msg.tool_call_id not in synth_ids and not is_synthetic_todo_nag_call_id(msg.tool_call_id):
+            continue
+        if msg.content == body:
+            continue
+        messages[index] = ToolChatMessage(tool_call_id=msg.tool_call_id, content=body)
+        updated += 1
+    return updated
 
 
 def inject_todo_nag(

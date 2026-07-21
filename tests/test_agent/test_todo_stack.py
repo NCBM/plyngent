@@ -497,3 +497,123 @@ async def test_loop_none_nag_strategy_skips_inject() -> None:
         )
     finally:
         set_todo_stack(None)
+
+
+def test_refresh_synthetic_todo_nags_updates_stale_results() -> None:
+    """Forged nags keep call ids; results track the live stack (not a frozen dirty snapshot)."""
+    from plyngent.agent.todo_nag import (
+        inject_todo_nag_for_stack,
+        is_synthetic_todo_nag_call_id,
+        refresh_synthetic_todo_nags,
+    )
+
+    stack = TodoStack()
+    _ = stack.push("stale dirty item")
+    messages: list[AnyChatMessage] = []
+    assert inject_todo_nag_for_stack(messages, stack, kind="end_of_turn", strategy="synthetic_tool")
+    assert any(
+        isinstance(m, ToolChatMessage)
+        and "stale dirty item" in m.content
+        and is_synthetic_todo_nag_call_id(m.tool_call_id)
+        for m in messages
+    )
+
+    _ = stack.clear()
+    n = refresh_synthetic_todo_nags(messages, stack)
+    assert n >= 1
+    for m in messages:
+        if isinstance(m, ToolChatMessage) and is_synthetic_todo_nag_call_id(m.tool_call_id):
+            assert "stale dirty item" not in m.content
+            assert "empty" in m.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_loop_synthetic_tool_refreshes_after_stack_cleared() -> None:
+    """After a dirty stack is cleaned, later turns must not re-show old nag text."""
+
+    class CaptureClient:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.payloads: list[list[AnyChatMessage]] = []
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del stream
+            self.calls += 1
+            self.payloads.append(list(param.messages))
+            if self.calls == 1:
+                # First stop → end-of-turn synthetic nag → second call clears.
+                message = AssistantChatMessage(content="first stop")
+                finish = "stop"
+            elif self.calls == 2:
+                message = AssistantChatMessage(
+                    content="",
+                    tool_calls=[
+                        AssistantFunctionToolCall(
+                            id="clr",
+                            function=AssistantFunctionTool(name="todo_clear", arguments="{}"),
+                        )
+                    ],
+                )
+                finish = "tool_calls"
+            else:
+                message = AssistantChatMessage(content="after clear")
+                finish = "stop"
+            return ChatCompletionResponse(
+                id="1",
+                object="chat.completion",
+                created=0,
+                model="m",
+                choices=[
+                    ChatCompletionChoice(
+                        index=0,
+                        message=message,
+                        logprobs={},
+                        finish_reason=finish,
+                    )
+                ],
+                system_fingerprint="",
+                usage={},
+            )
+
+    stack = TodoStack()
+    _ = stack.push("was dirty")
+    client = CaptureClient()
+    agent = ChatAgent(
+        client,  # type: ignore[arg-type]
+        model="m",
+        tools=ToolRegistry(list(TODO_TOOLS)),
+        stream=False,
+        todo_stack=stack,
+        todo_nag_strategy="synthetic_tool",
+    )
+    set_todo_stack(stack)
+    try:
+        async for _event in agent.run("turn1"):
+            pass
+        assert stack.is_empty()
+        n_after_turn1 = client.calls
+        async for _event in agent.run("turn2 clean"):
+            pass
+        # Later request payloads must not re-present the old dirty item via synth nags.
+        for payload in client.payloads[n_after_turn1:]:
+            for msg in payload:
+                if isinstance(msg, ToolChatMessage) and msg.tool_call_id.startswith("todo-nag-"):
+                    assert "was dirty" not in msg.content
+        # Durable history refreshed at turn start as well.
+        for msg in agent.messages:
+            if isinstance(msg, ToolChatMessage) and msg.tool_call_id.startswith("todo-nag-"):
+                assert "was dirty" not in msg.content
+    finally:
+        set_todo_stack(None)
