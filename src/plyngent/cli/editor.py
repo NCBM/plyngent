@@ -29,8 +29,9 @@ _MINIMAL_CONFIG = """\
 # # url = ":memory:"
 
 # [agent]
-# # system_prompt defaults to the built-in coding-agent guide when omitted.
-# # system_prompt = ""  # disable; or multi-line '''...''' to override
+# # system_prompt = persona (omit → built-in). tool_directives = tool playbook.
+# # system_prompt = "" / tool_directives = "" disable each part; both "" → no system.
+# # Or multi-line '''...''' to override.
 # max_tool_result_chars = 32000
 # parallel_tools = true
 # confirm_destructive = true

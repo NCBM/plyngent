@@ -169,9 +169,13 @@ class ReplState:
 
     def _make_agent(self) -> ChatAgent:
         from plyngent.cli.limits import prompt_continue_limit_async
+        from plyngent.config import compose_agent_system_content
 
         agent_cfg = self.config.agent_config
-        system_prompt = agent_cfg.system_prompt or None
+        system_prompt = compose_agent_system_content(
+            agent_cfg.system_prompt,
+            agent_cfg.tool_directives,
+        )
         on_limit = prompt_continue_limit_async if self.interactive_limits else None
         return ChatAgent(
             self.client,

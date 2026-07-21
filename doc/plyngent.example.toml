@@ -11,12 +11,17 @@
 # # url = ":memory:"
 
 [agent]
-# system_prompt defaults to the built-in coding-agent guide when omitted.
-# Override with a multi-line literal (prefer ''' so nested " is fine):
+# Persona (omit → built-in coding-agent line). tool_directives is the tool playbook.
+# Override with multi-line literals (prefer ''' so nested " is fine):
 # system_prompt = '''
-# Your custom system prompt...
+# Your custom persona...
 # '''
-# system_prompt = ""   # disable system prompt entirely
+# tool_directives = '''
+# ### Workspace
+# ...
+# '''
+# system_prompt = ""       # persona off; keep default tool_directives unless also cleared
+# tool_directives = ""     # playbook off (set both "" to disable system entirely)
 max_tool_result_chars = 32000
 parallel_tools = true
 confirm_destructive = true

@@ -6,6 +6,7 @@ import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
 from .models import DEFAULT_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
+from .models import DEFAULT_TOOL_DIRECTIVES as DEFAULT_TOOL_DIRECTIVES
 from .models import AgentConfig as AgentConfig
 from .models import AnthropicProvider as AnthropicProvider
 from .models import DatabaseConfig as DatabaseConfig
@@ -15,6 +16,7 @@ from .models import ModelConfig as ModelConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
 from .models import ProviderConfig as ProviderConfig
+from .models import compose_agent_system_content as compose_agent_system_content
 from .path import get_default_path as _get_default_path
 from .store import ConfigFormatError as ConfigFormatError
 from .store import ConfigStore as ConfigStore

@@ -2,12 +2,16 @@ from typing import Any
 
 from msgspec import Struct, field
 
-# Built-in agent system prompt when ``[agent].system_prompt`` is omitted.
-# Set ``system_prompt = ""`` in TOML to disable. Override with a multi-line
-# TOML literal (prefer '''...''' so nested " quotes are fine).
+# Built-in persona when ``[agent].system_prompt`` is omitted.
+# Set ``system_prompt = ""`` to omit the persona block only.
+# Override with a multi-line TOML literal (prefer ''' so nested " is fine).
 DEFAULT_SYSTEM_PROMPT = """\
 You are a professional coding agent in a workspace-bound tool environment.
+"""
 
+# Built-in tool playbook when ``[agent].tool_directives`` is omitted.
+# Set ``tool_directives = ""`` to omit this block only.
+DEFAULT_TOOL_DIRECTIVES = """\
 ### Workspace
 - Explore with `tree`/`listdir`/`glob_paths`/`grep_files`/`read_file` when unsure.
 - Stay under the workspace (or a path from `new_temporary_workspace`). Respect path denylists.
@@ -41,6 +45,21 @@ pop the group). Open items mean unfinished work.
 """
 
 
+def compose_agent_system_content(
+    system_prompt: str,
+    tool_directives: str,
+) -> str | None:
+    """Join persona + tool playbook into one system body, or ``None`` if both empty.
+
+    Non-empty parts are stripped and joined with a blank line. Either field may
+    be ``""`` to disable that part while keeping the other.
+    """
+    parts = [part.strip() for part in (system_prompt, tool_directives) if part and part.strip()]
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 class DatabaseConfig(Struct, omit_defaults=True):
     """Database connection configuration.
 
@@ -58,7 +77,10 @@ class DatabaseConfig(Struct, omit_defaults=True):
 class AgentConfig(Struct, omit_defaults=True):
     """Single-user agent profile defaults."""
 
+    # Persona / role (omit → DEFAULT_SYSTEM_PROMPT; "" disables persona only).
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    # Tool how-to (omit → DEFAULT_TOOL_DIRECTIVES; "" disables playbook only).
+    tool_directives: str = DEFAULT_TOOL_DIRECTIVES
     max_tool_result_chars: int = 32_000
     parallel_tools: bool = True
     confirm_destructive: bool = True

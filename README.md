@@ -136,10 +136,11 @@ access_key_or_token = "sk-..."
 "gpt-4o-mini" = { text = true }
 
 [agent]
-# system_prompt defaults to a built-in coding-agent guide (omit to use it).
-# system_prompt = ""   # disable
+# system_prompt = persona (omit → built-in). tool_directives = tool playbook.
+# system_prompt = "" / tool_directives = "" disable each part; both "" → no system.
 # Or multi-line override (prefer '''...'''):
-# system_prompt = '''Your custom prompt...'''
+# system_prompt = '''Your custom persona...'''
+# tool_directives = '''### Workspace ...'''
 confirm_destructive = true
 max_context_tokens = 200000
 ```
