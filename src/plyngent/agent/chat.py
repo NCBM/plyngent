@@ -210,9 +210,9 @@ class ChatAgent:
         if self.messages and isinstance(self.messages[0], SystemChatMessage):
             return
         self.messages.insert(0, SystemChatMessage(content=self.system_prompt))
-        # System inject is not a DB message unless already stored.
-        if self._persist_from == 0:
-            self._persist_from = 1
+        # Prepended system is local-only; shift the checkpoint so indices that
+        # already pointed past stored messages stay correct after insert.
+        self._persist_from = min(len(self.messages), self._persist_from + 1)
 
     def replace_messages(
         self,

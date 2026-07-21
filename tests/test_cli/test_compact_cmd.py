@@ -152,10 +152,15 @@ async def test_rebuild_client_preserves_persist_cursor(tmp_path: Path) -> None:
             [UserChatMessage(content="hi"), AssistantChatMessage(content="yo")],
             persisted=True,
         )
-        assert state.agent.persist_from == 2
+        # Default system prompt is prepended locally (not a DB row); checkpoint
+        # shifts so the two stored turns stay in the persisted prefix.
+        n_msgs = len(state.agent.messages)
+        assert n_msgs >= 2
+        assert state.agent.persist_from == n_msgs
+        cursor = state.agent.persist_from
         state.rebuild_client()
-        assert len(state.agent.messages) == 2
-        assert state.agent.persist_from == 2
+        assert len(state.agent.messages) == n_msgs
+        assert state.agent.persist_from == cursor
     finally:
         await memory.close()
 
