@@ -94,23 +94,6 @@ class PersistentDataView[T](AbstractAsyncContextManager["PersistentDataView[T]"]
                 return None
         return current
 
-    def _ensure_parent(self, root: object) -> object:
-        """Ensure dict parents along path exist; return parent container for last key."""
-        if not self._path:
-            return root
-        current: object = root
-        for key in self._path[:-1]:
-            if not isinstance(current, dict):
-                msg = f"cannot navigate non-dict parent at {key!r}"
-                raise TypeError(msg)
-            mapping = cast("dict[object, object]", current)
-            child: object | None = mapping.get(key)
-            if child is None:
-                child = cast("object", {})
-                mapping[key] = child
-            current = child
-        return current
-
     def __getitem__(self, key: str | int) -> PersistentDataView[Any]:
         child_path = (*self._path, key)
         cached = self._child_cache.get(child_path)
@@ -142,24 +125,70 @@ class PersistentDataView[T](AbstractAsyncContextManager["PersistentDataView[T]"]
     def store(self, value: T) -> None:
         txn = self._require_txn()
         self._domain[self._path] = value
-        if not self._path:
-            txn.root = value
-        else:
-            parent = self._ensure_parent(txn.root)
-            last = self._path[-1]
-            if isinstance(parent, dict):
-                cast("dict[object, object]", parent)[last] = value
-            elif isinstance(parent, list) and isinstance(last, int):
-                lst = cast("list[object]", parent)
-                while len(lst) <= last:
-                    lst.append(None)
-                lst[last] = value
-            else:
-                msg = f"cannot store at path {self._path!r}"
-                raise TypeError(msg)
+        self._write_at_path(txn, self._path, value)
         txn.dirty = True
 
+    def _write_at_path(self, txn: _TxnState, path: tuple[str | int, ...], value: object) -> None:
+        """Write *value* into the txn buffer at *path* (may be a live domain object)."""
+        if not path:
+            txn.root = value
+            return
+        parent = self._ensure_parent_for(txn.root, path)
+        last = path[-1]
+        if isinstance(parent, dict):
+            cast("dict[object, object]", parent)[last] = value
+        elif isinstance(parent, list) and isinstance(last, int):
+            lst = cast("list[object]", parent)
+            while len(lst) <= last:
+                lst.append(None)
+            lst[last] = value
+        else:
+            msg = f"cannot store at path {path!r}"
+            raise TypeError(msg)
+
+    def _ensure_parent_for(self, root: object, path: tuple[str | int, ...]) -> object:
+        """Ensure dict parents along *path* exist; return parent container for last key."""
+        if not path:
+            return root
+        current: object = root
+        for key in path[:-1]:
+            if not isinstance(current, dict):
+                msg = f"cannot navigate non-dict parent at {key!r}"
+                raise TypeError(msg)
+            mapping = cast("dict[object, object]", current)
+            child: object | None = mapping.get(key)
+            if child is None:
+                child = cast("object", {})
+                mapping[key] = child
+            current = child
+        return current
+
+    @staticmethod
+    def _serialize_value(value: object) -> object:
+        """Prefer domain ``to_raw()`` so stores receive JSON-ish trees, not live objects."""
+        to_raw = getattr(value, "to_raw", None)
+        if callable(to_raw):
+            return to_raw()
+        return value
+
+    def _flush_domain(self, txn: _TxnState) -> None:
+        """Rewrite domain objects into the buffer in serializable form before store."""
+        for path, value in self._domain.items():
+            self._write_at_path(txn, path, self._serialize_value(value))
+
     def _materialize_domain(self, typ: type[Any], current: object) -> object:
+        if current is not None and isinstance(current, typ):
+            self._domain[self._path] = current
+            return current
+
+        # Hybrid domain objects (e.g. TodoStack): reconstruct from durable raw.
+        from_raw = getattr(typ, "from_raw", None)
+        if current is not None and callable(from_raw):
+            converted: object = from_raw(current)
+            self._domain[self._path] = converted
+            self.store(cast("T", converted))
+            return converted
+
         ctor = cast("Any", typ)
         if current is None:
             try:
@@ -170,15 +199,13 @@ class PersistentDataView[T](AbstractAsyncContextManager["PersistentDataView[T]"]
             if created is not None:
                 self.store(cast("T", created))
             return created
-        if not isinstance(current, typ):
-            try:
-                converted: object = ctor(current)
-            except TypeError:
-                converted = current
-            self._domain[self._path] = converted
-            self.store(cast("T", converted))
-            return converted
-        return current
+        try:
+            converted = ctor(current)
+        except TypeError:
+            converted = current
+        self._domain[self._path] = converted
+        self.store(cast("T", converted))
+        return converted
 
     @overload
     def typed(self, typ: None = None) -> T: ...
@@ -211,6 +238,7 @@ class PersistentDataView[T](AbstractAsyncContextManager["PersistentDataView[T]"]
         """Flush the root buffer to the store without closing the txn."""
         txn = self._require_txn()
         if txn.dirty:
+            self._flush_domain(txn)
             await self._store.store(txn.root)
             txn.dirty = False
 
@@ -249,6 +277,7 @@ class PersistentDataView[T](AbstractAsyncContextManager["PersistentDataView[T]"]
         # Root exit
         try:
             if exc_type is None and txn.dirty:
+                self._flush_domain(txn)
                 await self._store.store(txn.root)
         finally:
             self._txn = None
