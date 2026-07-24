@@ -412,7 +412,10 @@ class ToolRegistry:
                 return denied
             return await self._invoke(definition, args)
 
-        if self._auto_bind_state and (self._instance is not None or self._session is not None):
+        # Bind host-provided state for tools that read contextvars (todo, workspace).
+        # Tag enforcement remains gated by ``auto_bind_state``; binding is always useful
+        # when the registry holds instance/session handles.
+        if self._instance is not None or self._session is not None:
             from plyngent.tools.context import bind_tool_context
 
             with bind_tool_context(
