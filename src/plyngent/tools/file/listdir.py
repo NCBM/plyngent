@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 
-@tool
-def listdir(path: str = ".") -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def listdir(path: str = ".") -> str:
     """List entries in a directory under the workspace (name and type)."""
     target = resolve_path(path)
     if not target.is_dir():

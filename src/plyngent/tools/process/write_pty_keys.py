@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_terminal import decode_write_data
 from .write_pty import write_pty_payload
 
 
-@tool
-def write_pty_keys(session_id: int, data: str) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def write_pty_keys(session_id: int, data: str) -> str:
     """Write to a PTY after expanding key escapes (never for normal typing).
 
     Use this only for control sequences. Prefer :func:`write_pty` for plain text

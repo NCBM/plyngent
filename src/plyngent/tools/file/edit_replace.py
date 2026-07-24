@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 
@@ -32,8 +32,8 @@ def _success_message(path: str, *, replaced: int, found: int) -> str:
     )
 
 
-@tool
-def edit_replace(path: str, old_string: str, new_string: str, max_replaces: int = 1) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def edit_replace(path: str, old_string: str, new_string: str, max_replaces: int = 1) -> str:
     """Replace occurrences of ``old_string`` with ``new_string`` in a file.
 
     Replaces left-to-right, non-overlapping. Default ``max_replaces=1`` (first match

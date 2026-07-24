@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_session import DEFAULT_PTY_READ_BYTES, PtyManager, format_read_result
@@ -11,7 +11,7 @@ from .pty_session import DEFAULT_PTY_READ_BYTES, PtyManager, format_read_result
 _MAX_READ_TIMEOUT = 120.0
 
 
-@tool
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
 async def read_pty(
     session_id: int,
     *,

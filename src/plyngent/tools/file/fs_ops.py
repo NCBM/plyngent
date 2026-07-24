@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
 
 
@@ -77,8 +77,8 @@ def _copy_or_move_validated(
         return f"error: {action} failed: {exc}"
 
 
-@tool
-def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     """Copy a file or directory under the workspace (``shutil.copy2`` / ``copytree``).
 
     ``dst`` parent directories are created as needed. If ``dst`` exists, set
@@ -93,8 +93,8 @@ def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     return _copy_or_move_validated(source, dest, root, src=src, dst=dst, overwrite=overwrite, action="copy")
 
 
-@tool
-def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     """Move/rename a file or directory under the workspace (``shutil.move``)."""
     pair = _resolve_pair(src, dst)
     if isinstance(pair, str):
@@ -129,8 +129,8 @@ def _delete_target(target: Path, path: str, *, recursive: bool) -> str:
     return f"error: unsupported path type: {path}"
 
 
-@tool
-def delete_path(path: str, *, recursive: bool = False) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def delete_path(path: str, *, recursive: bool = False) -> str:
     """Delete a file or directory under the workspace.
 
     Files and empty directories are removed always. Non-empty directories require

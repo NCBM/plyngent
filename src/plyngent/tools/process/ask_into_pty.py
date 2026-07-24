@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.prompting import NonInteractiveError, ask_async, ask_secret_async
 from plyngent.tools.workspace import WorkspaceError
 
@@ -38,7 +38,7 @@ async def _prompt_answer(label: str, *, secret: bool) -> _PromptResult:
     return ("ok", answer)
 
 
-@tool
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
 async def ask_into_pty(
     session_id: int,
     message: str,

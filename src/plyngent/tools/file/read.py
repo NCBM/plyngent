@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 _LINENO_WIDTH = 6
@@ -17,8 +17,8 @@ def _format_with_lineno(lines: list[str], *, start_lineno: int) -> str:
     return "".join(out)
 
 
-@tool
-def read_file(
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def read_file(
     path: str,
     *,
     offset: int = 0,

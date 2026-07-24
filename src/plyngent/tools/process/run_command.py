@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .command_exec import (
@@ -10,7 +10,7 @@ from .command_exec import (
 )
 
 
-@tool
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
 async def run_command(
     command: list[str],
     *,

@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import (
     MAX_TEMPORARY_WORKSPACES,
     WorkspaceError,
@@ -61,17 +61,7 @@ def cleanup_temporary_workspaces() -> int:
     return removed
 
 
-@tool
-def new_temporary_workspace(prefix: str = "ws") -> str:
-    """Create a scratch directory under the system temp dir and allow tool paths in it.
-
-    The project workspace is unchanged: relative paths still resolve there.
-    Use the returned **absolute** path for file/process tools. Temporary
-    workspaces are deleted when this chat process exits (not on each turn).
-
-    Cross-platform (uses ``tempfile``; typically ``/tmp`` on POSIX, ``%TEMP%``
-    on Windows). At most 16 concurrent temporary workspaces per process.
-    """
+def _create_temporary_workspace(prefix: str) -> str:
     if len(list_workspace_allowlist()) >= MAX_TEMPORARY_WORKSPACES:
         return f"error: too many temporary workspaces (max {MAX_TEMPORARY_WORKSPACES})"
 
@@ -94,3 +84,19 @@ def new_temporary_workspace(prefix: str = "ws") -> str:
         "note: project workspace unchanged; use this absolute path for tools; "
         "removed when chat exits"
     )
+
+
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def new_temporary_workspace(prefix: str = "ws") -> str:
+    """Create a scratch directory under the system temp dir and allow tool paths in it.
+
+    The project workspace is unchanged: relative paths still resolve there.
+    Use the returned **absolute** path for file/process tools. Temporary
+    workspaces are deleted when this chat process exits (not on each turn).
+
+    Cross-platform (uses ``tempfile``; typically ``/tmp`` on POSIX, ``%TEMP%``
+    on Windows). At most 16 concurrent temporary workspaces per process.
+    """
+    import asyncio
+
+    return await asyncio.to_thread(_create_temporary_workspace, prefix)

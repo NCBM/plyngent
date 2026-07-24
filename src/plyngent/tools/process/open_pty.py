@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import shlex
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_session import PtyManager
 
 
-@tool
-def open_pty(command: list[str], *, cwd: str = ".") -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def open_pty(command: list[str], *, cwd: str = ".") -> str:
     """Open a PTY session running ``command`` (argv) under the workspace.
 
     POSIX uses openpty/fork; Windows uses ConPTY (pywinpty). Returns structured

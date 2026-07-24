@@ -4,7 +4,7 @@ import json
 import shlex
 from typing import Any, cast
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .command_exec import (
@@ -154,7 +154,7 @@ async def _run_batch_steps(
     return results, stopped_early
 
 
-@tool
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
 async def run_command_batch(
     commands: list[dict[str, object]] | str,
     *,

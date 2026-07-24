@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.prompting import FormField, NonInteractiveError, form_async
 from plyngent.tools.chat.choose import parse_options
 
@@ -54,7 +54,7 @@ def parse_fields(raw: str) -> list[FormField]:
     return out
 
 
-@tool(name="ask_user_form")
+@tool(name="ask_user_form", tags=ToolTag.LOCAL)
 async def form_user(title: str, fields: str, *, confirm_submit: bool = True) -> str:
     """Run a multi-step form with the human; returns JSON object of answers.
 

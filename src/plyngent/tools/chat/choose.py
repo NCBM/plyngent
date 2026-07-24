@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.prompting import ChoiceOption, NonInteractiveError, choose_async
 
 
@@ -46,7 +46,7 @@ def parse_options(raw: str) -> list[ChoiceOption]:
     return out
 
 
-@tool(name="ask_user_choice")
+@tool(name="ask_user_choice", tags=ToolTag.LOCAL)
 async def choose_user(
     question: str,
     options: str,

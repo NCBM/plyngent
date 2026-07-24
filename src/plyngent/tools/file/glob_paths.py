@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.file.tree import VCS_DIR_NAMES
 from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
 
@@ -65,8 +65,8 @@ def _resolve_glob_base(path: str) -> tuple[Path, Path] | str:
     return root, base
 
 
-@tool
-def glob_paths(
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def glob_paths(
     pattern: str,
     path: str = ".",
     *,

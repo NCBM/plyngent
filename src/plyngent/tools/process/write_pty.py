@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_session import PtyManager
@@ -21,8 +21,8 @@ def write_pty_payload(session_id: int, raw: str) -> str:
     )
 
 
-@tool
-def write_pty(session_id: int, data: str) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def write_pty(session_id: int, data: str) -> str:
     """Write **literal** text to a PTY session. Does not append a newline.
 
     ``data`` is sent unchanged (no ``ctrl+x`` / ``\\\\xHH`` expansion). For

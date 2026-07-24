@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.file.tree import VCS_DIR_NAMES
 from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
 
@@ -127,8 +127,8 @@ def _compile_pattern(pattern: str, *, case_insensitive: bool) -> re.Pattern[str]
         return f"error: invalid regex: {exc}"
 
 
-@tool
-def grep_files(
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def grep_files(
     pattern: str,
     path: str = ".",
     *,

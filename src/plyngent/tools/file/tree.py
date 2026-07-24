@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError, get_path_denylist, resolve_path
 
 if TYPE_CHECKING:
@@ -151,8 +151,8 @@ def _resolve_skip_basenames(skip_dirs: Sequence[str] | None) -> frozenset[str]:
     return frozenset(name for name in skip_dirs if name)
 
 
-@tool
-def tree(
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def tree(
     path: str = ".",
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,

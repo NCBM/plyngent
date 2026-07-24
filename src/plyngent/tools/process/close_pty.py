@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 
 from .pty_session import PtyManager, format_close_result
 
 
-@tool
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
 async def close_pty(session_id: int) -> str:
     """Close a PTY session (SIGTERM, then SIGKILL after a short grace period).
 

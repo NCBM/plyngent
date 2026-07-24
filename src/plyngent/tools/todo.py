@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,6 +27,12 @@ def get_todo_stack() -> TodoStack | None:
 
 
 def _require_stack() -> TodoStack:
+    """Prefer session-bound todo; fall back to process bind during migration."""
+    from plyngent.tools.context import get_session
+
+    session = get_session()
+    if session is not None and session.todo is not None:
+        return session.todo
     if _stack is None:
         msg = "todo stack is not available in this session"
         raise RuntimeError(msg)
@@ -36,10 +42,11 @@ def _require_stack() -> TodoStack:
 def _notify() -> None:
     if _on_change is not None:
         _on_change()
+    # Session-bound stacks may also persist via host on_change on the process bind.
 
 
-@tool(name="todo_list")
-def todo_list() -> str:
+@tool(name="todo_list", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+async def todo_list() -> str:
     """Show the LIFO stack of **task groups** (TOP group = current breakdown level).
 
     Non-empty stack with open (pending/in_progress) items = unfinished work.
@@ -53,8 +60,8 @@ def todo_list() -> str:
     return stack.render()
 
 
-@tool(name="todo_push")
-def todo_push(titles: list[str], notes: str = "") -> str:
+@tool(name="todo_push", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+async def todo_push(titles: list[str], notes: str = "") -> str:
     """Push **one task group** (siblings) onto the stack — not one level per title.
 
     ``titles``: JSON array of strings (tool schema type ``array``). All entries
@@ -74,8 +81,8 @@ def todo_push(titles: list[str], notes: str = "") -> str:
     return f"pushed group (depth={stack.depth}) items=[{ids}]\n{stack.render()}"
 
 
-@tool(name="todo_pop")
-def todo_pop() -> str:
+@tool(name="todo_pop", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+async def todo_pop() -> str:
     """Pop the entire **top group** (all siblings from that push).
 
     Prefer after TOP items are done/cancelled so the stack does not stay
@@ -92,8 +99,8 @@ def todo_pop() -> str:
     return f"popped TOP group ({titles}); new top group=[{top_s}]\n{stack.render()}"
 
 
-@tool(name="todo_update")
-def todo_update(
+@tool(name="todo_update", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+async def todo_update(
     item_id: str,
     status: str = "",
     title: str = "",
@@ -125,8 +132,8 @@ def todo_update(
     return f"updated {item.id} → {item.status}: {item.title}\n{stack.render()}"
 
 
-@tool(name="todo_clear")
-def todo_clear() -> str:
+@tool(name="todo_clear", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+async def todo_clear() -> str:
     """Clear all groups on the stack."""
     stack = _require_stack()
     n = stack.clear()

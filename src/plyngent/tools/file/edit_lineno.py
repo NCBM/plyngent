@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 if TYPE_CHECKING:
@@ -76,8 +76,8 @@ def _replace_range(
     return f"replaced lines {start_line}-{end} ({removed} lines) with {len(replacement)} lines in {path}"
 
 
-@tool
-def edit_lineno(path: str, start_line: int, end_line: int, new_content: str) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+async def edit_lineno(path: str, start_line: int, end_line: int, new_content: str) -> str:
     """Replace lines ``start_line``..``end_line`` (1-based, inclusive) in a file.
 
     ``new_content`` may be multi-line. Use an empty string to delete the range.

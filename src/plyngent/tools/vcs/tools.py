@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError, get_workspace_root
 
 from .detect import detect_vcs
@@ -22,8 +22,8 @@ def _backend_or_error() -> VcsBackend | str:
     return backend
 
 
-@tool
-def vcs_kind() -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def vcs_kind() -> str:
     """Return the detected VCS kind under the workspace (e.g. ``git``), or an error."""
     backend = _backend_or_error()
     if isinstance(backend, str):
@@ -31,8 +31,8 @@ def vcs_kind() -> str:
     return backend.kind
 
 
-@tool
-def vcs_status() -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def vcs_status() -> str:
     """Show working-tree status for the detected VCS (read-only)."""
     backend = _backend_or_error()
     if isinstance(backend, str):
@@ -40,8 +40,8 @@ def vcs_status() -> str:
     return backend.status()
 
 
-@tool
-def vcs_diff(path: str = "", *, staged: bool = False) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def vcs_diff(path: str = "", *, staged: bool = False) -> str:
     """Show a unified diff for the detected VCS (read-only).
 
     ``path`` is optional and relative to the workspace. ``staged=true`` is
@@ -54,8 +54,8 @@ def vcs_diff(path: str = "", *, staged: bool = False) -> str:
     return backend.diff(staged=staged, path=rel)
 
 
-@tool
-def vcs_log(limit: int = 10) -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def vcs_log(limit: int = 10) -> str:
     """Show recent commits for the detected VCS (read-only)."""
     if limit < 1:
         return "error: limit must be >= 1"
@@ -65,8 +65,8 @@ def vcs_log(limit: int = 10) -> str:
     return backend.log(limit=limit)
 
 
-@tool
-def vcs_branch() -> str:
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+async def vcs_branch() -> str:
     """Show the current branch / named head for the detected VCS (read-only)."""
     backend = _backend_or_error()
     if isinstance(backend, str):
