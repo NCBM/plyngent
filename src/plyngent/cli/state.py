@@ -79,6 +79,7 @@ class ReplState:
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
+        self.instance_state.workspace.root = self.workspace
         # Process-global workspace remains for tools/tests that run without instance bind.
         _ = set_workspace_root(self.workspace)
         self.session_state = self._session_data_for_todo()
@@ -178,6 +179,7 @@ class ReplState:
         if isinstance(store, MemoryViewStore):
             store.merge_key("todo", self.todo_stack.to_raw())
         self.instance_state.workspace_root = self.workspace
+        self.instance_state.workspace.root = self.workspace
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_session_state(self.session_state)
             self.agent.tools.set_instance_state(self.instance_state)
@@ -437,6 +439,7 @@ class ReplState:
             raise ValueError(msg)
         self.workspace = resolved
         self.instance_state.workspace_root = resolved
+        self.instance_state.workspace.root = resolved
         _ = set_workspace_root(resolved)
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_instance_state(self.instance_state)

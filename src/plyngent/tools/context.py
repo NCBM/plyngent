@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
+    from plyngent.tools.workspace import WorkspacePolicy
 
 
 def _default_instance_data() -> PersistentDataView[Any]:
@@ -24,16 +25,29 @@ def _default_session_data() -> PersistentDataView[Any]:
     return session_data_view()
 
 
+def _default_workspace_policy() -> WorkspacePolicy:
+    from plyngent.tools.workspace import WorkspacePolicy
+
+    return WorkspacePolicy()
+
+
 @dataclass
 class InstanceState:
     """Process / agent-host scoped state for INSTANCE_STATE tools."""
 
-    # Optional fixed facets (workspace path still also lives in workspace module
-    # during migration; hosts should set both until globals retire).
+    # Primary workspace root facet (mirrors workspace.policy.root when set).
     workspace_root: Path | None = None
+    # Path/command policy bag for this host (preferred over process globals).
+    workspace: WorkspacePolicy = field(default_factory=_default_workspace_policy)
     data: PersistentDataView[Any] = field(default_factory=_default_instance_data)
     # Ephemeral process maps (PTY etc.) may hang here later.
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.workspace_root is not None and self.workspace.root is None:
+            self.workspace.root = self.workspace_root
+        elif self.workspace.root is not None and self.workspace_root is None:
+            self.workspace_root = self.workspace.root
 
     @property
     def pty(self) -> Any:

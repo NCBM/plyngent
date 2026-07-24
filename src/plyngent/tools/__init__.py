@@ -61,6 +61,8 @@ from .workspace import (
 )
 from .workspace import DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS as DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
 from .workspace import WorkspaceError as WorkspaceError
+from .workspace import WorkspacePolicy as WorkspacePolicy
+from .workspace import active_workspace_policy as active_workspace_policy
 from .workspace import add_workspace_allowlist as add_workspace_allowlist
 from .workspace import check_command_allowed as check_command_allowed
 from .workspace import clear_policy_allowed_commands as clear_policy_allowed_commands

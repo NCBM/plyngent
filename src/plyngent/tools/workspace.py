@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from plyngent.tools.context import InstanceState
 
 DEFAULT_COMMAND_DENYLIST: frozenset[str] = frozenset(
     {
@@ -44,104 +47,129 @@ class WorkspaceError(ValueError):
     """Raised when a path or command violates workspace policy."""
 
 
-class _WorkspaceState:
+@dataclass
+class WorkspacePolicy:
+    """Workspace path/command policy for one agent host / instance.
+
+    Prefer hanging this on :class:`~plyngent.tools.context.InstanceState.workspace`.
+    Module-level APIs still fall back to a process-global policy when no instance
+    is bound (tests and early boot).
+    """
+
     root: Path | None = None
     path_denylist: tuple[str, ...] = ()
     command_denylist: frozenset[str] = DEFAULT_COMMAND_DENYLIST
-    # Extra roots allowed for resolve_path (e.g. temporary workspaces under system temp).
-    allowlist: list[Path]
-    # Paths created by new_temporary_workspace (subset of allowlist); cleaned on chat exit.
-    temporary_owned: list[Path]
-    # Basenames the human allowed this process (denylist override, not permanent).
-    policy_allowed_commands: set[str]
-    policy_confirm_hook: PolicyConfirmHook | None
-    policy_confirm_timeout_seconds: float
-
-    def __init__(self) -> None:
-        self.allowlist = []
-        self.temporary_owned = []
-        self.policy_allowed_commands = set()
-        self.policy_confirm_hook = None
-        self.policy_confirm_timeout_seconds = DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
+    allowlist: list[Path] = field(default_factory=list)
+    temporary_owned: list[Path] = field(default_factory=list)
+    policy_allowed_commands: set[str] = field(default_factory=set)
+    policy_confirm_hook: PolicyConfirmHook | None = None
+    policy_confirm_timeout_seconds: float = DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
 
 
-_state = _WorkspaceState()
+# Process fallback when no InstanceState is bound.
+_process_policy = WorkspacePolicy()
+
+
+def _bound_instance() -> InstanceState | None:
+    from plyngent.tools.context import get_instance
+
+    return get_instance()
+
+
+def active_workspace_policy() -> WorkspacePolicy:
+    """Return the policy bag for the bound instance, else the process fallback."""
+    instance = _bound_instance()
+    if instance is not None:
+        return instance.workspace
+    return _process_policy
 
 
 def set_workspace_root(root: Path | str) -> Path:
     """Set the workspace root used by tools; returns the resolved root.
 
-    Writes the process-global root and, when an :class:`~plyngent.tools.context.InstanceState`
-    is bound, mirrors onto ``instance.workspace_root``.
+    Writes the active policy bag (instance when bound, else process) and keeps
+    ``instance.workspace_root`` in sync for callers that read the facet.
     """
     path = Path(root).expanduser().resolve()
     if not path.is_dir():
         msg = f"workspace root is not a directory: {path}"
         raise WorkspaceError(msg)
-    _state.root = path
-    from plyngent.tools.context import get_instance
-
-    instance = get_instance()
+    policy = active_workspace_policy()
+    policy.root = path
+    instance = _bound_instance()
     if instance is not None:
         instance.workspace_root = path
+        # When bound, also keep process root as a bootstrapped default for tools
+        # that briefly run without context (compat).
+        if _process_policy.root is None:
+            _process_policy.root = path
+    else:
+        _process_policy.root = path
     return path
 
 
 def get_workspace_root() -> Path:
     """Return the configured workspace root.
 
-    Prefers a bound instance's ``workspace_root`` when set; otherwise the
+    Prefers a bound instance's ``workspace_root`` / policy root; otherwise the
     process-global root from :func:`set_workspace_root`.
     """
-    from plyngent.tools.context import get_instance
-
-    instance = get_instance()
-    if instance is not None and instance.workspace_root is not None:
-        return instance.workspace_root
-    if _state.root is None:
+    instance = _bound_instance()
+    if instance is not None:
+        if instance.workspace_root is not None:
+            return instance.workspace_root
+        if instance.workspace.root is not None:
+            return instance.workspace.root
+    if _process_policy.root is None:
         msg = "workspace root is not set; call set_workspace_root() first"
         raise WorkspaceError(msg)
-    return _state.root
+    return _process_policy.root
 
 
 def clear_workspace_root() -> None:
-    """Clear workspace root (mainly for tests). Does not clear allowlist."""
-    _state.root = None
-    from plyngent.tools.context import get_instance
+    """Clear workspace root (mainly for tests). Does not clear allowlist.
 
-    instance = get_instance()
+    When an instance is bound, clears both the instance facet and the process
+    fallback so ``get_workspace_root`` cannot revive the old process root.
+    """
+    policy = active_workspace_policy()
+    policy.root = None
+    instance = _bound_instance()
     if instance is not None:
         instance.workspace_root = None
+        instance.workspace.root = None
+    _process_policy.root = None
 
 
 def set_path_denylist(patterns: list[str] | tuple[str, ...] | None) -> None:
     """Set path substring denylist (matched against resolved path strings)."""
-    _state.path_denylist = tuple(patterns or ())
+    active_workspace_policy().path_denylist = tuple(patterns or ())
 
 
 def get_path_denylist() -> tuple[str, ...]:
     """Return the current path substring denylist."""
-    return _state.path_denylist
+    return active_workspace_policy().path_denylist
 
 
 def set_command_denylist(names: list[str] | tuple[str, ...] | frozenset[str] | None) -> None:
     """Set denied command basenames (None restores defaults)."""
-    _state.command_denylist = DEFAULT_COMMAND_DENYLIST if names is None else frozenset(names)
+    policy = active_workspace_policy()
+    policy.command_denylist = DEFAULT_COMMAND_DENYLIST if names is None else frozenset(names)
     # Session overrides only make sense against the active denylist.
-    _state.policy_allowed_commands &= _state.command_denylist
+    policy.policy_allowed_commands &= policy.command_denylist
 
 
 def get_command_denylist() -> frozenset[str]:
-    return _state.command_denylist
+    return active_workspace_policy().command_denylist
 
 
 def set_policy_confirm_hook(hook: PolicyConfirmHook | None) -> None:
     """Register a timed human confirm for denylisted commands (CLI installs this)."""
-    _state.policy_confirm_hook = hook
+    active_workspace_policy().policy_confirm_hook = hook
 
 
 def get_policy_confirm_hook() -> PolicyConfirmHook | None:
-    return _state.policy_confirm_hook
+    return active_workspace_policy().policy_confirm_hook
 
 
 def set_policy_confirm_timeout(seconds: float) -> None:
@@ -149,23 +177,23 @@ def set_policy_confirm_timeout(seconds: float) -> None:
     if seconds <= 0:
         msg = "policy confirm timeout must be > 0"
         raise WorkspaceError(msg)
-    _state.policy_confirm_timeout_seconds = float(seconds)
+    active_workspace_policy().policy_confirm_timeout_seconds = float(seconds)
 
 
 def get_policy_confirm_timeout() -> float:
-    return _state.policy_confirm_timeout_seconds
+    return active_workspace_policy().policy_confirm_timeout_seconds
 
 
 def clear_policy_allowed_commands() -> None:
     """Drop session-scoped denylist overrides (tests / chat exit)."""
-    _state.policy_allowed_commands.clear()
+    active_workspace_policy().policy_allowed_commands.clear()
 
 
 def grant_policy_command(basename: str) -> None:
     """Allow *basename* for the rest of this process despite the denylist."""
     name = basename.strip()
     if name:
-        _state.policy_allowed_commands.add(name)
+        active_workspace_policy().policy_allowed_commands.add(name)
 
 
 def add_workspace_allowlist(root: Path | str, *, owned: bool = False) -> Path:
@@ -178,25 +206,27 @@ def add_workspace_allowlist(root: Path | str, *, owned: bool = False) -> Path:
     if not path.is_dir():
         msg = f"allowlist root is not a directory: {path}"
         raise WorkspaceError(msg)
-    if path not in _state.allowlist:
-        if len(_state.allowlist) >= MAX_TEMPORARY_WORKSPACES and owned:
+    policy = active_workspace_policy()
+    if path not in policy.allowlist:
+        if len(policy.allowlist) >= MAX_TEMPORARY_WORKSPACES and owned:
             msg = f"too many temporary workspaces (max {MAX_TEMPORARY_WORKSPACES})"
             raise WorkspaceError(msg)
-        _state.allowlist.append(path)
-    if owned and path not in _state.temporary_owned:
-        _state.temporary_owned.append(path)
+        policy.allowlist.append(path)
+    if owned and path not in policy.temporary_owned:
+        policy.temporary_owned.append(path)
     return path
 
 
 def list_workspace_allowlist() -> list[Path]:
     """Return a copy of extra allowed roots (not including the primary workspace)."""
-    return list(_state.allowlist)
+    return list(active_workspace_policy().allowlist)
 
 
 def clear_workspace_allowlist() -> None:
     """Clear allowlist and owned-temp registry (tests). Does not delete directories."""
-    _state.allowlist.clear()
-    _state.temporary_owned.clear()
+    policy = active_workspace_policy()
+    policy.allowlist.clear()
+    policy.temporary_owned.clear()
 
 
 def pop_owned_temporary_workspaces() -> list[Path]:
@@ -205,34 +235,37 @@ def pop_owned_temporary_workspaces() -> list[Path]:
     Paths remain on the allowlist until the caller removes them via
     :func:`remove_workspace_allowlist`.
     """
-    owned = list(_state.temporary_owned)
-    _state.temporary_owned.clear()
+    policy = active_workspace_policy()
+    owned = list(policy.temporary_owned)
+    policy.temporary_owned.clear()
     return owned
 
 
 def remove_workspace_allowlist(root: Path | str) -> None:
     """Drop *root* from the allowlist if present."""
     path = Path(root).expanduser().resolve()
-    while path in _state.allowlist:
-        _state.allowlist.remove(path)
+    policy = active_workspace_policy()
+    while path in policy.allowlist:
+        policy.allowlist.remove(path)
 
 
-def _primary_roots() -> list[Path]:
-    """Primary workspace roots: bound instance (if any) then process global."""
+def _primary_roots(policy: WorkspacePolicy) -> list[Path]:
+    """Primary workspace roots: bound instance facet then policy root."""
     roots: list[Path] = []
-    from plyngent.tools.context import get_instance
-
-    instance = get_instance()
+    instance = _bound_instance()
     if instance is not None and instance.workspace_root is not None:
         roots.append(instance.workspace_root)
-    if _state.root is not None and _state.root not in roots:
-        roots.append(_state.root)
+    if policy.root is not None and policy.root not in roots:
+        roots.append(policy.root)
+    # Process root as last resort when instance policy has no root yet.
+    if _process_policy.root is not None and _process_policy.root not in roots:
+        roots.append(_process_policy.root)
     return roots
 
 
-def _under_any_root(resolved: Path) -> bool:
-    roots = _primary_roots()
-    roots.extend(_state.allowlist)
+def _under_any_root(resolved: Path, policy: WorkspacePolicy) -> bool:
+    roots = _primary_roots(policy)
+    roots.extend(policy.allowlist)
     for root in roots:
         try:
             _ = resolved.relative_to(root)
@@ -248,17 +281,18 @@ def resolve_path(path: str | Path) -> Path:
     Relative paths resolve against the **primary** workspace root. Absolute
     paths may also land under a temporary workspace allowlist entry.
     """
+    policy = active_workspace_policy()
     root = get_workspace_root()
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.expanduser().resolve()
-    if not _under_any_root(resolved):
+    if not _under_any_root(resolved, policy):
         msg = f"path escapes workspace root ({root}): {path}"
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.
     resolved_str = str(resolved).replace("\\", "/")
-    for pattern in _state.path_denylist:
+    for pattern in policy.path_denylist:
         if pattern and pattern.replace("\\", "/") in resolved_str:
             msg = f"path denied by policy (matched {pattern!r}): {path}"
             raise WorkspaceError(msg)
@@ -275,21 +309,22 @@ def check_command_allowed(argv: list[str]) -> None:
     if not argv:
         msg = "command argv must not be empty"
         raise WorkspaceError(msg)
+    policy = active_workspace_policy()
     binary = Path(argv[0]).name
-    if binary not in _state.command_denylist:
+    if binary not in policy.command_denylist:
         return
-    if binary in _state.policy_allowed_commands:
+    if binary in policy.policy_allowed_commands:
         return
-    hook = _state.policy_confirm_hook
+    hook = policy.policy_confirm_hook
     if hook is not None:
-        timeout = _state.policy_confirm_timeout_seconds
+        timeout = policy.policy_confirm_timeout_seconds
         try:
             allowed = bool(hook(binary, list(argv), timeout))
         except Exception as exc:
             msg = f"command denied by policy (basename {binary!r}; confirm failed: {exc})"
             raise WorkspaceError(msg) from exc
         if allowed:
-            _state.policy_allowed_commands.add(binary)
+            policy.policy_allowed_commands.add(binary)
             return
         msg = (
             f"command denied by policy (basename {binary!r} is blocked; user declined or timed out after {timeout:g}s)"

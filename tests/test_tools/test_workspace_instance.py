@@ -58,3 +58,16 @@ def test_resolve_path_accepts_instance_root_without_process_global(tmp_path: Pat
         resolved = resolve_path("note.txt")
         assert resolved == target.resolve()
     clear_workspace_root()
+
+
+def test_path_denylist_uses_instance_policy(tmp_path: Path) -> None:
+    """Path denylist is read from the bound instance policy bag."""
+    clear_workspace_root()
+    secret = tmp_path / "secrets"
+    secret.mkdir()
+    _ = (secret / "x.txt").write_text("no", encoding="utf-8")
+    instance = InstanceState(workspace_root=tmp_path.resolve())
+    instance.workspace.path_denylist = ("/secrets/",)
+    with bind_instance(instance), pytest.raises(WorkspaceError, match="denied by policy"):
+        _ = resolve_path("secrets/x.txt")
+    clear_workspace_root()
