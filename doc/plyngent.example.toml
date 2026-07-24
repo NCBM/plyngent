@@ -38,6 +38,12 @@ max_context_tokens = 200000
 # compact_user_prefix = "Summarize the following conversation:\n\n{transcript}"
 # compact_seed_text = "Compacted from {src}:\n\n{summary}\n\nCarry on."
 
+# Third-party tools (entry-point group plyngent.tools). Default: load none.
+# See doc/plugins.md.
+# tool_plugins = ["acme"]
+# tool_plugins = ["*"]
+# tool_plugins_disable = ["legacy"]
+
 # --- OpenAI-compatible (vLLM, LiteLLM, OpenAI, …) ---
 [providers.openai_compat]
 preset = "openai-compatible"
