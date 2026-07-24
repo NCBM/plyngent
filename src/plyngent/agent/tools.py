@@ -329,14 +329,14 @@ class ToolRegistry:
         session = self._session_for_grants()
         return session is not None and has_grant(session, name)
 
-    def _record_grant(self, name: str, *, tags: ToolTag) -> None:
+    async def _record_grant(self, name: str, *, tags: ToolTag) -> None:
         if not (tags & ToolTag.TRUSTABLE):
             return
         from plyngent.tools.grants import add_grant
 
         session = self._session_for_grants()
         if session is not None:
-            add_grant(session, name)
+            await add_grant(session, name)
 
     async def _prompt_soft_confirm(
         self,
@@ -352,7 +352,7 @@ class ToolRegistry:
         if inspect.isawaitable(decision):
             decision = await decision
         if decision is True:
-            self._record_grant(name, tags=tags)
+            await self._record_grant(name, tags=tags)
             return None
         if isinstance(decision, str) and decision.strip():
             return f"error: tool {name!r} denied by user confirm ({reason}); user comment: {decision.strip()}"

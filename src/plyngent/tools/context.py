@@ -58,7 +58,8 @@ class SessionState:
     data: PersistentDataView[Any] = field(default_factory=_default_session_data)
     # Live domain object during migration (also under data["todo"] when views bind).
     todo: TodoStack | None = None
-    # Soft-confirm grants: tool_name → True (Phase 1 key is tool name in session).
+    # Soft-confirm grants live map: tool_name → True (Phase 1 key is tool name).
+    # Durable copy lives under data["grants"] (see plyngent.tools.grants).
     grants: dict[str, bool] = field(default_factory=dict)
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -66,9 +67,11 @@ class SessionState:
         return bool(self.grants.get(tool_name))
 
     def add_grant(self, tool_name: str) -> None:
+        """Update the live map only; prefer :func:`plyngent.tools.grants.add_grant` to persist."""
         self.grants[tool_name] = True
 
     def clear_grants(self) -> None:
+        """Clear the live map; durable view is updated separately when needed."""
         self.grants.clear()
 
 

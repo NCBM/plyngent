@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from plyngent.agent import ToolRegistry, ToolTag, tool
 from plyngent.tools.context import SessionState, bind_tool_context
+from plyngent.tools.grants import clear_grants, has_grant, hydrate_grants, persist_grants
+from plyngent.tools.view import MemoryViewStore, session_data_view
 
 
 async def test_yolo_only_skips_yolo_tagged_tools() -> None:
@@ -83,3 +85,63 @@ async def test_untagged_trustable_prompts_every_time() -> None:
     assert await reg.execute("always_ask", "{}") == "ok"
     assert await reg.execute("always_ask", "{}") == "ok"
     assert calls == ["always_ask", "always_ask"]
+
+
+async def test_trustable_grant_persists_to_session_data() -> None:
+    calls: list[str] = []
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.TRUSTABLE, register=False)
+    async def trust_me() -> str:
+        return "ok"
+
+    def danger(_name: str, _args: object) -> str | None:
+        return "soft"
+
+    async def confirm(name: str, _args: object, _reason: str) -> bool:
+        calls.append(name)
+        return True
+
+    store = MemoryViewStore({})
+    session = SessionState(session_id=1, data=session_data_view(store=store))
+    reg = ToolRegistry(
+        [trust_me],
+        danger=danger,
+        on_confirm=confirm,
+        yolo=False,
+        session_state=session,
+    )
+    assert await reg.execute("trust_me", "{}") == "ok"
+    assert has_grant(session, "trust_me")
+    loaded = await store.load()
+    assert isinstance(loaded, dict)
+    grants = loaded.get("grants")
+    assert isinstance(grants, dict)
+    assert grants.get("trust_me") is True
+
+    # Fresh session + same store: hydrate restores the grant (no second prompt).
+    session2 = SessionState(session_id=1, data=session_data_view(store=store))
+    await hydrate_grants(session2)
+    assert has_grant(session2, "trust_me")
+    reg2 = ToolRegistry(
+        [trust_me],
+        danger=danger,
+        on_confirm=confirm,
+        yolo=False,
+        session_state=session2,
+    )
+    assert await reg2.execute("trust_me", "{}") == "ok"
+    assert calls == ["trust_me"]
+
+
+async def test_clear_grants_and_persist() -> None:
+    store = MemoryViewStore({})
+    session = SessionState(session_id=2, data=session_data_view(store=store))
+    session.add_grant("tool_a")
+    await persist_grants(session)
+    clear_grants(session)
+    assert not has_grant(session, "tool_a")
+    # Live clear does not rewrite the store; explicit persist does.
+    await persist_grants(session)
+    loaded = await store.load()
+    assert isinstance(loaded, dict)
+    assert loaded.get("grants") == {}
