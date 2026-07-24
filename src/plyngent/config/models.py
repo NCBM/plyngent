@@ -99,6 +99,12 @@ class AgentConfig(Struct, omit_defaults=True):
     # developer | user | synthetic_tool | none  (legacy "system" → developer)
     todo_nag_strategy: str = "developer"
 
+    # Append-only developer playbook checkpoints when last prompt_tokens crosses
+    # N * this interval (0 = off). See agent/directive_checkpoint.py.
+    directive_reminder_tokens: int = 100_000
+    # Optional short checklist body (empty = built-in hard-constraint list).
+    directive_reminder_text: str = ""
+
     # Compact / summarisation prompts (empty = use built-in defaults).
     compact_system_prompt: str = ""
     compact_user_prefix: str = ""

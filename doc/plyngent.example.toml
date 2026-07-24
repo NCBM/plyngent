@@ -41,6 +41,9 @@ max_context_tokens = 200000
 # developer (default) | user | synthetic_tool | none
 # (legacy system is treated as developer)
 # todo_nag_strategy = "developer"
+# Append-only developer playbook checkpoints every N prompt_tokens (0 = off).
+# directive_reminder_tokens = 100000
+# directive_reminder_text = ""
 
 # Optional: custom compact/summarisation prompts (empty = built-in defaults).
 # compact_system_prompt = ""

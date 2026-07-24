@@ -236,7 +236,14 @@ class ReplState:
             agent_cfg.tool_directives,
         )
         on_limit = prompt_continue_limit_async if self.interactive_limits else None
-        return ChatAgent(
+        peak = 0
+        band = 0
+        last_req = None
+        if hasattr(self, "agent"):
+            peak = self.agent.peak_prompt_tokens
+            band = self.agent.reminder_last_band
+            last_req = self.agent.last_request_usage
+        agent = ChatAgent(
             self.client,
             model=self.model,
             tools=self._tool_registry(),
@@ -251,7 +258,14 @@ class ReplState:
             max_context_tokens=agent_cfg.max_context_tokens,
             todo_stack=self.todo_stack,
             todo_nag_strategy=agent_cfg.todo_nag_strategy,
+            directive_reminder_tokens=agent_cfg.directive_reminder_tokens,
+            directive_reminder_text=agent_cfg.directive_reminder_text or None,
+            peak_prompt_tokens=peak,
+            reminder_last_band=band,
         )
+        if last_req is not None and not last_req.is_zero():
+            agent.last_request_usage = last_req
+        return agent
 
     def rebuild_client(self) -> None:
         """Recreate client and agent after provider/model/tools change."""
