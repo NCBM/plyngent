@@ -243,7 +243,7 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
 
 Safety defaults:
 

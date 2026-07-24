@@ -87,7 +87,8 @@ Module-level `@tool` handlers. Call `set_workspace_root()` before use.
 - **`vcs`**: read-only VCS tools (`vcs_kind` / `vcs_status` / `vcs_diff` / `vcs_log` / `vcs_branch`) via `VcsBackend` protocol; **git** implemented; detectors are pluggable for other systems.
 - **`chat`**: human prompts as tools — `ask_user_line` / `ask_user_choice` / `ask_user_form` (shared `prompting` core).
 - **`todo`**: LIFO stack of **task groups** (not a queue of tasks) — `todo_push` creates one group of siblings; `todo_pop` removes the whole top group; `todo_update` by id; DFS breakdown push[T1,T2]→push[T1.1…]→pop→push[T2.1…]; stored on session row; open items = unfinished work (`[TODO OPEN WORK]`); all-terminal non-empty = hygiene (`[TODO HYGIENE]`); nag channel via `[agent] todo_nag_strategy` (`developer`/`user` = prose nag; `synthetic_tool` = forged `todo_list` call + **real** `stack.render()` result + ToolCall/Result events; `none`).
-- **`DEFAULT_TOOLS`**: file + process + vcs + chat + todo tool list for a `ToolRegistry`.
+- **`net` / `fetch`**: HTTP GET/POST/PUT/DELETE via niquests (isolated session, not the LLM client). Manual redirects with per-hop SSRF checks (`asyncio` `getaddrinfo`). Private/loopback hosts need instance policy grant (CLI timed confirm; **not** YOLO). Public cleartext HTTP and mutating methods soft-confirm (`YOLO`/`TRUSTABLE`). HTTPS→HTTP redirects blocked unless `allow_http_downgrade`. `user_agent` tool arg (or headers) is never replaced by the default when provided. Caps: body bytes/chars, request body size.
+- **`DEFAULT_TOOLS` / catalog**: file + process + vcs + chat + todo + net (`fetch`) for local surface.
 
 ### Prompting (`prompting.py`)
 
