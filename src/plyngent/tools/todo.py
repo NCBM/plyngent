@@ -27,12 +27,26 @@ def get_todo_stack() -> TodoStack | None:
 
 
 def _require_stack() -> TodoStack:
-    """Prefer session-bound todo; fall back to process bind during migration."""
+    """Prefer session-bound todo; fall back to process bind during migration.
+
+    Order: ``session.todo`` facet → ``session.data["todo"].typed(TodoStack)`` when a
+    view is open/bound → process ``set_todo_stack`` global.
+    """
+    from plyngent.agent.todo_stack import TodoStack
     from plyngent.tools.context import get_session
 
     session = get_session()
-    if session is not None and session.todo is not None:
-        return session.todo
+    if session is not None:
+        if session.todo is not None:
+            return session.todo
+        try:
+            # Prefer live domain object when a txn is open; otherwise skip.
+            todo = session.data["todo"].typed(TodoStack)
+        except RuntimeError:
+            todo = None
+        if isinstance(todo, TodoStack):
+            session.todo = todo
+            return todo
     if _stack is None:
         msg = "todo stack is not available in this session"
         raise RuntimeError(msg)

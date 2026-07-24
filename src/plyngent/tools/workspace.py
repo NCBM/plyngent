@@ -69,17 +69,35 @@ _state = _WorkspaceState()
 
 
 def set_workspace_root(root: Path | str) -> Path:
-    """Set the workspace root used by tools; returns the resolved root."""
+    """Set the workspace root used by tools; returns the resolved root.
+
+    Writes the process-global root and, when an :class:`~plyngent.tools.context.InstanceState`
+    is bound, mirrors onto ``instance.workspace_root``.
+    """
     path = Path(root).expanduser().resolve()
     if not path.is_dir():
         msg = f"workspace root is not a directory: {path}"
         raise WorkspaceError(msg)
     _state.root = path
+    from plyngent.tools.context import get_instance
+
+    instance = get_instance()
+    if instance is not None:
+        instance.workspace_root = path
     return path
 
 
 def get_workspace_root() -> Path:
-    """Return the configured workspace root."""
+    """Return the configured workspace root.
+
+    Prefers a bound instance's ``workspace_root`` when set; otherwise the
+    process-global root from :func:`set_workspace_root`.
+    """
+    from plyngent.tools.context import get_instance
+
+    instance = get_instance()
+    if instance is not None and instance.workspace_root is not None:
+        return instance.workspace_root
     if _state.root is None:
         msg = "workspace root is not set; call set_workspace_root() first"
         raise WorkspaceError(msg)
@@ -89,6 +107,11 @@ def get_workspace_root() -> Path:
 def clear_workspace_root() -> None:
     """Clear workspace root (mainly for tests). Does not clear allowlist."""
     _state.root = None
+    from plyngent.tools.context import get_instance
+
+    instance = get_instance()
+    if instance is not None:
+        instance.workspace_root = None
 
 
 def set_path_denylist(patterns: list[str] | tuple[str, ...] | None) -> None:

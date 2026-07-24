@@ -7,12 +7,21 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from plyngent.tools.view import PersistentDataView, session_data_view
+
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
-    from plyngent.tools.view import PersistentDataView
+
+
+def _default_instance_data() -> PersistentDataView[Any]:
+    return session_data_view()
+
+
+def _default_session_data() -> PersistentDataView[Any]:
+    return session_data_view()
 
 
 @dataclass
@@ -22,7 +31,7 @@ class InstanceState:
     # Optional fixed facets (workspace path still also lives in workspace module
     # during migration; hosts should set both until globals retire).
     workspace_root: Path | None = None
-    data: PersistentDataView[Any] | None = None
+    data: PersistentDataView[Any] = field(default_factory=_default_instance_data)
     # Ephemeral process maps (PTY etc.) may hang here later.
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -40,7 +49,7 @@ class SessionState:
     """One chat session for SESSION_STATE tools."""
 
     session_id: int | str | None = None
-    data: PersistentDataView[Any] | None = None
+    data: PersistentDataView[Any] = field(default_factory=_default_session_data)
     # Live domain object during migration (also under data["todo"] when views bind).
     todo: TodoStack | None = None
     # Soft-confirm grants: tool_name → True (Phase 1 key is tool name in session).
