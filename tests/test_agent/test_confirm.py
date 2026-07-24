@@ -9,13 +9,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-@tool
+@tool(register=False)
 def delete_path(path: str, *, recursive: bool = False) -> str:
     del recursive
     return f"deleted {path}"
 
 
-@tool
+@tool(register=False)
 def read_file(path: str) -> str:
     return f"read {path}"
 

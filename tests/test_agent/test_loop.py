@@ -268,7 +268,7 @@ async def test_chat_agent_accumulates_session_usage() -> None:
 async def test_chat_agent_turn_usage_sums_tool_rounds() -> None:
     """Multi-round tool loop: turn usage is billing sum; last_request is final call."""
 
-    @tool
+    @tool(register=False)
     def ping() -> str:
         return "pong"
 
@@ -437,7 +437,7 @@ async def test_non_stream_yields_reasoning() -> None:
 
 
 async def test_run_chat_loop_with_tools() -> None:
-    @tool
+    @tool(register=False)
     def add(a: int, b: int) -> int:
         return a + b
 
@@ -470,7 +470,7 @@ async def test_run_chat_loop_with_tools() -> None:
 
 
 async def test_max_rounds() -> None:
-    @tool
+    @tool(register=False)
     def ping() -> str:
         return "pong"
 
@@ -494,7 +494,7 @@ async def test_max_rounds() -> None:
 
 
 async def test_max_rounds_continue_hook() -> None:
-    @tool
+    @tool(register=False)
     def ping() -> str:
         return "pong"
 
@@ -537,7 +537,7 @@ async def test_max_rounds_continue_hook() -> None:
 
 
 async def test_max_rounds_async_continue_hook() -> None:
-    @tool
+    @tool(register=False)
     def ping() -> str:
         return "pong"
 
@@ -721,7 +721,7 @@ async def test_retry_keeps_committed_tools_after_second_round_fails() -> None:
     session = await store.create_session(name="t")
     calls: list[str] = []
 
-    @tool
+    @tool(register=False)
     def side_effect() -> str:
         calls.append("ran")
         return "done-once"
@@ -809,7 +809,7 @@ async def test_chat_agent_system_prompt_prepended() -> None:
 
 
 async def test_tool_result_char_budget() -> None:
-    @tool
+    @tool(register=False)
     def big() -> str:
         return "x" * 100
 

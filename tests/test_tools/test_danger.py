@@ -100,7 +100,7 @@ async def test_confirm_deny_with_comment() -> None:
     from plyngent.agent.tools import ToolRegistry, tool
     from plyngent.tools.danger import classify_danger as danger
 
-    @tool
+    @tool(register=False)
     def delete_path(path: str) -> str:
         return f"deleted {path}"
 

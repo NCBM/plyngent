@@ -4,7 +4,7 @@ from plyngent.agent import ToolRegistry, schema_from_callable, tool
 
 
 def test_tool_decorator_infers_schema() -> None:
-    @tool
+    @tool(register=False)
     def add(a: int, b: int = 0) -> int:
         """Add two numbers."""
         return a + b
@@ -18,7 +18,7 @@ def test_tool_decorator_infers_schema() -> None:
 
 
 def test_tool_decorator_overrides() -> None:
-    @tool(name="ping", description="health")
+    @tool(name="ping", description="health", register=False)
     def health() -> str:
         return "ok"
 
@@ -36,11 +36,11 @@ def test_schema_from_callable_optional() -> None:
 
 
 async def test_registry_execute_sync_and_async() -> None:
-    @tool
+    @tool(register=False)
     def echo(text: str) -> str:
         return text
 
-    @tool
+    @tool(register=False)
     async def upper(text: str) -> str:
         return text.upper()
 
@@ -50,7 +50,7 @@ async def test_registry_execute_sync_and_async() -> None:
 
 
 async def test_registry_unknown_and_bad_json() -> None:
-    @tool
+    @tool(register=False)
     def noop() -> str:
         return "ok"
 
@@ -60,7 +60,7 @@ async def test_registry_unknown_and_bad_json() -> None:
 
 
 async def test_registry_handler_error() -> None:
-    @tool
+    @tool(register=False)
     def boom() -> str:
         msg = "nope"
         raise RuntimeError(msg)
@@ -71,7 +71,7 @@ async def test_registry_handler_error() -> None:
 
 
 def test_tool_items() -> None:
-    @tool
+    @tool(register=False)
     def f(x: int) -> int:
         return x
 

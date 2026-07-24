@@ -126,7 +126,7 @@ async def test_parallel_tool_calls_run_concurrently() -> None:
     gate = asyncio.Event()
     wait_timeout = 2.0
 
-    @tool
+    @tool(register=False)
     async def slow_a() -> str:
         nonlocal started
         started += 1
@@ -135,7 +135,7 @@ async def test_parallel_tool_calls_run_concurrently() -> None:
         _ = await asyncio.wait_for(gate.wait(), timeout=wait_timeout)
         return "a"
 
-    @tool
+    @tool(register=False)
     async def slow_b() -> str:
         nonlocal started
         started += 1

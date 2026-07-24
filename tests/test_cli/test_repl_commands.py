@@ -432,16 +432,20 @@ async def test_yolo_rebuilds_tool_registry(tmp_path: Path) -> None:
     )
     try:
         assert st.agent.tools is not None
+        # Soft-confirm hooks stay installed; YOLO only auto-allows YOLO-tagged tools.
         assert st.agent.tools.soft_confirm is True
+        assert st.agent.tools.yolo is False
         st.set_yolo("on")
         assert st.agent.tools is not None
-        assert st.agent.tools.soft_confirm is False
+        assert st.agent.tools.soft_confirm is True
+        assert st.agent.tools.yolo is True
         st.set_yolo("once")
         assert st.agent.tools is not None
-        assert st.agent.tools.soft_confirm is False
+        assert st.agent.tools.yolo is True
         st.set_yolo("off")
         assert st.agent.tools is not None
         assert st.agent.tools.soft_confirm is True
+        assert st.agent.tools.yolo is False
     finally:
         await memory.close()
 

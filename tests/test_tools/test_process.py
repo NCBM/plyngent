@@ -185,7 +185,7 @@ async def test_run_command_env(workspace: object) -> None:
 async def test_pty_open_read_close(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, _py("import time; time.sleep(30)"))
+        opened = await call_async(open_pty, _py("import time; time.sleep(30)"))
         assert "session_id=" in opened
         session_id = _session_id(opened)
         data = await call_async(read_pty, session_id, timeout=0.05)
@@ -207,7 +207,7 @@ def test_pty_denied(workspace: object) -> None:
 async def test_pty_echo_output(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, _py("print('hello-pty')"))
+        opened = await call_async(open_pty, _py("print('hello-pty')"))
         session_id = _session_id(opened)
         text = await call_async(read_pty, session_id, timeout=2.0, until="hello-pty")
         assert "hello-pty" in text
@@ -222,7 +222,7 @@ async def test_write_pty(workspace: object) -> None:
     del workspace
     try:
         # Line-oriented echo (portable stand-in for ``cat``).
-        opened = call_sync(
+        opened = await call_async(
             open_pty,
             _py(
                 "import sys\n"
@@ -235,7 +235,7 @@ async def test_write_pty(workspace: object) -> None:
             ),
         )
         session_id = _session_id(opened)
-        written = call_sync(write_pty, session_id, "pty-input\n")
+        written = await call_async(write_pty, session_id, "pty-input\n")
         assert "wrote=" in written
         text = await call_async(read_pty, session_id, timeout=2.0, until="pty-input")
         assert "pty-input" in text
@@ -258,7 +258,7 @@ async def test_ask_into_pty_writes_without_leaking_secret(workspace: object) -> 
     secret = "super-secret-password-xyz"
     backend = ScriptedBackend([], secrets=[secret])
     try:
-        opened = call_sync(
+        opened = await call_async(
             open_pty,
             _py(
                 "import sys\n"
@@ -302,7 +302,7 @@ async def test_ask_into_pty_empty_cancels(workspace: object) -> None:
 
     backend = ScriptedBackend([], secrets=[""])
     try:
-        opened = call_sync(open_pty, _py("import time; time.sleep(30)"))
+        opened = await call_async(open_pty, _py("import time; time.sleep(30)"))
         session_id = _session_id(opened)
         with temporary_backend(backend):
             result = await call_async(ask_into_pty, session_id, "Pass?", secret=True)
@@ -319,7 +319,7 @@ async def test_ask_into_pty_nonsecret_line(workspace: object) -> None:
 
     backend = ScriptedBackend(["yes"])
     try:
-        opened = call_sync(
+        opened = await call_async(
             open_pty,
             _py("import sys\nline = sys.stdin.readline()\nsys.stdout.write(line)\nsys.stdout.flush()\n"),
         )
@@ -338,7 +338,7 @@ async def test_ask_into_pty_nonsecret_line(workspace: object) -> None:
 async def test_pty_exec_failure_surfaces(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, ["definitely-not-a-real-binary-xyz"])
+        opened = await call_async(open_pty, ["definitely-not-a-real-binary-xyz"])
         # Windows ConPTY may fail at open; POSIX may open then fail on exec.
         if "error:" in opened and "session_id=" not in opened:
             assert "not found" in opened.lower() or "failed" in opened.lower()
@@ -394,7 +394,7 @@ async def test_pty_output_budget(workspace: object) -> None:
     try:
         PtyManager.set_limit_continue_hook(None)
         PtyManager.configure(session_output_budget=64)
-        opened = call_sync(open_pty, _py("print('x' * 1000)"))
+        opened = await call_async(open_pty, _py("print('x' * 1000)"))
         session_id = _session_id(opened)
         # Drain until budget exhausted or process ends.
         budget_hit = False
@@ -423,7 +423,7 @@ async def test_pty_output_budget_is_per_session(workspace: object) -> None:
         PtyManager.configure(session_output_budget=1024)
         class_budget = PtyManager.session_output_budget
         PtyManager.set_limit_continue_hook(lambda _reason: True)
-        opened = call_sync(open_pty, _py("print('x' * 200)"))
+        opened = await call_async(open_pty, _py("print('x' * 200)"))
         session_id = _session_id(opened)
         session = PtyManager.get(session_id)
         assert session is not None
@@ -495,7 +495,7 @@ def test_close_all_empty_is_noop() -> None:
 async def test_read_pty_sanitizes_esc(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(open_pty, _py("print(chr(0x1B)+'[31mred'+chr(0x1B)+'[0m')"))
+        opened = await call_async(open_pty, _py("print(chr(0x1B)+'[31mred'+chr(0x1B)+'[0m')"))
         session_id = _session_id(opened)
         text = await call_async(read_pty, session_id, timeout=2.0, until="red")
         assert "red" in text
@@ -510,7 +510,7 @@ async def test_read_pty_sanitizes_esc(workspace: object) -> None:
 async def test_write_pty_keys_ctrl_escape(workspace: object) -> None:
     del workspace
     try:
-        opened = call_sync(
+        opened = await call_async(
             open_pty,
             _py(
                 "import sys\n"
@@ -520,7 +520,7 @@ async def test_write_pty_keys_ctrl_escape(workspace: object) -> None:
             ),
         )
         session_id = _session_id(opened)
-        written = call_sync(write_pty_keys, session_id, "ctrl+c")
+        written = await call_async(write_pty_keys, session_id, "ctrl+c")
         assert "wrote=1" in written
         text = await call_async(read_pty, session_id, timeout=2.0)
         assert "error" not in text.lower() or "alive=" in text
