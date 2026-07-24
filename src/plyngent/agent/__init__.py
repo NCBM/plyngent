@@ -20,6 +20,7 @@ from .tools import DangerClassifier as DangerClassifier
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolDefinition as ToolDefinition
 from .tools import ToolRegistry as ToolRegistry
+from .tools import ToolTag as ToolTag
 from .tools import schema_from_callable as schema_from_callable
 from .tools import tool as tool
 from .usage import TokenUsage as TokenUsage

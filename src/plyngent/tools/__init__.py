@@ -1,7 +1,20 @@
+from .catalog import ToolCatalog as ToolCatalog
+from .catalog import ToolSource as ToolSource
+from .catalog import catalog_scope as catalog_scope
+from .catalog import default_tool_definitions as default_tool_definitions
+from .catalog import get_catalog as get_catalog
+from .catalog import register_builtin_tools as register_builtin_tools
 from .chat import CHAT_TOOLS as CHAT_TOOLS
 from .chat import ask_user as ask_user
 from .chat import choose_user as choose_user
 from .chat import form_user as form_user
+from .context import InstanceState as InstanceState
+from .context import SessionState as SessionState
+from .context import bind_instance as bind_instance
+from .context import bind_session as bind_session
+from .context import bind_tool_context as bind_tool_context
+from .context import require_instance as require_instance
+from .context import require_session as require_session
 from .danger import classify_danger as classify_danger
 from .file import FILE_TOOLS as FILE_TOOLS
 from .file import copy_path as copy_path
@@ -40,6 +53,8 @@ from .vcs import vcs_diff as vcs_diff
 from .vcs import vcs_kind as vcs_kind
 from .vcs import vcs_log as vcs_log
 from .vcs import vcs_status as vcs_status
+from .view import MemoryViewStore as MemoryViewStore
+from .view import PersistentDataView as PersistentDataView
 from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )
@@ -65,4 +80,5 @@ from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
 from .workspace import set_workspace_root as set_workspace_root
 
+# Deprecated alias: prefer default_tool_definitions() (catalog select).
 DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS]
