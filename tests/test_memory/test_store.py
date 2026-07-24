@@ -34,6 +34,27 @@ async def test_create_session_uses_default_user(store: MemoryStore) -> None:
     assert session.uid == user.uid
 
 
+async def test_session_context_usage_roundtrip(store: MemoryStore) -> None:
+    session = await store.create_session(name="usage")
+    row = await store.update_session_context_usage(
+        session.sid,
+        last_prompt_tokens=120_000,
+        peak_prompt_tokens=150_000,
+        last_completion_tokens=400,
+        usage_source="api",
+        reminder_last_band=1,
+    )
+    assert row.last_prompt_tokens == 120_000
+    assert row.peak_prompt_tokens == 150_000
+    assert row.last_completion_tokens == 400
+    assert row.usage_source == "api"
+    assert row.reminder_last_band == 1
+    loaded = await store.get_session(session.sid)
+    assert loaded is not None
+    assert loaded.peak_prompt_tokens == 150_000
+    assert loaded.reminder_last_band == 1
+
+
 async def test_append_and_list_messages(store: MemoryStore) -> None:
     session = await store.create_session()
     user_msg = UserChatMessage(content="hello")
