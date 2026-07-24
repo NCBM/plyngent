@@ -18,11 +18,7 @@ from plyngent.cli.models_source import (
 )
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
-from plyngent.tools import (
-    InstanceState,
-    SessionState,
-    set_workspace_root,
-)
+from plyngent.tools import InstanceState, SessionState
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
 if TYPE_CHECKING:
@@ -80,8 +76,6 @@ class ReplState:
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
-        # Process-global workspace remains for tools/tests that run without instance bind.
-        _ = set_workspace_root(self.workspace)
         self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self.sync_display_flags()
@@ -165,11 +159,10 @@ class ReplState:
         )
 
     def _bind_todo_tools(self) -> None:
-        """Bind session/instance state for tools (prefer context over process globals).
+        """Bind session/instance state for tools.
 
         Seeds ``session.data["todo"]`` from the live stack and attaches
-        :meth:`_todo_on_change` so memory persist no longer depends on
-        process-global ``set_todo_stack(on_change=...)``.
+        :meth:`_todo_on_change` for memory persist.
         """
         self.session_state.session_id = self.session_id
         self.session_state.todo = self.todo_stack
@@ -397,10 +390,9 @@ class ReplState:
 
         from plyngent.cli.selection import select_model, select_provider
         from plyngent.runtime import ProviderNotSupportedError
-        from plyngent.tools import set_path_denylist
 
         self.config.reload()
-        set_path_denylist(self.config.agent_config.path_denylist or None)
+        self.instance_state.workspace.path_denylist = tuple(self.config.agent_config.path_denylist or ())
 
         selectable = self.config.selectable_providers()
         preferred_provider = self.provider_name if self.provider_name in selectable else None
@@ -438,7 +430,6 @@ class ReplState:
         self.workspace = resolved
         self.instance_state.workspace_root = resolved
         self.instance_state.workspace.root = resolved
-        _ = set_workspace_root(resolved)
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_instance_state(self.instance_state)
 

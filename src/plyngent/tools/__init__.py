@@ -41,8 +41,6 @@ from .process import write_pty_keys as write_pty_keys
 from .temp_workspace import cleanup_temporary_workspaces as cleanup_temporary_workspaces
 from .temp_workspace import new_temporary_workspace as new_temporary_workspace
 from .todo import TODO_TOOLS as TODO_TOOLS
-from .todo import get_todo_stack as get_todo_stack
-from .todo import set_todo_stack as set_todo_stack
 from .todo import todo_clear as todo_clear
 from .todo import todo_list as todo_list
 from .todo import todo_pop as todo_pop
@@ -82,6 +80,3 @@ from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
 from .workspace import set_workspace_root as set_workspace_root
-
-# Deprecated alias: prefer default_tool_definitions() (catalog select).
-DEFAULT_TOOLS = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS]

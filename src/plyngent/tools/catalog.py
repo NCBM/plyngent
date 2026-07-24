@@ -211,9 +211,13 @@ def _ensure_builtin_definitions_registered(catalog: ToolCatalog) -> None:
     import time (usually the process catalog). Test ``catalog_scope(empty=True)``
     overrides must still see builtins for ``default_tool_definitions``.
     """
-    from plyngent.tools import DEFAULT_TOOLS
+    from plyngent.tools.chat import CHAT_TOOLS
+    from plyngent.tools.file import FILE_TOOLS
+    from plyngent.tools.process import PROCESS_TOOLS
+    from plyngent.tools.todo import TODO_TOOLS
+    from plyngent.tools.vcs import VCS_TOOLS
 
-    for definition in DEFAULT_TOOLS:
+    for definition in (*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS):
         if catalog.get(definition.name) is None:
             catalog.register(definition, source=_BUILTIN_SOURCE)
 

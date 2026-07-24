@@ -19,7 +19,6 @@ from plyngent.lmproto.openai_compatible.model import (
 )
 from plyngent.memory import MemoryStore
 from plyngent.memory.database.store import normalize_workspace
-from plyngent.tools import set_workspace_root
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -70,7 +69,6 @@ class DummyClient:
 
 
 def _make_state(memory: MemoryStore, workspace: Path) -> ReplState:
-    _ = set_workspace_root(workspace)
     provider = OpenAIProvider(access_key_or_token="sk-test")
     config = ConfigStore(path=workspace / "plyngent.toml", document=tomlkit.document())
     config.providers = {"local": provider}

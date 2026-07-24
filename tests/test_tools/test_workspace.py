@@ -5,7 +5,6 @@ import pytest
 from plyngent.tools import (
     WorkspaceError,
     check_command_allowed,
-    clear_workspace_root,
     get_workspace_root,
     resolve_path,
     set_command_denylist,
@@ -129,6 +128,12 @@ def test_command_denylist_policy_confirm_timeout_value(workspace: object) -> Non
 
 
 def test_root_required() -> None:
-    clear_workspace_root()
-    with pytest.raises(WorkspaceError, match="not set"):
+    from plyngent.tools.context import InstanceState, bind_instance
+
+    with bind_instance(InstanceState()), pytest.raises(WorkspaceError, match="workspace root is not set"):
+        _ = get_workspace_root()
+
+
+def test_unbound_instance_errors() -> None:
+    with pytest.raises(WorkspaceError, match="instance state is not bound"):
         _ = get_workspace_root()

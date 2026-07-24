@@ -18,10 +18,12 @@ def test_classify_copy() -> None:
 
 
 def test_classify_write_overwrite_only(tmp_path: Path) -> None:
-    from plyngent.tools.workspace import clear_workspace_root, set_workspace_root
+    from plyngent.tools.context import InstanceState, bind_instance
+    from plyngent.tools.workspace import set_workspace_root
 
-    set_workspace_root(tmp_path)
-    try:
+    instance = InstanceState(workspace_root=tmp_path.resolve())
+    with bind_instance(instance):
+        _ = set_workspace_root(tmp_path)
         # New file: no soft-confirm
         assert classify_danger("write_file", {"path": "new.txt"}) is None
         # Partial edits: never soft-confirm
@@ -36,8 +38,6 @@ def test_classify_write_overwrite_only(tmp_path: Path) -> None:
         assert classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": False}) is None
         creason = classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": True})
         assert creason is not None and "overwrite" in creason
-    finally:
-        clear_workspace_root()
 
 
 def test_classify_safe_tools() -> None:

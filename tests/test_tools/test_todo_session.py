@@ -1,18 +1,15 @@
-"""Todo tools via session.data PersistentDataView (no process global)."""
+"""Todo tools via session.data PersistentDataView (session-bound only)."""
 
 from __future__ import annotations
 
 from plyngent.agent import ToolRegistry
 from plyngent.agent.todo_stack import TodoStack
 from plyngent.tools.context import SessionState, bind_tool_context
-from plyngent.tools.todo import TODO_TOOLS, get_todo_stack, set_todo_stack
+from plyngent.tools.todo import TODO_TOOLS
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
 
-async def test_todo_tools_session_data_without_process_bind() -> None:
-    set_todo_stack(None)
-    assert get_todo_stack() is None
-
+async def test_todo_tools_session_data() -> None:
     store = MemoryViewStore({})
     session = SessionState(session_id="s1", data=session_data_view(store=store))
     registry = ToolRegistry(list(TODO_TOOLS), session_state=session)
@@ -36,7 +33,6 @@ async def test_todo_tools_session_data_without_process_bind() -> None:
 
 async def test_todo_tools_prefer_session_todo_facet() -> None:
     stack = TodoStack()
-    set_todo_stack(stack)  # process bind present
     store = MemoryViewStore({})
     session = SessionState(session_id="s2", data=session_data_view(store=store), todo=stack)
     registry = ToolRegistry(list(TODO_TOOLS), session_state=session)
@@ -48,11 +44,9 @@ async def test_todo_tools_prefer_session_todo_facet() -> None:
     loaded = await store.load()
     assert isinstance(loaded, dict)
     assert isinstance(loaded.get("todo"), dict)
-    set_todo_stack(None)
 
 
 async def test_todo_tools_view_isolation_two_sessions() -> None:
-    set_todo_stack(None)
     store_a = MemoryViewStore({})
     store_b = MemoryViewStore({})
     session_a = SessionState(session_id="a", data=session_data_view(store=store_a))
@@ -72,13 +66,11 @@ async def test_todo_tools_view_isolation_two_sessions() -> None:
     raw_b = TodoStack.from_raw(loaded_b.get("todo"))
     assert [i.title for i in raw_a.all_items()] == ["only-a"]
     assert [i.title for i in raw_b.all_items()] == ["only-b"]
-    # Live facets must not alias across sessions.
     assert session_a.todo is not session_b.todo
 
 
 async def test_with_bound_context_without_registry_session() -> None:
     """Handlers honor contextvars when registry does not hold session_state."""
-    set_todo_stack(None)
     store = MemoryViewStore({})
     session = SessionState(session_id="ctx", data=session_data_view(store=store))
     registry = ToolRegistry(list(TODO_TOOLS), auto_bind_state=False)
@@ -90,19 +82,13 @@ async def test_with_bound_context_without_registry_session() -> None:
     assert isinstance(loaded.get("todo"), dict)
 
 
-async def test_session_on_todo_change_preferred_over_process() -> None:
-    """Session.on_todo_change fires instead of process set_todo_stack on_change."""
-    set_todo_stack(None)
+async def test_session_on_todo_change_fires() -> None:
     hits: list[str] = []
-
-    def process_hook() -> None:
-        hits.append("process")
 
     def session_hook() -> None:
         hits.append("session")
 
     stack = TodoStack()
-    set_todo_stack(stack, on_change=process_hook)
     store = MemoryViewStore({})
     session = SessionState(
         session_id="hook",
@@ -113,4 +99,9 @@ async def test_session_on_todo_change_preferred_over_process() -> None:
     registry = ToolRegistry(list(TODO_TOOLS), session_state=session)
     _ = await registry.execute("todo_push", '{"titles": ["H"]}')
     assert hits == ["session"]
-    set_todo_stack(None)
+
+
+async def test_todo_without_session_errors() -> None:
+    registry = ToolRegistry(list(TODO_TOOLS))
+    out = await registry.execute("todo_list", "{}")
+    assert "error" in out.lower()

@@ -18,7 +18,6 @@ from plyngent.lmproto.openai_compatible.model import (
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
-from plyngent.tools import set_workspace_root
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -59,7 +58,6 @@ class SummaryClient:
 
 
 async def test_compact_to_new_session(tmp_path: Path) -> None:
-    _ = set_workspace_root(tmp_path)
     memory = await MemoryStore.open(DatabaseConfig())
     try:
         provider = OpenAIProvider(access_key_or_token="sk-test")
@@ -131,7 +129,6 @@ async def test_compact_to_new_session(tmp_path: Path) -> None:
 
 
 async def test_rebuild_client_preserves_persist_cursor(tmp_path: Path) -> None:
-    _ = set_workspace_root(tmp_path)
     memory = await MemoryStore.open(DatabaseConfig())
     try:
         provider = OpenAIProvider(access_key_or_token="sk-test")
@@ -166,7 +163,6 @@ async def test_rebuild_client_preserves_persist_cursor(tmp_path: Path) -> None:
 
 
 async def test_compact_empty_fails(tmp_path: Path) -> None:
-    _ = set_workspace_root(tmp_path)
     memory = await MemoryStore.open(DatabaseConfig())
     try:
         provider = OpenAIProvider(access_key_or_token="sk-test")

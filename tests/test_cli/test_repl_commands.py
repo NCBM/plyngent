@@ -18,7 +18,6 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionsParam,
 )
 from plyngent.memory import MemoryStore
-from plyngent.tools import set_workspace_root
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -68,7 +67,6 @@ class DummyClient:
 
 @pytest.fixture
 async def state(tmp_path: Path) -> AsyncIterator[ReplState]:
-    _ = set_workspace_root(tmp_path)
     memory = await MemoryStore.open(DatabaseConfig())
     provider = OpenAIProvider(access_key_or_token="sk-test")
     config = ConfigStore(path=tmp_path / "plyngent.toml", document=tomlkit.document())
@@ -433,7 +431,6 @@ async def test_yolo_toggle(state: ReplState, capsys: pytest.CaptureFixture[str])
 
 
 async def test_yolo_rebuilds_tool_registry(tmp_path: Path) -> None:
-    _ = set_workspace_root(tmp_path)
     memory = await MemoryStore.open(DatabaseConfig())
     provider = OpenAIProvider(access_key_or_token="sk-test")
     config = ConfigStore(path=tmp_path / "plyngent.toml", document=tomlkit.document())

@@ -70,10 +70,9 @@ class SessionState:
 
     session_id: int | str | None = None
     data: PersistentDataView[Any] = field(default_factory=_default_session_data)
-    # Live domain object during migration (also under data["todo"] when views bind).
+    # Live domain object (also under data["todo"] when views bind).
     todo: TodoStack | None = None
-    # Host hook after todo tools mutate (e.g. CLI memory persist). Prefer this over
-    # process-global set_todo_stack(on_change=...) when a session is bound.
+    # Host hook after todo tools mutate (e.g. CLI memory persist).
     on_todo_change: Callable[[], None] | None = None
     # Soft-confirm grants live map: tool_name → True (Phase 1 key is tool name).
     # Durable copy lives under data["grants"] (see plyngent.tools.grants).

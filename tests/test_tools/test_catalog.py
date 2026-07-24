@@ -5,16 +5,21 @@ from __future__ import annotations
 import inspect
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools import DEFAULT_TOOLS, default_tool_definitions, register_builtin_tools
+from plyngent.tools import default_tool_definitions, register_builtin_tools
 from plyngent.tools.catalog import ToolCatalog, ToolSource, catalog_scope, get_catalog, registration_source
+from plyngent.tools.chat import CHAT_TOOLS
+from plyngent.tools.file import FILE_TOOLS
+from plyngent.tools.process import PROCESS_TOOLS
+from plyngent.tools.todo import TODO_TOOLS
+from plyngent.tools.vcs import VCS_TOOLS
 
 
-def test_default_tool_names_match_legacy_lists() -> None:
+def test_default_tool_names_match_group_lists() -> None:
     register_builtin_tools()
     selected = default_tool_definitions(surface="local")
-    legacy = [t.name for t in DEFAULT_TOOLS]
-    assert sorted(t.name for t in selected) == sorted(legacy)
-    assert len(selected) == len(legacy)
+    groups = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS]
+    assert sorted(t.name for t in selected) == sorted(t.name for t in groups)
+    assert len(selected) == len(groups)
 
 
 def test_all_builtins_are_async_and_tagged() -> None:

@@ -47,8 +47,12 @@ def cleanup_temporary_workspaces() -> int:
     """Remove directories created by :func:`new_temporary_workspace` (chat exit).
 
     Only deletes paths still under the system temp dir. Returns the number of
-    directories removed.
+    directories removed. No-op when no instance is bound.
     """
+    from plyngent.tools.context import get_instance
+
+    if get_instance() is None:
+        return 0
     removed = 0
     for path in pop_owned_temporary_workspaces():
         if not _is_under_system_temp(path):

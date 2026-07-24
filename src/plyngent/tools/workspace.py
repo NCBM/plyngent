@@ -51,9 +51,8 @@ class WorkspaceError(ValueError):
 class WorkspacePolicy:
     """Workspace path/command policy for one agent host / instance.
 
-    Prefer hanging this on :class:`~plyngent.tools.context.InstanceState.workspace`.
-    Module-level APIs still fall back to a process-global policy when no instance
-    is bound (tests and early boot).
+    Lives on :class:`~plyngent.tools.context.InstanceState.workspace`. There is
+    no process-global policy bag — hosts must bind instance state around tool use.
     """
 
     root: Path | None = None
@@ -66,79 +65,54 @@ class WorkspacePolicy:
     policy_confirm_timeout_seconds: float = DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
 
 
-# Process fallback when no InstanceState is bound.
-_process_policy = WorkspacePolicy()
-
-
 def _bound_instance() -> InstanceState | None:
     from plyngent.tools.context import get_instance
 
     return get_instance()
 
 
-def active_workspace_policy() -> WorkspacePolicy:
-    """Return the policy bag for the bound instance, else the process fallback."""
+def require_bound_instance() -> InstanceState:
+    """Return the bound instance or raise :class:`WorkspaceError`."""
     instance = _bound_instance()
-    if instance is not None:
-        return instance.workspace
-    return _process_policy
+    if instance is None:
+        msg = "instance state is not bound; host must set InstanceState around tool execution"
+        raise WorkspaceError(msg)
+    return instance
+
+
+def active_workspace_policy() -> WorkspacePolicy:
+    """Return the policy bag for the bound instance (required)."""
+    return require_bound_instance().workspace
 
 
 def set_workspace_root(root: Path | str) -> Path:
-    """Set the workspace root used by tools; returns the resolved root.
-
-    Writes the active policy bag (instance when bound, else process) and keeps
-    ``instance.workspace_root`` in sync for callers that read the facet.
-    """
+    """Set the workspace root on the bound instance; returns the resolved root."""
     path = Path(root).expanduser().resolve()
     if not path.is_dir():
         msg = f"workspace root is not a directory: {path}"
         raise WorkspaceError(msg)
-    policy = active_workspace_policy()
-    policy.root = path
-    instance = _bound_instance()
-    if instance is not None:
-        instance.workspace_root = path
-        # When bound, also keep process root as a bootstrapped default for tools
-        # that briefly run without context (compat).
-        if _process_policy.root is None:
-            _process_policy.root = path
-    else:
-        _process_policy.root = path
+    instance = require_bound_instance()
+    instance.workspace.root = path
+    instance.workspace_root = path
     return path
 
 
 def get_workspace_root() -> Path:
-    """Return the configured workspace root.
-
-    Prefers a bound instance's ``workspace_root`` / policy root; otherwise the
-    process-global root from :func:`set_workspace_root`.
-    """
-    instance = _bound_instance()
-    if instance is not None:
-        if instance.workspace_root is not None:
-            return instance.workspace_root
-        if instance.workspace.root is not None:
-            return instance.workspace.root
-    if _process_policy.root is None:
-        msg = "workspace root is not set; call set_workspace_root() first"
-        raise WorkspaceError(msg)
-    return _process_policy.root
+    """Return the bound instance workspace root."""
+    instance = require_bound_instance()
+    if instance.workspace_root is not None:
+        return instance.workspace_root
+    if instance.workspace.root is not None:
+        return instance.workspace.root
+    msg = "workspace root is not set on the bound instance"
+    raise WorkspaceError(msg)
 
 
 def clear_workspace_root() -> None:
-    """Clear workspace root (mainly for tests). Does not clear allowlist.
-
-    When an instance is bound, clears both the instance facet and the process
-    fallback so ``get_workspace_root`` cannot revive the old process root.
-    """
-    policy = active_workspace_policy()
-    policy.root = None
-    instance = _bound_instance()
-    if instance is not None:
-        instance.workspace_root = None
-        instance.workspace.root = None
-    _process_policy.root = None
+    """Clear workspace root on the bound instance (mainly for tests)."""
+    instance = require_bound_instance()
+    instance.workspace.root = None
+    instance.workspace_root = None
 
 
 def set_path_denylist(patterns: list[str] | tuple[str, ...] | None) -> None:
@@ -155,7 +129,6 @@ def set_command_denylist(names: list[str] | tuple[str, ...] | frozenset[str] | N
     """Set denied command basenames (None restores defaults)."""
     policy = active_workspace_policy()
     policy.command_denylist = DEFAULT_COMMAND_DENYLIST if names is None else frozenset(names)
-    # Session overrides only make sense against the active denylist.
     policy.policy_allowed_commands &= policy.command_denylist
 
 
@@ -190,7 +163,7 @@ def clear_policy_allowed_commands() -> None:
 
 
 def grant_policy_command(basename: str) -> None:
-    """Allow *basename* for the rest of this process despite the denylist."""
+    """Allow *basename* for this instance despite the denylist."""
     name = basename.strip()
     if name:
         active_workspace_policy().policy_allowed_commands.add(name)
@@ -249,22 +222,17 @@ def remove_workspace_allowlist(root: Path | str) -> None:
         policy.allowlist.remove(path)
 
 
-def _primary_roots(policy: WorkspacePolicy) -> list[Path]:
-    """Primary workspace roots: bound instance facet then policy root."""
+def _primary_roots(instance: InstanceState, policy: WorkspacePolicy) -> list[Path]:
     roots: list[Path] = []
-    instance = _bound_instance()
-    if instance is not None and instance.workspace_root is not None:
+    if instance.workspace_root is not None:
         roots.append(instance.workspace_root)
     if policy.root is not None and policy.root not in roots:
         roots.append(policy.root)
-    # Process root as last resort when instance policy has no root yet.
-    if _process_policy.root is not None and _process_policy.root not in roots:
-        roots.append(_process_policy.root)
     return roots
 
 
-def _under_any_root(resolved: Path, policy: WorkspacePolicy) -> bool:
-    roots = _primary_roots(policy)
+def _under_any_root(resolved: Path, instance: InstanceState, policy: WorkspacePolicy) -> bool:
+    roots = _primary_roots(instance, policy)
     roots.extend(policy.allowlist)
     for root in roots:
         try:
@@ -281,13 +249,14 @@ def resolve_path(path: str | Path) -> Path:
     Relative paths resolve against the **primary** workspace root. Absolute
     paths may also land under a temporary workspace allowlist entry.
     """
-    policy = active_workspace_policy()
+    instance = require_bound_instance()
+    policy = instance.workspace
     root = get_workspace_root()
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.expanduser().resolve()
-    if not _under_any_root(resolved, policy):
+    if not _under_any_root(resolved, instance, policy):
         msg = f"path escapes workspace root ({root}): {path}"
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.

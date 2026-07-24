@@ -26,7 +26,6 @@ from plyngent.config.models import DatabaseConfig
 from plyngent.memory import MemoryStore
 from plyngent.prompting import NonInteractiveBackend, configure_prompting
 from plyngent.runtime import ProviderNotSupportedError, create_client
-from plyngent.tools import set_workspace_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -115,16 +114,8 @@ def _read_prompt_text(prompt: str | None, *, stdin_isatty: bool) -> str | None:
     return text or None
 
 
-def _setup_workspace_and_hooks(
-    store: ConfigStore,
-    workspace: Path,
-    *,
-    interactive: bool,
-) -> None:
-    _ = set_workspace_root(workspace)
-    from plyngent.tools import set_path_denylist
-
-    set_path_denylist(store.agent_config.path_denylist or None)
+def _setup_hooks(*, interactive: bool) -> None:
+    """Install interactive limit hooks (workspace policy is set on ReplState)."""
     if interactive:
         install_cli_limit_hooks()
     else:
@@ -217,7 +208,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         if store.recoverable_providers:
             _warn_recoverable_providers(store.recoverable_providers)
 
-    _setup_workspace_and_hooks(store, workspace, interactive=interactive)
+    _setup_hooks(interactive=interactive)
     # --yes forces sticky YOLO; else derive from config.confirm_destructive.
     from plyngent.cli.state import YoloMode
 
@@ -297,6 +288,12 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             interactive_limits=interactive,
             yolo=yolo,
         )
+        # Path denylist and policy confirm live on instance.workspace (no process bag).
+        state.instance_state.workspace.path_denylist = tuple(store.agent_config.path_denylist or ())
+        if interactive:
+            from plyngent.cli.limits import prompt_policy_command_confirm
+
+            state.instance_state.workspace.policy_confirm_hook = prompt_policy_command_confirm
         # Seed cache if we already fetched; else warm in background for Tab.
         if remote_ids is not None:
             state.seed_remote_models(remote_ids)
@@ -323,20 +320,17 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         return EXIT_OK
     finally:
         await memory.close()
-        from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
-
-        set_policy_confirm_hook(None)
-        clear_policy_allowed_commands()
         # PTY + temp workspace cleanup via instance shutdown when state exists.
         state_obj = locals().get("state")
         if isinstance(state_obj, ReplState):
+            state_obj.instance_state.workspace.policy_confirm_hook = None
+            state_obj.instance_state.workspace.policy_allowed_commands.clear()
             await state_obj.instance_state.shutdown()
         else:
+            # No ReplState: only PTY class cleanup (temps require instance allowlist).
             from plyngent.tools.process.pty_session import PtyManager
-            from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
 
             PtyManager.close_all()
-            _ = cleanup_temporary_workspaces()
 
 
 def _configure_logging(level: str) -> None:
@@ -384,7 +378,7 @@ def main(ctx: click.Context, log_level: str) -> None:
 )
 @click.option("--provider", "provider_name", default=None, help="Provider name from config.")
 @click.option("--model", default=None, help="Model id.")
-@click.option("--tools/--no-tools", default=True, show_default=True, help="Enable DEFAULT_TOOLS.")
+@click.option("--tools/--no-tools", default=True, show_default=True, help="Enable catalog tools (local surface).")
 @click.option(
     "--workspace",
     type=click.Path(path_type=Path, file_okay=False, exists=True),

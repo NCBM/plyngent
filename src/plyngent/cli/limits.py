@@ -350,9 +350,10 @@ async def prompt_workspace_mismatch_async(
 
 
 def install_cli_limit_hooks() -> None:
-    """Register interactive continue hooks, policy confirm, and prompt cancel-pause."""
+    """Register interactive continue hooks and prompt cancel-pause.
+
+    Command denylist policy confirm is set on :class:`~plyngent.tools.context.InstanceState`
+    when the REPL starts (no process-global hook).
+    """
     configure_prompting(pause_factory=pause_task_cancel_for_prompt)
     PtyManager.set_limit_continue_hook(prompt_continue_limit)
-    from plyngent.tools.workspace import set_policy_confirm_hook
-
-    set_policy_confirm_hook(prompt_policy_command_confirm)

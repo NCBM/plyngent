@@ -9,84 +9,41 @@ if TYPE_CHECKING:
 
     from plyngent.agent.todo_stack import TodoStack, TodoStatus
 
-_stack: TodoStack | None = None
-_on_change: Callable[[], None] | None = None
-
 _VALID_STATUS = frozenset({"pending", "in_progress", "done", "cancelled"})
 
 
-def set_todo_stack(stack: TodoStack | None, *, on_change: Callable[[], None] | None = None) -> None:
-    """Bind the session todo stack for tool handlers (and optional persist hook).
-
-    Process-global bind remains for CLI/agent hosts that keep a live
-    :class:`~plyngent.agent.todo_stack.TodoStack` outside the view store.
-    Prefer session ``data["todo"]`` transactions when available.
-    """
-    global _stack, _on_change  # noqa: PLW0603 — intentional process bind
-    _stack = stack
-    _on_change = on_change
-
-
-def get_todo_stack() -> TodoStack | None:
-    return _stack
-
-
 def _notify() -> None:
-    """Fire host persist hooks: prefer session.on_todo_change, else process bind."""
+    """Fire host persist hook on the bound session (if any)."""
     from plyngent.tools.context import get_session
 
     session = get_session()
     if session is not None and session.on_todo_change is not None:
         session.on_todo_change()
-        return
-    if _on_change is not None:
-        _on_change()
-
-
-def _process_stack() -> TodoStack:
-    if _stack is None:
-        msg = "todo stack is not available in this session"
-        raise RuntimeError(msg)
-    return _stack
 
 
 async def _with_todo_stack(mutator: Callable[[TodoStack], str]) -> str:
     """Run *mutator* against the session todo stack and publish changes.
 
-    Prefer::
+    Requires a bound :class:`~plyngent.tools.context.SessionState`::
 
         async with session.data:
             stack = session.data["todo"].typed(TodoStack)
             ...
-
-    When a host already bound ``session.todo`` / process ``set_todo_stack``,
-    mutate that live object and still refresh the view buffer when a session
-    is bound so commits stay consistent.
     """
     from plyngent.agent.todo_stack import TodoStack
-    from plyngent.tools.context import get_session
+    from plyngent.tools.context import require_session
 
-    session = get_session()
-    if session is None:
-        result = mutator(_process_stack())
-        _notify()
-        return result
-
+    session = require_session()
     result = ""
     async with session.data as data:
-        # Prefer host-bound live stack (CLI keeps TodoStack for nags / memory).
         if session.todo is not None:
             stack = session.todo
-        elif _stack is not None:
-            stack = _stack
-            session.todo = stack
         else:
             stack = data["todo"].typed(TodoStack)
             session.todo = stack
         # Keep view domain + buffer in sync for durable commit.
         data["todo"].store(stack)
         result = mutator(stack)
-    # View commit serialized to_raw; host on_todo_change may persist CLI memory.
     _notify()
     return result
 
