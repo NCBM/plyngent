@@ -26,6 +26,8 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.confirm_destructive is True
     assert store.agent_config.path_denylist == []
     assert store.agent_config.max_context_tokens == 200_000
+    assert store.agent_config.tool_plugins == []
+    assert store.agent_config.tool_plugins_disable == []
 
 
 def test_compose_defaults_join_persona_and_directives() -> None:

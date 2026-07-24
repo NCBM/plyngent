@@ -87,6 +87,12 @@ class AgentConfig(Struct, omit_defaults=True):
     path_denylist: list[str] = field(default_factory=list)
     max_context_tokens: int = 200_000
 
+    # Third-party tool plugins (entry-point group ``plyngent.tools``).
+    # Default empty = load none. Use ``["*"]`` to load all discovered plugins.
+    tool_plugins: list[str] = field(default_factory=list)
+    # Entry-point names never loaded even when listed / ``*``.
+    tool_plugins_disable: list[str] = field(default_factory=list)
+
     # How to inject todo stack nags into model context (see agent/todo_nag.py).
     # developer | user | synthetic_tool | none  (legacy "system" → developer)
     todo_nag_strategy: str = "developer"

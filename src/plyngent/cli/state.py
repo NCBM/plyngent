@@ -21,7 +21,6 @@ from plyngent.runtime import create_client
 from plyngent.tools import (
     InstanceState,
     SessionState,
-    default_tool_definitions,
     set_todo_stack,
     set_workspace_root,
 )
@@ -178,9 +177,21 @@ class ReplState:
         if not self.tools_enabled:
             return None
         from plyngent.cli.limits import prompt_confirm_tool_async
+        from plyngent.tools.catalog import register_builtin_tools
         from plyngent.tools.danger import classify_danger
+        from plyngent.tools.plugins import load_plugin_tools
 
-        tools = default_tool_definitions(surface="local")
+        agent_cfg = self.config.agent_config
+        catalog = register_builtin_tools()
+        _ = load_plugin_tools(
+            agent_cfg.tool_plugins,
+            disable=agent_cfg.tool_plugins_disable,
+        )
+        # Local surface: builtins + allowlisted plugins (import registers into catalog).
+        tools = catalog.select(surface="local")
+        disable = {name.strip() for name in agent_cfg.tool_plugins_disable if name.strip()}
+        if disable:
+            tools = [tool for tool in tools if tool.name not in disable]
         yolo = self.effective_yolo() != "off"
         # Always attach soft-confirm path so non-YOLO tools still prompt under YOLO mode.
         return ToolRegistry(

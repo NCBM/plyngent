@@ -28,6 +28,7 @@ from .file import move_path as move_path
 from .file import read_file as read_file
 from .file import tree as tree
 from .file import write_file as write_file
+from .plugins import load_plugin_tools as load_plugin_tools
 from .process import PROCESS_TOOLS as PROCESS_TOOLS
 from .process import ask_into_pty as ask_into_pty
 from .process import close_pty as close_pty
