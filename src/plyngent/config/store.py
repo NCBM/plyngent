@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
 import tomlkit
@@ -370,6 +370,24 @@ class ConfigStore:
             self._document[key] = tomlkit.table()
         return cast("MutableMapping[str, object]", self._document[key])
 
+    @staticmethod
+    def _encode_toml_value(value: object) -> object:
+        """Encode builtins for tomlkit; strings with LF become multi-line literals."""
+        if isinstance(value, str):
+            if "\n" in value:
+                return tomlkit.string(value, multiline=True)
+            return value
+        if isinstance(value, list):
+            arr: object = tomlkit.array()
+            append = cast("Any", arr).append
+            for item in cast("list[object]", value):
+                append(ConfigStore._encode_toml_value(item))
+            return arr
+        if isinstance(value, dict):
+            # Nested dicts at section level are rare; providers use dedicated helpers.
+            return ConfigStore._to_inline_table(cast("Mapping[str, object]", value))
+        return value
+
     def _sync_section(self, key: str, data: object) -> None:
         raw: dict[str, object] = msgspec.to_builtins(data)
         if not raw:
@@ -381,7 +399,7 @@ class ConfigStore:
             if k not in raw:
                 del section[k]
         for k, v in raw.items():
-            section[k] = v
+            section[k] = self._encode_toml_value(v)
 
     def _sync_database_section(self) -> None:
         """Sync ``[database]`` to the document."""
@@ -403,7 +421,7 @@ class ConfigStore:
             if isinstance(value, dict):
                 table[key] = ConfigStore._to_inline_table(cast("Mapping[str, object]", value))
             else:
-                table[key] = value
+                table[key] = ConfigStore._encode_toml_value(value)
         return table
 
     @staticmethod
@@ -427,7 +445,7 @@ class ConfigStore:
             elif isinstance(value, dict):
                 entry[key] = ConfigStore._to_inline_table(cast("Mapping[str, object]", value))
             else:
-                entry[key] = value
+                entry[key] = ConfigStore._encode_toml_value(value)
         return entry
 
     def _sync_providers_section(self) -> None:

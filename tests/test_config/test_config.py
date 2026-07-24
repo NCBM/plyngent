@@ -282,6 +282,30 @@ def test_write_models_as_inline_tables(tmp_path: Path) -> None:
     assert again.providers["local"].models["gpt-test"].cost_factor == 2
 
 
+def test_write_lf_strings_as_multiline(tmp_path: Path) -> None:
+    """Strings containing LF are written as TOML multi-line strings (\"\"\"…\"\"\")."""
+    from plyngent.config import AgentConfig
+
+    path = tmp_path / "ml-string.toml"
+    config = ConfigStore(path=path, document=tomlkit.document())
+    # AgentConfig has no public setter; exercise the TOML encoder via write path.
+    config._agent = AgentConfig(
+        system_prompt="Line one.\nLine two.",
+        tool_directives="Use tools.\nBe careful.",
+    )
+    config.write()
+    text = path.read_text(encoding="utf-8")
+    assert 'system_prompt = """' in text
+    assert "Line one." in text and "Line two." in text
+    assert 'tool_directives = """' in text
+    # Escaped single-line form should not appear for these values.
+    assert 'system_prompt = "Line one.\\nLine two."' not in text
+
+    again = plyngent.config.load(path)
+    assert again.agent_config.system_prompt == "Line one.\nLine two."
+    assert again.agent_config.tool_directives == "Use tools.\nBe careful."
+
+
 def test_update_config() -> None:
     file = Path(__file__).parent / "plyngent-edit-2.toml"
     _ = shutil.copy(Path(__file__).parent / "plyngent-valid.toml", file)
