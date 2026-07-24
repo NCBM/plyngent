@@ -14,6 +14,15 @@ def test_resolve_plugin_allowlist() -> None:
     assert resolve_plugin_allowlist(["acme", " beta "]) == {"acme", "beta"}
 
 
+def test_plugin_would_load() -> None:
+    from plyngent.tools.plugins import plugin_would_load
+
+    assert plugin_would_load("acme", enable=["acme"], disable=[]) is True
+    assert plugin_would_load("acme", enable=["*"], disable=[]) is True
+    assert plugin_would_load("acme", enable=["*"], disable=["acme"]) is False
+    assert plugin_would_load("acme", enable=[], disable=[]) is False
+
+
 def test_load_plugin_tools_default_loads_none() -> None:
     with catalog_scope(empty=True):
         loaded = load_plugin_tools(None)

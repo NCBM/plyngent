@@ -121,19 +121,38 @@ enable = ["acme"]
 `enable` / `disable` are **plugin entry-point names** (e.g. `acme`), not individual
 tool function names.
 
-Restart the chat REPL after changing config so the tool registry rebuilds.
+### CLI management
+
+```bash
+# Installed entry points + enable/disable status
+plyngent plugins list
+plyngent plugins list --config /path/to/plyngent.toml
+
+# Allowlist / block (writes [plugins] and saves the file)
+plyngent plugins enable acme
+plyngent plugins enable '*'          # load all discovered
+plyngent plugins disable legacy
+plyngent plugins undeny legacy       # drop disable only
+plyngent plugins clear --yes
+```
+
+In the chat REPL (writes config and rebuilds the tool registry when tools are on):
+
+```text
+/plugins                 # same as /plugins list
+/plugins enable acme
+/plugins disable legacy
+/plugins undeny legacy
+/plugins reload          # re-read config + rebuild tools
+/plugins clear
+/tools --list            # model-visible tools + catalog source
+```
 
 CLI load order (simplified):
 
 1. `register_builtin_tools()`
 2. `load_plugin_tools(plugins.enable, disable=plugins.disable)`
 3. `catalog.select(surface="local")` → `ToolRegistry`
-
-Inspect the model surface in the REPL:
-
-```text
-/tools --list
-```
 
 Listed tools show **tags** and **catalog source** (`builtin` vs `plugin:…`).
 

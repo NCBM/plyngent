@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from plyngent.tools.catalog import ToolSource, get_catalog, registration_source
@@ -20,6 +21,90 @@ def _iter_entry_points() -> list[importlib.metadata.EntryPoint]:
         # Older importlib.metadata API (unlikely on 3.14, kept for clarity).
         selected = importlib.metadata.entry_points().select(group=ENTRY_POINT_GROUP)
     return list(selected)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredPlugin:
+    """One installed ``plyngent.tools`` entry point (not necessarily enabled)."""
+
+    id: str
+    value: str
+    package: str | None = None
+    version: str | None = None
+
+    @property
+    def module(self) -> str:
+        return self.value.split(":", 1)[0] if ":" in self.value else self.value
+
+
+@dataclass(frozen=True, slots=True)
+class PluginStatus:
+    """Discovery + allowlist status for CLI listing."""
+
+    plugin: DiscoveredPlugin
+    enabled: bool
+    disabled: bool
+
+    @property
+    def will_load(self) -> bool:
+        """True if current config would load this plugin."""
+        return self.enabled and not self.disabled
+
+
+def list_discovered_plugins() -> list[DiscoveredPlugin]:
+    """Return installed entry points for :data:`ENTRY_POINT_GROUP`, sorted by id."""
+    found: list[DiscoveredPlugin] = []
+    for entry in _iter_entry_points():
+        dist = entry.dist
+        package = dist.name if dist is not None else None
+        version = dist.version if dist is not None else None
+        found.append(
+            DiscoveredPlugin(
+                id=entry.name,
+                value=entry.value,
+                package=package,
+                version=version,
+            )
+        )
+    return sorted(found, key=lambda p: p.id)
+
+
+def plugin_would_load(
+    plugin_id: str,
+    *,
+    enable: Sequence[str] | None,
+    disable: Iterable[str] | None = None,
+) -> bool:
+    """Whether *plugin_id* would be loaded under the given allowlist."""
+    disabled = {name.strip() for name in (disable or ()) if name.strip()}
+    if plugin_id in disabled:
+        return False
+    allow = resolve_plugin_allowlist(enable)
+    if allow is None:
+        return True
+    return plugin_id in allow
+
+
+def list_plugin_statuses(
+    *,
+    enable: Sequence[str] | None,
+    disable: Iterable[str] | None = None,
+) -> list[PluginStatus]:
+    """Discovered plugins with enable/disable/will-load flags from config lists."""
+    disabled = {name.strip() for name in (disable or ()) if name.strip()}
+    allow = resolve_plugin_allowlist(enable)
+    rows: list[PluginStatus] = []
+    for plugin in list_discovered_plugins():
+        is_disabled = plugin.id in disabled
+        is_enabled = True if allow is None else plugin.id in allow
+        rows.append(
+            PluginStatus(
+                plugin=plugin,
+                enabled=is_enabled and not is_disabled,
+                disabled=is_disabled,
+            )
+        )
+    return rows
 
 
 def resolve_plugin_allowlist(plugins: Sequence[str] | None) -> set[str] | None:

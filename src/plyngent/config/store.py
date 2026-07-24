@@ -158,6 +158,74 @@ class ConfigStore:
         """Typed plugin allowlist (enable / disable entry-point names)."""
         return self._plugins
 
+    def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
+        """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
+        cleaned = [name.strip() for name in names if name.strip()]
+        self._plugins = msgspec.structs.replace(self._plugins, enable=cleaned)
+        return self._plugins
+
+    def set_plugins_disable(self, names: Sequence[str]) -> PluginsConfig:
+        """Replace the plugin disable list (in-memory; call :meth:`write` to persist)."""
+        cleaned = [name.strip() for name in names if name.strip()]
+        self._plugins = msgspec.structs.replace(self._plugins, disable=cleaned)
+        return self._plugins
+
+    def enable_plugin(self, name: str) -> PluginsConfig:
+        """Allowlist *name* and remove it from the disable list.
+
+        Special case: ``name == "*"`` sets enable to ``["*"]`` (load all).
+        """
+        token = name.strip()
+        if not token:
+            msg = "plugin name must not be empty"
+            raise ValueError(msg)
+        disable = [n for n in self._plugins.disable if n.strip() and n.strip() != token]
+        if token == "*":
+            self._plugins = msgspec.structs.replace(self._plugins, enable=["*"], disable=disable)
+            return self._plugins
+        enable = list(self._plugins.enable)
+        if any(item.strip() == "*" for item in enable):
+            # Already load-all; only ensure not disabled.
+            self._plugins = msgspec.structs.replace(self._plugins, disable=disable)
+            return self._plugins
+        if token not in enable:
+            enable.append(token)
+        self._plugins = msgspec.structs.replace(self._plugins, enable=enable, disable=disable)
+        return self._plugins
+
+    def disable_plugin(self, name: str) -> PluginsConfig:
+        """Block *name* via the disable list (wins over enable / ``*``).
+
+        Also removes *name* from a non-``*`` enable list so config stays tidy.
+        """
+        token = name.strip()
+        if not token or token == "*":
+            msg = "disable requires a concrete plugin entry-point name"
+            raise ValueError(msg)
+        enable = list(self._plugins.enable)
+        if not any(item.strip() == "*" for item in enable) and token in enable:
+            enable = [n for n in enable if n.strip() != token]
+        disable = list(self._plugins.disable)
+        if token not in disable:
+            disable.append(token)
+        self._plugins = msgspec.structs.replace(self._plugins, enable=enable, disable=disable)
+        return self._plugins
+
+    def undeny_plugin(self, name: str) -> PluginsConfig:
+        """Remove *name* from the disable list only (does not add to enable)."""
+        token = name.strip()
+        if not token:
+            msg = "plugin name must not be empty"
+            raise ValueError(msg)
+        disable = [n for n in self._plugins.disable if n.strip() != token]
+        self._plugins = msgspec.structs.replace(self._plugins, disable=disable)
+        return self._plugins
+
+    def clear_plugins(self) -> PluginsConfig:
+        """Clear enable and disable lists (load no plugins)."""
+        self._plugins = PluginsConfig()
+        return self._plugins
+
     # -- providers (read/write) --
 
     @property

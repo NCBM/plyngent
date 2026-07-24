@@ -972,6 +972,77 @@ def tools_cmd(
     click.echo(f"tools={'on' if enabled else 'off'}")
 
 
+def _slash_rebuild_tools_if_on(state: ReplState) -> None:
+    if state.tools_enabled:
+        state.rebuild_client()
+
+
+def _slash_apply_plugin_action(state: ReplState, act: str, token: str) -> None:
+    if act == "enable":
+        _ = state.config.enable_plugin(token)
+    elif act == "disable":
+        _ = state.config.disable_plugin(token)
+    elif act == "undeny":
+        _ = state.config.undeny_plugin(token)
+    else:
+        msg = f"unknown plugins action {act!r}"
+        raise click.UsageError(msg)
+    state.config.write()
+    _slash_rebuild_tools_if_on(state)
+    cfg = state.config.plugins_config
+    click.echo(f"plugins {act} {token!r}  enable={list(cfg.enable)!r}  disable={list(cfg.disable)!r}")
+
+
+@slash.command("plugins")
+@click.argument(
+    "action",
+    required=False,
+    type=click.Choice(["list", "enable", "disable", "undeny", "reload", "clear"]),
+)
+@click.argument("name", required=False)
+@click.pass_obj
+def plugins_slash_cmd(state: ReplState, action: str | None, name: str | None) -> None:
+    """List or change plugin allowlist; reload tools into this session.
+
+    ``/plugins`` or ``/plugins list`` — installed entry points + config status.
+    ``/plugins enable NAME`` / ``disable NAME`` / ``undeny NAME`` — update
+    config on disk, then rebuild the tool registry for this session.
+    ``/plugins reload`` — re-read config and rebuild tools without list changes.
+    ``/plugins clear`` — empty enable/disable lists and rebuild.
+    """
+    act = (action or "list").lower()
+    if act == "list":
+        from plyngent.cli.app import print_plugins_table
+
+        print_plugins_table(state.config)
+        return
+    if act == "reload":
+        state.config.reload()
+        _slash_rebuild_tools_if_on(state)
+        cfg = state.config.plugins_config
+        click.echo(
+            f"reloaded plugins enable={list(cfg.enable)!r} disable={list(cfg.disable)!r} "
+            f"tools={'on' if state.tools_enabled else 'off'}"
+        )
+        return
+    if act == "clear":
+        _ = state.config.clear_plugins()
+        state.config.write()
+        _slash_rebuild_tools_if_on(state)
+        if state.tools_enabled:
+            click.echo("cleared plugins enable/disable; tools registry rebuilt")
+        else:
+            click.echo("cleared plugins enable/disable")
+        return
+    if name is None or not name.strip():
+        msg = f"/plugins {act} requires a plugin entry-point name"
+        raise click.UsageError(msg)
+    try:
+        _slash_apply_plugin_action(state, act, name.strip())
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+
 @slash.command("yolo")
 @click.argument("mode", required=False, type=YOLO_MODE, metavar="[on|off|once]")
 @click.pass_obj

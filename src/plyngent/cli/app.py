@@ -35,9 +35,18 @@ if TYPE_CHECKING:
 _DEFAULT_DB_FILENAME = "chat.db"
 
 
-def _load_config(config_path: Path | None) -> ConfigStore:
+def _load_config(config_path: Path | None, *, require_providers: bool = True) -> ConfigStore:
+    """Load config; optionally skip the interactive “no providers” recovery path.
+
+    Plugin management only needs a valid TOML file (and will create one if
+    missing via :func:`load_config_with_optional_edit` when providers are required
+    for chat). For plugins, use ``require_providers=False``.
+    """
     try:
-        return load_config_with_optional_edit(config_path)
+        if require_providers:
+            return load_config_with_optional_edit(config_path)
+        path = resolve_config_path(config_path)
+        return config_mod.load(path)
     except config_mod.ConfigFormatError as exc:
         path = resolve_config_path(config_path)
         msg = f"invalid config TOML ({path}): {exc}"
@@ -499,6 +508,154 @@ def providers_cmd(config_path: Path | None) -> None:
         click.echo(f"{name}\tpreset={tag}\tmodels=(empty; recoverable)")
     if store.bad_providers:
         _warn_bad_providers(store.bad_providers)
+
+
+def print_plugins_table(store: ConfigStore) -> None:
+    """Print discovered plugins with allowlist status (CLI + slash)."""
+    from plyngent.tools.plugins import list_plugin_statuses
+
+    cfg = store.plugins_config
+    click.echo(f"config={store.path}")
+    enable_s = ", ".join(cfg.enable) if cfg.enable else "(none)"
+    disable_s = ", ".join(cfg.disable) if cfg.disable else "(none)"
+    click.echo(f"enable=[{enable_s}]  disable=[{disable_s}]")
+    rows = list_plugin_statuses(enable=cfg.enable, disable=cfg.disable)
+    if not rows:
+        click.echo("(no plyngent.tools entry points installed)")
+        return
+    click.echo("id\tstatus\tpackage\tvalue")
+    for row in rows:
+        if row.disabled:
+            status = "disabled"
+        elif row.enabled:
+            status = "enabled"
+        else:
+            status = "off"
+        pkg = row.plugin.package or "-"
+        if row.plugin.version:
+            pkg = f"{pkg}@{row.plugin.version}"
+        click.echo(f"{row.plugin.id}\t{status}\t{pkg}\t{row.plugin.value}")
+
+
+@main.group("plugins")
+def plugins_group() -> None:
+    """Manage third-party plugins (``[plugins]`` allowlist in config)."""
+
+
+@plugins_group.command("list")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml.",
+)
+def plugins_list_cmd(config_path: Path | None) -> None:
+    """List installed ``plyngent.tools`` entry points and enable/disable status."""
+    store = _load_config(config_path, require_providers=False)
+    print_plugins_table(store)
+
+
+@plugins_group.command("enable")
+@click.argument("name")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml.",
+)
+def plugins_enable_cmd(name: str, config_path: Path | None) -> None:
+    """Allowlist a plugin entry-point name (or ``*`` for all) and write config.
+
+    Removes the name from ``[plugins].disable`` if present. Takes effect for
+    new chat sessions (registry is built at chat start).
+    """
+    store = _load_config(config_path, require_providers=False)
+    try:
+        _ = store.enable_plugin(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    store.write()
+    click.echo(f"enabled {name.strip()!r} in {store.path}")
+    enable_s = ", ".join(store.plugins_config.enable) or "(none)"
+    disable_s = ", ".join(store.plugins_config.disable) or "(none)"
+    click.echo(f"enable=[{enable_s}]  disable=[{disable_s}]")
+
+
+@plugins_group.command("disable")
+@click.argument("name")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml.",
+)
+def plugins_disable_cmd(name: str, config_path: Path | None) -> None:
+    """Block a plugin via ``[plugins].disable`` and write config.
+
+    Disable always wins over enable / ``*``. Use ``plugins undeny`` to drop the
+    block without adding the plugin to enable.
+    """
+    store = _load_config(config_path, require_providers=False)
+    try:
+        _ = store.disable_plugin(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    store.write()
+    click.echo(f"disabled {name.strip()!r} in {store.path}")
+    enable_s = ", ".join(store.plugins_config.enable) or "(none)"
+    disable_s = ", ".join(store.plugins_config.disable) or "(none)"
+    click.echo(f"enable=[{enable_s}]  disable=[{disable_s}]")
+
+
+@plugins_group.command("undeny")
+@click.argument("name")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml.",
+)
+def plugins_undeny_cmd(name: str, config_path: Path | None) -> None:
+    """Remove *name* from ``[plugins].disable`` only (does not enable it)."""
+    store = _load_config(config_path, require_providers=False)
+    try:
+        _ = store.undeny_plugin(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    store.write()
+    click.echo(f"undenied {name.strip()!r} in {store.path}")
+    disable_s = ", ".join(store.plugins_config.disable) or "(none)"
+    click.echo(f"disable=[{disable_s}]")
+
+
+@plugins_group.command("clear")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to plyngent.toml.",
+)
+@click.option(
+    "--yes",
+    "confirm_yes",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def plugins_clear_cmd(config_path: Path | None, *, confirm_yes: bool) -> None:
+    """Clear ``[plugins].enable`` and ``disable`` (load no plugins)."""
+    store = _load_config(config_path, require_providers=False)
+    needs_confirm = not confirm_yes and (store.plugins_config.enable or store.plugins_config.disable)
+    if needs_confirm and not click.confirm("Clear all plugin enable/disable entries?", default=False):
+        raise click.Abort
+    _ = store.clear_plugins()
+    store.write()
+    click.echo(f"cleared plugins lists in {store.path}")
 
 
 @main.group("config")

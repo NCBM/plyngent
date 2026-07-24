@@ -101,6 +101,10 @@ plyngent chat -p "Summarize this repo" --provider oai --model gpt-5.4-mini --no-
 
 # 3) List providers from config
 plyngent providers
+
+# 4) Plugins (entry-point allowlist under [plugins])
+plyngent plugins list
+plyngent plugins enable acme
 ```
 
 In the REPL: type normally, use `/help` for slash commands, `"""` … `"""` for multiline, `/markdown` for Rich rendering, `/quit` to leave.
