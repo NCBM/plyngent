@@ -23,10 +23,20 @@ from plyngent.lmproto.openai_compatible.model import (
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
-from plyngent.tools.todo import TODO_TOOLS, set_todo_stack
+from plyngent.tools.context import SessionState
+from plyngent.tools.todo import TODO_TOOLS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+
+def _session_for(stack: TodoStack) -> SessionState:
+    """Bind a live stack via SessionState (no process-global set_todo_stack)."""
+    return SessionState(session_id="test", todo=stack)
+
+
+def _todo_registry(stack: TodoStack) -> ToolRegistry:
+    return ToolRegistry(list(TODO_TOOLS), session_state=_session_for(stack))
 
 
 def test_parse_push_titles() -> None:
@@ -263,8 +273,7 @@ async def test_todo_tools_and_persist(tmp_path: object) -> None:
     try:
         session = await memory.create_session(name="t")
         stack = TodoStack()
-        set_todo_stack(stack, on_change=None)
-        registry = ToolRegistry(list(TODO_TOOLS))
+        registry = _todo_registry(stack)
         out = await registry.execute("todo_push", '{"titles": ["T1", "T2"]}')
         assert "group" in out.lower() or "pushed" in out
         assert stack.depth == 1
@@ -281,7 +290,6 @@ async def test_todo_tools_and_persist(tmp_path: object) -> None:
         assert again.depth == 1
         assert [i.title for i in again.groups[0].items] == ["T1", "T2"]
     finally:
-        set_todo_stack(None)
         await memory.close()
 
 
@@ -336,19 +344,15 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
-        tools=ToolRegistry(list(TODO_TOOLS)),
+        tools=_todo_registry(stack),
         stream=False,
         todo_stack=stack,
     )
-    set_todo_stack(stack)
-    try:
-        async for _event in agent.run("do stuff"):
-            pass
-        assert client.calls >= 2
-        assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
-        assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
-    finally:
-        set_todo_stack(None)
+    async for _event in agent.run("do stuff"):
+        pass
+    assert client.calls >= 2
+    assert any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
+    assert not any(isinstance(m, UserChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
 
 
 class ScriptedClientWithTodoListThenStop:
@@ -418,29 +422,22 @@ async def test_loop_skips_todo_review_when_touched_even_if_open() -> None:
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
-        tools=ToolRegistry(list(TODO_TOOLS)),
+        tools=_todo_registry(stack),
         stream=False,
         todo_stack=stack,
         # Avoid turn-start synthetic inject muddying counts; developer turn-start
         # is fine (prose only). End-of-turn is what we assert against.
         todo_nag_strategy="developer",
     )
-    set_todo_stack(stack)
-    try:
-        async for _event in agent.run("do stuff"):
-            pass
-        # call1: tool_calls todo_list; call2: stop — no call3 from end-of-turn nag.
-        assert client.calls == 2
-        assert stack.touched_this_turn
-        assert not stack.needs_review()
-        # End-of-turn OPEN WORK prose must not appear after a natural stop.
-        # (turn_start may still inject once at the beginning of the run.)
-        end_nags = [
-            m for m in agent.messages if isinstance(m, DeveloperChatMessage) and "You stopped with" in m.content
-        ]
-        assert end_nags == []
-    finally:
-        set_todo_stack(None)
+    async for _event in agent.run("do stuff"):
+        pass
+    # call1: tool_calls todo_list; call2: stop — no call3 from end-of-turn nag.
+    assert client.calls == 2
+    assert stack.touched_this_turn
+    assert not stack.needs_review()
+    # End-of-turn OPEN WORK prose must not appear after a natural stop.
+    end_nags = [m for m in agent.messages if isinstance(m, DeveloperChatMessage) and "You stopped with" in m.content]
+    assert end_nags == []
 
 
 @pytest.mark.asyncio
@@ -452,23 +449,19 @@ async def test_loop_synthetic_tool_nag_strategy() -> None:
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
-        tools=ToolRegistry(list(TODO_TOOLS)),
+        tools=_todo_registry(stack),
         stream=False,
         todo_stack=stack,
         todo_nag_strategy="synthetic_tool",
     )
-    set_todo_stack(stack)
-    try:
-        async for _event in agent.run("do stuff"):
-            pass
-        # Result body is real todo_list shape (render), not OPEN WORK prose.
-        assert any(
-            isinstance(m, ToolChatMessage) and "open work" in m.content and "[TODO OPEN WORK]" not in m.content
-            for m in agent.messages
-        )
-        assert not any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
-    finally:
-        set_todo_stack(None)
+    async for _event in agent.run("do stuff"):
+        pass
+    # Result body is real todo_list shape (render), not OPEN WORK prose.
+    assert any(
+        isinstance(m, ToolChatMessage) and "open work" in m.content and "[TODO OPEN WORK]" not in m.content
+        for m in agent.messages
+    )
+    assert not any(isinstance(m, DeveloperChatMessage) and "[TODO OPEN WORK]" in m.content for m in agent.messages)
 
 
 @pytest.mark.asyncio
@@ -480,23 +473,19 @@ async def test_loop_none_nag_strategy_skips_inject() -> None:
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
-        tools=ToolRegistry(list(TODO_TOOLS)),
+        tools=_todo_registry(stack),
         stream=False,
         todo_stack=stack,
         todo_nag_strategy="none",
     )
-    set_todo_stack(stack)
-    try:
-        async for _event in agent.run("do stuff"):
-            pass
-        # One completion only — no end-of-turn continue from nag.
-        assert client.calls == 1
-        assert not any(
-            isinstance(m, (DeveloperChatMessage, ToolChatMessage)) and "[TODO OPEN WORK]" in getattr(m, "content", "")
-            for m in agent.messages
-        )
-    finally:
-        set_todo_stack(None)
+    async for _event in agent.run("do stuff"):
+        pass
+    # One completion only — no end-of-turn continue from nag.
+    assert client.calls == 1
+    assert not any(
+        isinstance(m, (DeveloperChatMessage, ToolChatMessage)) and "[TODO OPEN WORK]" in getattr(m, "content", "")
+        for m in agent.messages
+    )
 
 
 def test_refresh_synthetic_todo_nags_updates_stale_results() -> None:
@@ -593,27 +582,23 @@ async def test_loop_synthetic_tool_refreshes_after_stack_cleared() -> None:
     agent = ChatAgent(
         client,  # type: ignore[arg-type]
         model="m",
-        tools=ToolRegistry(list(TODO_TOOLS)),
+        tools=_todo_registry(stack),
         stream=False,
         todo_stack=stack,
         todo_nag_strategy="synthetic_tool",
     )
-    set_todo_stack(stack)
-    try:
-        async for _event in agent.run("turn1"):
-            pass
-        assert stack.is_empty()
-        n_after_turn1 = client.calls
-        async for _event in agent.run("turn2 clean"):
-            pass
-        # Later request payloads must not re-present the old dirty item via synth nags.
-        for payload in client.payloads[n_after_turn1:]:
-            for msg in payload:
-                if isinstance(msg, ToolChatMessage) and msg.tool_call_id.startswith("todo-nag-"):
-                    assert "was dirty" not in msg.content
-        # Durable history refreshed at turn start as well.
-        for msg in agent.messages:
+    async for _event in agent.run("turn1"):
+        pass
+    assert stack.is_empty()
+    n_after_turn1 = client.calls
+    async for _event in agent.run("turn2 clean"):
+        pass
+    # Later request payloads must not re-present the old dirty item via synth nags.
+    for payload in client.payloads[n_after_turn1:]:
+        for msg in payload:
             if isinstance(msg, ToolChatMessage) and msg.tool_call_id.startswith("todo-nag-"):
                 assert "was dirty" not in msg.content
-    finally:
-        set_todo_stack(None)
+    # Durable history refreshed at turn start as well.
+    for msg in agent.messages:
+        if isinstance(msg, ToolChatMessage) and msg.tool_call_id.startswith("todo-nag-"):
+            assert "was dirty" not in msg.content
