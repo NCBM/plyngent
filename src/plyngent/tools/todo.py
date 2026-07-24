@@ -32,6 +32,13 @@ def get_todo_stack() -> TodoStack | None:
 
 
 def _notify() -> None:
+    """Fire host persist hooks: prefer session.on_todo_change, else process bind."""
+    from plyngent.tools.context import get_session
+
+    session = get_session()
+    if session is not None and session.on_todo_change is not None:
+        session.on_todo_change()
+        return
     if _on_change is not None:
         _on_change()
 
@@ -79,7 +86,7 @@ async def _with_todo_stack(mutator: Callable[[TodoStack], str]) -> str:
         # Keep view domain + buffer in sync for durable commit.
         data["todo"].store(stack)
         result = mutator(stack)
-    # View commit serialized to_raw; process on_change may still persist CLI memory.
+    # View commit serialized to_raw; host on_todo_change may persist CLI memory.
     _notify()
     return result
 

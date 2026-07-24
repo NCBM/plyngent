@@ -29,6 +29,24 @@ class MemoryViewStore:
     async def store(self, root: object) -> None:
         self._root = root
 
+    def peek(self) -> object:
+        """Return the current root without a transaction (sync hosts / tests)."""
+        return self._root
+
+    def replace(self, root: object) -> None:
+        """Replace the root without a transaction (sync hosts / tests)."""
+        self._root = root
+
+    def merge_key(self, key: str, value: object) -> None:
+        """Set *key* on a dict root (creates a dict root if needed)."""
+        root = self._root
+        if not isinstance(root, dict):
+            self._root = {key: value}
+            return
+        updated: dict[object, object] = dict(cast("dict[object, object]", root))
+        updated[key] = value
+        self._root = updated
+
 
 @dataclass
 class _TxnState:

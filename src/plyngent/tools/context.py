@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from plyngent.tools.view import PersistentDataView, session_data_view
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
@@ -58,6 +58,9 @@ class SessionState:
     data: PersistentDataView[Any] = field(default_factory=_default_session_data)
     # Live domain object during migration (also under data["todo"] when views bind).
     todo: TodoStack | None = None
+    # Host hook after todo tools mutate (e.g. CLI memory persist). Prefer this over
+    # process-global set_todo_stack(on_change=...) when a session is bound.
+    on_todo_change: Callable[[], None] | None = None
     # Soft-confirm grants live map: tool_name → True (Phase 1 key is tool name).
     # Durable copy lives under data["grants"] (see plyngent.tools.grants).
     grants: dict[str, bool] = field(default_factory=dict)
