@@ -255,6 +255,33 @@ class ToolRegistry:
     def __len__(self) -> int:
         return len(self._tools)
 
+    def definitions(self) -> list[ToolDefinition]:
+        """Return tool definitions in registration order (for cloning registries)."""
+        return list(self._tools.values())
+
+    def clone(
+        self,
+        *,
+        instance_state: object | None = None,
+        session_state: object | None = None,
+        yolo: bool | None = None,
+        auto_bind_state: bool | None = None,
+    ) -> ToolRegistry:
+        """New registry with the same tools/hooks and rebound host state.
+
+        *instance_state* / *session_state* are applied as given (use the parent
+        registry's handles only when the caller passes them through).
+        """
+        return ToolRegistry(
+            self.definitions(),
+            danger=self._danger,
+            on_confirm=self._on_confirm,
+            yolo=self._yolo if yolo is None else yolo,
+            auto_bind_state=self._auto_bind_state if auto_bind_state is None else auto_bind_state,
+            instance_state=instance_state,
+            session_state=session_state,
+        )
+
     def set_yolo(self, *, enabled: bool) -> None:
         self._yolo = enabled
 

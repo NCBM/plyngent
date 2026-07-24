@@ -25,6 +25,7 @@ from .todo_nag import (
     parse_todo_nag_strategy,
     refresh_synthetic_todo_nags,
 )
+from .tools import ToolRegistry
 from .usage import TokenUsage
 
 if TYPE_CHECKING:
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from .events import AgentEvent
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
-    from .tools import ToolRegistry
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
@@ -372,6 +372,98 @@ class ChatAgent:
         await self._persist(user_msg)
         self._persist_from = len(self.messages)
         async for event in self._run_from_user_message(user_msg):
+            yield event
+
+    def _resolve_aside_tools(
+        self,
+        *,
+        tools: ToolRegistry | bool | None,
+        instance_state: object | None,
+        session_state: object | None,
+    ) -> ToolRegistry | None:
+        """Resolve the tools argument for :meth:`run_aside`."""
+        if tools is False or tools is None:
+            return None
+        if tools is True:
+            if self.tools is None:
+                return None
+            return self.tools.clone(
+                instance_state=instance_state,
+                session_state=session_state,
+            )
+        reg = tools
+        if instance_state is not None:
+            reg.set_instance_state(instance_state)
+        if session_state is not None:
+            reg.set_session_state(session_state)
+        return reg
+
+    async def run_aside(
+        self,
+        user_text: str,
+        *,
+        include_history: bool = True,
+        tools: ToolRegistry | bool | None = False,
+        max_rounds: int | None = None,
+        system_prompt: str | None = None,
+        instance_state: object | None = None,
+        session_state: object | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Run a side turn that does not mutate this agent or its memory.
+
+        - Message list is forked (optional history copy); never written back.
+        - ``memory`` / ``session_id`` are unset on the side agent (no DB).
+        - ``todo_stack`` is unset (no nags / main stack thrash).
+        - Tools default **off**. ``tools=True`` clones this agent's registry with
+          a **fresh session** bag (unless *session_state* is passed) and the
+          given *instance_state* (CLI typically shares the host instance for
+          workspace identity).
+        """
+        text = user_text.strip()
+        if not text:
+            msg = "aside question must not be empty"
+            raise ValueError(msg)
+
+        # Prefer explicit session fork; default empty SessionState when tools on.
+        aside_session = session_state
+        aside_instance = instance_state
+        if tools is True or isinstance(tools, ToolRegistry):
+            if aside_session is None:
+                from plyngent.tools.context import SessionState
+
+                aside_session = SessionState()
+            if aside_instance is None and self.tools is not None:
+                # Inherit host instance when the main registry holds one.
+                aside_instance = getattr(self.tools, "_instance", None)
+
+        aside_tools = self._resolve_aside_tools(
+            tools=tools,
+            instance_state=aside_instance,
+            session_state=aside_session,
+        )
+        history = list(self.messages) if include_history else []
+        rounds = self.max_rounds if max_rounds is None else max_rounds
+        if aside_tools is None and max_rounds is None:
+            rounds = 1
+        aside = ChatAgent(
+            self.client,
+            model=self.model,
+            tools=aside_tools,
+            memory=None,
+            session_id=None,
+            max_rounds=rounds,
+            temperature=self.temperature,
+            on_limit=self.on_limit,
+            stream=self.stream,
+            system_prompt=self.system_prompt if system_prompt is None else system_prompt,
+            max_tool_result_chars=self.max_tool_result_chars,
+            parallel_tools=self.parallel_tools,
+            max_context_tokens=self.max_context_tokens,
+            todo_stack=None,
+            todo_nag_strategy="none",
+            messages=history,
+        )
+        async for event in aside.run(text):
             yield event
 
     async def retry(self) -> AsyncIterator[AgentEvent]:

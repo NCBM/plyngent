@@ -82,9 +82,9 @@ HELP_FOOTER = (
     "assistant/tool output is discarded but the user message stays (so /retry\n"
     "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
     "\n"
-    "Tab completes slash commands and arguments (provider, model, session ids,\n"
-    "todos actions, on/off, yolo, export, flags). Use --session ID or /resume to\n"
-    "continue a prior chat after restart.\n"
+    "Side questions: /btw … answers without changing the main session\n"
+    "(optional --tools / --fresh). Tab completes slash commands and arguments.\n"
+    "Use --session ID or /resume to continue a prior chat after restart.\n"
     "\n"
     'Multiline: start a message with """ then end a later line with """.\n'
     "Long prompts: /edit opens $VISUAL/$EDITOR (blocking).\n"
@@ -918,6 +918,77 @@ def _format_tool_tags(tags: object) -> str:
         return "-"
     names = [member.name for member in ToolTag if member.name and (tags & member) == member]
     return "|".join(names) if names else str(tags)
+
+
+@slash.command("btw")
+@click.argument("question", nargs=-1, required=False)
+@click.option(
+    "--tools/--no-tools",
+    "with_tools",
+    default=False,
+    show_default=True,
+    help="Allow tools on the side turn (shared workspace; forked session grants/todo).",
+)
+@click.option(
+    "--fresh",
+    is_flag=True,
+    default=False,
+    help="Ignore main history; system prompt only.",
+)
+@click.pass_obj
+def btw_cmd(
+    state: ReplState,
+    question: tuple[str, ...],
+    *,
+    with_tools: bool,
+    fresh: bool,
+) -> None:
+    """Ask a side question without changing the main session transcript or DB.
+
+    Uses the current model and (unless ``--fresh``) a copy of main history.
+    Tools are **off** by default; ``--tools`` clones the main tool registry with
+    a fresh session bag and the shared instance workspace.
+    """
+    text = " ".join(question).strip()
+    if not text:
+        click.echo("usage: /btw [--tools] [--fresh] <question>")
+        return
+    if state.agent.pending_retry_text is not None:
+        click.echo("error: finish or /retry the main turn before /btw")
+        return
+    if with_tools and (not state.tools_enabled or state.agent.tools is None):
+        click.echo("error: --tools requires tools on (/tools on)")
+        return
+
+    from plyngent.cli.display import render_events
+    from plyngent.cli.retry import run_cancellable
+    from plyngent.tools.context import SessionState
+
+    click.secho("btw: ", fg="magenta", nl=False)
+    click.echo(text)
+    tools_arg: bool = with_tools
+    aside_session = SessionState() if with_tools else None
+    aside_instance = state.instance_state if with_tools else None
+
+    async def _run() -> None:
+        await run_cancellable(
+            render_events(
+                state.agent.run_aside(
+                    text,
+                    include_history=not fresh,
+                    tools=tools_arg,
+                    instance_state=aside_instance,
+                    session_state=aside_session,
+                )
+            )
+        )
+
+    try:
+        _await(_run())
+    except Exception as exc:  # noqa: BLE001 — surface side-turn failures
+        click.secho(f"error: btw failed: {exc}", fg="red")
+        return
+    click.secho("(btw done — main session unchanged)", fg="bright_black")
 
 
 @slash.command("tools")
