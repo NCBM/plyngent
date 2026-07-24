@@ -35,12 +35,18 @@ class InstanceState:
     # Ephemeral process maps (PTY etc.) may hang here later.
     extras: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def pty(self) -> Any:
+        """PTY manager facade for this process (class-level sessions today)."""
+        from plyngent.tools.process.pty_session import PtyManager
+
+        return PtyManager
+
     async def shutdown(self) -> None:
         """Best-effort cleanup hooks (PTY close, temp workspaces)."""
-        from plyngent.tools.process.pty_session import PtyManager
         from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
 
-        PtyManager.close_all()
+        self.pty.close_all()
         _ = cleanup_temporary_workspaces()
 
 

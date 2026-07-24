@@ -5,7 +5,7 @@ import asyncio
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
-from .pty_session import DEFAULT_PTY_READ_BYTES, PtyManager, format_read_result
+from .pty_session import DEFAULT_PTY_READ_BYTES, active_pty_manager, format_read_result
 
 # Cap per-call wait so a misbehaving tool arg cannot stall forever even off-loop.
 _MAX_READ_TIMEOUT = 120.0
@@ -34,7 +34,7 @@ async def read_pty(
     wait = min(max(0.0, timeout), _MAX_READ_TIMEOUT)
     try:
         result = await asyncio.to_thread(
-            PtyManager.read,
+            active_pty_manager().read,
             session_id,
             max_bytes=max_bytes,
             timeout=wait,

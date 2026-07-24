@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from plyngent.tools.process.pty_backend import PtyHandle, pty_available, spawn_pty
 from plyngent.tools.process.pty_terminal import sanitize_pty_output_for_tool
@@ -391,6 +391,20 @@ class PtyManager:
             ids = list(cls._sessions.keys())
         for session_id in ids:
             _ = cls.close(session_id)
+
+
+def active_pty_manager() -> type[PtyManager]:
+    """Return the PTY manager for the bound instance, else the process default.
+
+    Today :class:`PtyManager` is process-global; the instance facet is a stable
+    host API so tools do not hard-code the class forever.
+    """
+    from plyngent.tools.context import get_instance
+
+    instance = get_instance()
+    if instance is not None:
+        return cast("type[PtyManager]", instance.pty)
+    return PtyManager
 
 
 def format_read_result(result: PtyReadResult) -> str:

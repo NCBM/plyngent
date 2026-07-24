@@ -5,7 +5,7 @@ import shlex
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
-from .pty_session import PtyManager
+from .pty_session import active_pty_manager
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
@@ -17,7 +17,7 @@ async def open_pty(command: list[str], *, cwd: str = ".") -> str:
     data (marker) and a non-zero exit_code.
     """
     try:
-        session = PtyManager.open(command, cwd=cwd)
+        session = active_pty_manager().open(command, cwd=cwd)
     except WorkspaceError as exc:
         return f"error: {exc}"
     except OSError as exc:

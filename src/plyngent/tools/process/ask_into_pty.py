@@ -6,7 +6,7 @@ from plyngent.agent import ToolTag, tool
 from plyngent.prompting import NonInteractiveError, ask_async, ask_secret_async
 from plyngent.tools.workspace import WorkspaceError
 
-from .pty_session import PtyManager
+from .pty_session import active_pty_manager
 from .write_pty import write_pty_payload
 
 type _PromptResult = tuple[Literal["ok"], str] | tuple[Literal["err"], str]
@@ -59,7 +59,7 @@ async def ask_into_pty(
     label = message.strip() or ("Secret" if secret else "Input")
     try:
         # Validate session before blocking the human.
-        _ = PtyManager.refresh(session_id)
+        _ = active_pty_manager().refresh(session_id)
     except WorkspaceError as exc:
         return f"error: {exc}"
 

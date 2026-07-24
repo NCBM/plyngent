@@ -3,13 +3,14 @@ from __future__ import annotations
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
 
-from .pty_session import PtyManager
+from .pty_session import active_pty_manager
 
 
 def write_pty_payload(session_id: int, raw: str) -> str:
     """Write raw bytes (as str) to the PTY and format the tool status string."""
-    PtyManager.write(session_id, raw)
-    session = PtyManager.refresh(session_id)
+    manager = active_pty_manager()
+    manager.write(session_id, raw)
+    session = manager.refresh(session_id)
     exit_disp = "" if session.exit_code is None else str(session.exit_code)
     return "\n".join(
         [
