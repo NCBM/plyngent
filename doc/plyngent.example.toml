@@ -19,6 +19,13 @@
 # enable = ["*"]
 # disable = ["legacy"]
 
+# Host network / SSRF policy for tools such as ``fetch``.
+# Clash TUN + Fake-IP often resolves public names to 198.18.0.0/15; list that
+# pool so fetch does not treat every site as private/loopback.
+# Metadata (169.254.169.254) stays forbidden even if listed.
+# [networking]
+# ssrf_assume_public_cidrs = ["198.18.0.0/15"]
+
 [agent]
 # Persona (omit → built-in coding-agent line). tool_directives is the tool playbook.
 # Override with multi-line literals (prefer ''' so nested " is fine):

@@ -30,9 +30,11 @@ from .file import tree as tree
 from .file import write_file as write_file
 from .net import NET_TOOLS as NET_TOOLS
 from .net import clear_private_grants as clear_private_grants
+from .net import clear_ssrf_assume_public_cidrs as clear_ssrf_assume_public_cidrs
 from .net import fetch as fetch
 from .net import grant_private_host as grant_private_host
 from .net import set_fetch_policy_confirm_hook as set_fetch_policy_confirm_hook
+from .net import set_ssrf_assume_public_cidrs as set_ssrf_assume_public_cidrs
 from .plugins import load_plugin_tools as load_plugin_tools
 from .process import PROCESS_TOOLS as PROCESS_TOOLS
 from .process import ask_into_pty as ask_into_pty

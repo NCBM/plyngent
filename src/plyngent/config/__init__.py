@@ -13,6 +13,7 @@ from .models import DatabaseConfig as DatabaseConfig
 from .models import DeepseekProvider as DeepseekProvider
 from .models import HttpTimeoutConfig as HttpTimeoutConfig
 from .models import ModelConfig as ModelConfig
+from .models import NetworkingConfig as NetworkingConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
 from .models import PluginsConfig as PluginsConfig

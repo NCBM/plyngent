@@ -132,6 +132,34 @@ def test_classify_ips() -> None:
     assert classify_ip_strings(["8.8.8.8", "10.0.0.1"]) is HostClass.PRIVATE
 
 
+def test_ssrf_assume_public_cidrs_fake_ip() -> None:
+    from plyngent.tools.net.policy import (
+        clear_ssrf_assume_public_cidrs,
+        parse_ssrf_assume_public_cidrs,
+        set_ssrf_assume_public_cidrs,
+    )
+
+    # Clash Fake-IP style address is private without exemption.
+    assert classify_ip_strings(["198.18.0.1"]) is HostClass.PRIVATE
+    nets = set_ssrf_assume_public_cidrs(["198.18.0.0/15"])
+    assert nets
+    assert classify_ip_strings(["198.18.0.1"]) is HostClass.PUBLIC
+    # Explicit assume_public overrides empty context.
+    clear_ssrf_assume_public_cidrs()
+    assert classify_ip_strings(["198.18.0.1"]) is HostClass.PRIVATE
+    assert (
+        classify_ip_strings(
+            ["198.18.0.1"],
+            assume_public=parse_ssrf_assume_public_cidrs(["198.18.0.0/15"]),
+        )
+        is HostClass.PUBLIC
+    )
+    # Metadata never becomes public via assume list.
+    set_ssrf_assume_public_cidrs(["169.254.0.0/16", "198.18.0.0/15"])
+    assert classify_ip_strings(["169.254.169.254"]) is HostClass.FORBIDDEN
+    clear_ssrf_assume_public_cidrs()
+
+
 def test_soft_confirm_reason_matrix() -> None:
     assert soft_confirm_reason(method="GET", url="https://ex.com/", scheme="https", body_present=False) is None
     http_reason = soft_confirm_reason(method="GET", url="http://ex.com/", scheme="http", body_present=False)

@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, Any, cast
 import msgspec
 import tomlkit
 
-from .models import AgentConfig, DatabaseConfig, ModelConfig, PluginsConfig, Provider
+from .models import (
+    AgentConfig,
+    DatabaseConfig,
+    ModelConfig,
+    NetworkingConfig,
+    PluginsConfig,
+    Provider,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping, Sequence
@@ -39,6 +46,14 @@ def _parse_plugins(raw: dict[str, object]) -> PluginsConfig:
         return msgspec.convert(raw, PluginsConfig)
     except msgspec.ValidationError:
         return PluginsConfig()
+
+
+def _parse_networking(raw: dict[str, object]) -> NetworkingConfig:
+    """Parse the ``[networking]`` section, falling back to defaults."""
+    try:
+        return msgspec.convert(raw, NetworkingConfig)
+    except msgspec.ValidationError:
+        return NetworkingConfig()
 
 
 def _parse_providers(
@@ -109,6 +124,7 @@ class ConfigStore:
     _database: DatabaseConfig
     _agent: AgentConfig
     _plugins: PluginsConfig
+    _networking: NetworkingConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -120,6 +136,7 @@ class ConfigStore:
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
+        self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -157,6 +174,18 @@ class ConfigStore:
     def plugins_config(self) -> PluginsConfig:
         """Typed plugin allowlist (enable / disable entry-point names)."""
         return self._plugins
+
+    # -- networking (read-only) --
+
+    @property
+    def networking(self) -> MappingProxyType[str, object]:
+        """Read-only mapping view of networking / SSRF-related configuration."""
+        return MappingProxyType(msgspec.structs.asdict(self._networking))
+
+    @property
+    def networking_config(self) -> NetworkingConfig:
+        """Typed networking section (e.g. Fake-IP SSRF exemptions)."""
+        return self._networking
 
     def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
         """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
@@ -360,6 +389,7 @@ class ConfigStore:
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
+        self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --
@@ -412,6 +442,10 @@ class ConfigStore:
     def _sync_plugins_section(self) -> None:
         """Sync ``[plugins]`` to the document."""
         self._sync_section("plugins", self._plugins)
+
+    def _sync_networking_section(self) -> None:
+        """Sync ``[networking]`` to the document."""
+        self._sync_section("networking", self._networking)
 
     @staticmethod
     def _to_inline_table(mapping: Mapping[str, object]) -> object:
@@ -471,4 +505,5 @@ class ConfigStore:
         self._sync_database_section()
         self._sync_agent_section()
         self._sync_plugins_section()
+        self._sync_networking_section()
         self._sync_providers_section()

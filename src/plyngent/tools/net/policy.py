@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -44,6 +45,8 @@ _NEVER_ALLOW_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IMDS IPv6
 )
 
+type IpNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
 
 class HostClass(Enum):
     PUBLIC = "public"
@@ -53,6 +56,46 @@ class HostClass(Enum):
 
 class FetchPolicyError(ValueError):
     """Hard fetch policy violation (returned to the model as error text)."""
+
+
+# Configured via ``[networking].ssrf_assume_public_cidrs`` (e.g. Clash Fake-IP).
+_ssrf_assume_public_networks: ContextVar[tuple[IpNetwork, ...]] = ContextVar(
+    "plyngent_ssrf_assume_public_networks",
+    default=(),
+)
+
+
+def parse_ssrf_assume_public_cidrs(cidrs: Sequence[str] | None) -> tuple[IpNetwork, ...]:
+    """Parse CIDR strings; invalid entries raise :class:`FetchPolicyError`."""
+    if not cidrs:
+        return ()
+    out: list[IpNetwork] = []
+    for raw in cidrs:
+        text = raw.strip()
+        if not text:
+            continue
+        try:
+            out.append(ipaddress.ip_network(text, strict=False))
+        except ValueError as exc:
+            msg = f"invalid ssrf_assume_public_cidrs entry {text!r}: {exc}"
+            raise FetchPolicyError(msg) from exc
+    return tuple(out)
+
+
+def set_ssrf_assume_public_cidrs(cidrs: Sequence[str] | None) -> tuple[IpNetwork, ...]:
+    """Install process/context networks treated as public for SSRF (config load)."""
+    networks = parse_ssrf_assume_public_cidrs(cidrs)
+    _ = _ssrf_assume_public_networks.set(networks)
+    return networks
+
+
+def get_ssrf_assume_public_networks() -> tuple[IpNetwork, ...]:
+    return _ssrf_assume_public_networks.get()
+
+
+def clear_ssrf_assume_public_cidrs() -> None:
+    """Reset Fake-IP / assume-public exemptions (tests / chat exit)."""
+    _ = _ssrf_assume_public_networks.set(())
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +169,15 @@ def resolve_redirect_url(current: str, location: str) -> str:
     return parse_fetch_url(joined).url
 
 
-def _ip_classification(address: str) -> HostClass:
+def _ip_in_networks(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, networks: Sequence[IpNetwork]) -> bool:
+    return any(ip in network for network in networks)
+
+
+def _ip_classification(
+    address: str,
+    *,
+    assume_public: Sequence[IpNetwork] = (),
+) -> HostClass:
     try:
         ip = ipaddress.ip_address(address)
     except ValueError:
@@ -134,19 +185,32 @@ def _ip_classification(address: str) -> HostClass:
     for network in _NEVER_ALLOW_NETWORKS:
         if ip in network:
             return HostClass.FORBIDDEN
+    # Clash Fake-IP (etc.): treat configured synthetic pools as public for policy.
+    # Metadata above still wins; do not list real loopback here.
+    if assume_public and _ip_in_networks(ip, assume_public):
+        return HostClass.PUBLIC
     # IPv6 unique-local / link-local / loopback / unspecified
     if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
         return HostClass.PRIVATE
     return HostClass.PUBLIC
 
 
-def classify_ip_strings(addresses: Sequence[str]) -> HostClass:
-    """Worst-class wins: FORBIDDEN > PRIVATE > PUBLIC."""
+def classify_ip_strings(
+    addresses: Sequence[str],
+    *,
+    assume_public: Sequence[IpNetwork] | None = None,
+) -> HostClass:
+    """Worst-class wins: FORBIDDEN > PRIVATE > PUBLIC.
+
+    *assume_public* defaults to the process context from
+    :func:`set_ssrf_assume_public_cidrs` (``[networking].ssrf_assume_public_cidrs``).
+    """
     if not addresses:
         return HostClass.FORBIDDEN
+    networks = get_ssrf_assume_public_networks() if assume_public is None else tuple(assume_public)
     worst = HostClass.PUBLIC
     for addr in addresses:
-        kind = _ip_classification(addr)
+        kind = _ip_classification(addr, assume_public=networks)
         if kind is HostClass.FORBIDDEN:
             return HostClass.FORBIDDEN
         if kind is HostClass.PRIVATE:

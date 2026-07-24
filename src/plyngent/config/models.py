@@ -126,6 +126,21 @@ class PluginsConfig(Struct, omit_defaults=True):
     disable: list[str] = field(default_factory=list)
 
 
+class NetworkingConfig(Struct, omit_defaults=True):
+    """Host-side network policy for tools such as ``fetch``.
+
+    ``ssrf_assume_public_cidrs``: CIDR strings whose resolved addresses are treated
+    as **public for SSRF policy** (skip private-host grants). Use for Clash/meta
+    Fake-IP pools (commonly ``198.18.0.0/15``). Empty default = no exemptions.
+
+    Metadata ranges (e.g. ``169.254.169.254``) stay forbidden even if listed here.
+    Real loopback/RFC1918 literals are unaffected unless you put those CIDRs here
+    (not recommended).
+    """
+
+    ssrf_assume_public_cidrs: list[str] = field(default_factory=list)
+
+
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags for a model within a provider."""
 

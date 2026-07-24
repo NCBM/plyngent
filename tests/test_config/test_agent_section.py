@@ -28,6 +28,24 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.max_context_tokens == 200_000
     assert store.plugins_config.enable == []
     assert store.plugins_config.disable == []
+    assert store.networking_config.ssrf_assume_public_cidrs == []
+
+
+def test_networking_ssrf_assume_public_cidrs(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text(
+        """
+[networking]
+ssrf_assume_public_cidrs = ["198.18.0.0/15", "fdfe:dcba:9876::/48"]
+""",
+        encoding="utf-8",
+    )
+    store = load(path)
+    assert store.networking_config.ssrf_assume_public_cidrs == [
+        "198.18.0.0/15",
+        "fdfe:dcba:9876::/48",
+    ]
+    assert "ssrf_assume_public_cidrs" in store.networking
 
 
 def test_compose_defaults_join_persona_and_directives() -> None:
