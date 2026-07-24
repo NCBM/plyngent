@@ -232,6 +232,51 @@ def prompt_policy_command_confirm(
         return False
 
 
+def prompt_policy_fetch_confirm(
+    host: str,
+    port: int,
+    url: str,
+    timeout_seconds: float,
+) -> bool:
+    """Ask whether to allow fetch to a private/loopback host (timed).
+
+    Independent of YOLO: always prompts when interactive. Default is **deny**.
+    Timeout, cancel, or non-interactive → False. On approve, the host:port is
+    granted for the rest of this process (see net grants).
+    """
+    reason = (
+        f"fetch targets private/loopback host {host!r} port {port}\n"
+        f"url: {url}\n"
+        f"Allow this host:port for the rest of this process?\n"
+        f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)"
+    )
+    try:
+        with pause_task_cancel_for_prompt():
+            backend = get_prompt_backend()
+            if not backend.is_interactive():
+                return False
+            backend.echo()
+            backend.secho(format_tool_confirm_box("policy", reason), fg="yellow")
+            backend.echo()
+            grant = f"{host}:{port}"
+            prompt = f"[policy] allow fetch {grant!r}? [y/N] (timeout {timeout_seconds:g}s): "
+            with contextlib.suppress(OSError):
+                _ = sys.stderr.write(prompt)
+                _ = sys.stderr.flush()
+            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            if raw is None:
+                with contextlib.suppress(OSError, NonInteractiveError):
+                    backend.secho(
+                        f"[policy] timed out after {timeout_seconds:g}s — denied",
+                        fg="red",
+                        err=True,
+                    )
+                return False
+            return raw.strip().lower() in {"y", "yes"}
+    except NonInteractiveError, KeyboardInterrupt, EOFError:
+        return False
+
+
 async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """Async confirm: True allow, False deny, str = deny with user comment."""
     del args

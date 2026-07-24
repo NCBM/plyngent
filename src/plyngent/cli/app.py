@@ -300,9 +300,14 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         # Path denylist and policy confirm live on instance.workspace (no process bag).
         state.instance_state.workspace.path_denylist = tuple(store.agent_config.path_denylist or ())
         if interactive:
-            from plyngent.cli.limits import prompt_policy_command_confirm
+            from plyngent.cli.limits import prompt_policy_command_confirm, prompt_policy_fetch_confirm
+            from plyngent.tools.net import set_fetch_policy_confirm_hook
 
             state.instance_state.workspace.policy_confirm_hook = prompt_policy_command_confirm
+            set_fetch_policy_confirm_hook(
+                prompt_policy_fetch_confirm,
+                instance=state.instance_state,
+            )
         # Seed cache if we already fetched; else warm in background for Tab.
         if remote_ids is not None:
             state.seed_remote_models(remote_ids)
@@ -334,6 +339,10 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         if isinstance(state_obj, ReplState):
             state_obj.instance_state.workspace.policy_confirm_hook = None
             state_obj.instance_state.workspace.policy_allowed_commands.clear()
+            from plyngent.tools.net import clear_private_grants, set_fetch_policy_confirm_hook
+
+            set_fetch_policy_confirm_hook(None, instance=state_obj.instance_state)
+            clear_private_grants(instance=state_obj.instance_state)
             await state_obj.instance_state.shutdown()
         else:
             # No ReplState: only PTY class cleanup (temps require instance allowlist).

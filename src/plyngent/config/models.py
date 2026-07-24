@@ -29,6 +29,14 @@ raise `max_replaces` or narrow `old_string`.
 for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 - Prefer `vcs_*` for status/diff/log/branch when enough.
 
+### Network
+- Prefer `fetch` (GET/POST/PUT/DELETE) for HTTP(S) docs/APIs over curl/wget via shell.
+- Set `user_agent` (or a User-Agent header) when the remote expects a specific client; \
+otherwise a small default is used. Never rely on shell to spoof identity.
+- Private/loopback/LAN hosts need an explicit human policy allow (not skipped by YOLO).
+- Prefer provider hosted search (e.g. web_search) for open-ended research; use `fetch` for known URLs.
+- Respect denials, size limits, and HTTPS→HTTP redirect blocks; do not re-fetch the same URL repeatedly.
+
 ### Humans & safety
 - Prefer `ask_user_line` / `ask_user_choice` / `ask_user_form` over waiting for the next free-form turn.
 - Overwrites, deletes, shells, and risky ops may require human confirm; hard denylists are not skipped by YOLO.
