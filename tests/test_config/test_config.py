@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import tomlkit
 
 import plyngent
 from plyngent.config import (
@@ -12,6 +13,7 @@ from plyngent.config import (
     OpenAICompatibleProvider,
     OpenAIProvider,
 )
+from plyngent.config.store import ConfigStore
 
 
 @pytest.fixture
@@ -250,6 +252,34 @@ url = "https://example/v1"
     config.write()
     config.reload()
     assert set(config.providers["local"].models) == {"base", "extra", "remote-a", "remote-b"}
+
+
+def test_write_models_as_inline_tables(tmp_path: Path) -> None:
+    """Persisted models use inline tables, not dotted [providers.x.models.id] sections."""
+    from plyngent.config import ModelConfig, OpenAICompatibleProvider
+
+    path = tmp_path / "inline-models.toml"
+    config = ConfigStore(path=path, document=tomlkit.document())
+    config.providers = {
+        "local": OpenAICompatibleProvider(
+            access_key_or_token="sk-test",
+            url="https://example/v1",
+            models={
+                "base": ModelConfig(),
+                "gpt-test": ModelConfig(text=True, cost_factor=2),
+            },
+        )
+    }
+    config.write()
+    text = path.read_text(encoding="utf-8")
+    assert "[providers.local.models]" in text
+    assert "[providers.local.models.base]" not in text
+    assert "[providers.local.models.gpt-test]" not in text
+    assert "gpt-test" in text and "cost_factor" in text
+    # Round-trip still loads models.
+    again = plyngent.config.load(path)
+    assert set(again.providers["local"].models) == {"base", "gpt-test"}
+    assert again.providers["local"].models["gpt-test"].cost_factor == 2
 
 
 def test_update_config() -> None:

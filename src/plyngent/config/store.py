@@ -395,8 +395,48 @@ class ConfigStore:
         """Sync ``[plugins]`` to the document."""
         self._sync_section("plugins", self._plugins)
 
+    @staticmethod
+    def _to_inline_table(mapping: Mapping[str, object]) -> object:
+        """Encode a flat (or nested-dict) mapping as a TOML inline table."""
+        table = tomlkit.inline_table()
+        for key, value in mapping.items():
+            if isinstance(value, dict):
+                table[key] = ConfigStore._to_inline_table(cast("Mapping[str, object]", value))
+            else:
+                table[key] = value
+        return table
+
+    @staticmethod
+    def _models_to_toml_table(models: Mapping[str, object]) -> object:
+        """Write each model as ``name = { … }`` under ``[providers.*.models]``."""
+        table = tomlkit.table()
+        for model_id, cfg in models.items():
+            if isinstance(cfg, dict):
+                table[model_id] = ConfigStore._to_inline_table(cast("Mapping[str, object]", cfg))
+            else:
+                table[model_id] = ConfigStore._to_inline_table({})
+        return table
+
+    @staticmethod
+    def _provider_to_toml_table(raw: Mapping[str, object]) -> object:
+        """Build a provider table; nested maps become inline tables except ``models``."""
+        entry = tomlkit.table()
+        for key, value in raw.items():
+            if key == "models" and isinstance(value, dict):
+                entry[key] = ConfigStore._models_to_toml_table(cast("Mapping[str, object]", value))
+            elif isinstance(value, dict):
+                entry[key] = ConfigStore._to_inline_table(cast("Mapping[str, object]", value))
+            else:
+                entry[key] = value
+        return entry
+
     def _sync_providers_section(self) -> None:
-        """Sync ``[providers]`` to the document (ready + recoverable)."""
+        """Sync ``[providers]`` to the document (ready + recoverable).
+
+        Model configs are written as **inline tables** under
+        ``[providers.<name>.models]`` (e.g. ``\"gpt-test\" = { text = true }``),
+        not as one dotted section per model id.
+        """
         section = self._toml_table("providers")
         keep = set(self._providers) | set(self._recoverable_providers)
 
@@ -405,14 +445,8 @@ class ConfigStore:
                 del section[name]
 
         for name, provider in {**self._recoverable_providers, **self._providers}.items():
-            raw: dict[str, object] = msgspec.to_builtins(provider)
-            if name in section:
-                entry = cast("MutableMapping[str, object]", section[name])
-                entry.clear()
-                for k, v in raw.items():
-                    entry[k] = v
-            else:
-                section[name] = raw
+            raw = cast("dict[str, object]", msgspec.to_builtins(provider))
+            section[name] = self._provider_to_toml_table(raw)
 
     def _sync_to_document(self) -> None:
         """Incrementally sync all sections into the document."""
