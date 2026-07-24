@@ -17,6 +17,10 @@ from .budget import (
     DEFAULT_TOOL_RESULT_MAX_CHARS,
     estimate_messages_tokens,
 )
+from .directive_checkpoint import (
+    DEFAULT_DIRECTIVE_REMINDER_TOKENS,
+    parse_checkpoint_bands,
+)
 from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 from .todo_nag import (
@@ -128,11 +132,15 @@ class ChatAgent:
     max_context_tokens: int
     todo_stack: TodoStack | None
     todo_nag_strategy: TodoNagStrategy
+    directive_reminder_tokens: int
+    directive_reminder_text: str | None
     messages: list[AnyChatMessage]
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
     last_request_usage: TokenUsage
     last_turn_rounds: int
+    peak_prompt_tokens: int
+    reminder_last_band: int
     # Index into messages of the first unpersisted message (checkpoint cursor).
     _persist_from: int
 
@@ -155,6 +163,10 @@ class ChatAgent:
         max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
         todo_stack: TodoStack | None = None,
         todo_nag_strategy: str | TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
+        directive_reminder_tokens: int = DEFAULT_DIRECTIVE_REMINDER_TOKENS,
+        directive_reminder_text: str | None = None,
+        peak_prompt_tokens: int = 0,
+        reminder_last_band: int = 0,
     ) -> None:
         self.client = client
         self.model = model
@@ -171,13 +183,19 @@ class ChatAgent:
         self.max_context_tokens = max_context_tokens
         self.todo_stack = todo_stack
         self.todo_nag_strategy = parse_todo_nag_strategy(str(todo_nag_strategy))
+        self.directive_reminder_tokens = max(0, int(directive_reminder_tokens))
+        text = directive_reminder_text.strip() if directive_reminder_text else ""
+        self.directive_reminder_text = text or None
         self.messages = list(messages) if messages is not None else []
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
         self.last_request_usage = TokenUsage()
         self.last_turn_rounds = 0
+        self.peak_prompt_tokens = max(0, int(peak_prompt_tokens))
+        self.reminder_last_band = max(0, int(reminder_last_band))
         self._persist_from = len(self.messages)
         self._ensure_system_prompt()
+        self._sync_reminder_band_from_messages()
 
     @property
     def pending_retry_text(self) -> str | None:
@@ -214,6 +232,53 @@ class ChatAgent:
         # already pointed past stored messages stay correct after insert.
         self._persist_from = min(len(self.messages), self._persist_from + 1)
 
+    def _sync_reminder_band_from_messages(self) -> None:
+        """Raise :attr:`reminder_last_band` to match durable checkpoint markers."""
+        from_history = parse_checkpoint_bands(self.messages)
+        self.reminder_last_band = max(self.reminder_last_band, from_history)
+
+    def apply_session_context_usage(
+        self,
+        *,
+        last_prompt_tokens: int | None = None,
+        peak_prompt_tokens: int | None = None,
+        last_completion_tokens: int | None = None,
+        usage_source: str | None = None,
+        reminder_last_band: int | None = None,
+    ) -> None:
+        """Hydrate usage / reminder band from a session row (resume)."""
+        if peak_prompt_tokens is not None:
+            self.peak_prompt_tokens = max(self.peak_prompt_tokens, int(peak_prompt_tokens))
+        if reminder_last_band is not None:
+            self.reminder_last_band = max(self.reminder_last_band, int(reminder_last_band))
+        if last_prompt_tokens is not None and last_prompt_tokens > 0:
+            source = usage_source or "api"
+            self.last_request_usage = TokenUsage(
+                prompt_tokens=int(last_prompt_tokens),
+                completion_tokens=int(last_completion_tokens or 0),
+                total_tokens=int(last_prompt_tokens) + int(last_completion_tokens or 0),
+                source=source,
+            )
+            self.peak_prompt_tokens = max(self.peak_prompt_tokens, int(last_prompt_tokens))
+        self._sync_reminder_band_from_messages()
+
+    async def _persist_context_usage(self) -> None:
+        if self.memory is None or self.session_id is None:
+            return
+        last = self.last_request_usage
+        _ = await self.memory.update_session_context_usage(
+            self.session_id,
+            last_prompt_tokens=last.prompt_tokens if not last.is_zero() else None,
+            peak_prompt_tokens=self.peak_prompt_tokens or None,
+            last_completion_tokens=last.completion_tokens if not last.is_zero() else None,
+            usage_source=last.source if not last.is_zero() else None,
+            reminder_last_band=self.reminder_last_band,
+        )
+
+    async def _on_reminder_band(self, band: int) -> None:
+        self.reminder_last_band = max(self.reminder_last_band, band)
+        await self._persist_context_usage()
+
     def replace_messages(
         self,
         messages: Sequence[AnyChatMessage],
@@ -233,6 +298,7 @@ class ChatAgent:
         else:
             self._persist_from = len(self.messages) if persisted else 0
         self._ensure_system_prompt()
+        self._sync_reminder_band_from_messages()
 
     @property
     def persist_from(self) -> int:
@@ -246,6 +312,15 @@ class ChatAgent:
             raise RuntimeError(msg)
         loaded = await self.memory.list_messages(self.session_id)
         self.replace_messages(loaded, persisted=True)
+        row = await self.memory.get_session(self.session_id)
+        if row is not None:
+            self.apply_session_context_usage(
+                last_prompt_tokens=row.last_prompt_tokens,
+                peak_prompt_tokens=row.peak_prompt_tokens,
+                last_completion_tokens=row.last_completion_tokens,
+                usage_source=row.usage_source,
+                reminder_last_band=row.reminder_last_band,
+            )
 
     async def bind_session(self, session_id: int, *, load: bool = True) -> None:
         """Attach a memory session id; optionally load existing messages."""
@@ -295,6 +370,15 @@ class ChatAgent:
         end = committed_prefix_end(self.messages, user_index)
         del self.messages[end:]
 
+    def _developer_tail_end(self, start: int) -> int:
+        """Extend *start* through trailing developer checkpoint messages."""
+        from plyngent.lmproto.openai_compatible.model import DeveloperChatMessage
+
+        end = start
+        while end < len(self.messages) and isinstance(self.messages[end], DeveloperChatMessage):
+            end += 1
+        return end
+
     async def _run_from_user_message(self, user_msg: UserChatMessage) -> AsyncIterator[AgentEvent]:
         """Run the tool loop for an already-appended user message.
 
@@ -340,17 +424,29 @@ class ChatAgent:
                 max_context_tokens=self.max_context_tokens,
                 todo_stack=self.todo_stack,
                 todo_nag_strategy=self.todo_nag_strategy,
+                directive_reminder_tokens=self.directive_reminder_tokens,
+                directive_reminder_text=self.directive_reminder_text,
+                reminder_last_band=self.reminder_last_band,
+                on_reminder_band=self._on_reminder_band,
             ):
                 if isinstance(event, UsageEvent):
                     turn_rounds += 1
                     last_request = event.usage
                     turn_usage = turn_usage.add(event.usage)
                     self.session_usage = self.session_usage.add(event.usage)
+                    self.last_request_usage = event.usage
+                    self.peak_prompt_tokens = max(
+                        self.peak_prompt_tokens,
+                        event.usage.prompt_tokens,
+                    )
+                    await self._persist_context_usage()
                 # After a full tool batch, commit prefix so failures do not
-                # discard work that already had external effects.
+                # discard work that already had external effects. Trailing
+                # developer checkpoints after that batch are committed too.
                 commit_end = committed_prefix_end(self.messages, user_index)
-                if commit_end > self._persist_from:
-                    await self._persist_range(self._persist_from, commit_end)
+                end = self._developer_tail_end(commit_end)
+                if end > self._persist_from:
+                    await self._persist_range(self._persist_from, end)
                 yield event
             completed = True
         except BaseException:
@@ -363,6 +459,7 @@ class ChatAgent:
         self.last_turn_rounds = turn_rounds
         if self._persist_from < len(self.messages):
             await self._persist_range(self._persist_from, len(self.messages))
+        await self._persist_context_usage()
 
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
         """Append a user message (persist immediately), run the tool loop, yield events."""
@@ -461,6 +558,7 @@ class ChatAgent:
             max_context_tokens=self.max_context_tokens,
             todo_stack=None,
             todo_nag_strategy="none",
+            directive_reminder_tokens=0,
             messages=history,
         )
         async for event in aside.run(text):

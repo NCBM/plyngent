@@ -26,6 +26,10 @@ from .budget import (
     estimate_messages_tokens,
     truncate_tool_result,
 )
+from .directive_checkpoint import (
+    DEFAULT_DIRECTIVE_REMINDER_TOKENS,
+    inject_directive_checkpoints,
+)
 from .events import (
     AgentEvent,
     AssistantMessageEvent,
@@ -312,7 +316,36 @@ def _last_assistant(messages: list[AnyChatMessage], pre_len: int) -> AssistantCh
     return last
 
 
-async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
+async def _maybe_inject_directive_checkpoints(
+    messages: list[AnyChatMessage],
+    *,
+    usage_event: UsageEvent | None,
+    interval: int,
+    last_band: int,
+    reminder_text: str | None,
+    on_reminder_band: Callable[[int], Awaitable[None] | None] | None,
+) -> int:
+    """Append durable checkpoints after a usage sample; return updated last band."""
+    if usage_event is None or interval < 1:
+        return last_band
+    new_band, appended = inject_directive_checkpoints(
+        messages,
+        prompt_tokens=usage_event.usage.prompt_tokens,
+        source=usage_event.usage.source,
+        interval=interval,
+        last_fired_band=last_band,
+        reminder_text=reminder_text,
+    )
+    if not appended:
+        return last_band
+    if on_reminder_band is not None:
+        maybe = on_reminder_band(new_band)
+        if inspect.isawaitable(maybe):
+            await maybe
+    return new_band
+
+
+async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     client: ChatClient,
     messages: list[AnyChatMessage],
     *,
@@ -327,6 +360,10 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     todo_stack: TodoStack | None = None,
     todo_nag_strategy: TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
+    directive_reminder_tokens: int = DEFAULT_DIRECTIVE_REMINDER_TOKENS,
+    directive_reminder_text: str | None = None,
+    reminder_last_band: int = 0,
+    on_reminder_band: Callable[[int], Awaitable[None] | None] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
@@ -338,6 +375,11 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     When *todo_stack* is set and still needs review after a natural stop
     (open items, or non-empty stack untouched this turn), injects a review nag
     (channel from *todo_nag_strategy*) once so the model reconciles unfinished work.
+
+    After each usage sample, may append durable developer directive checkpoints
+    when *prompt_tokens* crosses bands of *directive_reminder_tokens* (0 disables).
+    *reminder_last_band* is the highest band already injected (history/DB).
+    *on_reminder_band* is notified with the new last band after appends.
     """
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
@@ -349,6 +391,7 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     prompt_tokens_hint: int | None = None
     sent_estimate_tokens: int | None = None
     todo_review_injected = False
+    last_band = max(0, reminder_last_band)
 
     while True:
         while rounds_used < allowance:
@@ -372,15 +415,42 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
             )
 
             pre_len = len(messages)
+            last_usage_event: UsageEvent | None = None
             async for event in _assistant_round(client, param, messages, stream=stream):
                 if isinstance(event, UsageEvent):
                     # Next rounds scale char-estimates by real/resolved prompt size.
                     prompt_tokens_hint = event.usage.prompt_tokens
                     sent_estimate_tokens = sent_est
+                    last_usage_event = event
                 yield event
+
             assistant = _last_assistant(messages, pre_len)
             tool_calls = assistant.tool_calls
-            if tool_calls is UNSET or not tool_calls or tools is None:
+            has_tools = tool_calls is not UNSET and bool(tool_calls) and tools is not None
+            if has_tools:
+                assert tools is not None
+                assert tool_calls is not UNSET
+                async for event in _execute_tool_calls(
+                    tools,
+                    tool_calls,
+                    messages,
+                    max_result_chars=max_tool_result_chars,
+                    parallel=parallel_tools,
+                ):
+                    yield event
+
+            # After tools (or text-only assistant): durable checkpoints stay out of
+            # assistant→tool batches so commit/retry structure remains valid.
+            last_band = await _maybe_inject_directive_checkpoints(
+                messages,
+                usage_event=last_usage_event,
+                interval=directive_reminder_tokens,
+                last_band=last_band,
+                reminder_text=directive_reminder_text,
+                on_reminder_band=on_reminder_band,
+            )
+
+            if not has_tools:
                 if todo_stack is not None and todo_stack.needs_review() and not todo_review_injected:
                     todo_review_injected = True
                     injected, nag_events = inject_todo_nag_for_stack_with_events(
@@ -394,14 +464,6 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
                     if injected:
                         continue
                 return
-            async for event in _execute_tool_calls(
-                tools,
-                tool_calls,
-                messages,
-                max_result_chars=max_tool_result_chars,
-                parallel=parallel_tools,
-            ):
-                yield event
 
         reason = f"tool loop reached {allowance} rounds (used {rounds_used})"
         if on_limit is not None and await _call_on_limit(on_limit, reason):
