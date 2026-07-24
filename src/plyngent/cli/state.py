@@ -18,7 +18,13 @@ from plyngent.cli.models_source import (
 )
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
-from plyngent.tools import DEFAULT_TOOLS, set_todo_stack, set_workspace_root
+from plyngent.tools import (
+    InstanceState,
+    SessionState,
+    default_tool_definitions,
+    set_todo_stack,
+    set_workspace_root,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -58,6 +64,8 @@ class ReplState:
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
     todo_stack: TodoStack = field(default_factory=TodoStack)
+    instance_state: InstanceState = field(default_factory=InstanceState)
+    session_state: SessionState = field(default_factory=SessionState)
     _todo_persist_tasks: set[object] = field(default_factory=set, init=False, repr=False)
     # Session ids for Tab complete (updated when listing/creating/resuming).
     _session_id_cache: list[int] = field(default_factory=list, init=False, repr=False)
@@ -71,6 +79,8 @@ class ReplState:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.workspace = Path(self.workspace).expanduser().resolve()
+        self.instance_state.workspace_root = self.workspace
+        self.session_state.todo = self.todo_stack
         self.agent = self._make_agent()
         self.sync_display_flags()
         self._bind_todo_tools()
@@ -99,11 +109,17 @@ class ReplState:
         return self.effective_yolo() == "off"
 
     def set_yolo(self, mode: YoloMode) -> None:
-        """Set YOLO mode; rebuild tool registry when soft-confirm hooks change."""
-        prev = self.soft_confirm_enabled()
+        """Set YOLO mode; update registry YOLO bit (and rebuild if needed)."""
+        prev = self.effective_yolo()
         self.yolo = mode
-        if prev != self.soft_confirm_enabled():
-            self.rebuild_client()
+        if prev != mode:
+            # Tag-aware confirm: YOLO only auto-approves YOLO-tagged tools.
+            if hasattr(self, "agent") and self.agent.tools is not None:
+                self.agent.tools.set_yolo(enabled=mode != "off")
+            else:
+                self.rebuild_client()
+        if mode == "off":
+            self.session_state.clear_grants()
 
     def expire_yolo_once(self, *, quiet: bool = False) -> None:
         """If mode is ``once``, drop back to ``off`` after a user turn."""
@@ -131,7 +147,12 @@ class ReplState:
             self._todo_persist_tasks.add(task)
             task.add_done_callback(self._todo_persist_tasks.discard)
 
+        self.session_state.todo = self.todo_stack
+        self.session_state.session_id = self.session_id
         set_todo_stack(self.todo_stack, on_change=on_change)
+        if hasattr(self, "agent") and self.agent.tools is not None:
+            self.agent.tools.set_session_state(self.session_state)
+            self.agent.tools.set_instance_state(self.instance_state)
 
     async def persist_todo_stack(self) -> None:
         """Write the in-memory todo stack to the active session row."""
@@ -159,13 +180,18 @@ class ReplState:
         from plyngent.cli.limits import prompt_confirm_tool_async
         from plyngent.tools.danger import classify_danger
 
-        if self.soft_confirm_enabled():
-            return ToolRegistry(
-                list(DEFAULT_TOOLS),
-                danger=classify_danger,
-                on_confirm=prompt_confirm_tool_async,
-            )
-        return ToolRegistry(list(DEFAULT_TOOLS))
+        tools = default_tool_definitions(surface="local")
+        yolo = self.effective_yolo() != "off"
+        # Always attach soft-confirm path so non-YOLO tools still prompt under YOLO mode.
+        return ToolRegistry(
+            tools,
+            danger=classify_danger,
+            on_confirm=prompt_confirm_tool_async,
+            yolo=yolo,
+            auto_bind_state=True,
+            instance_state=self.instance_state,
+            session_state=self.session_state,
+        )
 
     def _make_agent(self) -> ChatAgent:
         from plyngent.cli.limits import prompt_continue_limit_async
@@ -370,7 +396,10 @@ class ReplState:
             msg = f"workspace is not a directory: {resolved}"
             raise ValueError(msg)
         self.workspace = resolved
+        self.instance_state.workspace_root = resolved
         _ = set_workspace_root(resolved)
+        if hasattr(self, "agent") and self.agent.tools is not None:
+            self.agent.tools.set_instance_state(self.instance_state)
 
     def _apply_session_workspace(self, row: SessionRow) -> None:
         """Bind tools/REPL workspace to the session's directory when set."""
@@ -476,6 +505,7 @@ class ReplState:
         if session.sid not in self._session_id_cache:
             self._session_id_cache.insert(0, session.sid)
         self.todo_stack = TodoStack()
+        self.session_state = SessionState(session_id=session.sid, todo=self.todo_stack)
         self.agent = self._make_agent()
         self._bind_todo_tools()
 

@@ -323,15 +323,20 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         return EXIT_OK
     finally:
         await memory.close()
-        from plyngent.tools.process.pty_session import PtyManager
-        from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
-
-        PtyManager.close_all()
         from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
 
         set_policy_confirm_hook(None)
         clear_policy_allowed_commands()
-        _ = cleanup_temporary_workspaces()
+        # PTY + temp workspace cleanup via instance shutdown when state exists.
+        state_obj = locals().get("state")
+        if isinstance(state_obj, ReplState):
+            await state_obj.instance_state.shutdown()
+        else:
+            from plyngent.tools.process.pty_session import PtyManager
+            from plyngent.tools.temp_workspace import cleanup_temporary_workspaces
+
+            PtyManager.close_all()
+            _ = cleanup_temporary_workspaces()
 
 
 def _configure_logging(level: str) -> None:
