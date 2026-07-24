@@ -21,9 +21,9 @@ from plyngent.runtime import create_client
 from plyngent.tools import (
     InstanceState,
     SessionState,
-    set_todo_stack,
     set_workspace_root,
 )
+from plyngent.tools.view import MemoryViewStore, session_data_view
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -79,7 +79,9 @@ class ReplState:
         self.client = cast("ChatClient", cast("object", create_client(self.provider)))
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
-        self.session_state.todo = self.todo_stack
+        # Process-global workspace remains for tools/tests that run without instance bind.
+        _ = set_workspace_root(self.workspace)
+        self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self.sync_display_flags()
         self._bind_todo_tools()
@@ -130,25 +132,52 @@ class ReplState:
 
             click.secho("yolo=off (once expired)", fg="bright_black", err=True)
 
-    def _bind_todo_tools(self) -> None:
-        """Point module-level todo tools at this session stack + persist hook."""
+    def _todo_on_change(self) -> None:
+        """Schedule memory persist for the live todo stack (session-scoped hook)."""
         import asyncio
 
-        def on_change() -> None:
-            if self.session_id is None:
-                return
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return
-            task = loop.create_task(self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw()))
-            # Keep a strong ref until done so the task is not GC'd mid-flight.
-            self._todo_persist_tasks.add(task)
-            task.add_done_callback(self._todo_persist_tasks.discard)
+        if self.session_id is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self.memory.update_session_todo_stack(self.session_id, self.todo_stack.to_raw()))
+        # Keep a strong ref until done so the task is not GC'd mid-flight.
+        self._todo_persist_tasks.add(task)
+        task.add_done_callback(self._todo_persist_tasks.discard)
 
-        self.session_state.todo = self.todo_stack
+    def _session_data_for_todo(self, *, grants: dict[str, bool] | None = None) -> SessionState:
+        """Build a SessionState with live todo + MemoryViewStore seed (durable tree).
+
+        *grants* defaults to empty (new session / startup). Pass the previous map
+        only when intentionally preserving soft-confirm trust across rebinds.
+        """
+        grant_map = dict(grants or {})
+        store = MemoryViewStore({"todo": self.todo_stack.to_raw(), "grants": dict(grant_map)})
+        return SessionState(
+            session_id=self.session_id,
+            data=session_data_view(store=store),
+            todo=self.todo_stack,
+            on_todo_change=self._todo_on_change,
+            grants=grant_map,
+        )
+
+    def _bind_todo_tools(self) -> None:
+        """Bind session/instance state for tools (prefer context over process globals).
+
+        Seeds ``session.data["todo"]`` from the live stack and attaches
+        :meth:`_todo_on_change` so memory persist no longer depends on
+        process-global ``set_todo_stack(on_change=...)``.
+        """
         self.session_state.session_id = self.session_id
-        set_todo_stack(self.todo_stack, on_change=on_change)
+        self.session_state.todo = self.todo_stack
+        self.session_state.on_todo_change = self._todo_on_change
+        # Refresh durable seed so tools that rehydrate from the view see current data.
+        store = getattr(self.session_state.data, "_store", None)
+        if isinstance(store, MemoryViewStore):
+            store.merge_key("todo", self.todo_stack.to_raw())
+        self.instance_state.workspace_root = self.workspace
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_session_state(self.session_state)
             self.agent.tools.set_instance_state(self.instance_state)
@@ -516,7 +545,7 @@ class ReplState:
         if session.sid not in self._session_id_cache:
             self._session_id_cache.insert(0, session.sid)
         self.todo_stack = TodoStack()
-        self.session_state = SessionState(session_id=session.sid, todo=self.todo_stack)
+        self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self._bind_todo_tools()
 

@@ -88,3 +88,29 @@ async def test_with_bound_context_without_registry_session() -> None:
     loaded = await store.load()
     assert isinstance(loaded, dict)
     assert isinstance(loaded.get("todo"), dict)
+
+
+async def test_session_on_todo_change_preferred_over_process() -> None:
+    """Session.on_todo_change fires instead of process set_todo_stack on_change."""
+    set_todo_stack(None)
+    hits: list[str] = []
+
+    def process_hook() -> None:
+        hits.append("process")
+
+    def session_hook() -> None:
+        hits.append("session")
+
+    stack = TodoStack()
+    set_todo_stack(stack, on_change=process_hook)
+    store = MemoryViewStore({})
+    session = SessionState(
+        session_id="hook",
+        data=session_data_view(store=store),
+        todo=stack,
+        on_todo_change=session_hook,
+    )
+    registry = ToolRegistry(list(TODO_TOOLS), session_state=session)
+    _ = await registry.execute("todo_push", '{"titles": ["H"]}')
+    assert hits == ["session"]
+    set_todo_stack(None)
