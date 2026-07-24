@@ -11,6 +11,7 @@ from plyngent.tools.workspace import (
     WorkspaceError,
     clear_workspace_root,
     get_workspace_root,
+    resolve_path,
     set_workspace_root,
 )
 
@@ -45,3 +46,15 @@ def test_clear_clears_bound_instance(tmp_path: Path) -> None:
         assert instance.workspace_root is None
         with pytest.raises(WorkspaceError):
             _ = get_workspace_root()
+
+
+def test_resolve_path_accepts_instance_root_without_process_global(tmp_path: Path) -> None:
+    """Instance-only workspace must be a valid resolve root (not only process global)."""
+    clear_workspace_root()
+    target = tmp_path / "note.txt"
+    _ = target.write_text("hi", encoding="utf-8")
+    instance = InstanceState(workspace_root=tmp_path.resolve())
+    with bind_instance(instance):
+        resolved = resolve_path("note.txt")
+        assert resolved == target.resolve()
+    clear_workspace_root()

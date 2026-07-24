@@ -217,10 +217,21 @@ def remove_workspace_allowlist(root: Path | str) -> None:
         _state.allowlist.remove(path)
 
 
-def _under_any_root(resolved: Path) -> bool:
+def _primary_roots() -> list[Path]:
+    """Primary workspace roots: bound instance (if any) then process global."""
     roots: list[Path] = []
-    if _state.root is not None:
+    from plyngent.tools.context import get_instance
+
+    instance = get_instance()
+    if instance is not None and instance.workspace_root is not None:
+        roots.append(instance.workspace_root)
+    if _state.root is not None and _state.root not in roots:
         roots.append(_state.root)
+    return roots
+
+
+def _under_any_root(resolved: Path) -> bool:
+    roots = _primary_roots()
     roots.extend(_state.allowlist)
     for root in roots:
         try:
