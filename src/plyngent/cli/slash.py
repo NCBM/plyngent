@@ -908,14 +908,62 @@ def model_cmd(state: ReplState, model_id: str | None, *, persist: bool) -> None:
             click.secho(f"error: could not persist model: {exc}", fg="red")
 
 
+def _format_tool_tags(tags: object) -> str:
+    """Compact Flag names for operator display (e.g. LOCAL|INSTANCE_STATE)."""
+    from plyngent.agent.tools import ToolTag
+
+    if not isinstance(tags, ToolTag):
+        return str(tags)
+    if tags.value == 0:
+        return "-"
+    names = [member.name for member in ToolTag if member.name and (tags & member) == member]
+    return "|".join(names) if names else str(tags)
+
+
 @slash.command("tools")
 @click.argument("enabled", required=False, type=ON_OFF, metavar="[on|off]")
+@click.option(
+    "--list",
+    "list_tools",
+    is_flag=True,
+    default=False,
+    help="List registry tools with tags and catalog source.",
+)
 @click.pass_obj
-def tools_cmd(state: ReplState, enabled: bool | None) -> None:  # noqa: FBT001
+def tools_cmd(
+    state: ReplState,
+    enabled: bool | None,  # noqa: FBT001
+    *,
+    list_tools: bool,
+) -> None:
     """Show or set whether agent tools are enabled.
 
     Omit the argument to print the current value; pass ``on`` or ``off`` to change it.
+    Use ``--list`` to print name, tags, and catalog source for each registry tool.
     """
+    if list_tools:
+        if not state.tools_enabled or state.agent.tools is None:
+            click.echo("tools=off (no registry)")
+            return
+        from plyngent.tools.catalog import get_catalog
+
+        catalog = get_catalog()
+        registry = state.agent.tools
+        # ToolRegistry has no name iterator; use schema items then re-resolve defs.
+        items = sorted(registry.tool_items(), key=lambda item: item.function.name)
+        click.echo(f"tools=on count={len(items)}")
+        for item in items:
+            name = item.function.name
+            definition = registry.get(name)
+            tags_s = _format_tool_tags(definition.tags) if definition is not None else "-"
+            entry = catalog.get(name)
+            source_s = str(entry.source) if entry is not None else "registry"
+            click.echo(f"  {name}\t{tags_s}\t{source_s}")
+        if enabled is not None:
+            state.tools_enabled = enabled
+            state.rebuild_client()
+            click.echo(f"tools={'on' if enabled else 'off'}")
+        return
     if enabled is None:
         click.echo(f"tools={'on' if state.tools_enabled else 'off'}")
         return

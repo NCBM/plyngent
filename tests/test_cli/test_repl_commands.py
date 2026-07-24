@@ -166,6 +166,23 @@ async def test_tools_toggle(state: ReplState) -> None:
     assert state.tools_enabled is False
 
 
+async def test_tools_list(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/tools --list") is True
+    out_off = capsys.readouterr().out
+    assert "tools=off" in out_off or "no registry" in out_off
+
+    assert await handle_slash(state, "/tools on") is True
+    assert state.tools_enabled is True
+    assert state.agent.tools is not None
+    _ = capsys.readouterr()
+    assert await handle_slash(state, "/tools --list") is True
+    out = capsys.readouterr().out
+    assert "tools=on count=" in out
+    assert "read_file" in out
+    assert "LOCAL" in out
+    assert "builtin" in out
+
+
 async def test_rename_slash(state: ReplState) -> None:
     sid = state.session_id
     assert sid is not None
