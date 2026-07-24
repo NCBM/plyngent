@@ -233,12 +233,26 @@ def _open_pty_reason(args: Mapping[str, object]) -> str | None:
     return _shell_or_dash_c_reason(argv, via="open_pty")
 
 
+def _fetch_reason(args: Mapping[str, object]) -> str | None:
+    """Soft-confirm cleartext HTTP and mutating fetch methods (not private-host policy)."""
+    from plyngent.tools.net.fetch import fetch_soft_reason
+
+    method_obj = args.get("method", "GET")
+    url_obj = args.get("url", "")
+    body_obj = args.get("body")
+    method = method_obj if isinstance(method_obj, str) else "GET"
+    url = url_obj if isinstance(url_obj, str) else ""
+    body = body_obj if isinstance(body_obj, str) else None
+    return fetch_soft_reason(method, url, body)
+
+
 def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noqa: PLR0911
     """Return a short reason if ``name``/``args`` need user confirm, else ``None``.
 
     Hard denylists (paths/commands) still raise independently. This only covers
     soft confirms for mutating tools and risky shell/REPL launches
     (interactive shells and ``python -c`` / ``bash -c`` one-liners).
+    Private/loopback fetch targets use a separate policy grant (not YOLO).
     """
     if name == "delete_path":
         return _delete_path_reason(args)
@@ -254,4 +268,6 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _run_command_batch_reason(args)
     if name == "open_pty":
         return _open_pty_reason(args)
+    if name == "fetch":
+        return _fetch_reason(args)
     return None

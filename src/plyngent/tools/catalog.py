@@ -213,11 +213,19 @@ def _ensure_builtin_definitions_registered(catalog: ToolCatalog) -> None:
     """
     from plyngent.tools.chat import CHAT_TOOLS
     from plyngent.tools.file import FILE_TOOLS
+    from plyngent.tools.net import NET_TOOLS
     from plyngent.tools.process import PROCESS_TOOLS
     from plyngent.tools.todo import TODO_TOOLS
     from plyngent.tools.vcs import VCS_TOOLS
 
-    for definition in (*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS):
+    for definition in (
+        *FILE_TOOLS,
+        *PROCESS_TOOLS,
+        *VCS_TOOLS,
+        *CHAT_TOOLS,
+        *TODO_TOOLS,
+        *NET_TOOLS,
+    ):
         if catalog.get(definition.name) is None:
             catalog.register(definition, source=_BUILTIN_SOURCE)
 
@@ -235,6 +243,7 @@ def register_builtin_tools(*, force: bool = False) -> ToolCatalog:
         # Group packages pull their leaf modules (FILE_TOOLS etc. still exported).
         import plyngent.tools.chat as _chat_tools
         import plyngent.tools.file as _file_tools
+        import plyngent.tools.net as _net_tools
         import plyngent.tools.process as _process_tools
         import plyngent.tools.temp_workspace as _temp_workspace_tools
         import plyngent.tools.todo as _todo_tools
@@ -243,6 +252,7 @@ def register_builtin_tools(*, force: bool = False) -> ToolCatalog:
         _ = (
             _chat_tools,
             _file_tools,
+            _net_tools,
             _process_tools,
             _temp_workspace_tools,
             _todo_tools,
