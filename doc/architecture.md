@@ -19,7 +19,7 @@
         - components: Utilities for class composition.
     - memory: Storage controlling for sessions and messages.
     - router: Multi-source capability routing (Phase H; not implemented).
-    - config: Plyngent configuration center (TOML).
+    - config: Plyngent configuration center (TOML), including ``[plugins]``.
     - agent: Tool loop, streaming, usage, compact; `@tool` / tags / registry.
     - tools: Workspace file/process/VCS/chat/todo tools; catalog; plugins;
       instance/session context and views.
@@ -27,5 +27,5 @@
     - cli: Click entry, slash registry, REPL, one-shot chat.
     - web: Web service (Phase H; not implemented).
 
-Tool plugins (third-party entry points): [plugins.md](./plugins.md).
+Plugins (third-party entry points, allowlisted under ``[plugins]``): [plugins.md](./plugins.md).
 

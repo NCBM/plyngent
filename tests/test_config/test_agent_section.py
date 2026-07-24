@@ -26,8 +26,8 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.confirm_destructive is True
     assert store.agent_config.path_denylist == []
     assert store.agent_config.max_context_tokens == 200_000
-    assert store.agent_config.tool_plugins == []
-    assert store.agent_config.tool_plugins_disable == []
+    assert store.plugins_config.enable == []
+    assert store.plugins_config.disable == []
 
 
 def test_compose_defaults_join_persona_and_directives() -> None:
@@ -138,3 +138,19 @@ tool_directives = ""
         )
         is None
     )
+
+
+def test_plugins_section_parse(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text(
+        """
+[plugins]
+enable = ["acme", "*"]
+disable = ["legacy"]
+""",
+        encoding="utf-8",
+    )
+    store = load(path)
+    assert store.plugins_config.enable == ["acme", "*"]
+    assert store.plugins_config.disable == ["legacy"]
+    assert store.plugins["enable"] == ["acme", "*"]

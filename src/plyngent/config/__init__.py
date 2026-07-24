@@ -15,6 +15,7 @@ from .models import HttpTimeoutConfig as HttpTimeoutConfig
 from .models import ModelConfig as ModelConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
+from .models import PluginsConfig as PluginsConfig
 from .models import ProviderConfig as ProviderConfig
 from .models import compose_agent_system_content as compose_agent_system_content
 from .path import get_default_path as _get_default_path

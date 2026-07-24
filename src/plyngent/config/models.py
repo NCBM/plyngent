@@ -87,12 +87,6 @@ class AgentConfig(Struct, omit_defaults=True):
     path_denylist: list[str] = field(default_factory=list)
     max_context_tokens: int = 200_000
 
-    # Third-party tool plugins (entry-point group ``plyngent.tools``).
-    # Default empty = load none. Use ``["*"]`` to load all discovered plugins.
-    tool_plugins: list[str] = field(default_factory=list)
-    # Entry-point names never loaded even when listed / ``*``.
-    tool_plugins_disable: list[str] = field(default_factory=list)
-
     # How to inject todo stack nags into model context (see agent/todo_nag.py).
     # developer | user | synthetic_tool | none  (legacy "system" → developer)
     todo_nag_strategy: str = "developer"
@@ -101,6 +95,21 @@ class AgentConfig(Struct, omit_defaults=True):
     compact_system_prompt: str = ""
     compact_user_prefix: str = ""
     compact_seed_text: str = ""
+
+
+class PluginsConfig(Struct, omit_defaults=True):
+    """Third-party plugins (not tool-specific config).
+
+    Hosts allowlist plugin **entry-point names** (today: group ``plyngent.tools``;
+    other extension points may reuse the same allowlist later).
+
+    - ``enable`` empty / omitted → load **no** plugins (safe default).
+    - ``enable = ["*"]`` → load every discovered entry point for that group.
+    - ``disable`` always wins over ``enable`` / ``*``.
+    """
+
+    enable: list[str] = field(default_factory=list)
+    disable: list[str] = field(default_factory=list)
 
 
 class ModelConfig(Struct, omit_defaults=True):

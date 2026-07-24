@@ -212,17 +212,15 @@ class ReplState:
         from plyngent.tools.danger import classify_danger
         from plyngent.tools.plugins import load_plugin_tools
 
-        agent_cfg = self.config.agent_config
+        plugins_cfg = self.config.plugins_config
         catalog = register_builtin_tools()
+        # Allowlisted entry points (plugin ids); disable is plugin-id only, not tool names.
         _ = load_plugin_tools(
-            agent_cfg.tool_plugins,
-            disable=agent_cfg.tool_plugins_disable,
+            plugins_cfg.enable,
+            disable=plugins_cfg.disable,
         )
         # Local surface: builtins + allowlisted plugins (import registers into catalog).
         tools = catalog.select(surface="local")
-        disable = {name.strip() for name in agent_cfg.tool_plugins_disable if name.strip()}
-        if disable:
-            tools = [tool for tool in tools if tool.name not in disable]
         yolo = self.effective_yolo() != "off"
         # Always attach soft-confirm path so non-YOLO tools still prompt under YOLO mode.
         return ToolRegistry(

@@ -143,14 +143,15 @@ access_key_or_token = "sk-..."
 # tool_directives = '''### Workspace ...'''
 confirm_destructive = true
 max_context_tokens = 200000
-# Optional third-party tools (entry points plyngent.tools); default load none.
-# tool_plugins = ["acme"]
-# See doc/plugins.md.
+
+# Optional plugins (entry-point names); default load none. See doc/plugins.md.
+# [plugins]
+# enable = ["acme"]
 ```
 
 Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_command`, PTY, policy confirm) are separate.
 
-Third-party **tool plugins**: install a package that declares `project.entry-points."plyngent.tools"`, then allowlist it with `[agent].tool_plugins`. Details: [doc/plugins.md](doc/plugins.md).
+Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 
 Supported provider presets today: `openai` (default if `preset` is omitted; default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted), `openai-compatible`, `deepseek` (OpenAI convention; default models `deepseek-v4-flash` and `deepseek-v4-pro` if `models` is omitted). Anthropic presets are modeled in config but not wired in the runtime client yet.
 

@@ -97,30 +97,36 @@ pdm add acme-plyngent
 
 ## Enable plugins in config
 
-In the user config (`plyngent config path`), under **`[agent]`**:
+Plugins are **not** agent-only: allowlisting lives under a top-level **`[plugins]`**
+section so future non-tool extensions can reuse the same gate.
+
+In the user config (`plyngent config path`):
 
 ```toml
-[agent]
+[plugins]
 # Allowlist of entry-point names. Default empty = load no plugins.
-tool_plugins = ["acme"]
-# tool_plugins = ["*"]          # every discovered plyngent.tools entry point
+enable = ["acme"]
+# enable = ["*"]          # every discovered plyngent.tools entry point
 # Never load these names even if listed or matched by *:
-# tool_plugins_disable = ["legacy"]
+# disable = ["legacy"]
 ```
 
 | Setting | Meaning |
 |---------|---------|
-| `tool_plugins = []` / omitted | Load **no** plugins (safe default). |
-| `tool_plugins = ["acme", "other"]` | Load only those entry-point names. |
-| `tool_plugins = ["*"]` | Load all discovered plugins. |
-| `tool_plugins_disable = ["x"]` | Skip `x` even when allowlisted or `*`. |
+| `enable = []` / omitted | Load **no** plugins (safe default). |
+| `enable = ["acme", "other"]` | Load only those entry-point names. |
+| `enable = ["*"]` | Load all discovered plugins for the group. |
+| `disable = ["x"]` | Skip plugin id `x` even when allowlisted or `*`. |
+
+`enable` / `disable` are **plugin entry-point names** (e.g. `acme`), not individual
+tool function names.
 
 Restart the chat REPL after changing config so the tool registry rebuilds.
 
 CLI load order (simplified):
 
 1. `register_builtin_tools()`
-2. `load_plugin_tools(tool_plugins, disable=tool_plugins_disable)`
+2. `load_plugin_tools(plugins.enable, disable=plugins.disable)`
 3. `catalog.select(surface="local")` → `ToolRegistry`
 
 Inspect the model surface in the REPL:
@@ -163,7 +169,7 @@ default.
 | `@tool`, `ToolTag`, `ToolRegistry` | `plyngent.agent` / `plyngent.agent.tools` |
 | Catalog, `ToolSource`, `select` | `plyngent.tools.catalog` |
 | `load_plugin_tools` | `plyngent.tools.plugins` |
-| Config fields | `AgentConfig.tool_plugins`, `tool_plugins_disable` |
+| Config fields | `PluginsConfig.enable`, `PluginsConfig.disable` (`[plugins]`) |
 
 ## Related docs
 

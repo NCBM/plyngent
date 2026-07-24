@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 import msgspec
 import tomlkit
 
-from .models import AgentConfig, DatabaseConfig, ModelConfig, Provider
+from .models import AgentConfig, DatabaseConfig, ModelConfig, PluginsConfig, Provider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping, Sequence
@@ -31,6 +31,14 @@ def _parse_agent(raw: dict[str, object]) -> AgentConfig:
         return msgspec.convert(raw, AgentConfig)
     except msgspec.ValidationError:
         return AgentConfig()
+
+
+def _parse_plugins(raw: dict[str, object]) -> PluginsConfig:
+    """Parse the ``[plugins]`` section, falling back to defaults."""
+    try:
+        return msgspec.convert(raw, PluginsConfig)
+    except msgspec.ValidationError:
+        return PluginsConfig()
 
 
 def _parse_providers(
@@ -100,6 +108,7 @@ class ConfigStore:
     _document: tomlkit.TOMLDocument
     _database: DatabaseConfig
     _agent: AgentConfig
+    _plugins: PluginsConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -110,6 +119,7 @@ class ConfigStore:
         raw: dict[str, object] = document.unwrap()
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
+        self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -135,6 +145,18 @@ class ConfigStore:
     def agent_config(self) -> AgentConfig:
         """Typed agent profile (system prompt, tool budgets, etc.)."""
         return self._agent
+
+    # -- plugins (read-only) --
+
+    @property
+    def plugins(self) -> MappingProxyType[str, object]:
+        """Read-only mapping view of plugin allowlist configuration."""
+        return MappingProxyType(msgspec.structs.asdict(self._plugins))
+
+    @property
+    def plugins_config(self) -> PluginsConfig:
+        """Typed plugin allowlist (enable / disable entry-point names)."""
+        return self._plugins
 
     # -- providers (read/write) --
 
@@ -269,6 +291,7 @@ class ConfigStore:
         raw: dict[str, object] = self._document.unwrap()
         self._database = _parse_database(cast("dict[str, object]", raw.get("database", {})))
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
+        self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --
@@ -300,6 +323,10 @@ class ConfigStore:
         """Sync ``[agent]`` to the document."""
         self._sync_section("agent", self._agent)
 
+    def _sync_plugins_section(self) -> None:
+        """Sync ``[plugins]`` to the document."""
+        self._sync_section("plugins", self._plugins)
+
     def _sync_providers_section(self) -> None:
         """Sync ``[providers]`` to the document (ready + recoverable)."""
         section = self._toml_table("providers")
@@ -323,4 +350,5 @@ class ConfigStore:
         """Incrementally sync all sections into the document."""
         self._sync_database_section()
         self._sync_agent_section()
+        self._sync_plugins_section()
         self._sync_providers_section()
