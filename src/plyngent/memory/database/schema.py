@@ -34,6 +34,14 @@ class Session(PlyngentBase):
     model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Todo/task stack JSON for multi-step sub-tasks (optional).
     todo_stack: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+    # Last model request context size (API prompt_tokens preferred).
+    last_prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    peak_prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    last_completion_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    # "api" | "estimate" | None when never recorded.
+    usage_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Highest directive-reminder band already injected (append-only checkpoints).
+    reminder_last_band: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

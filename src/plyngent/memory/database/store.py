@@ -69,6 +69,7 @@ class MemoryStore:
             await conn.run_sync(_migrate_session_workspace)
             await conn.run_sync(_migrate_session_llm)
             await conn.run_sync(_migrate_session_todo_stack)
+            await conn.run_sync(_migrate_session_context_usage)
 
     async def close(self) -> None:
         """Dispose the underlying engine."""
@@ -234,6 +235,37 @@ class MemoryStore:
             await session.refresh(row)
             return row
 
+    async def update_session_context_usage(
+        self,
+        sid: int,
+        *,
+        last_prompt_tokens: int | None = None,
+        peak_prompt_tokens: int | None = None,
+        last_completion_tokens: int | None = None,
+        usage_source: str | None = None,
+        reminder_last_band: int | None = None,
+    ) -> Session:
+        """Update remembered context size / directive-reminder band (omit to leave)."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            if last_prompt_tokens is not None:
+                row.last_prompt_tokens = int(last_prompt_tokens)
+            if peak_prompt_tokens is not None:
+                row.peak_prompt_tokens = int(peak_prompt_tokens)
+            if last_completion_tokens is not None:
+                row.last_completion_tokens = int(last_completion_tokens)
+            if usage_source is not None:
+                row.usage_source = usage_source
+            if reminder_last_band is not None:
+                row.reminder_last_band = int(reminder_last_band)
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
     async def rename_session(self, sid: int, name: str) -> Session:
         """Rename a session (max 64 characters, non-empty after strip)."""
         cleaned = name.strip()
@@ -345,3 +377,22 @@ def _migrate_session_todo_stack(sync_conn: object) -> None:
     columns = _session_columns(sync_conn)
     if "todo_stack" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN todo_stack JSON"))
+
+
+def _migrate_session_context_usage(sync_conn: object) -> None:
+    """Add session context usage + directive reminder band columns."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    columns = _session_columns(sync_conn)
+    if "last_prompt_tokens" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN last_prompt_tokens INTEGER"))
+    if "peak_prompt_tokens" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN peak_prompt_tokens INTEGER"))
+    if "last_completion_tokens" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN last_completion_tokens INTEGER"))
+    if "usage_source" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN usage_source VARCHAR(16)"))
+    if "reminder_last_band" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN reminder_last_band INTEGER"))
