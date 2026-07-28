@@ -8,11 +8,12 @@ from plyngent.tools.grants import clear_grants, has_grant, hydrate_grants, persi
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
 
-async def test_yolo_only_skips_yolo_tagged_tools() -> None:
+async def test_danger_overrides_yolo_tag() -> None:
+    """Decorator YOLO tag does not bypass confirm when danger flags the call."""
     calls: list[str] = []
 
     @tool(tags=ToolTag.LOCAL | ToolTag.YOLO, register=False)
-    async def yolo_ok() -> str:
+    async def yolo_tool() -> str:
         return "y"
 
     @tool(tags=ToolTag.LOCAL, register=False)
@@ -27,15 +28,15 @@ async def test_yolo_only_skips_yolo_tagged_tools() -> None:
         return True
 
     reg = ToolRegistry(
-        [yolo_ok, no_yolo],
+        [yolo_tool, no_yolo],
         danger=danger,
         on_confirm=confirm,
         yolo=True,
     )
-    assert await reg.execute("yolo_ok", "{}") == "y"
-    assert calls == []
+    assert await reg.execute("yolo_tool", "{}") == "y"
+    assert calls == ["yolo_tool"]
     assert await reg.execute("no_yolo", "{}") == "n"
-    assert calls == ["no_yolo"]
+    assert calls == ["yolo_tool", "no_yolo"]
 
 
 async def test_trustable_grant_once() -> None:

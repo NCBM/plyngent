@@ -392,14 +392,15 @@ class ToolRegistry:
         *,
         tags: ToolTag,
     ) -> str | None:
-        """Soft-confirm gate driven by danger reason + tags + grants + YOLO.
+        """Soft-confirm gate driven by danger reason + tags + grants.
 
         Pipeline (soft gate only; hard denylists stay in tool handlers)::
 
             no soft reason → run
-            YOLO mode and (tags & YOLO) → allow
             (tags & TRUSTABLE) and grant exists → allow
-            else on_confirm; on approve + TRUSTABLE → store grant
+            else → on_confirm (decorator YOLO tag does not override
+                   dangerous invocations — internal danger classification
+                   always takes precedence)
         """
         if self._danger is None:
             return None
@@ -408,11 +409,6 @@ class ToolRegistry:
             return None
 
         async with self._confirm_lock:
-            reason = self._danger(name, args)
-            if reason is None:
-                return None
-            if self._yolo and (tags & ToolTag.YOLO):
-                return None
             if self._grant_allows(name, tags=tags):
                 return None
             return await self._prompt_soft_confirm(name, args, reason, tags=tags)
