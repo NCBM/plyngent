@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, cast
 
 import msgspec
 from msgspec import UNSET
 
-from plyngent.lmproto.openai_compatible.client import merge_stream_tool_calls
+from plyngent.lmproto.openai_compatible.client import OpenAICompatibleClient, merge_stream_tool_calls
 from plyngent.lmproto.openai_compatible.model import (
     AnyAssistantToolCall,
     AssistantChatMessage,
     AssistantFunctionToolCall,
+    ChatCompletionChunk,
+    ChatCompletionResponse,
     ChatCompletionsParam,
     StreamOptions,
     StreamToolCallDelta,
@@ -53,10 +56,10 @@ if TYPE_CHECKING:
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
-    from .client import ChatClient
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
     from .tools import ToolRegistry
+    from .types import AnyLLMClient
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
@@ -185,11 +188,31 @@ def _validate_assistant_terminal(
     raise RuntimeError(msg)
 
 
+async def _dispatch_chat_completions(
+    client: AnyLLMClient,
+    param: ChatCompletionsParam,
+    *,
+    stream: bool,
+) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+    kind = getattr(client, "kind", "chat_completions")
+    if kind != "chat_completions":
+        if kind == "messages":
+            msg = "Anthropic /messages dispatch is not wired in the agent loop yet"
+        else:
+            msg = "OpenAI /responses dispatch is not wired in the agent loop yet"
+        raise NotImplementedError(msg)
+    cc = cast("OpenAICompatibleClient", client)
+    return await cc.chat_completions(param, stream=stream)
+
+
 async def _non_stream_round(
-    client: ChatClient,
+    client: AnyLLMClient,
     param: ChatCompletionsParam,
 ) -> AsyncIterator[AgentEvent]:
-    response = await client.chat_completions(param, stream=False)
+    response = cast(
+        "ChatCompletionResponse",
+        await _dispatch_chat_completions(client, param, stream=False),
+    )
     if not response.choices:
         msg = "chat completion response contained no choices"
         raise RuntimeError(msg)
@@ -213,7 +236,7 @@ async def _non_stream_round(
 
 
 async def _stream_round(
-    client: ChatClient,
+    client: AnyLLMClient,
     param: ChatCompletionsParam,
 ) -> AsyncIterator[AgentEvent]:
     """Stream one completion; yield text deltas as chunks arrive, then assistant.
@@ -227,7 +250,10 @@ async def _stream_round(
         param,
         stream_options=StreamOptions(include_usage=True),
     )
-    stream = await client.chat_completions(stream_param, stream=True)
+    stream = cast(
+        "AsyncIterator[ChatCompletionChunk]",
+        await _dispatch_chat_completions(client, stream_param, stream=True),
+    )
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     tool_deltas: list[StreamToolCallDelta] = []
@@ -286,7 +312,7 @@ async def _stream_round(
 
 
 async def _assistant_round(
-    client: ChatClient,
+    client: AnyLLMClient,
     param: ChatCompletionsParam,
     messages: list[AnyChatMessage],
     *,
@@ -346,7 +372,7 @@ async def _maybe_inject_directive_checkpoints(
 
 
 async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
-    client: ChatClient,
+    client: AnyLLMClient,
     messages: list[AnyChatMessage],
     *,
     model: str,

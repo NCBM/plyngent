@@ -4,11 +4,14 @@ import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
-from plyngent.agent import ChatAgent, ChatClient, ToolRegistry
+from plyngent.agent import ChatAgent, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.agent.todo_stack import TodoStack
+
+if TYPE_CHECKING:
+    from plyngent.agent.types import AnyLLMClient
 from plyngent.cli.models_source import (
     DEFAULT_MODELS_CACHE_TTL,
     client_supports_models,
@@ -56,7 +59,7 @@ class ReplState:
     yolo: YoloMode | None = None
     # Set by /edit; REPL sends as the next user turn then clears.
     pending_user_text: str | None = None
-    client: ChatClient = field(init=False)
+    client: AnyLLMClient = field(init=False)
     agent: ChatAgent = field(init=False)
     session_id: int | None = None
     todo_stack: TodoStack = field(default_factory=TodoStack)
@@ -73,7 +76,7 @@ class ReplState:
 
     def __post_init__(self) -> None:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
-        self.client = cast("ChatClient", cast("object", create_client(self.provider, model=self.model)))
+        self.client = create_client(self.provider, model=self.model)
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
@@ -275,7 +278,7 @@ class ReplState:
         # Preserve live stream toggle if agent already exists.
         if hasattr(self, "agent"):
             self.stream_enabled = self.agent.stream
-        self.client = cast("ChatClient", cast("object", create_client(self.provider, model=self.model)))
+        self.client = create_client(self.provider, model=self.model)
         self.agent = self._make_agent()
         # Restore history without re-marking already-stored messages as dirty.
         self.agent.replace_messages(messages, persist_from=persist_from)

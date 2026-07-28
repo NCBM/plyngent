@@ -4,6 +4,8 @@ import math
 from typing import TYPE_CHECKING
 
 from plyngent.config.routing import EffectiveProvider, resolve_effective_provider
+from plyngent.lmproto.anthropic import AnthropicClient
+from plyngent.lmproto.anthropic.config import AnthropicConfig as AnthropicConfigCls
 from plyngent.lmproto.deepseek import DeepseekOpenAIClient
 from plyngent.lmproto.openai import OpenAIClient
 from plyngent.lmproto.openai_compatible import OpenAICompatibleClient, OpenAIConfig
@@ -14,14 +16,13 @@ from plyngent.lmproto.openai_compatible.config import (
 )
 
 if TYPE_CHECKING:
-    from plyngent.agent.responses_client import ResponsesChatClient
     from plyngent.config.models import HttpTimeoutConfig, Provider
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | ResponsesChatClient
+type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | AnthropicClient
 # Backward-compatible name used by older imports/tests.
 type OpenAICompatibleClientUnion = ProtocolClient
 
@@ -99,18 +100,17 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
     """
     effective = resolve_effective_provider(provider, model=model)
     if effective.preset == "openai":
-        from plyngent.agent.responses_client import wrap_openai_for_agent
-
-        return wrap_openai_for_agent(
-            OpenAIClient(provider_to_openai_config(effective)),
-            provider_tools=effective.provider_tools or None,
-        )
+        return OpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "openai-compatible":
         return OpenAICompatibleClient(provider_to_openai_config(effective))
     if effective.preset == "deepseek":
         return DeepseekOpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "anthropic":
-        msg = "anthropic preset is configured but native Anthropic client is not implemented yet"
-        raise ProviderNotSupportedError(msg)
+        return AnthropicClient(
+            AnthropicConfigCls(
+                api_key=effective.access_key_or_token,
+                base_url=effective.url or DEFAULT_ANTHROPIC_BASE_URL,
+            )
+        )
     msg = f"provider preset {effective.preset!r} is not supported"
     raise ProviderNotSupportedError(msg)

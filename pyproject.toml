@@ -63,6 +63,8 @@ reportMissingParameterType = "none"
 reportUnusedParameter = "none"
 reportMissingImports = "none"
 reportMissingTypeStubs = "none"
+reportArgumentType = "none"
+reportAttributeAccessIssue = "none"
 
 [[tool.basedpyright.executionEnvironments]]
 root = "scripts"

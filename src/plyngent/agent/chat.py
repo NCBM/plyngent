@@ -39,10 +39,10 @@ if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
     from plyngent.memory import MemoryStore
 
-    from .client import ChatClient
     from .events import AgentEvent
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
+    from .types import AnyLLMClient
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
@@ -149,7 +149,7 @@ def _synthetic_todo_pair_after(
 class ChatAgent:
     """Thin wrapper: chat client + optional tools + optional memory bind."""
 
-    client: ChatClient
+    client: AnyLLMClient
     model: str
     tools: ToolRegistry | None
     memory: MemoryStore | None
@@ -178,7 +178,7 @@ class ChatAgent:
 
     def __init__(
         self,
-        client: ChatClient,
+        client: AnyLLMClient,
         *,
         model: str,
         tools: ToolRegistry | None = None,

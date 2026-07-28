@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from msgspec import UNSET
 
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
+    ChatCompletionResponse,
     ChatCompletionsParam,
     DeveloperChatMessage,
     SystemChatMessage,
@@ -18,9 +19,11 @@ from .budget import DEFAULT_CONTEXT_MAX_TOKENS, compact_messages_for_request
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from plyngent.lmproto.openai_compatible.client import OpenAICompatibleClient
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
-    from .client import ChatClient
+    from .types import AnyLLMClient
+
 
 _SUMMARY_SYSTEM = (
     "You compress chat histories for a coding agent. "
@@ -88,7 +91,7 @@ def soft_compact_transcript(
 
 
 async def summarize_messages(
-    client: ChatClient,
+    client: AnyLLMClient,
     messages: Sequence[AnyChatMessage],
     *,
     model: str,
@@ -140,7 +143,12 @@ async def summarize_messages(
         model=model,
         temperature=temperature if temperature is not None else UNSET,
     )
-    response = await client.chat_completions(param, stream=False)
+    response: ChatCompletionResponse
+    if getattr(client, "kind", "chat_completions") == "chat_completions":
+        response = await cast("OpenAICompatibleClient", client).chat_completions(param, stream=False)
+    else:
+        msg = f"summarization for client.kind={client.kind!r} is not implemented"
+        raise NotImplementedError(msg)
     if not response.choices:
         msg = "summarization response contained no choices"
         raise RuntimeError(msg)
