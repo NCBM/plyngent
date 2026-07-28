@@ -69,6 +69,7 @@ def _append_synthetic_todo_list(messages: list[AnyChatMessage], body: str) -> st
     messages.append(
         AssistantChatMessage(
             content=UNSET,
+            reasoning_content="",
             tool_calls=[
                 AssistantFunctionToolCall(
                     id=call_id,
@@ -130,7 +131,37 @@ def refresh_synthetic_todo_nags(
             continue
         messages[index] = ToolChatMessage(tool_call_id=msg.tool_call_id, content=body)
         updated += 1
+
+    # Synthetic assistant messages (tool calls but no reasoning_content) trip
+    # DeepSeek's rule: "if the model performed a tool call between two user
+    # messages, the assistant's reasoning_content must be passed back."
+    # Inject empty reasoning_content so the API doesn't reject the request.
+    updated += _inject_reasoning_content_for_synthetic(messages)
     return updated
+
+
+def _inject_reasoning_content_for_synthetic(
+    messages: list[AnyChatMessage],
+) -> int:
+    """Inject ``reasoning_content=\"\"`` into synthetic nag assistants that lack it."""
+    injected = 0
+    for index, msg in enumerate(messages):
+        if not isinstance(msg, AssistantChatMessage):
+            continue
+        tool_calls = msg.tool_calls
+        if tool_calls is UNSET or not tool_calls:
+            continue
+        if not any(
+            isinstance(c, AssistantFunctionToolCall) and is_synthetic_todo_nag_call_id(c.id) for c in tool_calls
+        ):
+            continue
+        if msg.reasoning_content is not UNSET:
+            continue
+        from msgspec import structs
+
+        messages[index] = structs.replace(msg, reasoning_content="")
+        injected += 1
+    return injected
 
 
 def inject_todo_nag(
