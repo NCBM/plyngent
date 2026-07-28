@@ -437,6 +437,12 @@ class ChatAgent:
             # have survived rollback (it looks like a committed tool batch).
             # Skip fresh injection — refresh_synthetic_todo_nags already updated
             # the content of the surviving pair above.
+            _turn_nag_skipped = (
+                self.todo_stack is not None
+                and not self.todo_stack.is_empty()
+                and _turn_nag_strategy == "synthetic_tool"
+                and _synthetic_todo_pair_after(self.messages, user_index)
+            )
             if (
                 self.todo_stack is not None
                 and not self.todo_stack.is_empty()
@@ -467,6 +473,7 @@ class ChatAgent:
                 max_context_tokens=self.max_context_tokens,
                 todo_stack=self.todo_stack,
                 todo_nag_strategy=_turn_nag_strategy,
+                turn_start_nag_skipped=_turn_nag_skipped,
                 directive_reminder_tokens=self.directive_reminder_tokens,
                 directive_reminder_text=self.directive_reminder_text,
                 reminder_last_band=self.reminder_last_band,
