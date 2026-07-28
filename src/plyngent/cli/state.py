@@ -16,6 +16,7 @@ from plyngent.cli.models_source import (
     fetch_remote_model_ids,
     model_choices_for_provider,
 )
+from plyngent.config import EffectiveProvider, resolve_effective_provider
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
 from plyngent.tools import InstanceState, SessionState
@@ -72,7 +73,7 @@ class ReplState:
 
     def __post_init__(self) -> None:
         # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
-        self.client = cast("ChatClient", cast("object", create_client(self.provider)))
+        self.client = cast("ChatClient", cast("object", create_client(self.provider, model=self.model)))
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
@@ -274,7 +275,7 @@ class ReplState:
         # Preserve live stream toggle if agent already exists.
         if hasattr(self, "agent"):
             self.stream_enabled = self.agent.stream
-        self.client = cast("ChatClient", cast("object", create_client(self.provider)))
+        self.client = cast("ChatClient", cast("object", create_client(self.provider, model=self.model)))
         self.agent = self._make_agent()
         # Restore history without re-marking already-stored messages as dirty.
         self.agent.replace_messages(messages, persist_from=persist_from)
@@ -285,8 +286,15 @@ class ReplState:
             self.invalidate_remote_models()
 
     def _models_cache_key(self) -> tuple[str, str]:
+        # Remote model lists belong to the provider endpoint used for discovery,
+        # not model-level overrides (the model is not selected yet there).
         url = getattr(self.provider, "url", "") or ""
         return (self.provider_name, str(url))
+
+    @property
+    def effective_provider(self) -> EffectiveProvider:
+        """Selected provider after model-level preset/url overrides."""
+        return resolve_effective_provider(self.provider, model=self.model)
 
     def invalidate_remote_models(self) -> None:
         """Drop cached remote model catalog (provider/client change)."""

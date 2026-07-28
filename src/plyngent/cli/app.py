@@ -268,7 +268,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
                 preferred_model=preferred_model,
                 interactive=interactive,
             ):
-                client = create_client(provider)
+                client = create_client(provider, model=preferred_model)
                 try:
                     if client_supports_models(client):
                         remote_ids = await fetch_remote_model_ids(client)

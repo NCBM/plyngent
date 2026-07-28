@@ -532,8 +532,10 @@ def status_cmd(state: ReplState) -> None:
     last_rounds = state.agent.last_turn_rounds
     ctx_tag = "api" if ctx_src == "api" else "est"
     ctx_tilde = "" if ctx_src == "api" else "~"
+    effective = state.effective_provider
     click.echo(
-        f"provider={state.provider_name}  model={state.model}\n"
+        f"provider={state.provider_name}  model={state.model}  "
+        f"preset={effective.preset}  url={effective.url}\n"
         f"session={state.session_id}  messages={len(state.agent.messages)}  "
         f"pending_retry={pending_disp}\n"
         f"tools={'on' if state.tools_enabled else 'off'}  "

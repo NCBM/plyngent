@@ -3,13 +3,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from plyngent.config.models import (
-    DeepseekProvider,
-    HttpTimeoutConfig,
-    OpenAICompatibleProvider,
-    OpenAIProvider,
-    Provider,
-)
+from plyngent.config.routing import EffectiveProvider, resolve_effective_provider
 from plyngent.lmproto.deepseek import DeepseekOpenAIClient
 from plyngent.lmproto.openai import OpenAIClient
 from plyngent.lmproto.openai_compatible import OpenAICompatibleClient, OpenAIConfig
@@ -20,11 +14,11 @@ from plyngent.lmproto.openai_compatible.config import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from plyngent.agent.responses_client import ResponsesChatClient
+    from plyngent.config.models import HttpTimeoutConfig, Provider
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | ResponsesChatClient
@@ -62,7 +56,6 @@ def normalize_http_timeout(timeout: float | HttpTimeoutConfig | None) -> HttpTim
             raise InvalidHttpTimeoutError(msg)
         return value
 
-    # Remaining union member: HttpTimeoutConfig
     connect = DEFAULT_HTTP_CONNECT_TIMEOUT if timeout.connect is None else float(timeout.connect)
     read = DEFAULT_HTTP_READ_TIMEOUT if timeout.read is None else float(timeout.read)
     if not math.isfinite(connect) or connect <= 0:
@@ -74,60 +67,50 @@ def normalize_http_timeout(timeout: float | HttpTimeoutConfig | None) -> HttpTim
     return (connect, read)
 
 
-def provider_to_openai_config(provider: OpenAIProvider | OpenAICompatibleProvider | DeepseekProvider) -> OpenAIConfig:
-    """Map a provider config entry to :class:`OpenAIConfig`."""
-    if isinstance(provider, OpenAIProvider):
-        base_url = provider.url or DEFAULT_OPENAI_BASE_URL
-    elif isinstance(provider, DeepseekProvider):
-        base_url = provider.url or DEFAULT_DEEPSEEK_BASE_URL
+def provider_to_openai_config(
+    provider: Provider | EffectiveProvider,
+    *,
+    model: str | None = None,
+) -> OpenAIConfig:
+    """Map provider/effective config to the shared OpenAI-compatible HTTP config."""
+    if isinstance(provider, EffectiveProvider):
+        effective = provider
     else:
-        base_url = provider.url
-        if not base_url:
-            msg = "openai-compatible provider requires a non-empty url"
-            raise ProviderNotSupportedError(msg)
+        effective = resolve_effective_provider(provider, model=model)
+    if not effective.url and effective.preset in {"openai-compatible", "deepseek"}:
+        msg = f"{effective.preset} provider requires a non-empty url"
+        raise ProviderNotSupportedError(msg)
     try:
-        http_timeout = normalize_http_timeout(provider.timeout)
+        http_timeout = normalize_http_timeout(effective.timeout)
     except InvalidHttpTimeoutError as exc:
         raise ProviderNotSupportedError(str(exc)) from exc
     return OpenAIConfig(
-        access_key_or_token=provider.access_key_or_token,
-        base_url=base_url,
+        access_key_or_token=effective.access_key_or_token,
+        base_url=effective.url,
         timeout=http_timeout,
     )
 
 
-def _deepseek_convention(extras: Mapping[str, str]) -> str:
-    return extras.get("convention", "openai").lower()
+def create_client(provider: Provider, *, model: str | None = None) -> ProtocolClient:
+    """Build a protocol client for *provider*, applying model-level routing.
 
-
-def create_client(provider: Provider) -> ProtocolClient:
-    """Build a protocol client for the given provider config entry.
-
-    OpenAI platform providers are wrapped so the agent uses the Responses API
-    while still exposing a chat-completions-shaped interface.
-
-    Raises:
-        ProviderNotSupportedError: When the provider preset (or DeepSeek convention)
-            has no implemented client yet.
+    ``preset`` always decides API conventions: ``openai`` → /responses,
+    ``openai-compatible`` → /chat/completions, ``anthropic`` → /messages.
     """
-    if isinstance(provider, OpenAIProvider):
+    effective = resolve_effective_provider(provider, model=model)
+    if effective.preset == "openai":
         from plyngent.agent.responses_client import wrap_openai_for_agent
 
         return wrap_openai_for_agent(
-            OpenAIClient(provider_to_openai_config(provider)),
-            provider_tools=provider.provider_tools or None,
+            OpenAIClient(provider_to_openai_config(effective)),
+            provider_tools=effective.provider_tools or None,
         )
-    if isinstance(provider, OpenAICompatibleProvider):
-        return OpenAICompatibleClient(provider_to_openai_config(provider))
-    if isinstance(provider, DeepseekProvider):
-        convention = _deepseek_convention(provider.extras)
-        if convention in {"openai", "openai_compat", "openai-compatible"}:
-            return DeepseekOpenAIClient(provider_to_openai_config(provider))
-        if convention == "anthropic":
-            msg = "deepseek anthropic convention is not implemented"
-            raise ProviderNotSupportedError(msg)
-        msg = f"unknown deepseek convention {convention!r}"
+    if effective.preset == "openai-compatible":
+        return OpenAICompatibleClient(provider_to_openai_config(effective))
+    if effective.preset == "deepseek":
+        return DeepseekOpenAIClient(provider_to_openai_config(effective))
+    if effective.preset == "anthropic":
+        msg = "anthropic preset is configured but native Anthropic client is not implemented yet"
         raise ProviderNotSupportedError(msg)
-    # Remaining Provider variant: AnthropicProvider
-    msg = "anthropic provider client is not implemented"
+    msg = f"provider preset {effective.preset!r} is not supported"
     raise ProviderNotSupportedError(msg)
