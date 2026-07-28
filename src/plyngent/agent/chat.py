@@ -25,7 +25,6 @@ from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 from .todo_nag import (
     DEFAULT_TODO_NAG_STRATEGY,
-    inject_todo_nag_for_stack_with_events,
     is_synthetic_todo_nag_call_id,
     parse_todo_nag_strategy,
     refresh_synthetic_todo_nags,
@@ -431,33 +430,6 @@ class ChatAgent:
         last_request = TokenUsage()
         try:
             _turn_nag_strategy: TodoNagStrategy = self.todo_nag_strategy
-            # Turn-start nag before first completion; yield events so CLI flushes
-            # (synthetic_tool → ToolCall/Result chrome, not glued to text).
-            # On retry, a synthetic_tool pair from a previous failed attempt may
-            # have survived rollback (it looks like a committed tool batch).
-            # Skip fresh injection — refresh_synthetic_todo_nags already updated
-            # the content of the surviving pair above.
-            _turn_nag_skipped = (
-                self.todo_stack is not None
-                and not self.todo_stack.is_empty()
-                and _turn_nag_strategy == "synthetic_tool"
-                and _synthetic_todo_pair_after(self.messages, user_index)
-            )
-            if (
-                self.todo_stack is not None
-                and not self.todo_stack.is_empty()
-                and (
-                    _turn_nag_strategy != "synthetic_tool" or not _synthetic_todo_pair_after(self.messages, user_index)
-                )
-            ):
-                _injected, nag_events = inject_todo_nag_for_stack_with_events(
-                    self.messages,
-                    self.todo_stack,
-                    kind="turn_start",
-                    strategy=_turn_nag_strategy,
-                )
-                for nag_event in nag_events:
-                    yield nag_event
 
             async for event in run_chat_loop(
                 self.client,
@@ -473,7 +445,6 @@ class ChatAgent:
                 max_context_tokens=self.max_context_tokens,
                 todo_stack=self.todo_stack,
                 todo_nag_strategy=_turn_nag_strategy,
-                turn_start_nag_skipped=_turn_nag_skipped,
                 directive_reminder_tokens=self.directive_reminder_tokens,
                 directive_reminder_text=self.directive_reminder_text,
                 reminder_last_band=self.reminder_last_band,

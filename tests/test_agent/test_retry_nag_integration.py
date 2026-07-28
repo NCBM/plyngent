@@ -1,8 +1,8 @@
-"""Integration tests: full run→fail→retry flow, synthetic_tool nag detection.
+"""Integration tests: full run-fail-retry flow, synthetic_tool nag detection.
 
 Uses mock clients to simulate model responses across retries, covering:
-- Turn-start nag skipped on retry (pair survived rollback)
-- End-of-turn nag NOT injected on retry (turn-start pair covers it)
+- No turn-start nag is ever injected (nag only fires after complete turns)
+- End-of-turn nag fires after a successful retry when model doesn't touch stack
 - No duplicate synthetic pairs accumulate in history
 """
 
@@ -14,9 +14,7 @@ import pytest
 from msgspec import UNSET
 
 from plyngent.agent import ChatAgent
-from plyngent.agent.todo_nag import (
-    is_synthetic_todo_nag_call_id,
-)
+from plyngent.agent.todo_nag import is_synthetic_todo_nag_call_id
 from plyngent.agent.todo_stack import TodoStack
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
@@ -149,8 +147,8 @@ class FailTwiceThenTextClient:
 
 
 @pytest.mark.asyncio
-async def test_retry_twice_no_extra_pairs() -> None:
-    """After two failed streams + one success, only 1 synthetic pair exists."""
+async def test_no_turn_start_nag_on_initial_run() -> None:
+    """No turn-start nag is injected on initial run — only end-of-turn."""
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")
 
@@ -167,75 +165,26 @@ async def test_retry_twice_no_extra_pairs() -> None:
         todo_nag_strategy="synthetic_tool",
     )
 
-    # First run fails
+    # First run fails — no turn-start nag
     with pytest.raises(RuntimeError, match="stream fail"):
         async for _ in agent.run("hi"):
             pass
 
-    assert count_synthetic_pairs(agent.messages) == 1, "1 pair after first run failure"
-
-    # First retry fails
-    with pytest.raises(RuntimeError, match="stream fail"):
-        async for _ in agent.retry():
-            pass
-
-    assert count_synthetic_pairs(agent.messages) == 1, "Still 1 pair after first retry failure — no duplicate injection"
-
-    # Second retry succeeds
-    async for _ in agent.retry():
-        pass
-
-    assert count_synthetic_pairs(agent.messages) == 1, "Still 1 pair after successful retry"
+    assert count_synthetic_pairs(agent.messages) == 0, "0 pairs after first failure"
 
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_retry_after_tool_round_completed() -> None:
-    """Tool calls executed + retry on next round produces no duplicate nag."""
+async def test_end_of_turn_nag_on_successful_retry() -> None:
+    """End-of-turn nag fires after a successful retry when stack untouched."""
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")
 
     stack = TodoStack()
     _ = stack.push("task B")
-    registry = None  # no tools, so model always returns text
 
-    call_count = 0
-
-    class ToolThenStreamFailClient:
-        @overload
-        async def chat_completions(
-            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
-        ) -> ChatCompletionResponse: ...
-
-        @overload
-        async def chat_completions(
-            self, param: ChatCompletionsParam, *, stream: Literal[True]
-        ) -> AsyncIterator[ChatCompletionChunk]: ...
-
-        async def chat_completions(
-            self, param: ChatCompletionsParam, *, stream: bool = False
-        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
-            nonlocal call_count
-            call_count += 1
-            if stream:
-                if call_count >= 3:
-                    return _stream_ok()
-                msg = f"stream fail #{call_count}"
-                raise RuntimeError(msg)
-            return _response(AssistantChatMessage(content="ok"))
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc: object) -> None:
-            return None
-
-    async def _stream_ok() -> AsyncIterator[ChatCompletionChunk]:
-        for chunk in _chunks_from_text("done"):
-            yield chunk
-
-    client = ToolThenStreamFailClient()
+    client = FailTwiceThenTextClient()
     agent = ChatAgent(
         client,
         model="m",
@@ -243,25 +192,24 @@ async def test_retry_after_tool_round_completed() -> None:
         session_id=session.sid,
         todo_stack=stack,
         todo_nag_strategy="synthetic_tool",
-        tools=registry,
     )
 
-    # First run fails
+    # Run fails
     with pytest.raises(RuntimeError, match="stream fail"):
         async for _ in agent.run("hi"):
             pass
 
-    # Retry fails again
+    # Retry fails
     with pytest.raises(RuntimeError, match="stream fail"):
         async for _ in agent.retry():
             pass
 
-    assert count_synthetic_pairs(agent.messages) == 1, "Only 1 pair after 2 failures"
+    assert count_synthetic_pairs(agent.messages) == 0, "0 pairs after failures"
 
-    # Final retry succeeds
+    # Retry succeeds — end-of-turn nag fires
     async for _ in agent.retry():
         pass
 
-    assert count_synthetic_pairs(agent.messages) == 1, "1 pair after final success — no extra nag pair"
+    assert count_synthetic_pairs(agent.messages) == 1, "1 pair after success (end-of-turn nag only)"
 
     await store.close()

@@ -386,7 +386,6 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     todo_stack: TodoStack | None = None,
     todo_nag_strategy: TodoNagStrategy = DEFAULT_TODO_NAG_STRATEGY,
-    turn_start_nag_skipped: bool = False,
     directive_reminder_tokens: int = DEFAULT_DIRECTIVE_REMINDER_TOKENS,
     directive_reminder_text: str | None = None,
     reminder_last_band: int = 0,
@@ -480,19 +479,12 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
             if not has_tools:
                 if todo_stack is not None and todo_stack.needs_review() and not todo_review_injected:
                     todo_review_injected = True
-                    # On retry, the turn-start nag was skipped (pair survived
-                    # rollback).  The model already has the stack reminder
-                    # in-history — skip the end-of-turn duplicate.
-                    if turn_start_nag_skipped:
-                        injected = False
-                        nag_events: list[AgentEvent] = []
-                    else:
-                        injected, nag_events = inject_todo_nag_for_stack_with_events(
-                            messages,
-                            todo_stack,
-                            kind="end_of_turn",
-                            strategy=todo_nag_strategy,
-                        )
+                    injected, nag_events = inject_todo_nag_for_stack_with_events(
+                        messages,
+                        todo_stack,
+                        kind="end_of_turn",
+                        strategy=todo_nag_strategy,
+                    )
                     for nag_event in nag_events:
                         yield nag_event
                     if injected:
