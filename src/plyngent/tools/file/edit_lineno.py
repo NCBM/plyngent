@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import ToolTag, tool, was_lineno_read
 from plyngent.tools.workspace import resolve_path
 
 if TYPE_CHECKING:
@@ -85,6 +85,11 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
     target = resolve_path(path)
     if not target.is_file():
         return f"error: not a file: {path}"
+    if not was_lineno_read(str(target)):
+        return (
+            f"error: read {path!r} first with read_file(path, with_lineno=true) "
+            "to get correct line numbers"
+        )
 
     text = target.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)

@@ -1,4 +1,8 @@
 from .chat import ChatAgent as ChatAgent
+from .chat import get_lineno_read_files as get_lineno_read_files
+from .chat import mark_lineno_read as mark_lineno_read
+from .chat import reset_lineno_tracker as reset_lineno_tracker
+from .chat import was_lineno_read as was_lineno_read
 from .compact import build_compacted_seed_messages as build_compacted_seed_messages
 from .compact import summarize_messages as summarize_messages
 from .events import AgentEvent as AgentEvent

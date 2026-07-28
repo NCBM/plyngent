@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 
 from msgspec import UNSET
@@ -44,6 +45,44 @@ if TYPE_CHECKING:
     from .types import AnyLLMClient
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
+
+
+# Per-conversation tracking of files read with ``with_lineno=True``.
+# Set to a fresh ``set`` at the start of each user turn via
+# :func:`reset_lineno_tracker`; cleared after the assistant finishes.
+# Tool handlers read/write via :func:`get_lineno_read_files`.
+_lineno_read_files: ContextVar[set[str] | None] = ContextVar("_lineno_read_files", default=None)
+
+
+def reset_lineno_tracker() -> Token[set[str] | None]:
+    """Replace the tracker with a fresh empty set; return the previous token.
+
+    Call at the start of a new user turn. Restore with
+    ``_lineno_read_files.reset(token)`` when the turn completes.
+    """
+    return _lineno_read_files.set(set())
+
+
+def get_lineno_read_files() -> set[str]:
+    """Return the current turn's set of line-numbered file paths.
+
+    Returns an empty set when no turn is active (tools will reject edits).
+    """
+    val = _lineno_read_files.get()
+    return val if val is not None else set()
+
+
+def mark_lineno_read(path: str) -> None:
+    """Record that *path* was read with line numbers this turn."""
+    val = _lineno_read_files.get()
+    if val is not None:
+        val.add(path)
+
+
+def was_lineno_read(path: str) -> bool:
+    """Return True if *path* was read with line numbers this turn."""
+    val = _lineno_read_files.get()
+    return val is not None and path in val
 
 
 def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
@@ -484,6 +523,7 @@ class ChatAgent:
 
     async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
         """Append a user message (persist immediately), run the tool loop, yield events."""
+        _ = reset_lineno_tracker()
         self._ensure_system_prompt()
         user_msg = UserChatMessage(content=user_text)
         self.messages.append(user_msg)
