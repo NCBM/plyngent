@@ -25,7 +25,7 @@ async def test_choose_user_tool_index() -> None:
             json.dumps(
                 {
                     "question": "Pick",
-                    "options": json.dumps(["alpha", "beta"]),
+                    "options": ["alpha", "beta"],
                     "allow_custom": False,
                 }
             ),
@@ -33,23 +33,44 @@ async def test_choose_user_tool_index() -> None:
     assert out == "alpha"
 
 
-async def test_choose_user_bad_options() -> None:
+async def test_choose_user_dict_options() -> None:
+    backend = ScriptedBackend(["1"])
+    with temporary_backend(backend):
+        registry = ToolRegistry([choose_user])
+        out = await registry.execute(
+            "ask_user_choice",
+            json.dumps(
+                {
+                    "question": "Pick",
+                    "options": [{"label": "yes", "description": "affirm"}],
+                }
+            ),
+        )
+    assert out == "yes"
+
+
+async def test_choose_user_invalid_options() -> None:
     registry = ToolRegistry([choose_user])
     out = await registry.execute(
         "ask_user_choice",
-        json.dumps({"question": "Pick", "options": "not-json"}),
+        json.dumps({"question": "Pick", "options": [42]}),
     )
-    assert out.startswith("error:")
+    assert "error" in out
 
 
 async def test_form_user_tool() -> None:
     backend = ScriptedBackend(["ncbm"], confirms=[True])
-    fields = json.dumps([{"name": "user", "prompt": "User?"}])
     with temporary_backend(backend):
         registry = ToolRegistry([form_user])
         out = await registry.execute(
             "ask_user_form",
-            json.dumps({"title": "Setup", "fields": fields, "confirm_submit": True}),
+            json.dumps(
+                {
+                    "title": "Setup",
+                    "fields": [{"name": "user", "prompt": "User?"}],
+                    "confirm_submit": True,
+                }
+            ),
         )
     assert json.loads(out) == {"user": "ncbm"}
 

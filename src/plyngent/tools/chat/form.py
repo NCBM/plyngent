@@ -8,25 +8,14 @@ from plyngent.prompting import FormField, NonInteractiveError, form_async
 from plyngent.tools.chat.choose import parse_options
 
 
-def parse_fields(raw: str) -> list[FormField]:
-    """Parse form fields JSON array of objects."""
-    text = raw.strip()
-    if not text:
-        return []
-    try:
-        data: object = json.loads(text)
-    except json.JSONDecodeError as exc:
-        msg = f"fields must be JSON: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(data, list) or not data:
-        msg = "fields must be a non-empty JSON array"
+def parse_fields(fields: list[dict[str, object]]) -> list[FormField]:
+    """Normalize a list of field dicts into ``FormField`` list."""
+    if not fields:
+        msg = "fields must be a non-empty list"
         raise ValueError(msg)
     out: list[FormField] = []
-    for item_obj in cast("list[object]", data):
-        if not isinstance(item_obj, dict):
-            msg = "each field must be a JSON object"
-            raise TypeError(msg)
-        raw_map = {str(key): value for key, value in cast("dict[object, object]", item_obj).items()}
+    for item_obj in fields:
+        raw_map = {str(key): value for key, value in item_obj.items()}
         name = raw_map.get("name")
         prompt = raw_map.get("prompt")
         if not isinstance(name, str) or not name:
@@ -39,7 +28,10 @@ def parse_fields(raw: str) -> list[FormField]:
         options_raw = raw_map.get("options")
         options = None
         if options_raw is not None:
-            options = parse_options(json.dumps(options_raw))
+            if not isinstance(options_raw, list):
+                msg = f"field {name!r} options must be a list"
+                raise TypeError(msg)
+            options = parse_options(cast("list[object]", options_raw))
         allow_custom_obj = raw_map.get("allow_custom", True)
         allow_custom = allow_custom_obj if isinstance(allow_custom_obj, bool) else True
         out.append(
@@ -55,12 +47,18 @@ def parse_fields(raw: str) -> list[FormField]:
 
 
 @tool(name="ask_user_form", tags=ToolTag.LOCAL)
-async def form_user(title: str, fields: str, *, confirm_submit: bool = True) -> str:
+async def form_user(
+    title: str,
+    fields: list[dict[str, object]],
+    *,
+    confirm_submit: bool = True,
+) -> str:
     """Run a multi-step form with the human; returns JSON object of answers.
 
-    ``fields`` is a JSON array of objects:
-    ``name``, ``prompt``, optional ``default``, optional ``options`` (same shape
-    as ask_user_choice), optional ``allow_custom`` (default true).
+    ``fields`` is a list of objects:
+    ``name`` (required), ``prompt`` (required), optional ``default``,
+    optional ``options`` (same shape as ask_user_choice),
+    optional ``allow_custom`` (default true).
     When ``confirm_submit`` is true, the human reviews a summary before submit.
     """
     try:
