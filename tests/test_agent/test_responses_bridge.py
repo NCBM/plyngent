@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 import msgspec
-import pytest
 
 from plyngent.agent.responses_bridge import (
     chat_messages_to_responses_input,
@@ -11,8 +8,7 @@ from plyngent.agent.responses_bridge import (
     responses_status_to_finish_reason,
     tool_items_to_response_tools,
 )
-from plyngent.agent.responses_client import ResponsesChatClient
-from plyngent.lmproto.openai.model import Response, ResponsesCreateParam
+from plyngent.lmproto.openai.model import Response
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionTool,
@@ -158,43 +154,3 @@ def test_provider_tools_merged_after_local_functions() -> None:
     assert tools[0].name == "local_tool"
     assert tools[1]["type"] == "web_search"
     assert tools[2]["vector_store_ids"] == ["vs_1"]
-
-
-@pytest.mark.asyncio
-async def test_responses_chat_client_non_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    from plyngent.lmproto.openai.client import OpenAIClient
-    from plyngent.lmproto.openai_compatible.config import OpenAIConfig
-
-    platform = OpenAIClient(OpenAIConfig(access_key_or_token="sk", base_url="https://example/v1"))
-
-    body = {
-        "id": "resp_x",
-        "object": "response",
-        "created_at": 1,
-        "model": "gpt-test",
-        "status": "completed",
-        "output": [
-            {
-                "id": "msg_1",
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": [{"type": "output_text", "text": "hello", "annotations": []}],
-            }
-        ],
-        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
-    }
-
-    async def fake_responses(param: ResponsesCreateParam, *, stream: bool = False):
-        assert stream is False
-        assert param.model == "gpt-test"
-        assert param.store is False
-        return msgspec.convert(body, Response)
-
-    monkeypatch.setattr(platform, "responses", fake_responses)
-    client = ResponsesChatClient(platform)
-    result = await client.chat_completions(
-        ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="hi")]),
-        stream=False,
-    )
-    assert result.choices[0].message.content == "hello"

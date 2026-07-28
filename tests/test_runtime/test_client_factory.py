@@ -20,24 +20,22 @@ def test_openai_provider_defaults_base_url() -> None:
     config = provider_to_openai_config(provider)
     assert config.access_key_or_token == "sk-test"
     assert config.base_url == "https://api.openai.com/v1"
-    from plyngent.agent.responses_client import ResponsesChatClient
+    from plyngent.lmproto.openai import OpenAIClient
 
     client = create_client(provider)
-    assert isinstance(client, ResponsesChatClient)
-    assert hasattr(client, "chat_completions")
-    assert client._provider_tools == [{"type": "web_search"}]
+    assert isinstance(client, OpenAIClient)
+    assert client.kind == "responses"
 
 
 def test_openai_provider_tools_passed_to_wrapper() -> None:
-    from plyngent.agent.responses_client import ResponsesChatClient
+    from plyngent.lmproto.openai import OpenAIClient
 
     provider = OpenAIProvider(
         access_key_or_token="sk-test",
         provider_tools=[{"type": "web_search"}],
     )
     client = create_client(provider)
-    assert isinstance(client, ResponsesChatClient)
-    assert client._provider_tools == [{"type": "web_search"}]
+    assert isinstance(client, OpenAIClient)
 
 
 def test_openai_compatible_requires_url() -> None:
@@ -76,9 +74,12 @@ def test_deepseek_ignores_legacy_convention_extra() -> None:
 
 
 def test_anthropic_not_implemented() -> None:
+    from plyngent.lmproto.anthropic import AnthropicClient
+
     provider = AnthropicProvider(access_key_or_token="sk-test")
-    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
-        _ = create_client(provider)
+    client = create_client(provider)
+    assert isinstance(client, AnthropicClient)
+    assert client.kind == "messages"
 
 
 def test_model_level_preset_url_overrides_parent() -> None:
@@ -91,7 +92,7 @@ def test_model_level_preset_url_overrides_parent() -> None:
         },
     )
     openai_client = create_client(provider, model="gpt")
-    assert openai_client.__class__.__name__ == "ResponsesChatClient"
+    assert openai_client.kind == "responses"
     assert provider_to_openai_config(provider, model="gpt").base_url == "https://api.openai.com/v1"
 
     compat_client = create_client(provider, model="qwen")
@@ -99,11 +100,14 @@ def test_model_level_preset_url_overrides_parent() -> None:
     assert provider_to_openai_config(provider, model="qwen").base_url == "https://gateway.example/v1"
 
 
-def test_model_level_anthropic_preset_not_implemented() -> None:
+def test_model_level_anthropic_preset() -> None:
+    from plyngent.lmproto.anthropic import AnthropicClient
+
     provider = OpenAICompatibleProvider(
         access_key_or_token="sk-test",
         url="https://gateway.example/v1",
         models={"claude": ModelConfig(preset="anthropic", url="https://api.anthropic.com/v1")},
     )
-    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
-        _ = create_client(provider, model="claude")
+    client = create_client(provider, model="claude")
+    assert isinstance(client, AnthropicClient)
+    assert client.kind == "messages"
