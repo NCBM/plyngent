@@ -5,6 +5,7 @@ import pytest
 from plyngent.config.models import (
     AnthropicProvider,
     DeepseekProvider,
+    ModelConfig,
     OpenAICompatibleProvider,
     OpenAIProvider,
 )
@@ -65,16 +66,44 @@ def test_deepseek_openai_convention() -> None:
     assert "deepseek-v4-pro" in provider.models
 
 
-def test_deepseek_anthropic_convention_not_implemented() -> None:
+def test_deepseek_ignores_legacy_convention_extra() -> None:
     provider = DeepseekProvider(
         access_key_or_token="sk-test",
         extras={"convention": "anthropic"},
     )
-    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
-        _ = create_client(provider)
+    client = create_client(provider)
+    assert isinstance(client, DeepseekOpenAIClient)
 
 
 def test_anthropic_not_implemented() -> None:
     provider = AnthropicProvider(access_key_or_token="sk-test")
     with pytest.raises(ProviderNotSupportedError, match="anthropic"):
         _ = create_client(provider)
+
+
+def test_model_level_preset_url_overrides_parent() -> None:
+    provider = OpenAICompatibleProvider(
+        access_key_or_token="sk-test",
+        url="https://gateway.example/v1",
+        models={
+            "gpt": ModelConfig(preset="openai", url="https://api.openai.com/v1"),
+            "qwen": ModelConfig(),
+        },
+    )
+    openai_client = create_client(provider, model="gpt")
+    assert openai_client.__class__.__name__ == "ResponsesChatClient"
+    assert provider_to_openai_config(provider, model="gpt").base_url == "https://api.openai.com/v1"
+
+    compat_client = create_client(provider, model="qwen")
+    assert isinstance(compat_client, OpenAICompatibleClient)
+    assert provider_to_openai_config(provider, model="qwen").base_url == "https://gateway.example/v1"
+
+
+def test_model_level_anthropic_preset_not_implemented() -> None:
+    provider = OpenAICompatibleProvider(
+        access_key_or_token="sk-test",
+        url="https://gateway.example/v1",
+        models={"claude": ModelConfig(preset="anthropic", url="https://api.anthropic.com/v1")},
+    )
+    with pytest.raises(ProviderNotSupportedError, match="anthropic"):
+        _ = create_client(provider, model="claude")

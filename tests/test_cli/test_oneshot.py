@@ -129,10 +129,10 @@ access_key_or_token = "sk"
                 usage={},
             )
 
-    monkeypatch.setattr("plyngent.cli.app.create_client", lambda _p: DummyClient())
+    monkeypatch.setattr("plyngent.cli.app.create_client", lambda _p, **_kw: DummyClient())
     monkeypatch.setattr(
         "plyngent.cli.state.create_client",
-        lambda _p: DummyClient(),
+        lambda _p, **_kw: DummyClient(),
     )
 
     from platformdirs import user_data_path

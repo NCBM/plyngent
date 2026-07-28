@@ -189,6 +189,30 @@ models = {}
         _ = config.promote_provider("hollow", [])
 
 
+def test_model_level_preset_url_overrides_parse(tmp_path: Path) -> None:
+    path = tmp_path / "mixed.toml"
+    _ = path.write_text(
+        """
+[providers.mixed]
+preset = "openai-compatible"
+url = "https://gateway.example/v1"
+access_key_or_token = "sk-test"
+
+[providers.mixed.models]
+"claude" = { text = true, preset = "anthropic", url = "https://api.anthropic.com/v1" }
+"qwen" = { text = true }
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    provider = config.providers["mixed"]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.models["claude"].preset == "anthropic"
+    assert provider.models["claude"].url == "https://api.anthropic.com/v1"
+    assert provider.models["qwen"].preset == ""
+    assert provider.models["qwen"].url == ""
+
+
 def test_read_invalid_config() -> None:
     with pytest.raises(ConfigFormatError):
         _ = plyngent.config.load(Path(__file__).parent / "plyngent-invalid.toml")

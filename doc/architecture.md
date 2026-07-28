@@ -20,7 +20,8 @@
     - memory: Storage controlling for sessions and messages.
     - router: Multi-source capability routing (Phase H; not implemented).
     - config: Plyngent configuration center (TOML), including ``[plugins]`` and
-      ``[networking]`` (e.g. fetch SSRF Fake-IP CIDR exemptions).
+      ``[networking]`` (e.g. fetch SSRF Fake-IP CIDR exemptions). Model entries
+      may override provider ``preset`` / ``url`` for mixed API routing.
     - agent: Tool loop, streaming, usage, compact; `@tool` / tags / registry.
     - tools: Workspace file/process/VCS/chat/todo/net tools; catalog; plugins;
       instance/session context and views.
