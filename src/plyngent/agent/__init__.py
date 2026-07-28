@@ -1,5 +1,4 @@
 from .chat import ChatAgent as ChatAgent
-from .client import ChatClient as ChatClient
 from .compact import build_compacted_seed_messages as build_compacted_seed_messages
 from .compact import summarize_messages as summarize_messages
 from .events import AgentEvent as AgentEvent
@@ -14,8 +13,6 @@ from .events import ToolResultEvent as ToolResultEvent
 from .events import UsageEvent as UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS as DEFAULT_MAX_ROUNDS
 from .loop import run_chat_loop as run_chat_loop
-from .responses_client import ResponsesChatClient as ResponsesChatClient
-from .responses_client import wrap_openai_for_agent as wrap_openai_for_agent
 from .tools import DangerClassifier as DangerClassifier
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolDefinition as ToolDefinition
