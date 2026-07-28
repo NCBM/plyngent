@@ -180,6 +180,8 @@ class BaseOpenAIClient:
 class OpenAICompatibleClient(BaseOpenAIClient):
     """Chat Completions only (``POST /chat/completions`` + ``GET /models``)."""
 
+    kind: str = "chat_completions"
+
     def __init__(self, config: OpenAIConfig) -> None:
         super().__init__(config)
 

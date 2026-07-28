@@ -30,6 +30,8 @@ def _inject_thinking(data: bytes) -> bytes:
 
 
 class DeepseekOpenAIClient(BaseOpenAIClient):
+    kind: str = "chat_completions"
+
     def __init__(self, config: OpenAIConfig) -> None:
         super().__init__(config)
 

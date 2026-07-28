@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 class OpenAIClient(BaseOpenAIClient):
     """Full OpenAI HTTP client (``/chat/completions`` + ``/responses`` + ``/models``)."""
 
+    kind: str = "responses"
+
     response_decoder: msgspec.json.Decoder[Response]
     response_deleted_decoder: msgspec.json.Decoder[ResponseDeleted]
     response_event_decoder: msgspec.json.Decoder[ResponseStreamEvent]
