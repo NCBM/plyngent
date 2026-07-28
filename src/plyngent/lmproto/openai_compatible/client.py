@@ -8,6 +8,7 @@ import niquests
 from msgspec import UNSET
 from niquests.auth import BearerTokenAuth
 
+from .compat import coerce_chat_completions_param
 from .config import OpenAIConfig  # noqa: TC001
 from .model import (
     AssistantFunctionTool,
@@ -196,7 +197,7 @@ class OpenAICompatibleClient(BaseOpenAIClient):
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         # Library pattern: async def returns AsyncIterator when stream=True.
-        param = msgspec.structs.replace(param, stream=stream)
+        param = coerce_chat_completions_param(msgspec.structs.replace(param, stream=stream))
         data = self.encoder.encode(param)
         if stream:
             resp = await self.session.post(

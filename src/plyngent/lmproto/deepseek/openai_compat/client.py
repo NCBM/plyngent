@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import msgspec
 
 from ...openai_compatible.client import BaseOpenAIClient, read_response_body
+from ...openai_compatible.compat import coerce_chat_completions_param_any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -29,7 +30,7 @@ class DeepseekOpenAIClient(BaseOpenAIClient):
     async def chat_completions(
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
-        param = msgspec.structs.replace(param, stream=stream)
+        param = coerce_chat_completions_param_any(msgspec.structs.replace(param, stream=stream))
         data = self.encoder.encode(param)
         if stream:
             resp = await self.session.post(
