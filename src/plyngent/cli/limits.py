@@ -98,9 +98,17 @@ def _echo_tool_confirm(name: str, reason: str) -> None:
     backend.echo()
 
 
+def _echo_continue_limit(reason: str) -> None:
+    """Echo the limit reason as a standalone line (not jammed into a confirm prompt)."""
+    backend = get_prompt_backend()
+    backend.secho(f"[limit] {reason}", fg="yellow")
+    backend.echo()
+
+
 def _prompt_continue_limit_sync(reason: str) -> bool:
     try:
-        return confirm(f"[limit] {reason}\nRaise limit and continue?", default=True)
+        _echo_continue_limit(reason)
+        return confirm("Raise limit and continue?", default=True)
     except NonInteractiveError:
         return False
 
@@ -114,10 +122,13 @@ def prompt_continue_limit(reason: str) -> bool:
 async def prompt_continue_limit_async(reason: str) -> bool:
     """Async variant: confirm off the event loop so the turn is not cancelled."""
     try:
-        return await confirm_async(
-            f"[limit] {reason}\nRaise limit and continue?",
-            default=True,
-        )
+        from plyngent.prompting import run_prompt_async
+
+        def _run() -> bool:
+            _echo_continue_limit(reason)
+            return confirm("Raise limit and continue?", default=True)
+
+        return await run_prompt_async(_run)
     except NonInteractiveError:
         return False
 

@@ -491,7 +491,7 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
                         continue
                 return
 
-        reason = f"tool loop reached {allowance} rounds (used {rounds_used})"
+        reason = f"tool loop limit reached ({allowance} rounds)"
         if on_limit is not None and await _call_on_limit(on_limit, reason):
             yield MaxRoundsEvent(rounds=allowance, continued=True)
             allowance += max_rounds
