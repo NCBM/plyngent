@@ -20,6 +20,11 @@ from .models import PluginsConfig as PluginsConfig
 from .models import ProviderConfig as ProviderConfig
 from .models import compose_agent_system_content as compose_agent_system_content
 from .path import get_default_path as _get_default_path
+from .routing import EffectiveProvider as EffectiveProvider
+from .routing import ProviderPreset as ProviderPreset
+from .routing import default_url_for_preset as default_url_for_preset
+from .routing import provider_preset as provider_preset
+from .routing import resolve_effective_provider as resolve_effective_provider
 from .store import ConfigFormatError as ConfigFormatError
 from .store import ConfigStore as ConfigStore
 

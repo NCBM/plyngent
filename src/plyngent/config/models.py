@@ -142,7 +142,13 @@ class NetworkingConfig(Struct, omit_defaults=True):
 
 
 class ModelConfig(Struct, omit_defaults=True):
-    """Capability flags for a model within a provider."""
+    """Capability flags and optional routing overrides for a model.
+
+    ``preset`` / ``url`` override the parent provider for this model only.
+    ``preset`` keeps the same meanings as provider presets:
+    ``openai`` → /responses, ``openai-compatible`` → /chat/completions,
+    ``anthropic`` → /messages (native support planned), ``deepseek`` → DeepSeek.
+    """
 
     text: bool = True
     image_in: bool = False
@@ -152,6 +158,8 @@ class ModelConfig(Struct, omit_defaults=True):
     video_in: bool = False
     video_out: bool = False
     cost_factor: float = 1.0
+    preset: str = ""
+    url: str = ""
 
 
 class HttpTimeoutConfig(Struct, omit_defaults=True):
@@ -202,6 +210,7 @@ def _default_openai_provider_tools() -> list[dict[str, Any]]:
 class OpenAIProvider(ProviderConfig, tag="openai"):
     """OpenAI platform provider (agent uses Responses API).
 
+    ``url`` should include the API version path (default: ``https://api.openai.com/v1``).
     ``provider_tools`` are hosted/provider-side tools (e.g. web_search) passed
     through to ``POST /responses`` as opaque dicts. They are **not** local
     ``ToolRegistry`` handlers and are ignored by non-OpenAI clients.
