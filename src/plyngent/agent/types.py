@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from plyngent.lmproto.anthropic.client import AnthropicClient
-from plyngent.lmproto.deepseek import DeepseekOpenAIClient, DeepseekResponsesClient
+from plyngent.lmproto.deepseek import (
+    DeepseekAnthropicClient,
+    DeepseekOpenAIClient,
+    DeepseekResponsesClient,
+)
 from plyngent.lmproto.openai.client import OpenAIClient
 from plyngent.lmproto.openai_compatible.client import OpenAICompatibleClient
 
 type AnyLLMClient = (
-    OpenAICompatibleClient | DeepseekOpenAIClient | DeepseekResponsesClient | OpenAIClient | AnthropicClient
+    OpenAICompatibleClient
+    | DeepseekOpenAIClient
+    | DeepseekResponsesClient
+    | DeepseekAnthropicClient
+    | OpenAIClient
+    | AnthropicClient
 )

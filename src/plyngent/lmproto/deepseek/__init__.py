@@ -1,3 +1,4 @@
+from .anthropic.client import DeepseekAnthropicClient as DeepseekAnthropicClient
 from .openai_compat.client import DeepseekOpenAIClient as DeepseekOpenAIClient
 from .openai_compat.model import AnyChatMessage as AnyChatMessage
 from .openai_compat.model import AssistantChatMessage as AssistantChatMessage
