@@ -161,20 +161,20 @@ def responses_status_to_finish_reason(
     has_tool_calls: bool,
 ) -> str:
     """Map Responses ``status`` to a chat-style finish_reason for the agent loop."""
+    from .finish_reason import chat_finish_reason
+
     status = response.status
     status_s = status if isinstance(status, str) else None
     if status_s == "incomplete":
         details = response.incomplete_details
         if details is not UNSET and details is not None:
             raw_reason = details.reason
-            if raw_reason is not UNSET and raw_reason == "content_filter":
-                return "content_filter"
+            if raw_reason is not UNSET:
+                return chat_finish_reason(raw_reason, has_tool_calls=False)
         return "length"
     if status_s in {"failed", "cancelled"}:
         return status_s
-    if has_tool_calls:
-        return "tool_calls"
-    return "stop"
+    return chat_finish_reason(status_s, has_tool_calls=has_tool_calls)
 
 
 def response_to_chat_completion(response: Response) -> ChatCompletionResponse:

@@ -228,15 +228,9 @@ def anthropic_stop_to_finish_reason(
     has_tool_calls: bool,
 ) -> str:
     """Map Anthropic ``stop_reason`` to a chat-style finish_reason."""
-    reason = (stop_reason or "").lower() or None
-    if reason == "max_tokens":
-        return "length"
-    if reason in {"refusal", "content_filter"}:
-        return "content_filter"
-    if reason == "tool_use" or has_tool_calls:
-        return "tool_calls"
-    # end_turn, stop_sequence, None, …
-    return "stop"
+    from .finish_reason import chat_finish_reason
+
+    return chat_finish_reason(stop_reason, has_tool_calls=has_tool_calls)
 
 
 def anthropic_usage_to_dict(usage: AnthropicUsage | dict[str, Any] | None) -> dict[str, Any] | None:
