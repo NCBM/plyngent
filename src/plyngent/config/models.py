@@ -21,7 +21,9 @@ DEFAULT_TOOL_DIRECTIVES = """\
 fix `old_string` or `max_replaces`; shell workarounds rarely help.
 - `edit_replace` defaults to the first match; if remaining matches are reported, \
 raise `max_replaces` or narrow `old_string`.
-- Before `edit_lineno`, `read_file` with `with_lineno=true`.
+- `edit_lineno` edits only lines you read via `read_file(path, with_lineno=true)`; \
+re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, \
+since line numbers go stale.
 
 ### Commands
 - Prefer `run_command` / `run_command_batch` (argv, no shell) over `bash -c` or similar.

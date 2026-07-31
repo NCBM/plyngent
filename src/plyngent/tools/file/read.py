@@ -29,7 +29,8 @@ async def read_file(
 
     ``offset`` is 0-based line start; ``limit`` is max lines (None = rest of file).
     When ``with_lineno`` is true, each line is prefixed with its 1-based file line
-    number (``     N|…``), matching ``edit_lineno`` numbering.
+    number (``     N|…``), matching ``edit_lineno`` numbering, and those lines are
+    marked readable for ``edit_lineno`` this turn.
     """
     target = resolve_path(path)
     if not target.is_file():
