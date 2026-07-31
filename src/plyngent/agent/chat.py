@@ -26,7 +26,6 @@ from .events import UsageEvent
 from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
 from .todo_nag import (
     DEFAULT_TODO_NAG_STRATEGY,
-    is_synthetic_todo_nag_call_id,
     parse_todo_nag_strategy,
     refresh_synthetic_todo_nags,
 )
@@ -151,37 +150,6 @@ def committed_prefix_end(messages: Sequence[AnyChatMessage], user_index: int) ->
         end = j
         i = j
     return end
-
-
-def _synthetic_todo_pair_after(
-    messages: Sequence[AnyChatMessage],
-    index: int,
-) -> bool:
-    """True when a synthetic todo nag pair sits at ``messages[index+1:index+3]``.
-
-    The pattern is ``AssistantChatMessage`` (all tool calls synthetic) followed
-    by a matching ``ToolChatMessage`` with a synthetic call id.
-    On retry after a failed turn, a previously injected turn-start nag may still
-    be in messages (survived rollback). This detects it so we can skip a fresh
-    injection.
-    """
-    if index + 2 >= len(messages):
-        return False
-    first = messages[index + 1]
-    if not isinstance(first, AssistantChatMessage):
-        return False
-    tool_calls = first.tool_calls
-    if tool_calls is UNSET or not tool_calls:
-        return False
-    if not all(
-        isinstance(call, AssistantFunctionToolCall) and is_synthetic_todo_nag_call_id(call.id) for call in tool_calls
-    ):
-        return False
-    synth_ids = {call.id for call in tool_calls if isinstance(call, AssistantFunctionToolCall)}
-    second = messages[index + 2]
-    if not isinstance(second, ToolChatMessage):
-        return False
-    return second.tool_call_id in synth_ids
 
 
 class ChatAgent:

@@ -16,7 +16,6 @@ from plyngent.prompting import (
     choose_async,
     configure_prompting,
     confirm,
-    confirm_async,
     get_prompt_backend,
 )
 from plyngent.tools.process.pty_session import PtyManager
