@@ -39,15 +39,18 @@ All protocol models use `msgspec.Struct` — not dataclasses, not Pydantic. Opti
 ```
 lmproto/openai_compatible/     ← Base: model, config, client
 lmproto/openai/                ← OpenAI platform: Responses + chat (extends base)
+lmproto/anthropic/             ← Anthropic Messages: model, config, client
 lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 ```
 
 - **`openai_compatible/model.py`** — tagged chat messages (`SystemChatMessage`, `UserChatMessage`, …), tools, request/response, streaming chunks.
-- **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAICompatibleClient` via `niquests` async + SSE; `chat_completions`, `models` only (`OpenAIClient` is a compat alias).
+- **`openai_compatible/client.py`** — `BaseOpenAIClient` / `OpenAICompatibleClient` via `niquests` async + SSE; `chat_completions`, `models` only.
 - **`openai_compatible/config.py`** — `OpenAIConfig` (token + base URL).
 - **`openai/model.py`** — OpenAI Responses API (`ResponsesCreateParam`, `Response`, function_call items, stream events).
-- **`openai/client.py`** — platform `OpenAIClient`: chat completions + `responses` / `get_response` / `delete_response`.
-- **DeepSeek** — `DeepseekOpenAIClient`; models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`.
+- **`openai/client.py`** — platform `OpenAIClient` (`kind="responses"`): chat completions + `responses` / `get_response` / `delete_response`.
+- **`anthropic/model.py`** — Anthropic Messages request/response + SSE event models.
+- **`anthropic/client.py`** — `AnthropicClient` (`kind="messages"`): `POST /messages` + `GET /models`.
+- **DeepSeek** — `DeepseekOpenAIClient` (`kind="chat_completions"`); models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`.
 
 ### Config (`config/`)
 
@@ -55,7 +58,7 @@ TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]
 
 ### Runtime (`runtime/`)
 
-`create_client(provider)` maps config `Provider` → protocol client. `provider_to_openai_config` normalizes `timeout` via `normalize_http_timeout` into `OpenAIConfig.timeout` for `niquests.AsyncSession`. OpenAI → `lmproto.openai.OpenAIClient` (Responses-capable); openai-compatible / deepseek(openai convention) → chat-completions clients; anthropic and deepseek anthropic convention raise `ProviderNotSupportedError`.
+`create_client(provider)` maps config `Provider` → protocol client by effective preset (model-level `preset`/`url` overrides apply). `normalize_http_timeout` feeds OpenAI-compatible configs and Anthropic. Mapping: `openai` → `OpenAIClient` (agent uses Responses), `openai-compatible` / `deepseek` → chat-completions clients, `anthropic` → `AnthropicClient`.
 
 ### Memory (`memory/`)
 
@@ -63,13 +66,14 @@ Async SQLAlchemy + aiosqlite. `MemoryStore`: schema init (+ lightweight SQLite `
 
 ### Agent (`agent/`)
 
-- **`ChatClient`** Protocol for `chat_completions` (agent history stays chat-shaped).
-- **OpenAI Responses integration**: `ResponsesChatClient` adapts platform `OpenAIClient.responses` to `ChatClient`; selected automatically for `OpenAIProvider` in `create_client`. Compat/DeepSeek stay on chat completions.
-- **Provider-side tools**: `OpenAIProvider.provider_tools` (list of dicts; default `[{type="web_search"}]` when omitted; `[]` disables) merged into Responses `tools` alongside local function tools; never executed by `ToolRegistry`.
+- **Kind-based dispatch**: clients expose `kind` (`chat_completions` | `responses` | `messages`). Agent history stays chat-completions-shaped; transport adapters return synthetic `ChatCompletionResponse` / stream chunks.
+- **`responses_bridge` / `responses_dispatch`**: chat ↔ OpenAI Responses; stream text/reasoning deltas; tool calls + usage on `response.completed`.
+- **`messages_bridge` / `messages_dispatch`**: chat ↔ Anthropic Messages; system fold; tool_use/tool_result; stream text + tool argument fragments.
+- **Provider-side tools**: `OpenAIProvider.provider_tools` (list of dicts; default `[{type="web_search"}]` when omitted; `[]` disables) threaded via `ChatAgent`/`run_chat_loop` into Responses only; never executed by `ToolRegistry`.
 - **`@tool` / `ToolRegistry`**: decorator infers JSON Schema from type hints; execute tools by name.
 - **`run_chat_loop`**: multi-round tool loop; default **streaming** text deltas + stream tool-call merge; parallel tools; tool-result char budget; soft context compact on request (**API-calibrated** after first usage when available); cooperative cancel points; optional `on_limit`.
-- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; **completed tool batches checkpointed** mid-turn; unfinished assistant suffix rolled back on failure); `stream`; system prompt; `retry()` continues incomplete turns (user-only **or** after committed tools — does not re-run those tools).
-- **`/compact`**: soft-compact tool dumps → model summary (no tools) → **new** session seeded with summary message. Soft-compact keeps the last **12** tool results full-size by default (`DEFAULT_RECENT_TOOL_RESULTS`); older tool payloads shrink first.
+- **`ChatAgent`**: optional `MemoryStore` (user message persisted immediately; **completed tool batches checkpointed** mid-turn; unfinished assistant suffix rolled back on failure); `stream`; system prompt; `provider_tools`; `retry()` continues incomplete turns (user-only **or** after committed tools — does not re-run those tools).
+- **`/compact`**: soft-compact tool dumps → model summary (no tools) via the same kind dispatch → **new** session seeded with summary message. Soft-compact keeps the last **12** tool results full-size by default (`DEFAULT_RECENT_TOOL_RESULTS`); older tool payloads shrink first.
 - Events: text_delta, **reasoning_delta**, assistant_message, tool_call/result, max_rounds, **error** (`retryable`/`source`), **cancelled** (`reason`), **usage** (`TokenUsage`).
 - Usage: API `usage` from completions (stream with `include_usage`); **char≈token fallback** (~4 chars/token) when omitted; **context size** = last request ``prompt_tokens`` (API preferred); `last_turn_usage` / `session_usage` are **billed sums** (tool rounds re-send history); CLI end-of-turn + `/status`.
 - Config ``[agent]``: `system_prompt` (persona; default `DEFAULT_SYSTEM_PROMPT`; `""` omits persona), `tool_directives` (tool playbook; default `DEFAULT_TOOL_DIRECTIVES`; `""` omits playbook; both empty → no system), `max_tool_result_chars`, `parallel_tools`, `confirm_destructive`, `path_denylist`, `max_context_tokens` (default 200k est. tokens).

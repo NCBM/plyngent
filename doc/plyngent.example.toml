@@ -89,8 +89,19 @@ access_key_or_token = "sk-replace-me"
 # "gpt-4o-mini" = { text = true }
 # # Model-level preset/url overrides let one provider route models via different APIs.
 # # `preset = "openai"` means /responses; `openai-compatible` means /chat/completions;
-# # `anthropic` means native /messages (support planned).
+# # `anthropic` means native /messages.
 # # "claude-sonnet" = { text = true, preset = "anthropic", url = "https://api.anthropic.com/v1" }
+
+# --- Anthropic (Messages API) ---
+# [providers.anthropic]
+# preset = "anthropic"
+# access_key_or_token = "sk-ant-replace-me"
+# # url defaults to https://api.anthropic.com/v1 when empty
+# timeout = { connect = 10, read = 600 }
+#
+# [providers.anthropic.models]
+# "claude-sonnet-4-20250514" = { text = true }
+# "claude-opus-4-20250514" = { text = true }
 
 # --- DeepSeek (OpenAI-compatible convention) ---
 # Default models if [providers.*.models] is omitted: deepseek-v4-flash, deepseek-v4-pro.

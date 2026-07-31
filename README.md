@@ -157,7 +157,16 @@ Per-provider **`timeout`** is passed to the HTTP session for chat/completions, R
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 
-Supported provider presets today: `openai` (default if `preset` is omitted; default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted), `openai-compatible`, `deepseek` (OpenAI convention; default models `deepseek-v4-flash` and `deepseek-v4-pro` if `models` is omitted). Anthropic presets are modeled in config but not wired in the runtime client yet.
+Supported provider presets today:
+
+| Preset | API used by the agent | Notes |
+|--------|------------------------|--------|
+| `openai` (default if `preset` omitted) | OpenAI **Responses** (`POST /responses`) | Default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted; optional `provider_tools` (default `web_search`) |
+| `openai-compatible` | Chat Completions | Generic hosts (vLLM, LiteLLM, proxies); requires `url` |
+| `deepseek` | Chat Completions (DeepSeek) | Default models `deepseek-v4-flash` / `deepseek-v4-pro` when `models` is omitted |
+| `anthropic` | Anthropic **Messages** (`POST /messages`) | Native tools/streaming; set `access_key_or_token` (API key) |
+
+Model-level `preset` / `url` overrides on a catalog entry can route a single provider name to a different API (e.g. gateway + Anthropic model).
 
 If `[database]` is omitted (or SQLite `url` is unset/empty), chat uses a durable file under the user data dir (e.g. `~/.local/share/plyngent/chat.db` on Linux). Set `url = ":memory:"` for a true in-memory SQLite (CLI warns; no file; useful for tests).
 
@@ -274,8 +283,8 @@ plyngent --log-level INFO chat ...
 
 See [doc/architecture.md](doc/architecture.md) and [CLAUDE.md](CLAUDE.md) for developers.
 
-- **`lmproto/`** — OpenAI-compatible (+ DeepSeek) msgspec models and async SSE clients  
-- **`agent/`** — tool loop, streaming, usage, compact  
+- **`lmproto/`** — OpenAI-compatible, OpenAI Responses, Anthropic Messages, DeepSeek msgspec models and async SSE clients  
+- **`agent/`** — kind-based tool loop (`chat_completions` / `responses` / `messages`), streaming, usage, compact  
 - **`memory/`** — async SQLAlchemy sessions/messages  
 - **`tools/`** — workspace tools  
 - **`cli/`** — Click entry + slash registry (`awaitlet` bridges sync Click to async work)  

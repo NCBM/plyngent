@@ -8,13 +8,12 @@
             - config: Configurations for specified providers.
             - client: Clients for accessing existent specified services.
             - server: Servers for accepting other clients.
-        - openai
-        - openai_compatible
-        - anthropic
-        - ollama
+        - openai_compatible: Chat Completions base (``kind=chat_completions``).
+        - openai: Platform Responses + chat (``kind=responses``).
+        - anthropic: Messages API (``kind=messages``).
         - deepseek
             - openai_compat
-            - anthropic
+            - anthropic (convention extras; runtime uses openai_compat today)
     - utils: Common utilities for code architecture.
         - components: Utilities for class composition.
     - memory: Storage controlling for sessions and messages.
@@ -22,7 +21,10 @@
     - config: Plyngent configuration center (TOML), including ``[plugins]`` and
       ``[networking]`` (e.g. fetch SSRF Fake-IP CIDR exemptions). Model entries
       may override provider ``preset`` / ``url`` for mixed API routing.
-    - agent: Tool loop, streaming, usage, compact; `@tool` / tags / registry.
+    - runtime: ``create_client`` maps effective provider preset → protocol client.
+    - agent: Kind-based tool loop, streaming, usage, compact; bridges:
+      ``responses_bridge``/``responses_dispatch``, ``messages_bridge``/``messages_dispatch``;
+      ``@tool`` / tags / registry. History stays chat-completions-shaped.
     - tools: Workspace file/process/VCS/chat/todo/net tools; catalog; plugins;
       instance/session context and views.
     - prompting: Shared ask/choose/form for CLI and tools.
