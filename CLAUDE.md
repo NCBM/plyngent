@@ -42,6 +42,7 @@ lmproto/openai/                ← OpenAI platform: Responses + chat (extends ba
 lmproto/anthropic/             ← Anthropic Messages: model, config, client
 lmproto/deepseek/openai_compat/ ← Extends base via inheritance + extra fields
 lmproto/deepseek/responses/     ← DeepSeek Responses client (extends OpenAI Responses client; SSE stops at terminal events, no `[DONE]`)
+lmproto/deepseek/anthropic/     ← DeepSeek Anthropic client (extends AnthropicClient; no `GET /models`)
 ```
 
 - **`openai_compatible/model.py`** — tagged chat messages (`SystemChatMessage`, `UserChatMessage`, …), tools, request/response, streaming chunks.
@@ -51,15 +52,15 @@ lmproto/deepseek/responses/     ← DeepSeek Responses client (extends OpenAI Re
 - **`openai/client.py`** — platform `OpenAIClient` (`kind="responses"`): chat completions + `responses` / `get_response` / `delete_response`.
 - **`anthropic/model.py`** — Anthropic Messages request/response + SSE event models.
 - **`anthropic/client.py`** — `AnthropicClient` (`kind="messages"`): `POST /messages` + `GET /models`.
-- **DeepSeek** — `DeepseekOpenAIClient` (`kind="chat_completions"`); models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`. `DeepseekResponsesClient` (`kind="responses"`) extends the OpenAI Responses client for `convention = "responses"` (SSE stops at terminal events — DeepSeek sends no `[DONE]`).
+- **DeepSeek** — `DeepseekOpenAIClient` (`kind="chat_completions"`); models add `reasoning_content`, `prefix`, `ThinkingOptions`. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`. `DeepseekResponsesClient` (`kind="responses"`) extends the OpenAI Responses client for `convention = "responses"` (SSE stops at terminal events — DeepSeek sends no `[DONE]`). `DeepseekAnthropicClient` (`kind="messages"`) extends `AnthropicClient` for `convention = "anthropic"` (base `https://api.deepseek.com/anthropic`; `models()` returns `[]`).
 
 ### Config (`config/`)
 
-TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]` section. Default path via platformdirs. Providers may set `timeout` as a float or `{ connect, read }` (`HttpTimeoutConfig`); omitted → product defaults (10s connect / 600s read). `DeepseekProvider.convention` (Literal: `""`/`"openai"`/`"anthropic"`/`"responses"`) selects the DeepSeek API surface — `"responses"` → OpenAI Responses; a per-model `ModelConfig.convention` overrides it (empty = inherit).
+TOML load/store (`ConfigStore`): `[providers]` tagged union presets, `[database]` section. Default path via platformdirs. Providers may set `timeout` as a float or `{ connect, read }` (`HttpTimeoutConfig`); omitted → product defaults (10s connect / 600s read). `DeepseekProvider.convention` (Literal: `""`/`"openai"`/`"anthropic"`/`"responses"`) selects the DeepSeek API surface — `"responses"` → OpenAI Responses, `"anthropic"` → Anthropic Messages on `https://api.deepseek.com/anthropic` (default url follows the convention); a per-model `ModelConfig.convention` overrides it (empty = inherit).
 
 ### Runtime (`runtime/`)
 
-`create_client(provider)` maps config `Provider` → protocol client by effective preset (model-level `preset`/`url` overrides apply). `normalize_http_timeout` feeds OpenAI-compatible configs and Anthropic. Mapping: `openai` → `OpenAIClient` (agent uses Responses), `openai-compatible` / `deepseek` → chat-completions clients (deepseek with effective `convention = "responses"` → `DeepseekResponsesClient`), `anthropic` → `AnthropicClient`.
+`create_client(provider)` maps config `Provider` → protocol client by effective preset (model-level `preset`/`url` overrides apply). `normalize_http_timeout` feeds OpenAI-compatible configs and Anthropic. Mapping: `openai` → `OpenAIClient` (agent uses Responses), `openai-compatible` / `deepseek` → chat-completions clients (deepseek with effective `convention = "responses"` → `DeepseekResponsesClient`, `"anthropic"` → `DeepseekAnthropicClient`), `anthropic` → `AnthropicClient`.
 
 ### Memory (`memory/`)
 

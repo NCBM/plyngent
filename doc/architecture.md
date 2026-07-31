@@ -12,8 +12,10 @@
         - openai: Platform Responses + chat (``kind=responses``).
         - anthropic: Messages API (``kind=messages``).
         - deepseek
-            - openai_compat
-            - anthropic (convention extras; runtime uses openai_compat today)
+            - openai_compat (``kind=chat_completions``)
+            - responses (``kind=responses``; DeepSeek Responses API)
+            - anthropic (``kind=messages``; DeepSeek Anthropic-compatible API on
+              ``https://api.deepseek.com/anthropic``)
     - utils: Common utilities for code architecture.
         - components: Utilities for class composition.
     - memory: Storage controlling for sessions and messages.

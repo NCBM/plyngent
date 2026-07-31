@@ -163,7 +163,7 @@ Supported provider presets today:
 |--------|------------------------|--------|
 | `openai` (default if `preset` omitted) | OpenAI **Responses** (`POST /responses`) | Default models `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano` when `models` is omitted; optional `provider_tools` (default `web_search`) |
 | `openai-compatible` | Chat Completions | Generic hosts (vLLM, LiteLLM, proxies); requires `url` |
-| `deepseek` | Chat Completions (DeepSeek) | Default models `deepseek-v4-flash` / `deepseek-v4-pro` when `models` is omitted; set `convention = "responses"` (provider or per-model) to use the OpenAI **Responses** API (`POST /responses`, currently only `deepseek-v4-flash`) |
+| `deepseek` | Chat Completions (DeepSeek) | Default models `deepseek-v4-flash` / `deepseek-v4-pro` when `models` is omitted; set `convention = "responses"` (provider or per-model) to use the OpenAI **Responses** API (`POST /responses`, currently only `deepseek-v4-flash`), or `convention = "anthropic"` to use the Anthropic **Messages** API on `https://api.deepseek.com/anthropic` |
 | `anthropic` | Anthropic **Messages** (`POST /messages`) | Native tools/streaming; set `access_key_or_token` (API key) |
 
 Model-level `preset` / `url` overrides on a catalog entry can route a single provider name to a different API (e.g. gateway + Anthropic model). DeepSeek models may also carry a per-model `convention` (empty = inherit the provider-level one), e.g. serve `deepseek-v4-flash` over Responses while `deepseek-v4-pro` stays Chat Completions:
@@ -177,6 +177,14 @@ access_key_or_token = "sk-..."
 "deepseek-v4-flash" = { text = true, convention = "responses" }
 "deepseek-v4-pro" = { text = true }
 ```
+
+DeepSeek's Anthropic convention (`convention = "anthropic"`) points at
+`https://api.deepseek.com/anthropic` by default and is fully supported by the
+agent's Anthropic Messages path (tools, streaming, usage). DeepSeek maps
+`claude-opus*` model ids to `deepseek-v4-pro` and `claude-haiku*` /
+`claude-sonnet*` (and unknown ids) to `deepseek-v4-flash` server-side; real
+`deepseek-v4-*` ids pass through as-is. `GET /models` is not documented on that
+base, so model selection is config-driven.
 
 If `[database]` is omitted (or SQLite `url` is unset/empty), chat uses a durable file under the user data dir (e.g. `~/.local/share/plyngent/chat.db` on Linux). Set `url = ":memory:"` for a true in-memory SQLite (CLI warns; no file; useful for tests).
 
