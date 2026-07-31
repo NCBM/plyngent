@@ -159,6 +159,13 @@ async def summarize_messages(
                 stream=False,
             ),
         )
+    elif kind == "messages":
+        from .messages_dispatch import dispatch_messages
+
+        response = cast(
+            "ChatCompletionResponse",
+            await dispatch_messages(cast("Any", client), param, stream=False),
+        )
     else:
         msg = f"summarization for client.kind={kind!r} is not implemented"
         raise NotImplementedError(msg)

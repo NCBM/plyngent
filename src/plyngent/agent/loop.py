@@ -54,6 +54,7 @@ from .usage import resolve_round_usage, token_usage_from_api
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
+    from plyngent.lmproto.anthropic.client import AnthropicClient
     from plyngent.lmproto.openai.client import OpenAIClient
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
@@ -210,8 +211,13 @@ async def _dispatch_chat_completions(
             stream=stream,
         )
     if kind == "messages":
-        msg = "Anthropic /messages dispatch is not wired in the agent loop yet"
-        raise NotImplementedError(msg)
+        from .messages_dispatch import dispatch_messages
+
+        return await dispatch_messages(
+            cast("AnthropicClient", client),
+            param,
+            stream=stream,
+        )
     msg = f"client kind {kind!r} is not supported by the agent loop"
     raise NotImplementedError(msg)
 

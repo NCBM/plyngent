@@ -147,7 +147,7 @@ class ModelConfig(Struct, omit_defaults=True):
     ``preset`` / ``url`` override the parent provider for this model only.
     ``preset`` keeps the same meanings as provider presets:
     ``openai`` → /responses, ``openai-compatible`` → /chat/completions,
-    ``anthropic`` → /messages (native support planned), ``deepseek`` → DeepSeek.
+    ``anthropic`` → /messages, ``deepseek`` → DeepSeek.
     """
 
     text: bool = True
