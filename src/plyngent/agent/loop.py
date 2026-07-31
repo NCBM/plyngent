@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
 from msgspec import UNSET
@@ -54,6 +54,7 @@ from .usage import resolve_round_usage, token_usage_from_api
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
+    from plyngent.lmproto.openai.client import OpenAIClient
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
 
     from .todo_nag import TodoNagStrategy
@@ -193,25 +194,37 @@ async def _dispatch_chat_completions(
     param: ChatCompletionsParam,
     *,
     stream: bool,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
     kind = getattr(client, "kind", "chat_completions")
-    if kind != "chat_completions":
-        if kind == "messages":
-            msg = "Anthropic /messages dispatch is not wired in the agent loop yet"
-        else:
-            msg = "OpenAI /responses dispatch is not wired in the agent loop yet"
+    if kind == "chat_completions":
+        cc = cast("OpenAICompatibleClient", client)
+        return await cc.chat_completions(param, stream=stream)
+    if kind == "responses":
+        from .responses_dispatch import dispatch_responses
+
+        return await dispatch_responses(
+            cast("OpenAIClient", client),
+            param,
+            provider_tools=provider_tools,
+            stream=stream,
+        )
+    if kind == "messages":
+        msg = "Anthropic /messages dispatch is not wired in the agent loop yet"
         raise NotImplementedError(msg)
-    cc = cast("OpenAICompatibleClient", client)
-    return await cc.chat_completions(param, stream=stream)
+    msg = f"client kind {kind!r} is not supported by the agent loop"
+    raise NotImplementedError(msg)
 
 
 async def _non_stream_round(
     client: AnyLLMClient,
     param: ChatCompletionsParam,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     response = cast(
         "ChatCompletionResponse",
-        await _dispatch_chat_completions(client, param, stream=False),
+        await _dispatch_chat_completions(client, param, stream=False, provider_tools=provider_tools),
     )
     if not response.choices:
         msg = "chat completion response contained no choices"
@@ -238,6 +251,8 @@ async def _non_stream_round(
 async def _stream_round(
     client: AnyLLMClient,
     param: ChatCompletionsParam,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Stream one completion; yield text deltas as chunks arrive, then assistant.
 
@@ -252,7 +267,7 @@ async def _stream_round(
     )
     stream = cast(
         "AsyncIterator[ChatCompletionChunk]",
-        await _dispatch_chat_completions(client, stream_param, stream=True),
+        await _dispatch_chat_completions(client, stream_param, stream=True, provider_tools=provider_tools),
     )
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
@@ -317,15 +332,16 @@ async def _assistant_round(
     messages: list[AnyChatMessage],
     *,
     stream: bool,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """One model turn: yield events and append the assistant message to ``messages``."""
     if stream:
-        async for event in _stream_round(client, param):
+        async for event in _stream_round(client, param, provider_tools=provider_tools):
             if isinstance(event, AssistantMessageEvent):
                 messages.append(event.message)
             yield event
         return
-    async for event in _non_stream_round(client, param):
+    async for event in _non_stream_round(client, param, provider_tools=provider_tools):
         if isinstance(event, AssistantMessageEvent):
             messages.append(event.message)
         yield event
@@ -390,6 +406,7 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     directive_reminder_text: str | None = None,
     reminder_last_band: int = 0,
     on_reminder_band: Callable[[int], Awaitable[None] | None] | None = None,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Multi-round chat/tool loop; mutates ``messages`` in place and yields events.
 
@@ -397,6 +414,10 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
     Request payloads may shrink older tool results when over ``max_context_tokens``.
+
+    *provider_tools* are hosted/provider-side tools (OpenAI Responses only, e.g.
+    ``web_search``) merged into the request as opaque dicts; never executed by the
+    :class:`ToolRegistry`. Ignored by non-Responses clients.
 
     When *todo_stack* is set and still needs review after a natural stop
     (open items, or non-empty stack untouched this turn), injects a review nag
@@ -442,7 +463,13 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
 
             pre_len = len(messages)
             last_usage_event: UsageEvent | None = None
-            async for event in _assistant_round(client, param, messages, stream=stream):
+            async for event in _assistant_round(
+                client,
+                param,
+                messages,
+                stream=stream,
+                provider_tools=provider_tools,
+            ):
                 if isinstance(event, UsageEvent):
                     # Next rounds scale char-estimates by real/resolved prompt size.
                     prompt_tokens_hint = event.usage.prompt_tokens

@@ -75,7 +75,6 @@ class ReplState:
     _remote_models_error: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # DeepSeek client uses a compatible but distinct param type; treat as ChatClient.
         self.client = create_client(self.provider, model=self.model)
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
@@ -266,6 +265,7 @@ class ReplState:
             directive_reminder_text=agent_cfg.directive_reminder_text or None,
             peak_prompt_tokens=peak,
             reminder_last_band=band,
+            provider_tools=self.effective_provider.provider_tools or None,
         )
         if last_req is not None and not last_req.is_zero():
             agent.last_request_usage = last_req

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from msgspec import UNSET
 
@@ -143,11 +143,24 @@ async def summarize_messages(
         model=model,
         temperature=temperature if temperature is not None else UNSET,
     )
+    kind = getattr(client, "kind", "chat_completions")
     response: ChatCompletionResponse
-    if getattr(client, "kind", "chat_completions") == "chat_completions":
+    if kind == "chat_completions":
         response = await cast("OpenAICompatibleClient", client).chat_completions(param, stream=False)
+    elif kind == "responses":
+        from .responses_dispatch import dispatch_responses
+
+        response = cast(
+            "ChatCompletionResponse",
+            await dispatch_responses(
+                cast("Any", client),
+                param,
+                provider_tools=None,
+                stream=False,
+            ),
+        )
     else:
-        msg = f"summarization for client.kind={client.kind!r} is not implemented"
+        msg = f"summarization for client.kind={kind!r} is not implemented"
         raise NotImplementedError(msg)
     if not response.choices:
         msg = "summarization response contained no choices"

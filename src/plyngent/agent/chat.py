@@ -172,6 +172,7 @@ class ChatAgent:
     todo_nag_strategy: TodoNagStrategy
     directive_reminder_tokens: int
     directive_reminder_text: str | None
+    provider_tools: list[dict[str, object]]
     messages: list[AnyChatMessage]
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
@@ -205,6 +206,7 @@ class ChatAgent:
         directive_reminder_text: str | None = None,
         peak_prompt_tokens: int = 0,
         reminder_last_band: int = 0,
+        provider_tools: Sequence[dict[str, object]] | None = None,
     ) -> None:
         self.client = client
         self.model = model
@@ -224,6 +226,7 @@ class ChatAgent:
         self.directive_reminder_tokens = max(0, int(directive_reminder_tokens))
         text = directive_reminder_text.strip() if directive_reminder_text else ""
         self.directive_reminder_text = text or None
+        self.provider_tools = [dict(item) for item in provider_tools] if provider_tools else []
         self.messages = list(messages) if messages is not None else []
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
@@ -456,6 +459,7 @@ class ChatAgent:
                 directive_reminder_text=self.directive_reminder_text,
                 reminder_last_band=self.reminder_last_band,
                 on_reminder_band=self._on_reminder_band,
+                provider_tools=self.provider_tools or None,
             ):
                 if isinstance(event, UsageEvent):
                     turn_rounds += 1
@@ -589,6 +593,7 @@ class ChatAgent:
             todo_nag_strategy="none",
             directive_reminder_tokens=0,
             messages=history,
+            provider_tools=self.provider_tools or None,
         )
         async for event in aside.run(text):
             yield event
