@@ -73,13 +73,15 @@ def test_deepseek_ignores_legacy_convention_extra() -> None:
     assert isinstance(client, DeepseekOpenAIClient)
 
 
-def test_anthropic_not_implemented() -> None:
+def test_anthropic_client_created() -> None:
     from plyngent.lmproto.anthropic import AnthropicClient
 
-    provider = AnthropicProvider(access_key_or_token="sk-test")
+    provider = AnthropicProvider(access_key_or_token="sk-test", timeout=30)
     client = create_client(provider)
     assert isinstance(client, AnthropicClient)
     assert client.kind == "messages"
+    # timeout is passed through to the niquests session
+    assert client.session.timeout == 30
 
 
 def test_model_level_preset_url_overrides_parent() -> None:

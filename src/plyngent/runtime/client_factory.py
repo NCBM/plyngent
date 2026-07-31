@@ -106,10 +106,15 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
     if effective.preset == "deepseek":
         return DeepseekOpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "anthropic":
+        try:
+            http_timeout = normalize_http_timeout(effective.timeout)
+        except InvalidHttpTimeoutError as exc:
+            raise ProviderNotSupportedError(str(exc)) from exc
         return AnthropicClient(
             AnthropicConfigCls(
                 api_key=effective.access_key_or_token,
                 base_url=effective.url or DEFAULT_ANTHROPIC_BASE_URL,
+                timeout=http_timeout,
             )
         )
     msg = f"provider preset {effective.preset!r} is not supported"
