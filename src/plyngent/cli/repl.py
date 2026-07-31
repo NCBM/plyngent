@@ -22,6 +22,12 @@ def _echo_user(text: str) -> None:
         click.echo(text)
 
 
+def _echo_interrupted() -> None:
+    click.echo()
+    click.secho("interrupted", fg="yellow")
+    click.echo()
+
+
 async def run_repl(state: ReplState) -> None:
     """Interactive chat loop with readline editing, history, and Tab completion."""
     setup_readline(state)
@@ -47,7 +53,11 @@ async def run_repl(state: ReplState) -> None:
             continue
 
         if entry.startswith("/"):
-            cont = await handle_slash(state, entry)
+            try:
+                cont = await handle_slash(state, entry)
+            except KeyboardInterrupt:
+                _echo_interrupted()
+                continue
             if not cont:
                 break
             if state.pending_user_text is not None:
@@ -56,6 +66,8 @@ async def run_repl(state: ReplState) -> None:
                 _echo_user(text)
                 try:
                     _ = await run_user_text_with_retries(state.agent, text)
+                except KeyboardInterrupt:
+                    _echo_interrupted()
                 finally:
                     state.expire_yolo_once()
             continue
@@ -63,5 +75,7 @@ async def run_repl(state: ReplState) -> None:
         _echo_user(entry)
         try:
             _ = await run_user_text_with_retries(state.agent, entry)
+        except KeyboardInterrupt:
+            _echo_interrupted()
         finally:
             state.expire_yolo_once()

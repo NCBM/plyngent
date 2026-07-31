@@ -131,20 +131,36 @@ def _echo_turn_usage(agent: ChatAgent) -> None:
     click.secho(f"[{'; '.join(parts)}]", fg="bright_black")
 
 
-async def _wait_for_retry(attempt: int, max_retries: int, wait: float) -> bool:
-    click.secho(
-        f"auto-retry {attempt}/{max_retries} in {wait:g}s (Ctrl+C to cancel; then /retry later)",
-        fg="yellow",
-    )
+def _echo_cancel_lines(*lines: str) -> None:
+    """Print post-cancel lines, treating a further Ctrl+C as benign.
+
+    After a turn-cancel the asyncio SIGINT handler is removed, so a second
+    Ctrl+C during this output would otherwise raise KeyboardInterrupt and
+    exit the REPL instead of returning to the prompt.
+    """
     try:
+        for line in lines:
+            if line:
+                click.secho(line, fg="yellow")
+            else:
+                click.echo()
+    except KeyboardInterrupt:
+        pass
+
+
+async def _wait_for_retry(attempt: int, max_retries: int, wait: float) -> bool:
+    try:
+        click.secho(
+            f"auto-retry {attempt}/{max_retries} in {wait:g}s (Ctrl+C to cancel; then /retry later)",
+            fg="yellow",
+        )
         ok = await sleep_cancellable(wait)
     except KeyboardInterrupt:
         ok = False
     if not ok:
-        click.secho("auto-retry cancelled; use /retry to try again", fg="yellow")
-        click.echo()
+        _echo_cancel_lines("auto-retry cancelled; use /retry to try again", "")
         return False
-    click.secho(f"retrying ({attempt}/{max_retries})…", fg="yellow")
+    _echo_cancel_lines(f"retrying ({attempt}/{max_retries})…")
     return True
 
 
@@ -170,17 +186,10 @@ async def run_turn_with_retries(
             await run_cancellable(render_events(current()))
         except asyncio.CancelledError:
             # Do not auto-retry cancelled turns — user intent was stop, not retry.
-            click.echo()
-            click.secho(
-                "cancelled; user message kept — use /retry to try again",
-                fg="yellow",
-            )
-            click.echo()
+            _echo_cancel_lines("", "cancelled; user message kept — use /retry to try again", "")
             return False
         except KeyboardInterrupt:
-            click.echo()
-            click.secho("interrupted", fg="yellow")
-            click.echo()
+            _echo_cancel_lines("", "interrupted", "")
             return False
         except Exception as exc:  # noqa: BLE001 — surface and optionally retry
             click.secho(f"error: {exc}", fg="red")

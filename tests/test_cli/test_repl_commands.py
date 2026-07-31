@@ -566,3 +566,30 @@ async def test_status_shows_context_tokens(state: ReplState, capsys: pytest.Capt
     out2 = capsys.readouterr().out
     assert "context_tokens=1234/" in out2
     assert "(api)" in out2
+
+
+async def test_repl_ctrl_c_from_turn_returns_to_prompt(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Ctrl+C escaping a turn lands back at the prompt, not out of the REPL."""
+    from plyngent.cli import repl as repl_mod
+    from plyngent.cli.repl import run_repl
+
+    calls: dict[str, int] = {"reads": 0}
+
+    def fake_read_entry() -> str:
+        calls["reads"] += 1
+        if calls["reads"] >= 2:
+            raise EOFError
+        return "hello"
+
+    async def interrupted_turn(_agent: object, _text: str) -> bool:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(repl_mod, "setup_readline", lambda _state: None)
+    monkeypatch.setattr(repl_mod, "read_repl_entry", fake_read_entry)
+    monkeypatch.setattr(repl_mod, "run_user_text_with_retries", interrupted_turn)
+
+    await run_repl(state)  # must return normally (EOF), never raise KeyboardInterrupt
+    assert calls["reads"] == 2

@@ -8,6 +8,7 @@ from plyngent.agent import ChatAgent
 from plyngent.cli.retry import (
     DEFAULT_MAX_AUTO_RETRIES,
     DEFAULT_RETRY_DELAYS_SECONDS,
+    _wait_for_retry,
     default_retry_delays,
     retry_pending_with_retries,
     run_turn_with_retries,
@@ -197,6 +198,102 @@ async def test_cancel_turn_rolls_back_and_sets_pending() -> None:
     assert len(loaded) == 1
     assert isinstance(loaded[0], UserChatMessage)
     await store.close()
+
+
+async def test_second_ctrl_c_during_cancel_message_stays_in_repl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a second Ctrl+C during the cancel message must not exit.
+
+    After the turn task is cancelled the asyncio SIGINT handler is gone, so the
+    second Ctrl+C arrives as a KeyboardInterrupt while the "cancelled" message
+    is printing. It must be swallowed and control must return to the REPL
+    (``False``), not propagate out of ``run_turn_with_retries``.
+    """
+    import asyncio
+
+    calls: list[int] = [0]
+
+    def raiser(message: object = None, **kwargs: object) -> None:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("plyngent.cli.retry.click.secho", raiser)
+
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+
+    class HangClient:
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+        ) -> ChatCompletionResponse: ...
+
+        @overload
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: Literal[True]
+        ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+        async def chat_completions(
+            self, param: ChatCompletionsParam, *, stream: bool = False
+        ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+            del param, stream
+            await asyncio.sleep(60)
+            return _response(AssistantChatMessage(content="never"))
+
+    agent = ChatAgent(HangClient(), model="m", memory=store, session_id=session.sid)
+    turn = asyncio.create_task(run_turn_with_retries(agent, starter=lambda: agent.run("cancel-me"), delays=()))
+    await asyncio.sleep(0.05)
+    _ = turn.cancel()  # first Ctrl+C: cancels the in-flight turn
+    ok = await turn  # must return False instead of raising KeyboardInterrupt
+    assert ok is False
+    assert agent.pending_retry_text == "cancel-me"
+    await store.close()
+
+
+async def test_second_ctrl_c_during_retry_cancel_message_stays_benign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a second Ctrl+C during the retry-cancel message is benign."""
+
+    async def interrupted_sleep(_seconds: float) -> bool:
+        return False  # first Ctrl+C interrupted the retry wait
+
+    monkeypatch.setattr("plyngent.cli.retry.sleep_cancellable", interrupted_sleep)
+
+    calls: list[int] = [0]
+
+    def raiser(message: object = None, **kwargs: object) -> None:
+        calls[0] += 1
+        if calls[0] == 2:  # second Ctrl+C lands on the "auto-retry cancelled" line
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("plyngent.cli.retry.click.secho", raiser)
+
+    assert await _wait_for_retry(1, 3, 0.01) is False
+
+
+async def test_second_ctrl_c_during_retry_announce_stays_benign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Ctrl+C during the "retrying" announcement does not abort the turn."""
+
+    async def ok_sleep(_seconds: float) -> bool:
+        return True
+
+    monkeypatch.setattr("plyngent.cli.retry.sleep_cancellable", ok_sleep)
+
+    calls: list[int] = [0]
+
+    def raiser(message: object = None, **kwargs: object) -> None:
+        calls[0] += 1
+        if calls[0] == 2:  # Ctrl+C lands on the "retrying" line
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("plyngent.cli.retry.click.secho", raiser)
+
+    assert await _wait_for_retry(1, 3, 0.01) is True
 
 
 async def test_manual_retry_after_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
