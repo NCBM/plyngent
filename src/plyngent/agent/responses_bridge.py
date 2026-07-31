@@ -1,7 +1,8 @@
 """Convert agent chat history/tools to OpenAI Responses API shapes and back.
 
 Agent memory and events stay chat-completions-shaped; only the transport uses
-Responses. DeepSeek / openai-compatible paths never enter this module.
+Responses. OpenAI Responses and DeepSeek Responses (``convention = "responses"``)
+both use this bridge; openai-compatible chat-completions paths never enter it.
 """
 
 from __future__ import annotations

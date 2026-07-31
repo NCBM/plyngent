@@ -328,3 +328,57 @@ async def test_dispatch_stream_raises_on_error_event() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         async for _ in cast("Any", stream):
             pass
+
+
+async def test_dispatch_stream_incomplete_maps_to_length() -> None:
+    """response.incomplete carries the full response; finish becomes ``length``."""
+    import msgspec
+
+    final = _completed_response(text="cut short", status="incomplete")
+    final_dict = msgspec.to_builtins(final)
+    events = [
+        ResponseStreamEvent(type="response.output_text.delta", delta="cut "),
+        ResponseStreamEvent(type="response.incomplete", response=final_dict),
+    ]
+    client = ScriptedResponsesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_responses(cast("Any", client), param, stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    assert any(c.choices and c.choices[0].finish_reason == "length" for c in chunks)
+
+
+async def test_dispatch_stream_failed_raises_with_error_detail() -> None:
+    """response.failed surfaces the embedded error instead of a missing terminal."""
+    events = [
+        ResponseStreamEvent(
+            type="response.failed",
+            response={
+                "id": "resp_1",
+                "object": "response",
+                "created_at": 1,
+                "model": "deepseek-v4-flash",
+                "status": "failed",
+                "output": [],
+                "error": {"code": "rate_limit_exceeded", "message": "slow down"},
+            },
+        ),
+    ]
+    client = ScriptedResponsesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_responses(cast("Any", client), param, stream=True)
+    with pytest.raises(RuntimeError, match="slow down"):
+        async for _ in cast("Any", stream):
+            pass
+
+
+async def test_dispatch_stream_failed_falls_back_to_event_message() -> None:
+    """response.failed without an embedded error uses the event message."""
+    events = [
+        ResponseStreamEvent(type="response.failed", message="backend error", code="server_error"),
+    ]
+    client = ScriptedResponsesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_responses(cast("Any", client), param, stream=True)
+    with pytest.raises(RuntimeError, match="backend error"):
+        async for _ in cast("Any", stream):
+            pass
