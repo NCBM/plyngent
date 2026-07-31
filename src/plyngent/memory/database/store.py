@@ -15,7 +15,9 @@ from .engine import create_engine
 from .schema import Message, PlyngentBase, Session, User
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
+
+    type MigrationStep = Callable[[object, set[str]], None]
 
 
 DEFAULT_USER_NAME = "local"
@@ -63,13 +65,17 @@ class MemoryStore:
         return store
 
     async def create_schema(self) -> None:
-        """Create all tables if they do not exist; apply lightweight migrations."""
+        """Create all tables if they do not exist; apply versioned migrations.
+
+        Schema evolution is grouped by release: ordered steps
+        (:data:`_SCHEMA_MIGRATIONS`) run only when the stored schema version
+        (:attr:`PRAGMA user_version`) is older, then the version is stamped.
+        Each step guards on its own columns, so legacy DBs that were upgraded
+        incrementally (user_version=0 but columns already present) stay safe.
+        """
         async with self._engine.begin() as conn:
             _ = await conn.run_sync(PlyngentBase.metadata.create_all)
-            await conn.run_sync(_migrate_session_workspace)
-            await conn.run_sync(_migrate_session_llm)
-            await conn.run_sync(_migrate_session_todo_stack)
-            await conn.run_sync(_migrate_session_context_usage)
+            await conn.run_sync(_run_schema_migrations)
 
     async def close(self) -> None:
         """Dispose the underlying engine."""
@@ -343,49 +349,45 @@ def _session_columns(sync_conn: object) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
-def _migrate_session_workspace(sync_conn: object) -> None:
-    """Add ``session.workspace`` on existing SQLite DBs created before the column existed."""
+def _schema_version(sync_conn: object) -> int:
+    """Read the SQLite ``user_version`` (0 = never migrated/stamped)."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return 0
+    return int(sync_conn.scalar(text("PRAGMA user_version")) or 0)
+
+
+def _migrate_session_v1(sync_conn: object, columns: set[str]) -> None:
+    """v0.1.0: add ``workspace`` / ``provider_name`` / ``model``."""
     from sqlalchemy.engine import Connection
 
     if not isinstance(sync_conn, Connection):
         return
-    columns = _session_columns(sync_conn)
-    if "workspace" in columns:
-        return
-    _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN workspace VARCHAR(1024)"))
-
-
-def _migrate_session_llm(sync_conn: object) -> None:
-    """Add ``session.provider_name`` / ``session.model`` for remembered LLM selection."""
-    from sqlalchemy.engine import Connection
-
-    if not isinstance(sync_conn, Connection):
-        return
-    columns = _session_columns(sync_conn)
+    if "workspace" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN workspace VARCHAR(1024)"))
     if "provider_name" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN provider_name VARCHAR(128)"))
     if "model" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN model VARCHAR(256)"))
 
 
-def _migrate_session_todo_stack(sync_conn: object) -> None:
-    """Add ``session.todo_stack`` JSON for the todo/task sub-task stack."""
+def _migrate_session_v2(sync_conn: object, columns: set[str]) -> None:
+    """v0.1.2: add ``todo_stack`` JSON for the todo/task sub-task stack."""
     from sqlalchemy.engine import Connection
 
     if not isinstance(sync_conn, Connection):
         return
-    columns = _session_columns(sync_conn)
     if "todo_stack" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN todo_stack JSON"))
 
 
-def _migrate_session_context_usage(sync_conn: object) -> None:
-    """Add session context usage + directive reminder band columns."""
+def _migrate_session_v3(sync_conn: object, columns: set[str]) -> None:
+    """Post-v0.2.0: add session context usage + directive reminder band columns."""
     from sqlalchemy.engine import Connection
 
     if not isinstance(sync_conn, Connection):
         return
-    columns = _session_columns(sync_conn)
     if "last_prompt_tokens" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN last_prompt_tokens INTEGER"))
     if "peak_prompt_tokens" not in columns:
@@ -396,3 +398,34 @@ def _migrate_session_context_usage(sync_conn: object) -> None:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN usage_source VARCHAR(16)"))
     if "reminder_last_band" not in columns:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN reminder_last_band INTEGER"))
+
+
+# Latest schema version this build knows. Bump (and append a step to
+# _SCHEMA_MIGRATIONS) when a new release adds or changes columns.
+_SCHEMA_VERSION = 3
+
+# Ordered (version, step) pairs. Each step receives the current ``session``
+# column set (read once) and adds only its own missing columns, so it is
+# idempotent for DBs that were upgraded incrementally without a version stamp.
+# Version 1 shipped in v0.1.0, version 2 in v0.1.2, version 3 post-v0.2.0.
+_SCHEMA_MIGRATIONS: tuple[tuple[int, MigrationStep], ...] = (
+    (1, _migrate_session_v1),
+    (2, _migrate_session_v2),
+    (3, _migrate_session_v3),
+)
+
+
+def _run_schema_migrations(sync_conn: object) -> None:
+    """Run pending versioned ``session`` migrations, then stamp the version."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    version = _schema_version(sync_conn)
+    if version >= _SCHEMA_VERSION:
+        return
+    columns = _session_columns(sync_conn)
+    for step_version, step in _SCHEMA_MIGRATIONS:
+        if step_version > version:
+            step(sync_conn, columns)
+    _ = sync_conn.execute(text(f"PRAGMA user_version = {_SCHEMA_VERSION}"))

@@ -224,3 +224,134 @@ async def test_workspace_column_migration(tmp_path: object) -> None:
 
     assert session.workspace == normalize_workspace(tmp_path)
     await store.close()
+
+
+async def _user_version(db_path: object) -> int:
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("PRAGMA user_version"))
+            return int(result.scalar() or 0)
+    finally:
+        await engine.dispose()
+
+
+async def _session_columns(db_path: object) -> set[str]:
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("PRAGMA table_info(session)"))
+            return {str(row[1]) for row in result.fetchall()}
+    finally:
+        await engine.dispose()
+
+
+async def _create_legacy_db(db_path: object, *, with_workspace: bool) -> None:
+    """Build a pre-migration DB with a minimal session table (optional workspace)."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        _ = await conn.execute(
+            text(
+                "CREATE TABLE user ("
+                "uid INTEGER PRIMARY KEY, name VARCHAR(48) UNIQUE, "
+                "email VARCHAR(255) UNIQUE, password_hash VARCHAR(256), "
+                "created_at DATETIME)"
+            )
+        )
+        workspace_col = ", workspace VARCHAR(1024)" if with_workspace else ""
+        _ = await conn.execute(
+            text(
+                "CREATE TABLE session ("
+                "sid INTEGER PRIMARY KEY, uid INTEGER, name VARCHAR(64), "
+                f"created_at DATETIME, updated_at DATETIME{workspace_col})"
+            )
+        )
+        _ = await conn.execute(
+            text(
+                "CREATE TABLE message ("
+                "mid INTEGER PRIMARY KEY, sid INTEGER, seq INTEGER, "
+                "data JSON, created_at DATETIME, updated_at DATETIME)"
+            )
+        )
+    await engine.dispose()
+
+
+async def test_schema_migrations_stamp_version(tmp_path: object) -> None:
+    """A fresh open creates the current schema and stamps PRAGMA user_version."""
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    db_path = tmp_path / "fresh.db"
+    store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
+    await store.close()
+    assert await _user_version(db_path) == 3
+    columns = await _session_columns(db_path)
+    assert {"workspace", "provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+
+
+async def test_legacy_db_migrated_to_latest(tmp_path: object) -> None:
+    """A pre-v0.1.0 session table runs all versioned steps and gets stamped."""
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    db_path = tmp_path / "legacy.db"
+    await _create_legacy_db(db_path, with_workspace=False)
+    assert await _user_version(db_path) == 0
+
+    store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
+    session = await store.create_session(name="migrated")
+    await store.close()
+
+    assert await _user_version(db_path) == 3
+    columns = await _session_columns(db_path)
+    assert {"workspace", "provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+    assert session.sid is not None
+
+
+async def test_partially_migrated_legacy_db_noops_remaining_steps(tmp_path: object) -> None:
+    """A DB upgraded incrementally (user_version=0, workspace present) is safe.
+
+    Versioned steps guard on their own columns, so an unstamped DB that already
+    has the v0.1.0 columns gets the rest applied and then stamped without
+    re-adding (or erroring on) existing columns.
+    """
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    db_path = tmp_path / "partial.db"
+    await _create_legacy_db(db_path, with_workspace=True)
+    assert await _user_version(db_path) == 0
+
+    store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
+    session = await store.create_session(name="partial", workspace=tmp_path)
+    await store.close()
+
+    assert await _user_version(db_path) == 3
+    columns = await _session_columns(db_path)
+    assert "workspace" in columns
+    assert {"provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+    assert session.workspace is not None
+
+
+async def test_stamped_db_skips_migrations_on_reopen(tmp_path: object) -> None:
+    """Reopening a current-schema DB does not re-run migrations or bump the stamp."""
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    db_path = tmp_path / "stamped.db"
+    store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
+    await store.close()
+    assert await _user_version(db_path) == 3
+
+    store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
+    await store.close()
+    assert await _user_version(db_path) == 3
