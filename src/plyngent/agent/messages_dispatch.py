@@ -1,7 +1,9 @@
 """Anthropic Messages dispatch: present ``/messages`` as chat completions to the loop.
 
 Agent memory and events stay chat-completions-shaped; only the transport uses
-``POST /messages``. OpenAI / DeepSeek paths never enter this module.
+``POST /messages``. Real Anthropic and the DeepSeek ``convention="anthropic"``
+surface both route through this module; OpenAI / openai-compatible paths never
+enter it.
 """
 
 from __future__ import annotations

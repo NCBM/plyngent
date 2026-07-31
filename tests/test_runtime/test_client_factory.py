@@ -89,8 +89,54 @@ def test_deepseek_default_and_legacy_conventions_stay_chat() -> None:
     default_client = create_client(DeepseekProvider(access_key_or_token="sk-test"))
     assert isinstance(default_client, DeepseekOpenAIClient)
     assert not isinstance(default_client, DeepseekResponsesClient)
-    legacy = DeepseekProvider(access_key_or_token="sk-test", convention="anthropic")
-    assert isinstance(create_client(legacy), DeepseekOpenAIClient)
+    # extras.convention stays ignored (legacy location).
+    legacy_extra = DeepseekProvider(
+        access_key_or_token="sk-test",
+        extras={"convention": "anthropic"},
+    )
+    assert isinstance(create_client(legacy_extra), DeepseekOpenAIClient)
+
+
+def test_deepseek_anthropic_convention() -> None:
+    from plyngent.lmproto.anthropic import AnthropicClient
+    from plyngent.lmproto.deepseek import DeepseekAnthropicClient
+
+    provider = DeepseekProvider(access_key_or_token="sk-test", convention="anthropic")
+    client = create_client(provider)
+    assert isinstance(client, DeepseekAnthropicClient)
+    assert isinstance(client, AnthropicClient)
+    assert client.kind == "messages"
+    assert client.session.base_url == "https://api.deepseek.com/anthropic"
+
+
+def test_deepseek_anthropic_convention_custom_url() -> None:
+    from plyngent.lmproto.deepseek import DeepseekAnthropicClient
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        url="https://gateway.example/anthropic",
+        convention="anthropic",
+    )
+    client = create_client(provider)
+    assert isinstance(client, DeepseekAnthropicClient)
+    assert client.session.base_url == "https://gateway.example/anthropic"
+
+
+def test_deepseek_model_level_anthropic_convention() -> None:
+    from plyngent.lmproto.deepseek import DeepseekAnthropicClient, DeepseekOpenAIClient
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        models={
+            "claude-proxy": ModelConfig(convention="anthropic"),
+            "deepseek-v4-flash": ModelConfig(),
+        },
+    )
+    proxy = create_client(provider, model="claude-proxy")
+    assert isinstance(proxy, DeepseekAnthropicClient)
+    assert proxy.session.base_url == "https://api.deepseek.com/anthropic"
+    flash = create_client(provider, model="deepseek-v4-flash")
+    assert isinstance(flash, DeepseekOpenAIClient)
 
 
 def test_deepseek_model_level_convention_override() -> None:
