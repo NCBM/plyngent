@@ -8,7 +8,7 @@ from plyngent.agent.responses_bridge import (
     responses_status_to_finish_reason,
     tool_items_to_response_tools,
 )
-from plyngent.lmproto.openai.model import Response
+from plyngent.lmproto.openai.model import Response, ResponseFunctionToolCallOutput
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionTool,
@@ -55,6 +55,51 @@ def test_chat_messages_to_input_and_instructions() -> None:
     instructions, items = chat_messages_to_responses_input(messages)
     assert instructions == "You are helpful."
     assert len(items) == 3  # user, function_call, function_call_output
+
+
+def test_parallel_tool_outputs_interleaved_after_calls() -> None:
+    """Regression: DeepSeek Responses rejects call, call, output, output batches.
+
+    Each ``function_call_output`` must directly follow its ``function_call`` so
+    strict/adjacency-matching servers (DeepSeek) accept parallel tool rounds.
+    """
+    messages = [
+        UserChatMessage(content="run both"),
+        AssistantChatMessage(
+            content=None,
+            tool_calls=[
+                AssistantFunctionToolCall(
+                    id="call_01_LPBuUG3KTaMDIwUoLwTE9127",
+                    function=AssistantFunctionTool(name="read_file", arguments='{"path":"a"}'),
+                ),
+                AssistantFunctionToolCall(
+                    id="call_02_ABCD",
+                    function=AssistantFunctionTool(name="grep_files", arguments='{"pattern":"todo"}'),
+                ),
+            ],
+        ),
+        ToolChatMessage(content="file body", tool_call_id="call_01_LPBuUG3KTaMDIwUoLwTE9127"),
+        ToolChatMessage(content="grep hit", tool_call_id="call_02_ABCD"),
+    ]
+    _, items = chat_messages_to_responses_input(messages)
+    types = [item.get("type") if isinstance(item, dict) else item.__struct_config__.tag for item in items]
+    assert types == [
+        "message",
+        "function_call",
+        "function_call_output",
+        "function_call",
+        "function_call_output",
+    ]
+    # Each output is paired with its own call, in stream order.
+    call_a = items[1]
+    out_a = items[2]
+    call_b = items[3]
+    out_b = items[4]
+    assert isinstance(call_a, dict) and isinstance(call_b, dict)
+    assert isinstance(out_a, ResponseFunctionToolCallOutput)
+    assert isinstance(out_b, ResponseFunctionToolCallOutput)
+    assert out_a.call_id == call_a["call_id"]
+    assert out_b.call_id == call_b["call_id"]
 
 
 def test_response_to_assistant_with_tools() -> None:

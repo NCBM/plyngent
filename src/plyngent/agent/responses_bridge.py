@@ -83,6 +83,49 @@ def _assistant_to_input_items(
     return items
 
 
+def _item_call_id(
+    item: dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput,
+) -> str | None:
+    """Return the call id for a ``function_call`` input item, else ``None``."""
+    if isinstance(item, ResponseFunctionToolCallOutput):
+        return item.call_id
+    if isinstance(item, dict) and item.get("type") == "function_call":
+        call_id = item.get("call_id")
+        return call_id if isinstance(call_id, str) else None
+    return None
+
+
+def _interleave_tool_outputs(
+    items: list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput],
+) -> list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput]:
+    """Place each ``function_call_output`` immediately after its ``function_call``.
+
+    OpenAI matches outputs to calls by ``call_id`` anywhere in ``input``, but
+    DeepSeek's Responses implementation expects each ``function_call`` to be
+    directly followed by its ``function_call_output`` — a parallel batch sent
+    as ``call, call, output, output`` is rejected with "No tool output found
+    for tool call …". Interleaving is a no-op for single-call rounds and stays
+    valid for OpenAI (outputs still follow their calls).
+    """
+    outputs_by_call: dict[str, list[ResponseFunctionToolCallOutput]] = {}
+    for item in items:
+        if isinstance(item, ResponseFunctionToolCallOutput):
+            outputs_by_call.setdefault(item.call_id, []).append(item)
+
+    out: list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput] = []
+    for item in items:
+        if isinstance(item, ResponseFunctionToolCallOutput):
+            continue  # re-added right after their call below
+        out.append(item)
+        call_id = _item_call_id(item)
+        if call_id is not None and call_id in outputs_by_call:
+            out.extend(outputs_by_call.pop(call_id))
+    # Defensive: outputs whose call was not seen keep stream order at the end.
+    for pending in outputs_by_call.values():
+        out.extend(pending)
+    return out
+
+
 def chat_messages_to_responses_input(
     messages: Sequence[AnyChatMessage],
 ) -> tuple[str | None, list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput]]:
@@ -112,7 +155,7 @@ def chat_messages_to_responses_input(
             )
 
     instructions = "\n\n".join(instructions_parts) if instructions_parts else None
-    return instructions, items
+    return instructions, _interleave_tool_outputs(items)
 
 
 def response_to_assistant_message(response: Response) -> AssistantChatMessage:
