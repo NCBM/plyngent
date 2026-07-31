@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 type ProviderPreset = Literal["openai", "openai-compatible", "anthropic", "deepseek"]
 
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
+
 
 @dataclass(frozen=True, slots=True)
 class EffectiveProvider:
@@ -54,9 +57,20 @@ def default_url_for_preset(preset: ProviderPreset) -> str:
     if preset == "anthropic":
         return "https://api.anthropic.com/v1"
     if preset == "deepseek":
-        return "https://api.deepseek.com"
+        return DEFAULT_DEEPSEEK_BASE_URL
     # Generic OpenAI-compatible providers usually require a host-specific URL.
     return ""
+
+
+def _default_url_for_deepseek_convention(convention: str) -> str:
+    """Default DeepSeek base URL for an API convention.
+
+    The Anthropic-convention endpoint lives under ``/anthropic``; chat and
+    Responses share the plain ``https://api.deepseek.com`` base.
+    """
+    if convention == "anthropic":
+        return DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+    return DEFAULT_DEEPSEEK_BASE_URL
 
 
 def validate_model_preset(preset: str) -> ProviderPreset:
@@ -77,9 +91,9 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
 
     ``preset`` always decides API conventions: ``openai`` means Responses,
     ``openai-compatible`` means Chat Completions, ``anthropic`` means Messages.
-    Exception: a ``deepseek`` preset may pick the Responses surface via the
-    ``convention`` field (``"responses"``); model-level ``convention`` wins
-    over the provider-level one.
+    Exception: a ``deepseek`` preset may pick the Responses or Anthropic
+    surface via the ``convention`` field (``"responses"`` / ``"anthropic"``);
+    model-level ``convention`` wins over the provider-level one.
     """
     parent_preset = provider_preset(provider)
     model_cfg = model_config_for(provider, model)
@@ -87,13 +101,6 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         preset = validate_model_preset(model_cfg.preset.strip())
     else:
         preset = parent_preset
-    url = model_cfg.url.strip() if model_cfg is not None and model_cfg.url.strip() else provider.url.strip()
-    if not url:
-        url = default_url_for_preset(preset)
-
-    provider_tools: list[dict[str, object]] = []
-    if preset == "openai" and isinstance(provider, OpenAIProvider) and parent_preset == "openai":
-        provider_tools = [dict(item) for item in provider.provider_tools]
 
     # DeepSeek API surface: model override > provider convention > chat default.
     convention = ""
@@ -101,6 +108,17 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         convention = provider.convention or "openai"
         if model_cfg is not None and model_cfg.convention:
             convention = model_cfg.convention
+
+    url = model_cfg.url.strip() if model_cfg is not None and model_cfg.url.strip() else provider.url.strip()
+    if not url:
+        if preset == "deepseek":
+            url = _default_url_for_deepseek_convention(convention)
+        else:
+            url = default_url_for_preset(preset)
+
+    provider_tools: list[dict[str, object]] = []
+    if preset == "openai" and isinstance(provider, OpenAIProvider) and parent_preset == "openai":
+        provider_tools = [dict(item) for item in provider.provider_tools]
 
     return EffectiveProvider(
         preset=preset,

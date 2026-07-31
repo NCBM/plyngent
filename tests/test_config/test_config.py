@@ -247,6 +247,45 @@ def test_deepseek_effective_convention_precedence() -> None:
     assert resolve_effective_provider(OpenAIProvider(access_key_or_token="sk")).convention == ""
 
 
+def test_deepseek_anthropic_convention_default_url() -> None:
+    from plyngent.config import resolve_effective_provider
+    from plyngent.config.routing import DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL, DEFAULT_DEEPSEEK_BASE_URL
+
+    provider = DeepseekProvider(access_key_or_token="sk-test", convention="anthropic")
+    effective = resolve_effective_provider(provider)
+    assert effective.convention == "anthropic"
+    assert effective.url == DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+
+    # Custom provider url wins over the convention default.
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        url="https://gateway.example/anthropic",
+        convention="anthropic",
+    )
+    assert resolve_effective_provider(provider).url == "https://gateway.example/anthropic"
+
+    # Other conventions keep the plain deepseek base.
+    for convention in ("", "openai", "responses"):
+        provider = DeepseekProvider(access_key_or_token="sk-test", convention=convention)
+        assert resolve_effective_provider(provider).url == DEFAULT_DEEPSEEK_BASE_URL
+
+
+def test_deepseek_anthropic_model_convention_default_url() -> None:
+    from plyngent.config import ModelConfig, resolve_effective_provider
+    from plyngent.config.routing import DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        models={"claude-proxy": ModelConfig(convention="anthropic")},
+    )
+    effective = resolve_effective_provider(provider, model="claude-proxy")
+    assert effective.convention == "anthropic"
+    assert effective.url == DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+    # Provider default url for a model without convention stays the deepseek base.
+    other = resolve_effective_provider(provider, model=None)
+    assert other.url == "https://api.deepseek.com"
+
+
 def test_read_empty_config() -> None:
     config = plyngent.config.load(Path(__file__).parent / "plyngent-empty.toml")
     assert isinstance(config.providers, Mapping)

@@ -6,7 +6,8 @@ from msgspec import Struct, field
 # per-model ``ModelConfig.convention`` override).
 # - "" (default) / "openai" → OpenAI-compatible chat completions
 # - "responses"           → OpenAI Responses API (``POST /responses``)
-# - "anthropic"           → legacy value, ignored (still chat completions)
+# - "anthropic"           → Anthropic Messages API (``POST /messages`` on
+#                           ``https://api.deepseek.com/anthropic``)
 type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
 
 # Built-in persona when ``[agent].system_prompt`` is omitted.
@@ -255,10 +256,11 @@ def _default_deepseek_models() -> dict[str, ModelConfig]:
 class DeepseekProvider(ProviderConfig, tag="deepseek"):
     """DeepSeek API provider.
 
-    ``convention`` selects the API surface on ``https://api.deepseek.com``:
+    ``convention`` selects the API surface on DeepSeek's endpoints:
     - ``""`` / ``"openai"`` → OpenAI-compatible chat completions (default)
     - ``"responses"`` → OpenAI Responses API (``POST /responses``)
-    - ``"anthropic"`` → legacy value, ignored (still chat completions)
+    - ``"anthropic"`` → Anthropic Messages API (``POST /messages`` on
+      ``https://api.deepseek.com/anthropic``)
 
     ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
     key is parsed but ignored (prefer the typed ``convention`` field).
