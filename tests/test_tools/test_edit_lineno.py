@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from plyngent.agent import reset_lineno_tracker
-from plyngent.tools.file import edit_lineno, read_file, write_file
+from plyngent.tools.file import edit_lineno, edit_replace, read_file, write_file
 from tests.test_tools.helpers import call_sync
 
 
@@ -84,3 +84,31 @@ def test_edit_lineno_rejects_without_prior_lineno_read(workspace: object) -> Non
     _ = reset_lineno_tracker()
     out = call_sync(edit_lineno, "e.txt", 1, 1, "hi\n")
     assert "read" in out and "with_lineno=true" in out
+
+
+def test_edit_lineno_requires_rerun_after_write(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "f.txt", "one\ntwo\nthree\n")
+    _ = _read_lineno("f.txt")
+    _ = call_sync(write_file, "f.txt", "changed\n")
+    out = call_sync(edit_lineno, "f.txt", 1, 1, "x\n")
+    assert "not read" in out
+
+
+def test_edit_lineno_requires_rerun_after_edit_replace(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "g.txt", "one\ntwo\nthree\n")
+    _ = _read_lineno("g.txt")
+    _ = call_sync(edit_replace, "g.txt", "two", "TWO")
+    out = call_sync(edit_lineno, "g.txt", 2, 2, "x\n")
+    assert "not read" in out
+
+
+def test_edit_lineno_invalidates_after_successful_edit(workspace: object) -> None:
+    del workspace
+    _ = call_sync(write_file, "h.txt", "a\nb\nc\n")
+    _ = _read_lineno("h.txt")
+    _ = call_sync(edit_lineno, "h.txt", 2, 2, "B\n")
+    # After the edit, line numbers are stale — must re-read before editing again.
+    out = call_sync(edit_lineno, "h.txt", 2, 2, "C\n")
+    assert "not read" in out

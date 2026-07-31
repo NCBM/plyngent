@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import ToolTag, invalidate_lineno_read, tool
 from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
 
 
@@ -68,8 +68,12 @@ def _copy_or_move_validated(
             else:
                 _ = shutil.copy2(source, dest, follow_symlinks=False)
                 label = _kind(source)
+            # A copy does not change the source, but the destination content is new.
+            invalidate_lineno_read(str(dest))
             return f"copied {label} {src} -> {dest.relative_to(root)}"
         moved = Path(shutil.move(str(source), str(dest))).resolve()
+        invalidate_lineno_read(str(source))
+        invalidate_lineno_read(str(moved))
         return f"moved {_kind(moved)} {src} -> {moved.relative_to(root)}"
     except WorkspaceError as exc:
         return f"error: {exc}"
@@ -110,11 +114,13 @@ async def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
 def _delete_directory(target: Path, path: str, *, recursive: bool) -> str:
     if recursive:
         shutil.rmtree(target)
+        invalidate_lineno_read(str(target))
         return f"deleted directory {path} (recursive)"
     try:
         _ = next(target.iterdir())
     except StopIteration:
         target.rmdir()
+        invalidate_lineno_read(str(target))
         return f"deleted empty directory {path}"
     return f"error: directory not empty: {path} (set recursive=true)"
 
@@ -123,6 +129,7 @@ def _delete_target(target: Path, path: str, *, recursive: bool) -> str:
     if target.is_symlink() or target.is_file():
         kind = _kind(target)
         target.unlink()
+        invalidate_lineno_read(str(target))
         return f"deleted {kind} {path}"
     if target.is_dir():
         return _delete_directory(target, path, recursive=recursive)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import ToolTag, invalidate_lineno_read, tool
 from plyngent.tools.workspace import resolve_path
 
 
@@ -54,4 +54,6 @@ async def edit_replace(path: str, old_string: str, new_string: str, max_replaces
     n = min(max_replaces, found)
     updated = text.replace(old_string, new_string, n)
     _ = target.write_text(updated, encoding="utf-8")
+    # Any lineno read state is stale after a write; force a re-read.
+    invalidate_lineno_read(str(target))
     return _success_message(path, replaced=n, found=found)
