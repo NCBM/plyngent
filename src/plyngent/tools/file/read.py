@@ -44,6 +44,6 @@ async def read_file(
         return ""
     slice_lines = lines[start:end]
     if with_lineno:
-        mark_lineno_read(str(target))
+        mark_lineno_read(str(target), set(range(start + 1, end + 1)))
         return _format_with_lineno(slice_lines, start_lineno=start + 1)
     return "".join(slice_lines)

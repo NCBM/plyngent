@@ -46,20 +46,21 @@ if TYPE_CHECKING:
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
 
 
-# Per-conversation tracking of files read with ``with_lineno=True``.
-# Set to a fresh ``set`` at the start of each user turn via
+# Per-conversation tracking of lines read with ``with_lineno=True``, keyed by
+# resolved file path. Set to a fresh ``dict`` at the start of each user turn via
 # :func:`reset_lineno_tracker`; cleared after the assistant finishes.
-# Tool handlers read/write via :func:`get_lineno_read_files`.
-_lineno_read_files: ContextVar[set[str] | None] = ContextVar("_lineno_read_files", default=None)
+# Tool handlers read/write via :func:`get_lineno_read_files` /
+# :func:`lineno_read_lines` / :func:`mark_lineno_read`.
+_lineno_read_files: ContextVar[dict[str, set[int]] | None] = ContextVar("_lineno_read_files", default=None)
 
 
-def reset_lineno_tracker() -> Token[set[str] | None]:
-    """Replace the tracker with a fresh empty set; return the previous token.
+def reset_lineno_tracker() -> Token[dict[str, set[int]] | None]:
+    """Replace the tracker with a fresh empty mapping; return the previous token.
 
     Call at the start of a new user turn. Restore with
     ``_lineno_read_files.reset(token)`` when the turn completes.
     """
-    return _lineno_read_files.set(set())
+    return _lineno_read_files.set({})
 
 
 def get_lineno_read_files() -> set[str]:
@@ -68,20 +69,41 @@ def get_lineno_read_files() -> set[str]:
     Returns an empty set when no turn is active (tools will reject edits).
     """
     val = _lineno_read_files.get()
-    return val if val is not None else set()
+    return set(val) if val is not None else set()
 
 
-def mark_lineno_read(path: str) -> None:
-    """Record that *path* was read with line numbers this turn."""
+def lineno_read_lines(path: str) -> set[int]:
+    """Return the set of 1-based line numbers read this turn for *path*.
+
+    Returns an empty set when no turn is active (tools will reject edits).
+    """
+    val = _lineno_read_files.get()
+    if val is None:
+        return set()
+    return set(val.get(path, ()))
+
+
+def mark_lineno_read(path: str, lines: set[int]) -> None:
+    """Record that *path* was read with line numbers this turn.
+
+    ``lines`` are 1-based absolute file line numbers (``read_file`` slice).
+    """
     val = _lineno_read_files.get()
     if val is not None:
-        val.add(path)
+        val.setdefault(path, set()).update(lines)
+
+
+def invalidate_lineno_read(path: str) -> None:
+    """Drop all read-line state for *path* (file changed under the model)."""
+    val = _lineno_read_files.get()
+    if val is not None:
+        _ = val.pop(path, None)
 
 
 def was_lineno_read(path: str) -> bool:
-    """Return True if *path* was read with line numbers this turn."""
+    """Return True if any line of *path* was read with line numbers this turn."""
     val = _lineno_read_files.get()
-    return val is not None and path in val
+    return val is not None and bool(val.get(path))
 
 
 def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
