@@ -298,3 +298,55 @@ async def test_stream_tool_call_deltas() -> None:
     assert any(isinstance(e, ToolCallEvent) for e in events_out)
     assert any(isinstance(e, ToolResultEvent) for e in events_out)
     assert any(isinstance(e, AssistantMessageEvent) and e.message.content == "ok" for e in events_out)
+
+
+async def test_dispatch_stream_missing_terminal_yields_no_finish() -> None:
+    """Stream with payload but no message_stop/stop_reason yields no finish chunk."""
+    events: list[AnthropicStreamEvent] = [
+        AnthropicMessageStart(
+            message=AnthropicMessageResponse(
+                id="msg_s",
+                model="claude-test",
+                content=[],
+                usage=AnthropicUsage(input_tokens=5, output_tokens=0),
+            )
+        ),
+        AnthropicContentBlockDelta(
+            index=0,
+            delta=AnthropicRawContentBlock(type="text_delta", text="partial"),
+        ),
+        # no message_delta stop_reason, no message_stop
+    ]
+    client = ScriptedMessagesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="claude-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_messages(cast("Any", client), param, stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    # Only the text delta; no finish_reason / usage terminal chunk.
+    assert len(chunks) == 1
+    assert chunks[0].choices and chunks[0].choices[0].delta.content == "partial"
+    assert not any(c.choices and c.choices[0].finish_reason not in (None, UNSET) for c in chunks)
+
+
+async def test_dispatch_stream_tool_calls_without_stop_yields_no_finish() -> None:
+    """Tool-call deltas without a stop signal must NOT fabricate finish_reason."""
+    events: list[AnthropicStreamEvent] = [
+        AnthropicMessageStart(
+            message=AnthropicMessageResponse(
+                id="msg_s",
+                model="claude-test",
+                content=[],
+                usage=AnthropicUsage(input_tokens=5, output_tokens=0),
+            )
+        ),
+        AnthropicContentBlockStart(
+            index=0,
+            content_block=AnthropicRawContentBlock(type="tool_use", id="tu_1", name="add"),
+        ),
+        # stream dies here: no message_delta stop_reason, no message_stop
+    ]
+    client = ScriptedMessagesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="claude-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_messages(cast("Any", client), param, stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    # tool-call start delta only; no fabricated finish_reason=tool_calls
+    assert not any(c.choices and c.choices[0].finish_reason not in (None, UNSET) for c in chunks)

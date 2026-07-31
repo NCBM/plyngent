@@ -227,9 +227,11 @@ async def _stream_as_chat_chunks(
         if state.saw_message_stop:
             break
 
-    if not state.saw_message_stop and state.stop_reason is None and not state.has_tool_calls:
-        # Stream ended without a terminal — yield nothing more so the loop can
-        # treat empty + no finish_reason as a missing terminal glitch.
+    if not state.saw_message_stop and state.stop_reason is None:
+        # Stream ended without a terminal signal (message_stop or message_delta
+        # stop_reason) — yield nothing more so the loop can treat empty + no
+        # finish_reason as a missing terminal glitch. Matches the Responses
+        # bridge contract (terminal only on response.completed).
         return
 
     finish = anthropic_stop_to_finish_reason(state.stop_reason, has_tool_calls=state.has_tool_calls)
