@@ -13,6 +13,8 @@ from plyngent.agent.messages_bridge import (
     anthropic_stop_to_finish_reason,
     anthropic_usage_to_dict,
     chat_param_to_anthropic_param,
+)
+from plyngent.agent.stream_chunks import (
     finish_reason_chunk,
     text_delta_chunk,
     tool_call_delta_chunk,

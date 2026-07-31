@@ -27,11 +27,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
-    ChunkChoice,
-    DeltaMessage,
     DeveloperChatMessage,
-    StreamFunctionDelta,
-    StreamToolCallDelta,
     SystemChatMessage,
     ToolFunctionItem,
     UserChatMessage,
@@ -204,58 +200,6 @@ def response_to_chat_completion(response: Response) -> ChatCompletionResponse:
     )
 
 
-def finish_reason_chunk(
-    *,
-    model: str,
-    finish_reason: str,
-    created: int = 0,
-) -> ChatCompletionChunk:
-    """Terminal stream chunk carrying only ``finish_reason`` (no delta text)."""
-    return ChatCompletionChunk(
-        id="resp-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(),
-                finish_reason=cast("Any", finish_reason),
-            )
-        ],
-    )
-
-
-def text_delta_chunk(*, model: str, content: str, created: int = 0) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="resp-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(content=content),
-            )
-        ],
-    )
-
-
-def reasoning_delta_chunk(*, model: str, content: str, created: int = 0) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="resp-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(reasoning_content=content),
-            )
-        ],
-    )
-
-
 def tool_call_chunks_from_response(
     response: Response,
     *,
@@ -263,50 +207,28 @@ def tool_call_chunks_from_response(
     created: int = 0,
 ) -> list[ChatCompletionChunk]:
     """Emit complete tool-call stream deltas (one chunk per call) for loop merge."""
+    from .stream_chunks import tool_call_delta_chunk
+
     calls = response_function_calls(response)
-    chunks: list[ChatCompletionChunk] = []
-    for index, call in enumerate(calls):
-        chunks.append(
-            ChatCompletionChunk(
-                id=response.id,
-                object="chat.completion.chunk",
-                created=created,
-                model=model,
-                choices=[
-                    ChunkChoice(
-                        index=0,
-                        delta=DeltaMessage(
-                            tool_calls=[
-                                StreamToolCallDelta(
-                                    index=index,
-                                    id=call.call_id,
-                                    type="function",
-                                    function=StreamFunctionDelta(
-                                        name=call.name,
-                                        arguments=call.arguments,
-                                    ),
-                                )
-                            ]
-                        ),
-                    )
-                ],
-            )
+    return [
+        tool_call_delta_chunk(
+            model=model,
+            index=index,
+            call_id=call.call_id,
+            name=call.name,
+            arguments=call.arguments,
+            created=created,
         )
-    return chunks
+        for index, call in enumerate(calls)
+    ]
 
 
 def usage_chunk_from_response(response: Response, *, model: str) -> ChatCompletionChunk | None:
+    from .stream_chunks import usage_chunk
+
     if response.usage is UNSET or response.usage is None:
         return None
-    created = int(response.created_at)
-    return ChatCompletionChunk(
-        id=response.id,
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[],
-        usage=response.usage,
-    )
+    return usage_chunk(model=model, usage=response.usage, created=int(response.created_at))
 
 
 def _merge_response_tools(

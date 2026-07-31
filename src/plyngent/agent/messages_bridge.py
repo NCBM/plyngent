@@ -30,14 +30,9 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionTool,
     AssistantFunctionToolCall,
     ChatCompletionChoice,
-    ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
-    ChunkChoice,
-    DeltaMessage,
     DeveloperChatMessage,
-    StreamFunctionDelta,
-    StreamToolCallDelta,
     SystemChatMessage,
     ToolFunctionItem,
     UserChatMessage,
@@ -287,88 +282,6 @@ def anthropic_response_to_chat_completion(
             )
         ],
         usage=cast("Any", usage) if usage is not None else UNSET,
-    )
-
-
-def finish_reason_chunk(
-    *,
-    model: str,
-    finish_reason: str,
-    created: int = 0,
-) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="anthropic-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(),
-                finish_reason=cast("Any", finish_reason),
-            )
-        ],
-    )
-
-
-def text_delta_chunk(*, model: str, content: str, created: int = 0) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="anthropic-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(content=content),
-            )
-        ],
-    )
-
-
-def tool_call_delta_chunk(
-    *,
-    model: str,
-    index: int,
-    call_id: str | None = None,
-    name: str | None = None,
-    arguments: str | None = None,
-    created: int = 0,
-) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="anthropic-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[
-            ChunkChoice(
-                index=0,
-                delta=DeltaMessage(
-                    tool_calls=[
-                        StreamToolCallDelta(
-                            index=index,
-                            id=call_id if call_id is not None else UNSET,
-                            type="function",
-                            function=StreamFunctionDelta(
-                                name=name if name is not None else UNSET,
-                                arguments=arguments if arguments is not None else UNSET,
-                            ),
-                        )
-                    ]
-                ),
-            )
-        ],
-    )
-
-
-def usage_chunk(*, model: str, usage: dict[str, Any], created: int = 0) -> ChatCompletionChunk:
-    return ChatCompletionChunk(
-        id="anthropic-stream",
-        object="chat.completion.chunk",
-        created=created,
-        model=model,
-        choices=[],
-        usage=usage,
     )
 
 

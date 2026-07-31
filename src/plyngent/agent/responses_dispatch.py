@@ -16,14 +16,16 @@ from msgspec import UNSET
 
 from plyngent.agent.responses_bridge import (
     chat_param_to_responses_kwargs,
-    finish_reason_chunk,
-    reasoning_delta_chunk,
     response_to_assistant_message,
     response_to_chat_completion,
     responses_status_to_finish_reason,
-    text_delta_chunk,
     tool_call_chunks_from_response,
     usage_chunk_from_response,
+)
+from plyngent.agent.stream_chunks import (
+    finish_reason_chunk,
+    reasoning_delta_chunk,
+    text_delta_chunk,
 )
 from plyngent.lmproto.openai.model import Response as ResponseModel
 from plyngent.lmproto.openai.model import ResponsesCreateParam
