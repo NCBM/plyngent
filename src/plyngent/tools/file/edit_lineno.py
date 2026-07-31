@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ToolTag, tool, was_lineno_read
+from plyngent.agent import ToolTag, lineno_read_lines, tool
 from plyngent.tools.workspace import resolve_path
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# How many unread line numbers to preview in the error message.
+_UNREAD_PREVIEW = 8
 
 
 def _detect_newline(lines: list[str]) -> str:
@@ -48,6 +51,22 @@ def _validate_range(start_line: int, end_line: int, n: int) -> str | None:
     return None
 
 
+def _unread_lines_in_range(
+    read_lines: set[int],
+    start_line: int,
+    end_line: int,
+    n: int,
+) -> list[int]:
+    """Lines in ``start_line..end_line`` that were not read with line numbers.
+
+    Appending (``start_line == n + 1``) requires the last line to be read, so
+    line numbers stay truthful; the append point itself is not a line.
+    """
+    if start_line == n + 1:
+        return [] if n in read_lines else [n]
+    return sorted(set(range(start_line, end_line + 1)) - read_lines)
+
+
 def _append_after(target: Path, path: str, text: str, lines: list[str], new_content: str) -> str:
     n = len(lines)
     newline = _detect_newline(lines[-1:] if lines else [])
@@ -85,17 +104,20 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
     target = resolve_path(path)
     if not target.is_file():
         return f"error: not a file: {path}"
-    if not was_lineno_read(str(target)):
-        return (
-            f"error: read {path!r} first with read_file(path, with_lineno=true) "
-            "to get correct line numbers"
-        )
 
     text = target.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     err = _validate_range(start_line, end_line, len(lines))
     if err is not None:
         return err
+
+    unread = _unread_lines_in_range(lineno_read_lines(str(target)), start_line, end_line, len(lines))
+    if unread:
+        preview = unread[:_UNREAD_PREVIEW]
+        head = ", ".join(str(i) for i in preview)
+        if len(unread) > _UNREAD_PREVIEW:
+            head += f", … ({len(unread)} total)"
+        return f"error: lines {head} not read; call read_file(path, with_lineno=true) first to see current line numbers"
 
     if start_line == len(lines) + 1:
         return _append_after(target, path, text, lines, new_content)
