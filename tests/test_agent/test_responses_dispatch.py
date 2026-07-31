@@ -314,3 +314,17 @@ async def test_unknown_kind_not_implemented() -> None:
             stream=False,
         ):
             pass
+
+
+async def test_dispatch_stream_raises_on_error_event() -> None:
+    import pytest
+
+    events = [
+        ResponseStreamEvent(type="error", code="server_error", message="boom"),
+    ]
+    client = ScriptedResponsesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="x")])
+    stream = await dispatch_responses(cast("Any", client), param, stream=True)
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in cast("Any", stream):
+            pass

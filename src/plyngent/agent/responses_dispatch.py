@@ -62,6 +62,12 @@ async def _stream_as_chat_chunks(
     final: ResponseModel | None = None
     async for event in stream:
         etype = event.type
+        if etype == "error":
+            code = event.code if event.code is not UNSET else ""
+            message = event.message if event.message is not UNSET else ""
+            detail = message.strip() or code
+            label = detail.strip() or etype
+            raise RuntimeError(f"openai responses stream error: {label}")  # noqa: TRY003 — transport failure
         if etype == "response.output_text.delta" and isinstance(event.delta, str) and event.delta:
             yield text_delta_chunk(model=model, content=event.delta)
             continue

@@ -282,6 +282,9 @@ class ResponseStreamEvent(Struct, omit_defaults=True):
     name: str | Unset = UNSET
     arguments: str | Unset = UNSET
     call_id: str | Unset = UNSET
+    # error events (type == "error")
+    code: str | Unset = UNSET
+    message: str | Unset = UNSET
 
 
 # --- Helpers -----------------------------------------------------------------------
