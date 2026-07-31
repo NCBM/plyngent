@@ -1,6 +1,13 @@
-from typing import Any
+from typing import Any, Literal
 
 from msgspec import Struct, field
+
+# DeepSeek API surface convention (``DeepseekProvider.convention`` and
+# per-model ``ModelConfig.convention`` override).
+# - "" (default) / "openai" → OpenAI-compatible chat completions
+# - "responses"           → OpenAI Responses API (``POST /responses``)
+# - "anthropic"           → legacy value, ignored (still chat completions)
+type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
 
 # Built-in persona when ``[agent].system_prompt`` is omitted.
 # Set ``system_prompt = ""`` to omit the persona block only.
@@ -162,6 +169,8 @@ class ModelConfig(Struct, omit_defaults=True):
     cost_factor: float = 1.0
     preset: str = ""
     url: str = ""
+    # DeepSeek API surface override ("" = inherit provider convention).
+    convention: DeepSeekConvention = ""
 
 
 class HttpTimeoutConfig(Struct, omit_defaults=True):
@@ -244,9 +253,19 @@ def _default_deepseek_models() -> dict[str, ModelConfig]:
 
 
 class DeepseekProvider(ProviderConfig, tag="deepseek"):
-    """Deepseek API provider with optional extras (e.g. convention)."""
+    """DeepSeek API provider.
+
+    ``convention`` selects the API surface on ``https://api.deepseek.com``:
+    - ``""`` / ``"openai"`` → OpenAI-compatible chat completions (default)
+    - ``"responses"`` → OpenAI Responses API (``POST /responses``)
+    - ``"anthropic"`` → legacy value, ignored (still chat completions)
+
+    ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
+    key is parsed but ignored (prefer the typed ``convention`` field).
+    """
 
     models: dict[str, ModelConfig] = field(default_factory=_default_deepseek_models)
+    convention: DeepSeekConvention = ""
     extras: dict[str, str] = field(default_factory=dict)
 
 

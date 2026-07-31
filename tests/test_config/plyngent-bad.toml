@@ -12,4 +12,4 @@ access_key_or_token = "sk-1145141919810"
 [providers.foo1]
 preset = "deepseek"
 access_key_or_token = "sk-1145141919810"
-convention = "anthropic"
+unknown_field = "should-be-rejected"

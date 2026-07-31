@@ -137,6 +137,116 @@ def test_deepseek_explicit_models_override_defaults() -> None:
     assert set(provider.models) == {"custom-only"}
 
 
+def test_deepseek_convention_from_toml(tmp_path: Path) -> None:
+    path = tmp_path / "deepseek-convention.toml"
+    _ = path.write_text(
+        """
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+convention = "responses"
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    provider = config.providers["ds"]
+    assert isinstance(provider, DeepseekProvider)
+    assert provider.convention == "responses"
+
+
+def test_deepseek_convention_invalid_is_bad_provider(tmp_path: Path) -> None:
+    path = tmp_path / "deepseek-bad-convention.toml"
+    _ = path.write_text(
+        """
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+convention = "bogus"
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert "ds" not in config.providers
+    assert "ds" in config.bad_providers
+
+
+def test_deepseek_model_convention_override_parses(tmp_path: Path) -> None:
+    path = tmp_path / "deepseek-model-convention.toml"
+    _ = path.write_text(
+        """
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+
+[providers.ds.models]
+"deepseek-v4-flash" = { text = true, convention = "responses" }
+"deepseek-v4-pro" = { text = true }
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    provider = config.providers["ds"]
+    assert isinstance(provider, DeepseekProvider)
+    assert provider.models["deepseek-v4-flash"].convention == "responses"
+    assert provider.models["deepseek-v4-pro"].convention == ""
+
+
+def test_deepseek_convention_write_back(tmp_path: Path) -> None:
+    path = tmp_path / "deepseek-convention-write.toml"
+    config = ConfigStore(path=path, document=tomlkit.document())
+    config.providers = {
+        "ds": DeepseekProvider(access_key_or_token="sk-test", convention="responses"),
+    }
+    config.write()
+    text = path.read_text(encoding="utf-8")
+    assert 'convention = "responses"' in text
+    again = plyngent.config.load(path)
+    assert again.providers["ds"].convention == "responses"
+
+
+def test_deepseek_convention_default_not_written(tmp_path: Path) -> None:
+    from plyngent.config import ModelConfig
+
+    path = tmp_path / "deepseek-convention-default.toml"
+    config = ConfigStore(path=path, document=tomlkit.document())
+    config.providers = {
+        "ds": DeepseekProvider(
+            access_key_or_token="sk-test",
+            models={"m": ModelConfig(text=True)},
+        ),
+    }
+    config.write()
+    text = path.read_text(encoding="utf-8")
+    assert "convention" not in text
+
+
+def test_deepseek_effective_convention_precedence() -> None:
+    from plyngent.config import ModelConfig, resolve_effective_provider
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        models={
+            "flash": ModelConfig(convention="responses"),
+            "pro": ModelConfig(),
+        },
+    )
+    # Provider default "" → chat completions convention.
+    effective = resolve_effective_provider(provider)
+    assert effective.convention == "openai"
+    # Model override wins.
+    effective = resolve_effective_provider(provider, model="flash")
+    assert effective.convention == "responses"
+    effective = resolve_effective_provider(provider, model="pro")
+    assert effective.convention == "openai"
+    # Provider-level convention is the fallback.
+    provider = DeepseekProvider(access_key_or_token="sk-test", convention="responses")
+    assert resolve_effective_provider(provider).convention == "responses"
+    # Non-deepseek presets leave convention empty.
+    from plyngent.config import OpenAIProvider
+
+    assert resolve_effective_provider(OpenAIProvider(access_key_or_token="sk")).convention == ""
+
+
 def test_read_empty_config() -> None:
     config = plyngent.config.load(Path(__file__).parent / "plyngent-empty.toml")
     assert isinstance(config.providers, Mapping)

@@ -10,6 +10,7 @@ from .models import DEFAULT_TOOL_DIRECTIVES as DEFAULT_TOOL_DIRECTIVES
 from .models import AgentConfig as AgentConfig
 from .models import AnthropicProvider as AnthropicProvider
 from .models import DatabaseConfig as DatabaseConfig
+from .models import DeepSeekConvention as DeepSeekConvention
 from .models import DeepseekProvider as DeepseekProvider
 from .models import HttpTimeoutConfig as HttpTimeoutConfig
 from .models import ModelConfig as ModelConfig

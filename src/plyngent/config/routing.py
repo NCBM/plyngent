@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from .models import (
     AnthropicProvider,
+    DeepseekProvider,
     HttpTimeoutConfig,
     ModelConfig,
     OpenAICompatibleProvider,
@@ -30,6 +31,9 @@ class EffectiveProvider:
     timeout: float | HttpTimeoutConfig | None
     provider_tools: list[dict[str, object]]
     source: Provider
+    # DeepSeek API surface (see DeepSeekConvention): "openai" / "anthropic" /
+    # "responses" for deepseek presets; "" (unused) for other presets.
+    convention: str = ""
 
 
 def provider_preset(provider: Provider) -> ProviderPreset:
@@ -73,6 +77,9 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
 
     ``preset`` always decides API conventions: ``openai`` means Responses,
     ``openai-compatible`` means Chat Completions, ``anthropic`` means Messages.
+    Exception: a ``deepseek`` preset may pick the Responses surface via the
+    ``convention`` field (``"responses"``); model-level ``convention`` wins
+    over the provider-level one.
     """
     parent_preset = provider_preset(provider)
     model_cfg = model_config_for(provider, model)
@@ -88,6 +95,13 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
     if preset == "openai" and isinstance(provider, OpenAIProvider) and parent_preset == "openai":
         provider_tools = [dict(item) for item in provider.provider_tools]
 
+    # DeepSeek API surface: model override > provider convention > chat default.
+    convention = ""
+    if preset == "deepseek" and isinstance(provider, DeepseekProvider):
+        convention = provider.convention or "openai"
+        if model_cfg is not None and model_cfg.convention:
+            convention = model_cfg.convention
+
     return EffectiveProvider(
         preset=preset,
         access_key_or_token=provider.access_key_or_token,
@@ -96,6 +110,7 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         timeout=provider.timeout,
         provider_tools=provider_tools,
         source=provider,
+        convention=convention,
     )
 
 
@@ -108,4 +123,5 @@ def effective_provider_to_config_dict(effective: EffectiveProvider) -> Mapping[s
         "model": effective.model or "",
         "timeout": effective.timeout,
         "provider_tools": effective.provider_tools,
+        "convention": effective.convention,
     }
