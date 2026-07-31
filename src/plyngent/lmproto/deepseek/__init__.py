@@ -6,3 +6,4 @@ from .openai_compat.model import DeepSeekReasoningEffort as DeepSeekReasoningEff
 from .openai_compat.model import NamedChatMessage as NamedChatMessage
 from .openai_compat.model import ThinkingOptions as ThinkingOptions
 from .openai_compat.model import ToolChatMessage as ToolChatMessage
+from .responses.client import DeepseekResponsesClient as DeepseekResponsesClient
