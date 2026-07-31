@@ -73,6 +73,43 @@ def test_deepseek_ignores_legacy_convention_extra() -> None:
     assert isinstance(client, DeepseekOpenAIClient)
 
 
+def test_deepseek_responses_convention() -> None:
+    from plyngent.lmproto.deepseek import DeepseekResponsesClient
+
+    provider = DeepseekProvider(access_key_or_token="sk-test", convention="responses")
+    client = create_client(provider)
+    assert isinstance(client, DeepseekResponsesClient)
+    assert client.kind == "responses"
+    assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com"
+
+
+def test_deepseek_default_and_legacy_conventions_stay_chat() -> None:
+    from plyngent.lmproto.deepseek import DeepseekResponsesClient
+
+    default_client = create_client(DeepseekProvider(access_key_or_token="sk-test"))
+    assert isinstance(default_client, DeepseekOpenAIClient)
+    assert not isinstance(default_client, DeepseekResponsesClient)
+    legacy = DeepseekProvider(access_key_or_token="sk-test", convention="anthropic")
+    assert isinstance(create_client(legacy), DeepseekOpenAIClient)
+
+
+def test_deepseek_model_level_convention_override() -> None:
+    from plyngent.lmproto.deepseek import DeepseekResponsesClient
+
+    provider = DeepseekProvider(
+        access_key_or_token="sk-test",
+        models={
+            "deepseek-v4-flash": ModelConfig(convention="responses"),
+            "deepseek-v4-pro": ModelConfig(),
+        },
+    )
+    flash = create_client(provider, model="deepseek-v4-flash")
+    assert isinstance(flash, DeepseekResponsesClient)
+    assert flash.kind == "responses"
+    pro = create_client(provider, model="deepseek-v4-pro")
+    assert isinstance(pro, DeepseekOpenAIClient)
+
+
 def test_anthropic_client_created() -> None:
     from plyngent.lmproto.anthropic import AnthropicClient
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from plyngent.config.routing import EffectiveProvider, resolve_effective_provider
 from plyngent.lmproto.anthropic import AnthropicClient
 from plyngent.lmproto.anthropic.config import AnthropicConfig as AnthropicConfigCls
-from plyngent.lmproto.deepseek import DeepseekOpenAIClient
+from plyngent.lmproto.deepseek import DeepseekOpenAIClient, DeepseekResponsesClient
 from plyngent.lmproto.openai import OpenAIClient
 from plyngent.lmproto.openai_compatible import OpenAICompatibleClient, OpenAIConfig
 from plyngent.lmproto.openai_compatible.config import (
@@ -22,7 +22,9 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-type ProtocolClient = OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | AnthropicClient
+type ProtocolClient = (
+    OpenAIClient | OpenAICompatibleClient | DeepseekOpenAIClient | DeepseekResponsesClient | AnthropicClient
+)
 # Backward-compatible name used by older imports/tests.
 type OpenAICompatibleClientUnion = ProtocolClient
 
@@ -97,6 +99,8 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
 
     ``preset`` always decides API conventions: ``openai`` → /responses,
     ``openai-compatible`` → /chat/completions, ``anthropic`` → /messages.
+    Exception: a ``deepseek`` preset picks the Responses surface when its
+    effective ``convention`` is ``"responses"``, else chat completions.
     """
     effective = resolve_effective_provider(provider, model=model)
     if effective.preset == "openai":
@@ -104,6 +108,8 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
     if effective.preset == "openai-compatible":
         return OpenAICompatibleClient(provider_to_openai_config(effective))
     if effective.preset == "deepseek":
+        if effective.convention == "responses":
+            return DeepseekResponsesClient(provider_to_openai_config(effective))
         return DeepseekOpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "anthropic":
         try:
