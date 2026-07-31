@@ -58,6 +58,23 @@ def test_token_usage_from_api_responses_fields() -> None:
     assert u.total_tokens == 9
 
 
+def test_token_usage_from_api_struct() -> None:
+    from plyngent.lmproto.anthropic.model import AnthropicUsage
+
+    u = token_usage_from_api(AnthropicUsage(input_tokens=7, output_tokens=2))
+    assert u is not None
+    assert u.prompt_tokens == 7
+    assert u.completion_tokens == 2
+    assert u.total_tokens == 9
+    assert u.source == "api"
+
+
+def test_token_usage_from_api_empty_struct_returns_none() -> None:
+    from plyngent.lmproto.anthropic.model import AnthropicUsage
+
+    assert token_usage_from_api(AnthropicUsage()) is None
+
+
 def test_chars_to_tokens() -> None:
     assert chars_to_tokens(0) == 0
     assert chars_to_tokens(1) == 1

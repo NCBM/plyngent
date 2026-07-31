@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+import msgspec
 from msgspec import UNSET, Struct
 
 from plyngent.agent.budget import estimate_message_chars, estimate_messages_chars
@@ -86,13 +87,16 @@ def _as_nonneg_int(value: object) -> int:
 
 
 def token_usage_from_api(usage: object) -> TokenUsage | None:
-    """Parse OpenAI-style usage dict; return None if missing/empty.
+    """Parse API usage into :class:`TokenUsage`; return None if missing/empty.
 
-    Accepts chat completions fields (``prompt_tokens`` / ``completion_tokens``)
-    and Responses fields (``input_tokens`` / ``output_tokens``).
+    Accepts chat completions fields (``prompt_tokens`` / ``completion_tokens``),
+    Responses fields (``input_tokens`` / ``output_tokens``), and msgspec Structs
+    carrying either pair (e.g. ``AnthropicUsage``).
     """
     if usage is None or usage is UNSET:
         return None
+    if isinstance(usage, Struct):
+        usage = msgspec.to_builtins(usage)
     if not isinstance(usage, dict):
         return None
     raw = cast("dict[str, object]", usage)

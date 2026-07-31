@@ -64,16 +64,6 @@ def _encode_tool_arguments(obj: dict[str, Any]) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
-def _as_nonneg_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return max(0, value)
-    if isinstance(value, float):
-        return max(0, int(value))
-    return 0
-
-
 def tool_items_to_anthropic_tools(
     tools: Sequence[AnyToolItem] | None,
 ) -> list[AnthropicToolDefinition]:
@@ -235,23 +225,17 @@ def anthropic_stop_to_finish_reason(
 
 def anthropic_usage_to_dict(usage: AnthropicUsage | dict[str, Any] | None) -> dict[str, Any] | None:
     """Normalize Anthropic usage Struct/dict to chat-compatible usage fields."""
-    if usage is None:
-        return None
-    if isinstance(usage, AnthropicUsage):
-        prompt = _as_nonneg_int(usage.input_tokens)
-        completion = _as_nonneg_int(usage.output_tokens)
-    else:
-        raw = cast("dict[str, object]", usage)
-        prompt = _as_nonneg_int(raw.get("input_tokens") or raw.get("prompt_tokens") or 0)
-        completion = _as_nonneg_int(raw.get("output_tokens") or raw.get("completion_tokens") or 0)
-    if prompt == 0 and completion == 0:
+    from .usage import token_usage_from_api
+
+    parsed = token_usage_from_api(usage)
+    if parsed is None:
         return None
     return {
-        "prompt_tokens": prompt,
-        "completion_tokens": completion,
-        "total_tokens": prompt + completion,
-        "input_tokens": prompt,
-        "output_tokens": completion,
+        "prompt_tokens": parsed.prompt_tokens,
+        "completion_tokens": parsed.completion_tokens,
+        "total_tokens": parsed.total_tokens,
+        "input_tokens": parsed.prompt_tokens,
+        "output_tokens": parsed.completion_tokens,
     }
 
 
