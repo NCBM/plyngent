@@ -848,7 +848,7 @@ async def test_tool_result_char_budget() -> None:
     tool_msgs = [m for m in messages if isinstance(m, ToolChatMessage)]
     assert len(tool_msgs) == 1
     assert tool_msgs[0].content.startswith("x" * 20)
-    assert "truncated" in tool_msgs[0].content
+    assert "Truncated" in tool_msgs[0].content
 
 
 async def test_empty_completion_raises() -> None:

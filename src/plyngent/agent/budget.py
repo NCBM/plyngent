@@ -28,13 +28,30 @@ DEFAULT_RECENT_TOOL_RESULTS = 12
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
 
 
-def truncate_tool_result(text: str, max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS) -> str:
-    """Cap tool output so huge dumps do not flood model context."""
+def truncate_tool_result(
+    text: str,
+    max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+    *,
+    hint: bool = True,
+) -> str:
+    """Cap tool output so huge dumps do not flood model context.
+
+    With ``hint=True`` the suffix tells the model the result was cut and that
+    it may ask the user to raise the config limit (``max_tool_result_chars``).
+    ``hint=False`` keeps the terse marker for internal shrinks whose cap is not
+    a user-facing config knob (e.g. request-time compacting).
+    """
     if max_chars < 1:
         return text
     if len(text) <= max_chars:
         return text
     omitted = len(text) - max_chars
+    if hint:
+        return (
+            f"{text[:max_chars]}\n"
+            f"...[Truncated ({max_chars} chars max.; {omitted} chars omitted). "
+            f"You may ask for user to increase the limit via configuration file.]"
+        )
     return f"{text[:max_chars]}\n...[truncated {omitted} characters]"
 
 
@@ -103,7 +120,7 @@ def _shrink_tool(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
         return message
     return msgspec.structs.replace(
         message,
-        content=truncate_tool_result(message.content, max_chars),
+        content=truncate_tool_result(message.content, max_chars, hint=False),
     )
 
 

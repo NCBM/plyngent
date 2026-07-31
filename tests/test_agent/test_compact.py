@@ -41,8 +41,18 @@ def test_truncate_tool_result_long() -> None:
     text = "a" * 50
     out = truncate_tool_result(text, 20)
     assert out.startswith("a" * 20)
-    assert "truncated" in out
+    assert "Truncated" in out
+    assert "20" in out
     assert "30" in out
+    assert "configuration file" in out
+
+
+def test_truncate_tool_result_no_hint() -> None:
+    text = "a" * 50
+    out = truncate_tool_result(text, 20, hint=False)
+    assert out.startswith("a" * 20)
+    assert "truncated" in out
+    assert "configuration file" not in out
 
 
 def test_compact_shrinks_old_tool_results() -> None:
