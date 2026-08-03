@@ -108,7 +108,7 @@ access_key_or_token = "sk"
 
                 async def empty() -> AsyncIterator[ChatCompletionChunk]:
                     if False:
-                        yield  # type: ignore[misc]
+                        yield
                     return
 
                 return empty()

@@ -342,7 +342,7 @@ async def test_loop_injects_todo_review_when_untouched() -> None:
     stack.begin_turn()
     client = ScriptedClient()
     agent = ChatAgent(
-        client,  # type: ignore[arg-type]
+        client,
         model="m",
         tools=_todo_registry(stack),
         stream=False,
@@ -420,7 +420,7 @@ async def test_loop_skips_todo_review_when_touched_even_if_open() -> None:
 
     client = ScriptedClientWithTodoListThenStop()
     agent = ChatAgent(
-        client,  # type: ignore[arg-type]
+        client,
         model="m",
         tools=_todo_registry(stack),
         stream=False,
@@ -447,7 +447,7 @@ async def test_loop_synthetic_tool_nag_strategy() -> None:
     stack.begin_turn()
     client = ScriptedClient()
     agent = ChatAgent(
-        client,  # type: ignore[arg-type]
+        client,
         model="m",
         tools=_todo_registry(stack),
         stream=False,
@@ -471,7 +471,7 @@ async def test_loop_none_nag_strategy_skips_inject() -> None:
     stack.begin_turn()
     client = ScriptedClient()
     agent = ChatAgent(
-        client,  # type: ignore[arg-type]
+        client,
         model="m",
         tools=_todo_registry(stack),
         stream=False,
@@ -580,7 +580,7 @@ async def test_loop_synthetic_tool_refreshes_after_stack_cleared() -> None:
     _ = stack.push("was dirty")
     client = CaptureClient()
     agent = ChatAgent(
-        client,  # type: ignore[arg-type]
+        client,
         model="m",
         tools=_todo_registry(stack),
         stream=False,

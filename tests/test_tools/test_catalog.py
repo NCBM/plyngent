@@ -90,7 +90,7 @@ def test_registration_source_context() -> None:
 def test_tool_tags_reject_neither_surface() -> None:
     try:
 
-        @tool(tags=ToolTag.YOLO, register=False)  # type: ignore[arg-type]
+        @tool(tags=ToolTag.YOLO, register=False)
         async def bad() -> str:
             return "x"
 

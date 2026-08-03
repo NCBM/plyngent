@@ -118,7 +118,7 @@ def _open_with_system_default(path: Path) -> None:
     resolved = str(path.resolve())
     if sys.platform == "win32":
         try:
-            os.startfile(resolved)  # type: ignore[attr-defined]
+            os.startfile(resolved)
         except OSError as exc:
             msg = f"failed to open with system default: {exc}"
             raise click.ClickException(msg) from exc
