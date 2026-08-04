@@ -159,7 +159,7 @@ Listed tools show **tags** and **catalog source** (`builtin` vs `plugin:…`).
 ## Policy checklist for authors
 
 1. Prefer **LOCAL** for host FS, shell, PTY, or arbitrary network side effects.
-2. Do not shadow builtin names (`read_file`, `run_command`, todo tools, …).
+2. Do not shadow builtin names (`read_file`, `run_argv`, todo tools, …).
 3. Do not rely on process-global workspace/todo alone when a host binds
    instance/session context — prefer the same patterns as builtins
    (`get_workspace_root` already prefers instance policy; session state via

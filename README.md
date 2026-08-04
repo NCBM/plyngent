@@ -153,7 +153,7 @@ max_context_tokens = 200000
 # enable = ["acme"]
 ```
 
-Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_command`, PTY, policy confirm) are separate.
+Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_argv`, PTY, policy confirm) are separate.
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 
@@ -270,7 +270,7 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with default noise-dir skips), `run_command` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+Default registry: file ops (including `tree` with default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
 
 Safety defaults:
 
