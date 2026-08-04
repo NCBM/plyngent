@@ -83,7 +83,7 @@ async def execute_argv(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     mix_stderr: bool = False,
 ) -> CommandStepResult:
-    """Run one argv command; no shell. Used by run_command and run_command_batch."""
+    """Run one argv command; no shell. Used by run_argv and run_command_batch."""
     if not command:
         msg = "command argv must not be empty"
         raise WorkspaceError(msg)

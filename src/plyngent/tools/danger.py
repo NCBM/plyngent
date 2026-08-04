@@ -59,8 +59,8 @@ def _basename(argv0: str) -> str:
     return name.lower()
 
 
-def _as_argv(args: Mapping[str, object]) -> list[str] | None:
-    command = args.get("command")
+def _as_argv(args: Mapping[str, object], *, key: str = "command") -> list[str] | None:
+    command = args.get(key)
     if not isinstance(command, list) or not command:
         return None
     out: list[str] = []
@@ -110,7 +110,7 @@ def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
     """Confirm interactive shells and ``*-c`` one-liners so the user can inspect argv.
 
     Multi-line reason (shown inside the CLI confirm box). ``via`` is a short
-    label such as ``run_command`` or ``open_pty``.
+    label such as ``run_argv`` or ``open_pty``.
 
     For ``-c`` scripts, argv shows ``$(command)`` instead of inlining the body;
     the full script is printed below untruncated, with every line indented.
@@ -181,11 +181,11 @@ def _delete_path_reason(args: Mapping[str, object]) -> str | None:
     return f"delete path {path!r}{extra}"
 
 
-def _run_command_reason(args: Mapping[str, object]) -> str | None:
-    argv = _as_argv(args)
+def _run_argv_reason(args: Mapping[str, object]) -> str | None:
+    argv = _as_argv(args, key="argv")
     if argv is None:
         return None
-    return _shell_or_dash_c_reason(argv, via="run_command")
+    return _shell_or_dash_c_reason(argv, via="run_argv")
 
 
 def _batch_step_argv(item: object) -> list[str] | None:
@@ -262,8 +262,8 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _copy_path_reason(args)
     if name == "write_file":
         return _write_file_reason(args)
-    if name == "run_command":
-        return _run_command_reason(args)
+    if name == "run_argv":
+        return _run_argv_reason(args)
     if name == "run_command_batch":
         return _run_command_batch_reason(args)
     if name == "open_pty":

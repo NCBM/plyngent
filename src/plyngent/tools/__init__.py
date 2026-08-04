@@ -41,7 +41,7 @@ from .process import ask_into_pty as ask_into_pty
 from .process import close_pty as close_pty
 from .process import open_pty as open_pty
 from .process import read_pty as read_pty
-from .process import run_command as run_command
+from .process import run_argv as run_argv
 from .process import run_command_batch as run_command_batch
 from .process import write_pty as write_pty
 from .process import write_pty_keys as write_pty_keys

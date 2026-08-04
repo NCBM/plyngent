@@ -43,9 +43,9 @@ def test_classify_write_overwrite_only(tmp_path: Path) -> None:
 def test_classify_safe_tools() -> None:
     assert classify_danger("read_file", {"path": "a"}) is None
     assert classify_danger("listdir", {"path": "."}) is None
-    assert classify_danger("run_command", {"command": ["echo", "hi"]}) is None
+    assert classify_danger("run_argv", {"argv": ["echo", "hi"]}) is None
     assert classify_danger("open_pty", {"command": ["true"]}) is None
-    assert classify_danger("run_command", {"command": ["ls", "-la"]}) is None
+    assert classify_danger("run_argv", {"argv": ["ls", "-la"]}) is None
 
 
 def test_classify_run_command_batch_risky() -> None:
@@ -71,18 +71,18 @@ def test_classify_run_command_batch_risky() -> None:
 
 
 def test_classify_shell_and_dash_c() -> None:
-    r = classify_danger("run_command", {"command": ["bash", "-c", "rm -rf /"]})
+    r = classify_danger("run_argv", {"argv": ["bash", "-c", "rm -rf /"]})
     assert r is not None
     assert "bash -c" in r
     assert "rm -rf" in r
 
-    r2 = classify_danger("run_command", {"command": ["python3", "-c", "print(1)"]})
+    r2 = classify_danger("run_argv", {"argv": ["python3", "-c", "print(1)"]})
     assert r2 is not None
     assert "python" in r2
     assert "-c" in r2
     assert "print(1)" in r2
 
-    r_py = classify_danger("run_command", {"command": ["python", "-c", "import os"]})
+    r_py = classify_danger("run_argv", {"argv": ["python", "-c", "import os"]})
     assert r_py is not None and "python -c" in r_py
 
     r3 = classify_danger("open_pty", {"command": ["bash"]})
@@ -118,8 +118,8 @@ async def test_confirm_deny_with_comment() -> None:
 def test_shell_confirm_formats_command_placeholder() -> None:
     script = chr(10).join(["line1", "line2", "line3"])
     reason = classify_danger(
-        "run_command",
-        {"command": ["bash", "-c", script]},
+        "run_argv",
+        {"argv": ["bash", "-c", script]},
     )
     assert reason is not None
     assert "$(command)" in reason

@@ -30,10 +30,10 @@ def test_prompt_confirm_tool_default_deny() -> None:
 
 
 def test_format_tool_confirm_box_multiline() -> None:
-    reason = "run_command: python3 -c (review code before allow)\nargv:\n  python3 -c print(1)\n-c code:\n  print(1)"
-    box = format_tool_confirm_box("run_command", reason)
+    reason = "run_argv: python3 -c (review code before allow)\nargv:\n  python3 -c print(1)\n-c code:\n  print(1)"
+    box = format_tool_confirm_box("run_argv", reason)
     assert "┌" in box and "└" in box
-    assert "confirm · tool 'run_command'" in box
+    assert "confirm · tool 'run_argv'" in box
     assert "python3 -c" in box
     assert "print(1)" in box
     # Distinct lines, not one jammed row

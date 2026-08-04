@@ -9,7 +9,7 @@ from plyngent.tools.process import (
     close_pty,
     open_pty,
     read_pty,
-    run_command,
+    run_argv,
     run_command_batch,
     write_pty,
     write_pty_keys,
@@ -41,32 +41,32 @@ def _py(code: str) -> list[str]:
     return [sys.executable, "-c", code]
 
 
-async def test_run_command_echo(workspace: object) -> None:
+async def test_run_argv_echo(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, _py("print('hi')"))
+    out = await call_async(run_argv, _py("print('hi')"))
     assert "exit_code=0" in out
     assert "hi" in out
 
 
-async def test_run_command_string_command_error(workspace: object) -> None:
+async def test_run_argv_string_command_error(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, "ls -la")
+    out = await call_async(run_argv, "ls -la")
     assert "error:" in out
     assert "only accepts an array" in out
     assert "executable not found" not in out
 
 
-async def test_run_command_stringified_json_array_error(workspace: object) -> None:
+async def test_run_argv_stringified_json_array_error(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, '["ls", "-la"]')
+    out = await call_async(run_argv, '["ls", "-la"]')
     assert "error:" in out
     assert "only accepts an array" in out
     assert "executable not found" not in out
 
 
-async def test_run_command_non_string_args_error(workspace: object) -> None:
+async def test_run_argv_non_string_args_error(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, ["ls", 1])
+    out = await call_async(run_argv, ["ls", 1])
     assert "error:" in out
     assert "array of string args" in out
 
@@ -157,32 +157,32 @@ async def test_run_command_batch_mix_stderr(workspace: object) -> None:
     assert "out" in out and "err" in out
 
 
-async def test_run_command_denied(workspace: object) -> None:
+async def test_run_argv_denied(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, ["rm", "-rf", "."])
+    out = await call_async(run_argv, ["rm", "-rf", "."])
     assert "denied" in out
 
 
-async def test_run_command_cwd(workspace: object) -> None:
+async def test_run_argv_cwd(workspace: object) -> None:
     assert isinstance(workspace, Path)
     sub = workspace / "sub"
     sub.mkdir()
     _ = (sub / "f.txt").write_text("z", encoding="utf-8")
-    out = await call_async(run_command, _py("import os; print('\\n'.join(os.listdir()))"), cwd="sub")
+    out = await call_async(run_argv, _py("import os; print('\\n'.join(os.listdir()))"), cwd="sub")
     assert "f.txt" in out
 
 
-async def test_run_command_timeout(workspace: object) -> None:
+async def test_run_argv_timeout(workspace: object) -> None:
     del workspace
-    out = await call_async(run_command, _py("import time; time.sleep(5)"), timeout_seconds=0.2)
+    out = await call_async(run_argv, _py("import time; time.sleep(5)"), timeout_seconds=0.2)
     assert "timed_out=true" in out
 
 
-async def test_run_command_timeout_keeps_partial_output(workspace: object) -> None:
+async def test_run_argv_timeout_keeps_partial_output(workspace: object) -> None:
     del workspace
     # Print then sleep past the timeout so communicate has partial stdout after kill.
     out = await call_async(
-        run_command,
+        run_argv,
         _py("import sys, time; sys.stdout.write('partial-out'); sys.stdout.flush(); time.sleep(5)"),
         timeout_seconds=0.3,
     )
@@ -190,10 +190,10 @@ async def test_run_command_timeout_keeps_partial_output(workspace: object) -> No
     assert "partial-out" in out
 
 
-async def test_run_command_stdin(workspace: object) -> None:
+async def test_run_argv_stdin(workspace: object) -> None:
     del workspace
     out = await call_async(
-        run_command,
+        run_argv,
         _py("import sys; print(sys.stdin.read(), end='')"),
         stdin="hello-stdin\n",
     )
@@ -201,10 +201,10 @@ async def test_run_command_stdin(workspace: object) -> None:
     assert "hello-stdin" in out
 
 
-async def test_run_command_env(workspace: object) -> None:
+async def test_run_argv_env(workspace: object) -> None:
     del workspace
     out = await call_async(
-        run_command,
+        run_argv,
         _py("import os; print(os.environ.get('PLYNGENT_TEST_VAR', ''), end='')"),
         env={"PLYNGENT_TEST_VAR": "from-env"},
     )
