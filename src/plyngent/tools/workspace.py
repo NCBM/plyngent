@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -268,6 +268,23 @@ def resolve_path(path: str | Path) -> Path:
     return resolved
 
 
+def argv_shape_error(argv: object) -> str | None:
+    """Return a model-facing error when ``argv`` is not a non-empty argv list.
+
+    Models occasionally pass a shell-style string or a JSON-encoded array as a
+    string; duck-typing would otherwise let it reach ``create_subprocess_exec``
+    and splat into single characters. Declared as ``object`` so the isinstance
+    checks are not flagged as unnecessary.
+    """
+    if isinstance(argv, str):
+        return 'only accepts an array of args, not a string; pass e.g. ["ls", "-la"]'
+    if not isinstance(argv, list):
+        return f"only accepts an array of args, not a {type(argv).__name__}"
+    if not all(isinstance(part, str) for part in cast("list[object]", argv)):
+        return "only accepts an array of string args"
+    return None
+
+
 def check_command_allowed(argv: list[str]) -> None:
     """Raise if argv is empty or the executable basename is denylisted.
 
@@ -275,6 +292,10 @@ def check_command_allowed(argv: list[str]) -> None:
     installed: the human is asked (with a timeout; default deny). Session grants
     skip re-prompting for the same basename. Independent of YOLO soft-confirm.
     """
+    shape_error = argv_shape_error(argv)
+    if shape_error is not None:
+        msg = f"command {shape_error}"
+        raise WorkspaceError(msg)
     if not argv:
         msg = "command argv must not be empty"
         raise WorkspaceError(msg)

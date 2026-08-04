@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools.workspace import WorkspaceError
+from plyngent.tools.workspace import WorkspaceError, argv_shape_error
 
 from .command_exec import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -20,6 +20,9 @@ async def run_command(
     env: dict[str, str] | None = None,
 ) -> str:
     """Run ``command`` (argv, no shell) under the workspace; capture stdout/stderr."""
+    shape_error = argv_shape_error(command)
+    if shape_error is not None:
+        return f"error: `run_command` {shape_error}"
     try:
         result = await execute_argv(
             command,

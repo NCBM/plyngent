@@ -48,6 +48,36 @@ async def test_run_command_echo(workspace: object) -> None:
     assert "hi" in out
 
 
+async def test_run_command_string_command_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_command, "ls -la")
+    assert "error:" in out
+    assert "only accepts an array" in out
+    assert "executable not found" not in out
+
+
+async def test_run_command_stringified_json_array_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_command, '["ls", "-la"]')
+    assert "error:" in out
+    assert "only accepts an array" in out
+    assert "executable not found" not in out
+
+
+async def test_run_command_non_string_args_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_command, ["ls", 1])
+    assert "error:" in out
+    assert "array of string args" in out
+
+
+async def test_open_pty_string_command_error(workspace: object) -> None:
+    del workspace
+    out = await call_async(open_pty, "echo hi")
+    assert "error:" in out
+    assert "only accepts an array" in out
+
+
 async def test_run_command_batch_serial(workspace: object) -> None:
     del workspace
     out = await call_async(
