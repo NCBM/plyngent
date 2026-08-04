@@ -192,20 +192,20 @@ def _batch_step_argv(item: object) -> list[str] | None:
     if not isinstance(item, dict):
         return None
     step = cast("dict[str, object]", item)
-    command = step.get("command")
-    if not isinstance(command, list) or not command:
+    argv = step.get("argv")
+    if not isinstance(argv, list) or not argv:
         return None
-    argv: list[str] = []
-    for part in cast("list[object]", command):
+    parts: list[str] = []
+    for part in cast("list[object]", argv):
         if not isinstance(part, str):
             return None
-        argv.append(part)
-    return argv or None
+        parts.append(part)
+    return parts or None
 
 
-def _run_command_batch_reason(args: Mapping[str, object]) -> str | None:
+def _run_argv_batch_reason(args: Mapping[str, object]) -> str | None:
     """One confirm for the whole batch if any step is shell/REPL/-c."""
-    raw = args.get("commands")
+    raw = args.get("steps")
     if isinstance(raw, str):
         try:
             loaded: object = json.loads(raw)
@@ -218,11 +218,11 @@ def _run_command_batch_reason(args: Mapping[str, object]) -> str | None:
         reason
         for index, item in enumerate(cast("list[object]", raw))
         if (argv := _batch_step_argv(item)) is not None
-        and (reason := _shell_or_dash_c_reason(argv, via=f"run_command_batch[{index}]")) is not None
+        and (reason := _shell_or_dash_c_reason(argv, via=f"run_argv_batch[{index}]")) is not None
     ]
     if not risky:
         return None
-    header = f"run_command_batch: {len(risky)} risky step(s) (review before allow)"
+    header = f"run_argv_batch: {len(risky)} risky step(s) (review before allow)"
     return header + "\n" + "\n".join(risky)
 
 
@@ -264,8 +264,8 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _write_file_reason(args)
     if name == "run_argv":
         return _run_argv_reason(args)
-    if name == "run_command_batch":
-        return _run_command_batch_reason(args)
+    if name == "run_argv_batch":
+        return _run_argv_batch_reason(args)
     if name == "open_pty":
         return _open_pty_reason(args)
     if name == "fetch":

@@ -48,23 +48,23 @@ def test_classify_safe_tools() -> None:
     assert classify_danger("run_argv", {"argv": ["ls", "-la"]}) is None
 
 
-def test_classify_run_command_batch_risky() -> None:
+def test_classify_run_argv_batch_risky() -> None:
     reason = classify_danger(
-        "run_command_batch",
+        "run_argv_batch",
         {
-            "commands": [
-                {"command": ["echo", "ok"]},
-                {"command": ["bash", "-c", "echo risky"]},
+            "steps": [
+                {"argv": ["echo", "ok"]},
+                {"argv": ["bash", "-c", "echo risky"]},
             ]
         },
     )
     assert reason is not None
-    assert "run_command_batch" in reason
+    assert "run_argv_batch" in reason
     assert "risky" in reason or "bash" in reason
     assert (
         classify_danger(
-            "run_command_batch",
-            {"commands": [{"command": ["echo", "ok"]}]},
+            "run_argv_batch",
+            {"steps": [{"argv": ["echo", "ok"]}]},
         )
         is None
     )

@@ -50,23 +50,23 @@ def _as_str_dict(value: object) -> dict[str, str] | None:
 
 def _parse_step(raw: object, index: int) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        msg = f"commands[{index}] must be an object"
+        msg = f"steps[{index}] must be an object"
         raise WorkspaceError(msg)
     data = cast("dict[str, object]", raw)
-    command = data.get("command")
-    if not isinstance(command, list) or not command:
-        msg = f"commands[{index}].command must be a non-empty argv list"
+    argv = data.get("argv")
+    if not isinstance(argv, list) or not argv:
+        msg = f"steps[{index}].argv must be a non-empty argv list"
         raise WorkspaceError(msg)
-    command_parts = cast("list[object]", command)
-    argv = [part for part in command_parts if isinstance(part, str)]
-    if len(argv) != len(command_parts):
-        msg = f"commands[{index}].command must be a list of strings"
+    argv_parts = cast("list[object]", argv)
+    argv_str = [part for part in argv_parts if isinstance(part, str)]
+    if len(argv_str) != len(argv_parts):
+        msg = f"steps[{index}].argv must be a list of strings"
         raise WorkspaceError(msg)
     cwd = data.get("cwd")
     stdin = data.get("stdin")
     stop = data.get("stop_on_error", None)
     return {
-        "command": argv,
+        "argv": argv_str,
         "cwd": str(cwd) if isinstance(cwd, str) and cwd else None,
         "env": _as_str_dict(data.get("env")),
         "stdin": None if stdin is None else str(stdin),
@@ -77,18 +77,18 @@ def _parse_step(raw: object, index: int) -> dict[str, Any]:
     }
 
 
-def _normalize_commands(commands: list[dict[str, object]] | str) -> list[object]:
-    if isinstance(commands, str):
+def _normalize_steps(steps: list[dict[str, object]] | str) -> list[object]:
+    if isinstance(steps, str):
         try:
-            loaded: object = json.loads(commands)
+            loaded: object = json.loads(steps)
         except json.JSONDecodeError as exc:
-            msg = f"commands must be a JSON array: {exc}"
+            msg = f"steps must be a JSON array: {exc}"
             raise WorkspaceError(msg) from exc
         if not isinstance(loaded, list):
-            msg = "commands must be a JSON array of step objects"
+            msg = "steps must be a JSON array of step objects"
             raise WorkspaceError(msg)
         return cast("list[object]", loaded)
-    return cast("list[object]", commands)
+    return cast("list[object]", steps)
 
 
 def _format_step(index: int, result: CommandStepResult, *, pipe_out: bool) -> str:
@@ -131,7 +131,7 @@ async def _run_batch_steps(
     for index, step in enumerate(steps):
         stdin_text = prev_capture if prev_piped else step["stdin"]
         result = await execute_argv(
-            step["command"],
+            step["argv"],
             cwd=step["cwd"] if step["cwd"] is not None else cwd,
             env=_merge_env(env, step["env"]),
             stdin=stdin_text,
@@ -155,8 +155,8 @@ async def _run_batch_steps(
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
-async def run_command_batch(
-    commands: list[dict[str, object]] | str,
+async def run_argv_batch(
+    steps: list[dict[str, object]] | str,
     *,
     cwd: str = ".",
     env: dict[str, str] | None = None,
@@ -164,10 +164,10 @@ async def run_command_batch(
 ) -> str:
     """Run a serial batch of argv commands (no shell).
 
-    Each element of ``commands`` is an object::
+    Each element of ``steps`` is an object::
 
         {
-          "command": ["git", "status"],   # required argv
+          "argv": ["git", "status"],     # required argv
           "cwd": ".",                     # optional, else batch cwd
           "env": {"FOO": "1"},            # optional overlay
           "stdin": "...",                 # optional; unused if previous pipe_out
@@ -181,15 +181,15 @@ async def run_command_batch(
     Default ``stop_on_error`` is true. Max 20 steps; total output budget 32k chars.
     """
     try:
-        raw_steps = _normalize_commands(commands)
+        raw_steps = _normalize_steps(steps)
         if not raw_steps:
-            return "error: commands must not be empty"
+            return "error: steps must not be empty"
         if len(raw_steps) > DEFAULT_MAX_BATCH_STEPS:
-            return f"error: at most {DEFAULT_MAX_BATCH_STEPS} commands per batch"
+            return f"error: at most {DEFAULT_MAX_BATCH_STEPS} steps per batch"
 
         steps = [_parse_step(item, i) for i, item in enumerate(raw_steps)]
         if steps[-1]["pipe_out"]:
-            return "error: last command has pipe_out=true but there is no next step"
+            return "error: last step has pipe_out=true but there is no next step"
 
         results, stopped_early = await _run_batch_steps(steps, cwd=cwd, env=env, stop_on_error=stop_on_error)
         body = "\n".join(

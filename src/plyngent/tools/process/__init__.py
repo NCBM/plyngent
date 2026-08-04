@@ -5,13 +5,13 @@ from .pty_terminal import decode_write_data as decode_write_data
 from .pty_terminal import sanitize_pty_output_for_tool as sanitize_pty_output_for_tool
 from .read_pty import read_pty as read_pty
 from .run_argv import run_argv as run_argv
-from .run_command_batch import run_command_batch as run_command_batch
+from .run_argv_batch import run_argv_batch as run_argv_batch
 from .write_pty import write_pty as write_pty
 from .write_pty_keys import write_pty_keys as write_pty_keys
 
 PROCESS_TOOLS = [
     run_argv,
-    run_command_batch,
+    run_argv_batch,
     open_pty,
     read_pty,
     write_pty,
