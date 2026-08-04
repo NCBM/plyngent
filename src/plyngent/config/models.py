@@ -34,8 +34,8 @@ re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, 
 since line numbers go stale.
 
 ### Commands
-- Prefer `run_command` / `run_command_batch` (argv, no shell) over `bash -c` or similar.
-- Several `run_command` calls in one step may run in parallel; use `run_command_batch` \
+- Prefer `run_argv` / `run_argv_batch` (argv lists, no shell) over `bash -c` or similar.
+- Several `run_argv` calls in one step may run in parallel; use `run_argv_batch` \
 for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 - Prefer `vcs_*` for status/diff/log/branch when enough.
 

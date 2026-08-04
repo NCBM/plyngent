@@ -17,8 +17,8 @@ DEFAULT_DIRECTIVE_REMINDER_TOKENS = 100_000
 
 DEFAULT_DIRECTIVE_REMINDER_TEXT = """\
 Tool playbook still applies (see system). Hard constraints:
-- Prefer file tools over shell; several `run_command` calls may run in parallel; \
-use `run_command_batch` for ordered pipelines.
+- Prefer file tools over shell; several `run_argv` calls may run in parallel; \
+use `run_argv_batch` for ordered pipelines.
 - `edit_replace`: fix match / `max_replaces`; `edit_lineno` edits only lines read via \
 `read_file(with_lineno=true)`, and line numbers reset after any file write.
 - Prefer `fetch` for HTTP(S); private/LAN hosts need human policy allow (not YOLO).
