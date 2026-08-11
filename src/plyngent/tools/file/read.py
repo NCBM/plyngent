@@ -18,6 +18,31 @@ def _format_with_lineno(lines: list[str], *, start_lineno: int) -> str:
     return "".join(out)
 
 
+def line_range_label(text: str, start_char: int, end_char: int) -> str:
+    """1-based inclusive line range covering ``text[start_char:end_char]``.
+
+    Char offsets do not map 1:1 to lines; this converts a contiguous char range
+    into the 1-based file line numbers it spans (offset is 0-based, so line 1
+    starts at char 0).
+    """
+    begin = text.count("\n", 0, start_char) + 1
+    last = max(start_char, end_char - 1)
+    end = text.count("\n", 0, last) + 1
+    return f"L{begin}-{end}"
+
+
+def read_raw_text(path: str) -> str | None:
+    """Full raw text of a workspace file; None when the path is not a regular file.
+
+    Shared by ``read_file`` and ``get_truncated`` so truncate-token char offsets
+    always refer to the raw file text (never the ``L{begin}-{end}`` header).
+    """
+    target = resolve_path(path)
+    if not target.is_file():
+        return None
+    return target.read_text(encoding="utf-8", errors="replace")
+
+
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
 async def read_file(
     path: str,
@@ -29,18 +54,21 @@ async def read_file(
 ) -> str:
     """Read a text file under the workspace.
 
-    ``offset`` is 0-based line start; ``limit`` is max lines (None = rest of file).
-    When ``with_lineno`` is true, each line is prefixed with its 1-based file line
-    number (``     N|…``), matching ``edit_lineno`` numbering, and those lines are
-    marked readable for ``edit_lineno`` this turn.
+    ``offset`` is 0-based line start (0 = first line); ``limit`` is max lines
+    (None = rest of file). When ``with_lineno`` is true, each line is prefixed
+    with its 1-based file line number (``     N|…``), matching ``edit_lineno``
+    numbering, and those lines are marked readable for ``edit_lineno`` this turn.
 
     ``max_chars`` caps the returned slice; a ``TRUNCATE_TOKEN`` is appended so
     ``get_truncated`` can continue reading the rest without a new request.
+
+    The result starts with a 1-based inclusive line range ``L{begin}-{end}`` so
+    the caller knows exactly which file lines were read (offset is 0-based).
     """
     target = resolve_path(path)
-    if not target.is_file():
+    text = read_raw_text(path)
+    if text is None:
         return f"error: not a file: {path}"
-    text = target.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines(keepends=True)
     if offset < 0:
         return "error: offset must be >= 0"
@@ -51,13 +79,13 @@ async def read_file(
     slice_lines = lines[start:end]
     if with_lineno:
         mark_lineno_read(str(target), set(range(start + 1, end + 1)))
-        out = _format_with_lineno(slice_lines, start_lineno=start + 1)
+        body = _format_with_lineno(slice_lines, start_lineno=start + 1)
     else:
-        out = "".join(slice_lines)
+        body = "".join(slice_lines)
     if max_chars is not None and max_chars >= 1:
         char_start = len("".join(lines[:start]))
-        out, _ = truncate_with_token(
-            out,
+        body, _ = truncate_with_token(
+            body,
             max_chars,
             kind="file",
             location=path,  # arg form: short token, resolves to the same file
@@ -65,4 +93,10 @@ async def read_file(
             limit=max_chars,
             total_len=len(text),
         )
-    return out
+    if not body:
+        return ""
+    if with_lineno:
+        return body  # per-line numbers already show the range
+    begin = start + 1
+    end_line = start + len(slice_lines)
+    return f"L{begin}-{end_line}\n{body}"

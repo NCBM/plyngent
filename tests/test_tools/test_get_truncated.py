@@ -29,7 +29,9 @@ async def test_get_truncated_file_chains_without_gap(workspace: Path) -> None:
     total_read = 0
     for _ in range(20):
         out = await call_async(get_truncated, token, max_chars=200)
-        content, _, _ = out.partition("\n...[")
+        body, _, _ = out.partition("\n...[")
+        header, _, content = body.partition("\n")
+        assert header.startswith("L") and "-" in header
         assert content == "a" * len(content)
         total_read += len(content)
         next_token = _extract_token(out)

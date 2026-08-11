@@ -19,19 +19,21 @@ def _extract_token(out: str) -> str | None:
 def test_write_read_listdir_edit(workspace: object) -> None:
     del workspace
     assert "wrote" in call_sync(write_file, "notes/a.txt", "hello world")
-    assert call_sync(read_file, "notes/a.txt") == "hello world"
+    assert call_sync(read_file, "notes/a.txt") == "L1-1\nhello world"
     listing = call_sync(listdir, "notes")
     assert "a.txt" in listing
     assert "file" in listing
     result = call_sync(edit_replace, "notes/a.txt", "world", "there")
     assert "replaced" in result
-    assert call_sync(read_file, "notes/a.txt") == "hello there"
+    assert call_sync(read_file, "notes/a.txt") == "L1-1\nhello there"
 
 
 def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
     (workspace / "big.txt").write_text("a" * 1000, encoding="utf-8")
     out = call_sync(read_file, "big.txt", max_chars=200)
-    content, _, marker = out.partition("\n...[")
+    header, _, rest = out.partition("\n")
+    assert header.startswith("L1-")  # 1-based range of the raw slice read
+    content, _, marker = rest.partition("\n...[")
     assert content == "a" * len(content)
     assert len(content) < 200
     assert "TRUNCATE_TOKEN:" in marker
@@ -46,7 +48,7 @@ def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
 def test_read_file_max_chars_small_file_untouched(workspace: Path) -> None:
     (workspace / "small.txt").write_text("tiny", encoding="utf-8")
     out = call_sync(read_file, "small.txt", max_chars=200)
-    assert out == "tiny"
+    assert out == "L1-1\ntiny"
     assert "TRUNCATE_TOKEN:" not in out
 
 
@@ -54,7 +56,7 @@ def test_edit_replace_first_only(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "t.txt", "aa aa")
     result = call_sync(edit_replace, "t.txt", "aa", "bb")
-    assert call_sync(read_file, "t.txt") == "bb aa"
+    assert call_sync(read_file, "t.txt") == "L1-1\nbb aa"
     assert "1 of 2" in result or "1 of 2 matches" in result
     assert "remain" in result
 
@@ -63,7 +65,7 @@ def test_edit_replace_max_replaces(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "t.txt", "aa aa aa")
     result = call_sync(edit_replace, "t.txt", "aa", "bb", max_replaces=2)
-    assert call_sync(read_file, "t.txt") == "bb bb aa"
+    assert call_sync(read_file, "t.txt") == "L1-1\nbb bb aa"
     assert "2 of 3" in result
     assert "1 remain" in result
 
@@ -72,7 +74,7 @@ def test_edit_replace_all_matches(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "t.txt", "aa aa")
     result = call_sync(edit_replace, "t.txt", "aa", "bb", max_replaces=10)
-    assert call_sync(read_file, "t.txt") == "bb bb"
+    assert call_sync(read_file, "t.txt") == "L1-1\nbb bb"
     assert "all 2 matches" in result
 
 
@@ -91,7 +93,8 @@ def test_edit_missing_old_string(workspace: object) -> None:
 def test_read_offset_limit(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "lines.txt", "a\nb\nc\nd\n")
-    assert call_sync(read_file, "lines.txt", offset=1, limit=2) == "b\nc\n"
+    # offset is 0-based: offset=1 skips line 1, so the read starts at 1-based line 2.
+    assert call_sync(read_file, "lines.txt", offset=1, limit=2) == "L2-3\nb\nc\n"
 
 
 def test_read_with_lineno(workspace: object) -> None:

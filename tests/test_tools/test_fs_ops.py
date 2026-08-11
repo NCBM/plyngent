@@ -11,7 +11,7 @@ def test_copy_file(workspace: object) -> None:
     _ = call_sync(write_file, "a.txt", "hello")
     out = call_sync(copy_path, "a.txt", "b.txt")
     assert "copied" in out
-    assert call_sync(read_file, "b.txt") == "hello"
+    assert call_sync(read_file, "b.txt") == "L1-1\nhello"
     assert (workspace / "a.txt").is_file()
 
 
@@ -21,8 +21,8 @@ def test_copy_directory(workspace: object) -> None:
     _ = call_sync(write_file, "src/nested/y.txt", "y")
     out = call_sync(copy_path, "src", "dst")
     assert "directory" in out
-    assert call_sync(read_file, "dst/x.txt") == "x"
-    assert call_sync(read_file, "dst/nested/y.txt") == "y"
+    assert call_sync(read_file, "dst/x.txt") == "L1-1\nx"
+    assert call_sync(read_file, "dst/nested/y.txt") == "L1-1\ny"
 
 
 def test_copy_overwrite(workspace: object) -> None:
@@ -32,7 +32,7 @@ def test_copy_overwrite(workspace: object) -> None:
     assert "exists" in call_sync(copy_path, "b.txt", "a.txt")
     out = call_sync(copy_path, "b.txt", "a.txt", overwrite=True)
     assert "copied" in out
-    assert call_sync(read_file, "a.txt") == "new"
+    assert call_sync(read_file, "a.txt") == "L1-1\nnew"
 
 
 def test_move_file(workspace: object) -> None:
@@ -41,7 +41,7 @@ def test_move_file(workspace: object) -> None:
     out = call_sync(move_path, "old.txt", "renamed.txt")
     assert "moved" in out
     assert not (workspace / "old.txt").exists()
-    assert call_sync(read_file, "renamed.txt") == "data"
+    assert call_sync(read_file, "renamed.txt") == "L1-1\ndata"
 
 
 def test_move_directory(workspace: object) -> None:
@@ -50,7 +50,7 @@ def test_move_directory(workspace: object) -> None:
     out = call_sync(move_path, "d", "e")
     assert "moved" in out
     assert not (workspace / "d").exists()
-    assert call_sync(read_file, "e/a.txt") == "a"
+    assert call_sync(read_file, "e/a.txt") == "L1-1\na"
 
 
 def test_delete_file(workspace: object) -> None:

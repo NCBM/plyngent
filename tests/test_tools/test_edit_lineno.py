@@ -19,7 +19,7 @@ def test_edit_lineno_replace_middle(workspace: object) -> None:
     _ = _read_lineno("a.txt")
     out = call_sync(edit_lineno, "a.txt", 2, 3, "TWO\nTHREE\n")
     assert "replaced lines 2-3" in out
-    assert call_sync(read_file, "a.txt") == "one\nTWO\nTHREE\nfour\n"
+    assert call_sync(read_file, "a.txt") == "L1-4\none\nTWO\nTHREE\nfour\n"
 
 
 def test_edit_lineno_requires_all_lines_read(workspace: object) -> None:
@@ -49,7 +49,7 @@ def test_edit_lineno_append_requires_last_line_read(workspace: object) -> None:
     _ = call_sync(read_file, "ap.txt", offset=2, limit=1, with_lineno=True)
     out = call_sync(edit_lineno, "ap.txt", 4, 4, "d\n")
     assert "appended" in out
-    assert call_sync(read_file, "ap.txt") == "a\nb\nc\nd\n"
+    assert call_sync(read_file, "ap.txt") == "L1-4\na\nb\nc\nd\n"
 
 
 def test_edit_lineno_delete_range(workspace: object) -> None:
@@ -58,7 +58,7 @@ def test_edit_lineno_delete_range(workspace: object) -> None:
     _ = _read_lineno("b.txt")
     out = call_sync(edit_lineno, "b.txt", 2, 2, "")
     assert "replaced" in out
-    assert call_sync(read_file, "b.txt") == "a\nc\n"
+    assert call_sync(read_file, "b.txt") == "L1-2\na\nc\n"
 
 
 def test_edit_lineno_append(workspace: object) -> None:
@@ -67,7 +67,7 @@ def test_edit_lineno_append(workspace: object) -> None:
     _ = _read_lineno("c.txt")
     out = call_sync(edit_lineno, "c.txt", 2, 2, "more\n")
     assert "appended" in out
-    assert call_sync(read_file, "c.txt") == "only\nmore\n"
+    assert call_sync(read_file, "c.txt") == "L1-2\nonly\nmore\n"
 
 
 def test_edit_lineno_invalid(workspace: object) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from plyngent.agent import ToolTag, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
-from plyngent.tools.file.read import read_file
+from plyngent.tools.file.read import line_range_label, read_raw_text
 from plyngent.tools.net.fetch import fetch
 from plyngent.tools.truncate_token import decode_truncate_token, truncate_with_token
 
@@ -16,16 +16,17 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
     Pass the token shown at the end of a truncated ``read_file``, ``fetch``, or
     earlier ``get_truncated`` result to keep reading without re-requesting the
     whole source or raising limits. Truncated output carries a fresh token, so
-    chunks chain indefinitely.
+    chunks chain indefinitely. File chunks start with a 1-based ``L{begin}-{end}``
+    line range like ``read_file``.
     """
     parsed = decode_truncate_token(token)
     if parsed is None:
         return "error: invalid truncate token"
     if parsed.kind == "http":
         return await fetch.handler(parsed.location, offset=parsed.offset, max_chars=parsed.limit)
-    text = await read_file.handler(parsed.location)
-    if text.startswith("error:"):
-        return text
+    text = read_raw_text(parsed.location)
+    if text is None:
+        return f"error: not a file: {parsed.location}"
     start = parsed.offset
     segment = text[start : start + max_chars]
     chunk, _ = truncate_with_token(
@@ -37,4 +38,6 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
         limit=max_chars,
         total_len=len(text),
     )
-    return chunk
+    content_len = len(chunk.split("\n...[", 1)[0]) if "\n...[" in chunk else len(chunk)
+    header = line_range_label(text, start, start + content_len)
+    return f"{header}\n{chunk}"

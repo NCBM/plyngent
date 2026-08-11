@@ -33,10 +33,10 @@ def test_new_temporary_workspace_allowlist(workspace: object) -> None:
     target = temp / "scratch.txt"
     _ = target.write_text("hello-temp", encoding="utf-8")
     assert resolve_path(str(target)) == target.resolve()
-    assert call_sync(read_file, str(target)) == "hello-temp"
+    assert call_sync(read_file, str(target)) == "L1-1\nhello-temp"
 
     _ = call_sync(write_file, "project.txt", "proj")
-    assert call_sync(read_file, "project.txt") == "proj"
+    assert call_sync(read_file, "project.txt") == "L1-1\nproj"
 
     # Sibling under system temp that we did not allowlist still fails.
     outside = temp.parent / "not-ours-should-fail"
