@@ -49,6 +49,7 @@ otherwise a small default is used. Never rely on shell to spoof identity.
 
 ### Humans & safety
 - Prefer `ask_user_line` / `ask_user_choice` / `ask_user_form` over waiting for the next free-form turn.
+- Use `wait` to pause; pressing Enter during the wait disturbs it (reason optional; turn continues immediately).
 - Overwrites, deletes, shells, and risky ops may require human confirm; hard denylists are not skipped by YOLO.
 - Temporary scratch: `new_temporary_workspace`.
 

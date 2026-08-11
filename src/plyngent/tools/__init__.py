@@ -8,6 +8,7 @@ from .chat import CHAT_TOOLS as CHAT_TOOLS
 from .chat import ask_user as ask_user
 from .chat import choose_user as choose_user
 from .chat import form_user as form_user
+from .chat import wait as wait
 from .context import InstanceState as InstanceState
 from .context import SessionState as SessionState
 from .context import bind_instance as bind_instance

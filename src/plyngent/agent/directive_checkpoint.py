@@ -23,6 +23,7 @@ use `run_argv_batch` for ordered pipelines.
 `read_file(with_lineno=true)`, and line numbers reset after any file write.
 - Prefer `fetch` for HTTP(S); private/LAN hosts need human policy allow (not YOLO).
 - PTY secrets only via `ask_into_pty`; denylists and confirms still apply.
+- `wait` pauses; pressing Enter disturbs early (optional reason).
 - Todo stack: open items mean unfinished work.
 """
 

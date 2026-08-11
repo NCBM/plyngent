@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import json
 
 from plyngent.agent import ToolRegistry
 from plyngent.prompting import NonInteractiveBackend, temporary_backend
-from plyngent.tools.chat import CHAT_TOOLS, ask_user, choose_user, form_user
+from plyngent.tools.chat import CHAT_TOOLS, ask_user, choose_user, form_user, wait
 from tests.test_prompting import ScriptedBackend
+
+wait_module = importlib.import_module("plyngent.tools.chat.wait")
 
 
 async def test_ask_user_tool() -> None:
@@ -77,7 +80,7 @@ async def test_form_user_tool() -> None:
 
 async def test_chat_tools_in_default_list() -> None:
     names = {t.name for t in CHAT_TOOLS}
-    assert names == {"ask_user_line", "ask_user_choice", "ask_user_form"}
+    assert names == {"ask_user_line", "ask_user_choice", "ask_user_form", "wait"}
 
 
 async def test_ask_user_non_interactive_error() -> None:
@@ -85,3 +88,59 @@ async def test_ask_user_non_interactive_error() -> None:
         registry = ToolRegistry([ask_user])
         out = await registry.execute("ask_user_line", '{"question": "hi"}')
     assert out.startswith("error:")
+
+
+async def test_wait_tool_zero_seconds(monkeypatch) -> None:
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 0}')
+    assert out == "waited 0s"
+
+
+async def test_wait_tool_negative_duration() -> None:
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": -1}')
+    assert out.startswith("error:")
+
+
+async def test_wait_tool_noninteractive_sleeps(monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(wait_module.asyncio, "sleep", fake_sleep)
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 5}')
+    assert out == "waited 5s"
+    assert slept == [5]
+
+
+async def test_wait_tool_disturbed_with_reason(monkeypatch) -> None:
+    monkeypatch.setattr(
+        wait_module,
+        "read_line_with_timeout",
+        lambda prompt, timeout: "tests are slow",
+    )
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 3}')
+    assert out == "disturbed by user: tests are slow"
+
+
+async def test_wait_tool_disturbed_empty_enter(monkeypatch) -> None:
+    monkeypatch.setattr(wait_module, "read_line_with_timeout", lambda prompt, timeout: "")
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 3}')
+    assert out == "disturbed by user (no reason)"
+
+
+async def test_wait_tool_times_out(monkeypatch) -> None:
+    monkeypatch.setattr(wait_module, "read_line_with_timeout", lambda prompt, timeout: None)
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 3}')
+    assert out == "waited 3s"
