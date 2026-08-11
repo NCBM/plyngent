@@ -44,8 +44,9 @@ def test_truncate_tool_result_long() -> None:
     assert "Truncated" in out
     assert "20" in out
     assert "30" in out
-    assert "get_truncated" in out
-    assert "configuration file" not in out
+    # Generic tool results carry no resumable source → no token, no get_truncated.
+    assert "get_truncated" not in out
+    assert "TRUNCATE_TOKEN" not in out
 
 
 def test_truncate_tool_result_no_hint() -> None:

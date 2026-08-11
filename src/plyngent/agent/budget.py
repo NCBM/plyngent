@@ -36,10 +36,13 @@ def truncate_tool_result(
 ) -> str:
     """Cap tool output so huge dumps do not flood model context.
 
-    With ``hint=True`` the suffix tells the model the result was cut and that
-    it may ask the user to raise the config limit (``max_tool_result_chars``).
-    ``hint=False`` keeps the terse marker for internal shrinks whose cap is not
-    a user-facing config knob (e.g. request-time compacting).
+    This is the generic agent-loop cap for arbitrary tool results — there is no
+    resumable source, so no ``TRUNCATE_TOKEN`` is emitted here. Token-capable
+    sources (``read_file`` / ``fetch`` / ``get_truncated``) embed their own
+    ``[TRUNCATE_TOKEN: ...]`` marker via :func:`truncate_with_token`, and only
+    there does the result point the model at ``get_truncated`` (hint and token
+    always appear together). ``hint=False`` keeps the terse marker for internal
+    shrinks whose cap is not a user-facing knob (e.g. request-time compacting).
     """
     if max_chars < 1:
         return text
@@ -47,11 +50,7 @@ def truncate_tool_result(
         return text
     omitted = len(text) - max_chars
     if hint:
-        return (
-            f"{text[:max_chars]}\n"
-            f"...[Truncated ({max_chars} chars max.; {omitted} chars omitted). "
-            f"Use `get_truncated` when a `TRUNCATE_TOKEN` is shown.]"
-        )
+        return f"{text[:max_chars]}\n...[Truncated ({max_chars} chars max.; {omitted} chars omitted)]"
     return f"{text[:max_chars]}\n...[truncated {omitted} characters]"
 
 
