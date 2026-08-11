@@ -26,7 +26,8 @@ use `run_argv_batch` for ordered pipelines.
 - Prefer `fetch` for HTTP(S); private/LAN hosts need human policy allow (not YOLO).
 - PTY secrets only via `ask_into_pty`; denylists and confirms still apply.
 - `wait` pauses; pressing Enter disturbs early (optional reason).
-- Todo stack: open items mean unfinished work.
+- Todo stack: open items mean unfinished work; the stack does not auto-clear — \
+call `todo_clear` (or pop finished TOP groups) when the whole plan is done.
 """
 
 _BAND_MARKER = re.compile(
