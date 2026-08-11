@@ -46,6 +46,13 @@ def decode_truncate_token(text: str) -> TruncateToken | None:
     return token
 
 
+def _truncated_marker(omitted: int, token: TruncateToken) -> str:
+    return (
+        f"\n...[truncated {omitted} chars; more via get_truncated token] "
+        f"[TRUNCATE_TOKEN: {encode_truncate_token(token)}]"
+    )
+
+
 def truncate_with_token(
     text: str,
     max_chars: int,
@@ -61,25 +68,29 @@ def truncate_with_token(
     ``text`` is a slice of the full source starting at ``offset``; ``total_len``
     is the full source length. A token is embedded whenever more content remains
     after the returned chunk, so ``get_truncated`` chains through truncations
-    and each chunk may itself carry a fresh token. The marker is budgeted so the
-    total returned length stays at or under ``max_chars`` (the agent loop's own
+    and each chunk may itself carry a fresh token. The token advances by the
+    length actually returned (no content is skipped), and the marker is budgeted
+    so the total returned length stays near ``max_chars`` (the agent loop's own
     cap never re-cuts it and never strips the token).
     """
     if max_chars < 1:
         return text, None
-    overflow = len(text) > max_chars
-    more_after = offset + max_chars < total_len
-    if not overflow and not more_after:
-        return text, None
-    token = TruncateToken(kind=kind, location=location, offset=offset + max_chars, limit=limit)
-    tok_text = encode_truncate_token(token)
-    if overflow:
+    if len(text) > max_chars:
         omitted = len(text) - max_chars
-        marker = f"\n...[truncated {omitted} chars; more via get_truncated token] [TRUNCATE_TOKEN: {tok_text}]"
-        cut = max_chars - len(marker)
+        # First pass sizes the marker with an offset+max_chars token; re-encode
+        # with the real cut so the cursor lands exactly where content stops.
+        first = TruncateToken(kind=kind, location=location, offset=offset + max_chars, limit=limit)
+        cut = max_chars - len(_truncated_marker(omitted, first))
         if cut < 1:
-            # Marker longer than the budget: emit anyway so chaining never drops.
-            return text[:max_chars] + marker, token
-        return text[:cut] + marker, token
-    marker = f"\n...[more content available; use get_truncated with the token] [TRUNCATE_TOKEN: {tok_text}]"
+            return text[:max_chars] + _truncated_marker(omitted, first), first
+        token = TruncateToken(kind=kind, location=location, offset=offset + cut, limit=limit)
+        return text[:cut] + _truncated_marker(omitted, token), token
+    more_after = offset + len(text) < total_len
+    if not more_after:
+        return text, None
+    token = TruncateToken(kind=kind, location=location, offset=offset + len(text), limit=limit)
+    marker = (
+        f"\n...[more content available; use get_truncated with the token] "
+        f"[TRUNCATE_TOKEN: {encode_truncate_token(token)}]"
+    )
     return text + marker, token
