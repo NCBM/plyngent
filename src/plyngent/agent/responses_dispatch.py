@@ -15,6 +15,7 @@ from msgspec import UNSET
 
 from plyngent.agent.responses_bridge import (
     chat_param_to_responses_kwargs,
+    reasoning_summary_text,
     response_to_assistant_message,
     response_to_chat_completion,
     responses_status_to_finish_reason,
@@ -45,7 +46,14 @@ if TYPE_CHECKING:
     )
 
 # Responses stream event types that carry reasoning text deltas.
-_REASONING_DELTA_TYPES = {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}
+# OpenAI streams ``response.reasoning_summary_text.delta``; DeepSeek streams
+# ``response.reasoning_text.delta`` and emits the full text once via
+# ``response.reasoning_text.done``.
+_REASONING_DELTA_TYPES = {
+    "response.reasoning_summary_text.delta",
+    "response.reasoning_text.delta",
+    "response.reasoning_text.done",
+}
 # Terminal events that carry the full Response object (status, tool calls, usage).
 # ``response.failed`` also carries a Response but is surfaced as an error.
 _FINAL_EVENT_TYPES = {"response.completed", "response.incomplete"}
@@ -90,6 +98,27 @@ def _decode_final_event(event: ResponseStreamEvent) -> ResponseModel | None:
         return None
 
 
+def _stream_reasoning_content(event: ResponseStreamEvent) -> str | None:
+    """Return reasoning text from a reasoning stream event (delta or full-text done)."""
+    if event.type not in _REASONING_DELTA_TYPES:
+        return None
+    content = event.delta if isinstance(event.delta, str) else event.text
+    return content if isinstance(content, str) and content else None
+
+
+def _terminal_chunks(final: ResponseModel, *, model: str) -> list[ChatCompletionChunk]:
+    """Build the post-stream chunks (tool calls, finish_reason, usage)."""
+    assistant = response_to_assistant_message(final)
+    has_tools = assistant.tool_calls is not UNSET and bool(assistant.tool_calls)
+    finish = responses_status_to_finish_reason(final, has_tool_calls=has_tools)
+    chunks: list[ChatCompletionChunk] = list(tool_call_chunks_from_response(final, model=model))
+    chunks.append(finish_reason_chunk(model=model, finish_reason=finish))
+    usage = usage_chunk_from_response(final, model=model)
+    if usage is not None:
+        chunks.append(usage)
+    return chunks
+
+
 async def _stream_as_chat_chunks(
     client: OpenAIClient,
     create: ResponsesCreateParam,
@@ -108,6 +137,7 @@ async def _stream_as_chat_chunks(
     """
     stream = await client.responses(create, stream=True)
     final: ResponseModel | None = None
+    saw_reasoning = False
     async for event in stream:
         etype = event.type
         if etype in {"error", "response.failed"}:
@@ -118,8 +148,10 @@ async def _stream_as_chat_chunks(
         if etype == "response.output_text.delta" and isinstance(event.delta, str) and event.delta:
             yield text_delta_chunk(model=model, content=event.delta)
             continue
-        if etype in _REASONING_DELTA_TYPES and isinstance(event.delta, str) and event.delta:
-            yield reasoning_delta_chunk(model=model, content=event.delta)
+        reasoning = _stream_reasoning_content(event)
+        if reasoning is not None:
+            saw_reasoning = True
+            yield reasoning_delta_chunk(model=model, content=reasoning)
             continue
 
     if final is None:
@@ -127,15 +159,16 @@ async def _stream_as_chat_chunks(
         # The loop will treat empty + no finish_reason as a glitch.
         return
 
-    assistant = response_to_assistant_message(final)
-    has_tools = assistant.tool_calls is not UNSET and bool(assistant.tool_calls)
-    finish = responses_status_to_finish_reason(final, has_tool_calls=has_tools)
-    for chunk in tool_call_chunks_from_response(final, model=model):
+    if not saw_reasoning:
+        # DeepSeek sometimes delivers reasoning only on the terminal response
+        # (top-level ``reasoning``); surface it so tool-call turns keep their
+        # reasoning_content when the assistant message goes back to the API.
+        terminal_reasoning = reasoning_summary_text(final)
+        if terminal_reasoning:
+            yield reasoning_delta_chunk(model=model, content=terminal_reasoning)
+
+    for chunk in _terminal_chunks(final, model=model):
         yield chunk
-    yield finish_reason_chunk(model=model, finish_reason=finish)
-    usage = usage_chunk_from_response(final, model=model)
-    if usage is not None:
-        yield usage
 
 
 async def dispatch_responses(

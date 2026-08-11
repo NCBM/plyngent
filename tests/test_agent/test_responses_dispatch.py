@@ -177,11 +177,65 @@ async def test_dispatch_responses_stream_text_and_usage() -> None:
     )
     stream = await dispatch_responses(cast("Any", client), param, stream=True)
     chunks = [chunk async for chunk in cast("Any", stream)]
-    # text deltas + finish + usage
     texts = [c.choices[0].delta.content for c in chunks if c.choices and isinstance(c.choices[0].delta.content, str)]
     assert texts == ["stream", "ed"]
     assert any(c.choices and c.choices[0].finish_reason == "stop" for c in chunks)
     assert any(token_usage_present(c) for c in chunks)
+
+
+async def _streamed_reasoning(
+    events: list[ResponseStreamEvent],
+) -> str:
+    """Run one Responses stream and join all streamed ``reasoning_content`` deltas."""
+    import msgspec
+
+    final = _completed_response(text="ok")
+    final.reasoning = {"content": [{"type": "reasoning_content", "text": "terminal reasoning"}]}
+    events.append(ResponseStreamEvent(type="response.completed", response=msgspec.to_builtins(final)))
+    client = ScriptedResponsesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="gpt-test", messages=[UserChatMessage(content="hi")])
+    stream = await dispatch_responses(cast("Any", client), param, stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    parts: list[str] = []
+    for chunk in chunks:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
+            parts.append(delta.reasoning_content)
+    return "".join(parts)
+
+
+async def test_dispatch_responses_stream_reasoning_text_done() -> None:
+    """DeepSeek ``response.reasoning_text.done`` carries the full reasoning text."""
+    reasoning = await _streamed_reasoning(
+        [ResponseStreamEvent(type="response.reasoning_text.done", delta="full chain of thought")]
+    )
+    assert reasoning == "full chain of thought"
+
+
+async def test_dispatch_responses_stream_reasoning_deltas() -> None:
+    reasoning = await _streamed_reasoning(
+        [
+            ResponseStreamEvent(type="response.reasoning_text.delta", delta="step one "),
+            ResponseStreamEvent(type="response.reasoning_text.delta", delta="step two"),
+        ]
+    )
+    assert reasoning == "step one step two"
+
+
+async def test_dispatch_responses_stream_terminal_only_reasoning() -> None:
+    """DeepSeek sometimes delivers reasoning only on the terminal response."""
+    reasoning = await _streamed_reasoning([])
+    assert reasoning == "terminal reasoning"
+
+
+async def test_dispatch_responses_stream_reasoning_no_duplicate() -> None:
+    """Streamed deltas win; the terminal reasoning is not re-emitted."""
+    reasoning = await _streamed_reasoning(
+        [ResponseStreamEvent(type="response.reasoning_text.delta", delta="streamed only")]
+    )
+    assert reasoning == "streamed only"
 
 
 def token_usage_present(chunk: object) -> bool:

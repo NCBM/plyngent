@@ -1,8 +1,13 @@
+from __future__ import annotations
+
+from typing import Any
+
 import msgspec
 
 from plyngent.agent.responses_bridge import (
     chat_messages_to_responses_input,
     chat_param_to_responses_kwargs,
+    reasoning_summary_text,
     response_to_assistant_message,
     response_to_chat_completion,
     responses_status_to_finish_reason,
@@ -143,6 +148,54 @@ def test_response_to_assistant_with_tools() -> None:
     assert isinstance(completion.usage, dict)
     assert completion.usage["input_tokens"] == 10
     assert completion.choices[0].finish_reason == "tool_calls"
+
+
+def _reasoning_response(
+    *,
+    output_reasoning: bool = False,
+    top_level: dict[str, Any] | None = None,
+) -> Response:
+    output: list[dict[str, Any]] = []
+    if output_reasoning:
+        output.append(
+            {
+                "id": "reason_1",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "openai-style reasoning"}],
+            }
+        )
+    return Response(
+        id="resp_r",
+        created_at=1,
+        model="deepseek-v4-flash",
+        output=output,
+        reasoning=top_level,
+    )
+
+
+def test_reasoning_summary_text_deepseek_top_level() -> None:
+    """DeepSeek Responses returns reasoning in the top-level ``reasoning`` field."""
+    response = _reasoning_response(top_level={"content": [{"type": "reasoning_content", "text": "think step by step"}]})
+    assert reasoning_summary_text(response) == "think step by step"
+    assistant = response_to_assistant_message(response)
+    assert assistant.reasoning_content == "think step by step"
+
+
+def test_reasoning_summary_text_prefers_top_level() -> None:
+    response = _reasoning_response(
+        output_reasoning=True,
+        top_level={"summary": [{"type": "summary_text", "text": "top-level reasoning"}]},
+    )
+    assert reasoning_summary_text(response) == "top-level reasoning"
+
+
+def test_reasoning_summary_text_falls_back_to_output_items() -> None:
+    response = _reasoning_response(output_reasoning=True)
+    assert reasoning_summary_text(response) == "openai-style reasoning"
+
+
+def test_reasoning_summary_text_empty_when_absent() -> None:
+    assert reasoning_summary_text(_reasoning_response()) == ""
 
 
 def test_responses_status_to_finish_reason_incomplete() -> None:

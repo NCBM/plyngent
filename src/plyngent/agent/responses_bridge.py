@@ -171,7 +171,7 @@ def response_to_assistant_message(response: Response) -> AssistantChatMessage:
             )
             for call in calls
         ]
-    reasoning = _reasoning_summary_text(response)
+    reasoning = reasoning_summary_text(response)
     return AssistantChatMessage(
         content=text or None,
         tool_calls=tool_calls,
@@ -179,23 +179,40 @@ def response_to_assistant_message(response: Response) -> AssistantChatMessage:
     )
 
 
-def _reasoning_summary_text(response: Response) -> str:
+def _reasoning_text_blocks(raw: object) -> list[str]:
+    """Collect text from a reasoning block list (``summary``/``content``)."""
+    parts: list[str] = []
+    if not isinstance(raw, list):
+        return parts
+    for block_obj in cast("list[object]", raw):
+        if not isinstance(block_obj, dict):
+            continue
+        block_map = cast("dict[str, object]", block_obj)
+        if block_map.get("type") in {"summary_text", "output_text", "reasoning_content"}:
+            text = block_map.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return parts
+
+
+def reasoning_summary_text(response: Response) -> str:
+    """Concatenate reasoning text from the response.
+
+    OpenAI puts ``reasoning`` items in ``output`` with a ``summary`` block list.
+    DeepSeek (Responses convention) additionally returns the full chain-of-thought
+    in the top-level ``response.reasoning`` (``content``/``summary`` block lists);
+    prefer it when present so the two sources are not duplicated.
+    """
+    reasoning = response.reasoning
+    if isinstance(reasoning, dict):
+        parts = _reasoning_text_blocks(reasoning.get("content")) + _reasoning_text_blocks(reasoning.get("summary"))
+        if parts:
+            return "".join(parts)
     parts: list[str] = []
     for raw in response.output:
         if raw.get("type") != "reasoning":
             continue
-        summary = raw.get("summary")
-        if not isinstance(summary, list):
-            continue
-        summary_items = cast("list[object]", summary)
-        for block_obj in summary_items:
-            if not isinstance(block_obj, dict):
-                continue
-            block_map = cast("dict[str, object]", block_obj)
-            if block_map.get("type") in {"summary_text", "output_text"}:
-                text = block_map.get("text")
-                if isinstance(text, str) and text:
-                    parts.append(text)
+        parts.extend(_reasoning_text_blocks(raw.get("summary")))
     return "".join(parts)
 
 
