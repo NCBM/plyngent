@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ReasoningDeltaEvent, TextDeltaEvent, ToolResultEvent
+from plyngent.agent import ReasoningDeltaEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from plyngent.cli.display import (
     get_markdown_enabled,
     markdown_render_available,
@@ -11,7 +11,11 @@ from plyngent.cli.display import (
     set_markdown_enabled,
     set_verbose_tool_results,
 )
-from plyngent.lmproto.openai_compatible.model import ToolChatMessage
+from plyngent.lmproto.openai_compatible.model import (
+    AssistantFunctionTool,
+    AssistantFunctionToolCall,
+    ToolChatMessage,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -61,7 +65,7 @@ async def test_flush_markdown_on_source_change(
 
     call = AssistantFunctionToolCall(
         id="1",
-        function=AssistantFunctionTool(name="read_file", arguments="{}"),
+        function=AssistantFunctionTool(name="run_argv", arguments='{"argv": ["echo", "x"]}'),
     )
     await render_events(
         _aiter(
@@ -76,6 +80,73 @@ async def test_flush_markdown_on_source_change(
     out = capsys.readouterr().out
     assert "[tool]" in out
     assert "after" in out
+
+
+def _read_call(args_json: str) -> ToolCallEvent:
+    return ToolCallEvent(
+        tool_call=AssistantFunctionToolCall(
+            id="1",
+            function=AssistantFunctionTool(name="read_file", arguments=args_json),
+        )
+    )
+
+
+def _result(content: str) -> ToolResultEvent:
+    return ToolResultEvent(message=ToolChatMessage(content=content, tool_call_id="1"))
+
+
+async def test_pretty_read_file_done(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\ntwo\n")]))
+    out = capsys.readouterr().out
+    assert "* Read 'a.txt' L1-4 (done)" in out
+    assert "[tool]" not in out
+    assert "[tool ok]" not in out
+
+
+async def test_pretty_read_file_statuses(capsys: pytest.CaptureFixture[str]) -> None:
+    cases = [
+        ("error: file not found: a.txt", "(file not found)"),
+        ("error: not a file: a.txt", "(not a file)"),
+        ("error: something else", "(error)"),
+        ("no header content", "(done)"),
+    ]
+    for content, status in cases:
+        await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result(content)]))
+        out = capsys.readouterr().out
+        assert f"* Read 'a.txt' {status}" in out, f"status {status} not rendered for {content!r}"
+
+
+async def test_pretty_todo_push(capsys: pytest.CaptureFixture[str]) -> None:
+    call = ToolCallEvent(
+        tool_call=AssistantFunctionToolCall(
+            id="2",
+            function=AssistantFunctionTool(name="todo_push", arguments='{"titles": ["T1"]}'),
+        )
+    )
+    result = (
+        "pushed group (depth=1) items=[a1]\n"
+        "(LIFO of groups: depth=1; TOP group = current breakdown level)\n"
+        "group d=0 TOP:\n"
+        "  [ ] a1: T1"
+    )
+    await render_events(_aiter([call, _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Todo Push:" in out
+    assert "  [ ] a1: T1" in out
+    assert "[tool]" not in out
+
+
+async def test_non_pretty_tool_keeps_old_style(capsys: pytest.CaptureFixture[str]) -> None:
+    call = ToolCallEvent(
+        tool_call=AssistantFunctionToolCall(
+            id="3",
+            function=AssistantFunctionTool(name="run_argv", arguments='{"argv": ["ls"]}'),
+        )
+    )
+    await render_events(_aiter([call, _result("exit_code=0")]))
+    out = capsys.readouterr().out
+    assert "[tool] run_argv(" in out
+    assert "[tool ok]" in out
 
 
 async def test_tool_result_preview_vs_verbose(capsys: pytest.CaptureFixture[str]) -> None:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import click
 
@@ -27,6 +28,10 @@ if TYPE_CHECKING:
 
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
+
+# Tool calls that render as a single pretty summary line instead of
+# ``[tool]`` / ``[tool result]``.
+_PRETTY_TOOLS = frozenset({"read_file", "todo_push", "todo_update"})
 
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
@@ -67,6 +72,49 @@ def _preview(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
+
+
+def _json_str_arg(args_json: str, key: str) -> str | None:
+    """Extract a string argument from a tool-call arguments JSON blob."""
+    try:
+        raw = json.loads(args_json)
+    except ValueError:
+        return None
+    if isinstance(raw, dict):
+        value = cast("dict[str, object]", raw).get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _read_file_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``read_file`` call: ``* Read 'path' L1-4 (done)``."""
+    path = _json_str_arg(args_json, "path") or "?"
+    if result.startswith("error: file not found"):
+        return f"* Read '{path}' (file not found)"
+    if result.startswith("error: not a file"):
+        return f"* Read '{path}' (not a file)"
+    if result.startswith("error:"):
+        return f"* Read '{path}' (error)"
+    first = result.splitlines()[0] if result.splitlines() else ""
+    if first.startswith("L") and "-" in first:
+        return f"* Read '{path}' {first} (done)"
+    return f"* Read '{path}' (done)"
+
+
+def _todo_pretty(name: str, result: str) -> str:
+    """Summary for todo push/update: header + the rendered todo stack."""
+    label = "Todo Push" if name == "todo_push" else "Todo Update"
+    return f"* {label}:\n{result}"
+
+
+def _pretty_tool_result(name: str, args_json: str, result: str) -> str | None:
+    """Pretty summary for a known tool call + result; None keeps the old style."""
+    if name == "read_file":
+        return _read_file_pretty(args_json, result)
+    if name in {"todo_push", "todo_update"}:
+        return _todo_pretty(name, result)
+    return None
 
 
 def _echo_stream(text: str) -> None:
@@ -144,6 +192,9 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
     assistant_buf: list[str] = []
     printed_reasoning = False
     printed_assistant = False
+    # Tool calls buffer so prettified tools can render once their result lands
+    # (the summary line needs the status/range). FIFO matches loop event order.
+    pending_tools: list[tuple[str, str, bool]] = []
 
     def flush_assistant() -> None:
         nonlocal source, assistant_buf, printed_assistant
@@ -192,14 +243,24 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             flush_assistant()
             call = event.tool_call
             if isinstance(call, AssistantFunctionToolCall):
-                args = _preview(call.function.arguments, _TOOL_ARGS_PREVIEW)
-                click.secho(f"\n[tool] {call.function.name}({args})", fg="yellow")
+                name = call.function.name
+                args = call.function.arguments
+                pretty_tool = name in _PRETTY_TOOLS
+                pending_tools.append((name, args, pretty_tool))
+                if not pretty_tool:
+                    preview = _preview(args, _TOOL_ARGS_PREVIEW)
+                    click.secho(f"\n[tool] {name}({preview})", fg="yellow")
             else:
+                pending_tools.append(("custom", call.id, False))
                 click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
         elif isinstance(event, ToolResultEvent):
             flush_assistant()
             content = event.message.content
-            if show_full:
+            name, args, pretty_tool = pending_tools.pop(0) if pending_tools else ("", "", False)
+            pretty_line = _pretty_tool_result(name, args, content) if pretty_tool else None
+            if pretty_line is not None:
+                click.secho(f"\n{pretty_line}", fg="yellow")
+            elif show_full:
                 click.secho(f"[tool ok]\n{content}", fg="magenta")
             else:
                 preview = _preview(content, _TOOL_RESULT_PREVIEW)
