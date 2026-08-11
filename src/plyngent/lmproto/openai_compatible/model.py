@@ -239,6 +239,9 @@ class DeltaMessage(Struct):
     # Providers often send content=null / reasoning_content=null on partial chunks.
     content: str | None | Unset = UNSET
     reasoning_content: str | None | Unset = UNSET
+    # True when reasoning_content is the FULL chain-of-thought (e.g. DeepSeek's
+    # ``response.reasoning_text.done``), replacing any streamed fragments.
+    reasoning_full: bool | Unset = UNSET
     tool_calls: list[StreamToolCallDelta] | Unset = UNSET
 
 

@@ -47,13 +47,15 @@ if TYPE_CHECKING:
 
 # Responses stream event types that carry reasoning text deltas.
 # OpenAI streams ``response.reasoning_summary_text.delta``; DeepSeek streams
-# ``response.reasoning_text.delta`` and emits the full text once via
-# ``response.reasoning_text.done``.
+# ``response.reasoning_text.delta`` fragments and emits the FULL chain-of-thought
+# once via ``response.reasoning_text.done``. Fragments append; a ``.done`` event
+# carries the complete text and must replace the accumulated fragments (otherwise
+# the CoT is concatenated twice).
 _REASONING_DELTA_TYPES = {
     "response.reasoning_summary_text.delta",
     "response.reasoning_text.delta",
-    "response.reasoning_text.done",
 }
+_REASONING_FULL_TYPES = {"response.reasoning_text.done"}
 # Terminal events that carry the full Response object (status, tool calls, usage).
 # ``response.failed`` also carries a Response but is surfaced as an error.
 _FINAL_EVENT_TYPES = {"response.completed", "response.incomplete"}
@@ -98,12 +100,19 @@ def _decode_final_event(event: ResponseStreamEvent) -> ResponseModel | None:
         return None
 
 
-def _stream_reasoning_content(event: ResponseStreamEvent) -> str | None:
-    """Return reasoning text from a reasoning stream event (delta or full-text done)."""
-    if event.type not in _REASONING_DELTA_TYPES:
-        return None
+def _stream_reasoning_content(event: ResponseStreamEvent) -> tuple[str | None, bool]:
+    """Return (reasoning_text, is_full) from a reasoning stream event.
+
+    ``.delta`` events carry incremental fragments (``is_full=False``); ``.done``
+    events carry the full chain-of-thought (``is_full=True``) and must replace
+    the accumulated fragments.
+    """
+    if event.type not in _REASONING_DELTA_TYPES and event.type not in _REASONING_FULL_TYPES:
+        return None, False
     content = event.delta if isinstance(event.delta, str) else event.text
-    return content if isinstance(content, str) and content else None
+    if not isinstance(content, str) or not content:
+        return None, False
+    return content, event.type in _REASONING_FULL_TYPES
 
 
 def _terminal_chunks(final: ResponseModel, *, model: str) -> list[ChatCompletionChunk]:
@@ -148,10 +157,10 @@ async def _stream_as_chat_chunks(
         if etype == "response.output_text.delta" and isinstance(event.delta, str) and event.delta:
             yield text_delta_chunk(model=model, content=event.delta)
             continue
-        reasoning = _stream_reasoning_content(event)
+        reasoning, reasoning_full = _stream_reasoning_content(event)
         if reasoning is not None:
             saw_reasoning = True
-            yield reasoning_delta_chunk(model=model, content=reasoning)
+            yield reasoning_delta_chunk(model=model, content=reasoning, full=reasoning_full)
             continue
 
     if final is None:

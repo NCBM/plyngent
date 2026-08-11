@@ -186,7 +186,11 @@ async def test_dispatch_responses_stream_text_and_usage() -> None:
 async def _streamed_reasoning(
     events: list[ResponseStreamEvent],
 ) -> str:
-    """Run one Responses stream and join all streamed ``reasoning_content`` deltas."""
+    """Run one Responses stream and join streamed ``reasoning_content`` deltas.
+
+    Mirrors the agent loop: ``.done`` (``reasoning_full``) replaces accumulated
+    fragments instead of appending.
+    """
     import msgspec
 
     final = _completed_response(text="ok")
@@ -202,7 +206,10 @@ async def _streamed_reasoning(
             continue
         delta = chunk.choices[0].delta
         if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
-            parts.append(delta.reasoning_content)
+            if delta.reasoning_full is True:
+                parts = [delta.reasoning_content]
+            else:
+                parts.append(delta.reasoning_content)
     return "".join(parts)
 
 
@@ -222,6 +229,19 @@ async def test_dispatch_responses_stream_reasoning_deltas() -> None:
         ]
     )
     assert reasoning == "step one step two"
+
+
+async def test_dispatch_responses_stream_reasoning_full_replaces_fragments() -> None:
+    """A ``.done`` event with the full CoT must replace streamed fragments, not
+    append — otherwise the chain-of-thought is concatenated twice."""
+    reasoning = await _streamed_reasoning(
+        [
+            ResponseStreamEvent(type="response.reasoning_text.delta", delta="partial "),
+            ResponseStreamEvent(type="response.reasoning_text.delta", delta="thinking"),
+            ResponseStreamEvent(type="response.reasoning_text.done", delta="full chain of thought"),
+        ]
+    )
+    assert reasoning == "full chain of thought"
 
 
 async def test_dispatch_responses_stream_terminal_only_reasoning() -> None:

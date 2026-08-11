@@ -58,7 +58,13 @@ def text_delta_chunk(*, model: str, content: str, created: int = 0) -> ChatCompl
     )
 
 
-def reasoning_delta_chunk(*, model: str, content: str, created: int = 0) -> ChatCompletionChunk:
+def reasoning_delta_chunk(
+    *,
+    model: str,
+    content: str,
+    created: int = 0,
+    full: bool = False,
+) -> ChatCompletionChunk:
     return ChatCompletionChunk(
         id="bridge-stream",
         object="chat.completion.chunk",
@@ -67,7 +73,7 @@ def reasoning_delta_chunk(*, model: str, content: str, created: int = 0) -> Chat
         choices=[
             ChunkChoice(
                 index=0,
-                delta=DeltaMessage(reasoning_content=content),
+                delta=DeltaMessage(reasoning_content=content, reasoning_full=full or UNSET),
             )
         ],
     )

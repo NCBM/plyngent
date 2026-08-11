@@ -16,6 +16,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    DeltaMessage,
     StreamOptions,
     StreamToolCallDelta,
     ToolChatMessage,
@@ -254,6 +255,18 @@ async def _non_stream_round(
     )
 
 
+def _append_reasoning_delta(
+    reasoning_parts: list[str],
+    delta: DeltaMessage,
+) -> list[str]:
+    """Accumulate a reasoning delta; a ``full`` (``.done``) event replaces fragments."""
+    if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
+        if delta.reasoning_full is True:
+            return [delta.reasoning_content]
+        return [*reasoning_parts, delta.reasoning_content]
+    return reasoning_parts
+
+
 async def _stream_round(
     client: AnyLLMClient,
     param: ChatCompletionsParam,
@@ -295,7 +308,7 @@ async def _stream_round(
             saw_terminal = True
         delta = choice.delta
         if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
-            reasoning_parts.append(delta.reasoning_content)
+            reasoning_parts = _append_reasoning_delta(reasoning_parts, delta)
             yield ReasoningDeltaEvent(content=delta.reasoning_content)
         if isinstance(delta.content, str) and delta.content:
             content_parts.append(delta.content)
