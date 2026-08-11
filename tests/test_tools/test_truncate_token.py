@@ -53,10 +53,11 @@ def test_truncate_with_token_cuts_and_advances() -> None:
         total_len=500,
     )
     assert token is not None
+    content, _, _ = out.partition("\n...[")
+    assert content.startswith("x")
     assert "truncated 300 chars" in out
     assert f"[TRUNCATE_TOKEN: {encode_truncate_token(token)}]" in out
-    assert token.offset == 200
-    assert token.limit == 200
+    assert token.offset == len(content)  # cursor lands exactly where content stops
     assert len(out) <= 200  # marker fits inside the char budget
 
 
@@ -73,7 +74,7 @@ def test_truncate_with_token_more_after_nonoverflow() -> None:
         total_len=200,
     )
     assert token is not None
-    assert token.offset == 40
+    assert token.offset == 30  # advanced by returned length only
     assert "more content available" in out
     assert out.startswith("y" * 30)
 
@@ -106,6 +107,7 @@ def test_truncate_with_token_nonzero_start() -> None:
     )
     assert token is not None
     assert token.kind == "http"
-    assert token.offset == 350  # 150 + 200
+    content, _, _ = out.partition("\n...[")
+    assert token.offset == 150 + len(content)
     assert "truncated 300 chars" in out
     assert len(out) <= 200

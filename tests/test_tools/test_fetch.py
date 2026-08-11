@@ -252,8 +252,12 @@ async def test_fetch_char_truncation_embeds_token(workspace: Path, http_server: 
     token = decode_truncate_token(token_str)
     assert token is not None
     assert token.kind == "http"
-    assert token.offset == 1000  # next chunk starts at max_chars
     assert token.limit == 1000
+    assert 0 < token.offset < 1000
+    # Continuation resumes exactly where the chunk stopped (no gap).
+    out2 = await call_async(fetch, f"{http_server}/big", max_chars=1000, offset=token.offset)
+    body2 = out2.split("--- body ---", 1)[-1].strip()
+    assert body2.startswith("x")
 
 
 async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> None:

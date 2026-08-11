@@ -21,6 +21,7 @@ Tool playbook still applies (see system). Hard constraints:
 use `run_argv_batch` for ordered pipelines.
 - `edit_replace`: fix match / `max_replaces`; `edit_lineno` edits only lines read via \
 `read_file(with_lineno=true)`, and line numbers reset after any file write.
+- Truncated results carry a `TRUNCATE_TOKEN`; continue with `get_truncated`.
 - Prefer `fetch` for HTTP(S); private/LAN hosts need human policy allow (not YOLO).
 - PTY secrets only via `ask_into_pty`; denylists and confirms still apply.
 - `wait` pauses; pressing Enter disturbs early (optional reason).

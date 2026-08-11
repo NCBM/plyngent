@@ -5,6 +5,7 @@ from .edit_replace import edit_replace as edit_replace
 from .fs_ops import copy_path as copy_path
 from .fs_ops import delete_path as delete_path
 from .fs_ops import move_path as move_path
+from .get_truncated import get_truncated as get_truncated
 from .glob_paths import glob_paths as glob_paths
 from .grep_files import grep_files as grep_files
 from .listdir import listdir as listdir
@@ -25,4 +26,5 @@ FILE_TOOLS = [
     move_path,
     delete_path,
     new_temporary_workspace,
+    get_truncated,
 ]
