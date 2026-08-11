@@ -22,9 +22,19 @@ DEFAULT_MAX_BATCH_STEPS = 20
 
 
 def truncate_output(text: str, label: str, max_chars: int = DEFAULT_MAX_OUTPUT_CHARS) -> str:
-    if len(text) <= max_chars:
+    """Cap a per-stream output block; embed a truncate token when cut.
+
+    ``label`` (stdout/stderr/batch) is kept for call-site clarity but the
+    marker itself is the uniform ``[Truncated (N chars max.; M omitted).
+    truncate_token=...]`` (no label), matching every other truncation site.
+    Returns ``text`` unchanged when it fits.
+    """
+    del label
+    if max_chars < 1 or len(text) <= max_chars:
         return text
-    return text[:max_chars] + f"\n...[{label} truncated]"
+    from plyngent.tools.truncate_token import truncate_generic
+
+    return truncate_generic(text, max_chars)
 
 
 def format_command_result(

@@ -11,8 +11,8 @@ get_truncated_module = importlib.import_module("plyngent.tools.file.get_truncate
 
 def _extract_token(out: str) -> str | None:
     for line in out.splitlines():
-        if "TRUNCATE_TOKEN:" in line:
-            return line.split("[TRUNCATE_TOKEN: ", 1)[1].rstrip("]")
+        if "truncate_token=" in line:
+            return line.split("truncate_token=", 1)[1].rstrip("]")
     return None
 
 
@@ -33,10 +33,10 @@ def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
     out = call_sync(read_file, "big.txt", max_chars=200)
     header, _, rest = out.partition("\n")
     assert header.startswith("L1-")  # 1-based range of the raw slice read
-    content, _, marker = rest.partition("\n...[")
+    content, _, marker = rest.partition("\n[Truncated")
     assert content == "a" * len(content)
     assert len(content) < 200
-    assert "TRUNCATE_TOKEN:" in marker
+    assert "truncate_token=" in marker
     token = _extract_token(out)
     assert token is not None
     parsed = get_truncated_module.decode_truncate_token(token)
@@ -49,7 +49,7 @@ def test_read_file_max_chars_small_file_untouched(workspace: Path) -> None:
     (workspace / "small.txt").write_text("tiny", encoding="utf-8")
     out = call_sync(read_file, "small.txt", max_chars=200)
     assert out == "L1-1\ntiny"
-    assert "TRUNCATE_TOKEN:" not in out
+    assert "truncate_token=" not in out
 
 
 def test_edit_replace_first_only(workspace: object) -> None:

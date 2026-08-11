@@ -12,8 +12,8 @@ get_truncated = get_truncated_module.get_truncated
 
 def _extract_token(out: str) -> str | None:
     for line in out.splitlines():
-        if "TRUNCATE_TOKEN:" in line:
-            return line.split("[TRUNCATE_TOKEN: ", 1)[1].rstrip("]")
+        if "truncate_token=" in line:
+            return line.split("truncate_token=", 1)[1].rstrip("]")
     return None
 
 
@@ -29,7 +29,7 @@ async def test_get_truncated_file_chains_without_gap(workspace: Path) -> None:
     total_read = 0
     for _ in range(20):
         out = await call_async(get_truncated, token, max_chars=200)
-        body, _, _ = out.partition("\n...[")
+        body, _, _ = out.partition("\n[Truncated")
         header, _, content = body.partition("\n")
         assert header.startswith("L") and "-" in header
         assert content == "a" * len(content)
@@ -62,3 +62,42 @@ async def test_get_truncated_http_passthrough(monkeypatch) -> None:
     out = await call_async(get_truncated, token, max_chars=200)
     assert out == "body-from-500"
     assert calls == [("https://example.com/x", 500, 400)]
+
+
+async def test_get_truncated_memory_chains() -> None:
+    from plyngent.tools.truncate_token import truncate_generic
+
+    bounded = truncate_generic("m" * 1000, 200)
+    assert "truncate_token=" in bounded
+    token = bounded.split("truncate_token=", 1)[1].rstrip("]")
+    parsed = decode_truncate_token(token)
+    assert parsed is not None
+    assert parsed.kind == "memory"
+    cursor = parsed.offset  # chars already delivered by truncate_generic
+    delivered = cursor
+    for _ in range(20):
+        out = await call_async(get_truncated, token, max_chars=200)
+        content, _, _ = out.partition("\n[Truncated")
+        assert content == "m" * len(content)
+        delivered += len(content)
+        next_token = _extract_token(out)
+        if next_token is None:
+            break  # source exhausted → no token, no marker
+        parsed = decode_truncate_token(next_token)
+        assert parsed is not None
+        assert parsed.kind == "memory"
+        # No gap: the next cursor is exactly where this chunk ended.
+        assert parsed.offset == delivered
+        token = next_token
+    assert delivered == 1000
+
+
+async def test_get_truncated_memory_expired() -> None:
+    from plyngent.tools.truncate_token import _MEMORY_REMAINDERS, store_remainder
+
+    key = store_remainder("x" * 500)
+    del _MEMORY_REMAINDERS[key]
+    token = encode_truncate_token(TruncateToken(kind="memory", location=key, offset=0, limit=200))
+    out = await call_async(get_truncated, token, max_chars=200)
+    assert out.startswith("error:")
+    assert "expired" in out

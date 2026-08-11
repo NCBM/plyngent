@@ -246,9 +246,9 @@ async def test_fetch_char_truncation_embeds_token(workspace: Path, http_server: 
     out = await call_async(fetch, f"{http_server}/big", max_chars=1000)
     assert "truncated=true" in out
     body = out.split("--- body ---", 1)[-1]
-    assert "TRUNCATE_TOKEN:" in body
-    token_line = next(ln for ln in body.splitlines() if "TRUNCATE_TOKEN:" in ln)
-    token_str = token_line.split("[TRUNCATE_TOKEN: ", 1)[1].rstrip("]")
+    assert "truncate_token=" in body
+    token_line = next(ln for ln in body.splitlines() if "truncate_token=" in ln)
+    token_str = token_line.split("truncate_token=", 1)[1].rstrip("]")
     token = decode_truncate_token(token_str)
     assert token is not None
     assert token.kind == "http"
@@ -269,7 +269,7 @@ async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> Non
     out = await call_async(fetch, f"{http_server}/big", max_chars=200, offset=4900)
     body = out.split("--- body ---", 1)[-1]
     assert body.strip() == "x" * 100
-    assert "TRUNCATE_TOKEN:" not in out
+    assert "truncate_token=" not in out
 
 
 async def test_fetch_private_denied_without_grant(workspace: Path, http_server: str) -> None:
