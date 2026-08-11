@@ -34,8 +34,8 @@ re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, 
 since line numbers go stale.
 - `read_file` results start with a 1-based line range `L{begin}-{end}` (`offset` \
 is 0-based); `with_lineno` shows per-line numbers instead.
-- Truncated `read_file` / `fetch` results carry a `TRUNCATE_TOKEN`; use \
-`get_truncated` with it to keep reading (chains through truncations).
+- Truncated results (any tool) carry a `truncate_token=...`; use `get_truncated` \
+with it to keep reading (chains through truncations).
 
 ### Commands
 - Prefer `run_argv` / `run_argv_batch` (argv lists, no shell) over `bash -c` or similar.

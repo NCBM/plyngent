@@ -190,6 +190,23 @@ async def test_run_argv_timeout_keeps_partial_output(workspace: object) -> None:
     assert "partial-out" in out
 
 
+async def test_run_argv_stdout_cap_embeds_token(workspace: object) -> None:
+    del workspace
+    # Per-stream cap default is 32000 chars: a bigger stdout embeds a token.
+    out = await call_async(run_argv, _py("print('x' * 40000)"))
+    assert "truncate_token=" in out
+    token_line = next(ln for ln in out.splitlines() if "truncate_token=" in ln)
+    assert "[Truncated (32000 chars max.;" in token_line
+    assert "[Truncated" in out
+
+
+async def test_run_argv_small_stdout_no_marker(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_argv, _py("print('tiny')"))
+    assert "Truncated" not in out
+    assert "truncate_token=" not in out
+
+
 async def test_run_argv_stdin(workspace: object) -> None:
     del workspace
     out = await call_async(
