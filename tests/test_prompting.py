@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from plyngent.prompting import (
@@ -7,12 +9,46 @@ from plyngent.prompting import (
     FormField,
     NonInteractiveBackend,
     NonInteractiveError,
+    _read_line_with_timeout_posix,
     ask,
     choose,
     confirm,
     form,
+    read_line_with_timeout,
     temporary_backend,
 )
+
+
+def _ready_poll(r, w, x, t):
+    return (r, w, x)
+
+
+def _never_poll(r, w, x, t):
+    return ([], [], [])
+
+
+def test_read_line_with_timeout_reads_line() -> None:
+    stream = io.StringIO("hello\n")
+    assert _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_ready_poll) == "hello"
+
+
+def test_read_line_with_timeout_empty_enter() -> None:
+    stream = io.StringIO("\n")
+    assert _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_ready_poll) == ""
+
+
+def test_read_line_with_timeout_timeout_returns_none() -> None:
+    stream = io.StringIO()
+    assert _read_line_with_timeout_posix("p> ", 0.01, stream=stream, poll=_never_poll) is None
+
+
+def test_read_line_with_timeout_eof_returns_none() -> None:
+    stream = io.StringIO("")
+    assert _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_ready_poll) is None
+
+
+def test_read_line_with_timeout_negative_timeout() -> None:
+    assert read_line_with_timeout("p> ", -1) is None
 
 
 class ScriptedBackend:

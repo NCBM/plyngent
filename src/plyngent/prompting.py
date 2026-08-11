@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import select
 import sys
+import time
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TextIO, cast, runtime_checkable
 
 import click
 
@@ -96,6 +98,87 @@ def _readline_input(prompt: str, *, completions: Sequence[str] | None = None) ->
         readline.set_completer(previous_completer)
         with contextlib.suppress(Exception):
             readline.set_completer_delims(previous_delims)
+
+
+type PollFn = Callable[
+    [list[object], list[object], list[object], float],
+    tuple[list[object], list[object], list[object]],
+]
+
+
+def _read_line_with_timeout_posix(
+    prompt: str,
+    timeout: float,
+    *,
+    stream: TextIO,
+    poll: PollFn,
+) -> str | None:
+    """Blocking line read on POSIX: poll stdin, then read one line on data.
+
+    Returns the line (without trailing newline), ``""`` for an empty Enter, or
+    ``None`` when the timeout elapses before any line is complete (EOF too).
+    """
+    _ = sys.stdout.write(prompt)
+    _ = sys.stdout.flush()
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        ready, _, _ = poll([stream], [], [], min(remaining, 0.1))
+        if not ready:
+            continue
+        line = stream.readline()
+        if line == "":
+            return None  # EOF
+        return line.rstrip("\n")
+
+
+def _read_line_with_timeout_windows(prompt: str, timeout: float) -> str | None:
+    """Blocking line read on Windows via msvcrt char polling (best-effort)."""
+    import msvcrt
+
+    _ = sys.stdout.write(prompt)
+    _ = sys.stdout.flush()
+    deadline = time.monotonic() + timeout
+    buf: list[str] = []
+    while time.monotonic() < deadline:
+        if msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                _ = sys.stdout.write("\n")
+                _ = sys.stdout.flush()
+                return "".join(buf)
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\x08", "\x7f") and buf:  # backspace / DEL
+                _ = buf.pop()
+                _ = sys.stdout.write("\b \b")
+                _ = sys.stdout.flush()
+                continue
+            buf.append(ch)
+            _ = sys.stdout.write(ch)
+            _ = sys.stdout.flush()
+        else:
+            time.sleep(0.05)
+    _ = sys.stdout.write("\n")
+    _ = sys.stdout.flush()
+    return None
+
+
+def read_line_with_timeout(prompt: str, timeout: float) -> str | None:
+    """Read one line, blocking at most ``timeout`` seconds.
+
+    Returns the typed line (without trailing newline), ``""`` for an empty
+    Enter, or ``None`` when the timeout elapses first (EOF too). Ctrl+C
+    propagates as :class:`KeyboardInterrupt`. POSIX polls stdin via ``select``;
+    Windows uses ``msvcrt`` char polling (best-effort).
+    """
+    if timeout < 0:
+        timeout = 0.0
+    if sys.platform == "win32":
+        return _read_line_with_timeout_windows(prompt, timeout)
+    return _read_line_with_timeout_posix(prompt, timeout, stream=sys.stdin, poll=cast("PollFn", select.select))
 
 
 class ClickPromptBackend:
