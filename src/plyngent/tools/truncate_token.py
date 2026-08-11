@@ -95,17 +95,19 @@ def truncate_with_token(
     offset: int,
     limit: int,
     total_len: int,
+    emit_more_after: bool = True,
 ) -> tuple[str, TruncateToken | None]:
     """Bound ``text`` (a slice of the full source starting at ``offset``) to ``max_chars``.
 
-    Returns ``(bounded_text, next_token)``. A token is embedded whenever more
-    source content remains after the returned chunk, so ``get_truncated``
-    chains through truncations; each chunk may itself carry a fresh token. The
-    token advances by the length actually returned (no content is skipped), and
-    the marker is budgeted so the total returned length stays near
-    ``max_chars`` (the agent loop's own cap never re-cuts it and never strips
-    the token). ``omitted`` in the marker counts source characters not yet
-    delivered. When nothing was cut and the source ends, ``text`` is returned
+    Returns ``(bounded_text, next_token)``. A token is embedded whenever the
+    returned chunk is cut (overflow) or, with ``emit_more_after`` (default),
+    whenever more source content remains after the chunk — so ``get_truncated``
+    chains through truncations. The token advances by the length actually
+    returned (no content is skipped), and the marker is budgeted so the total
+    returned length stays near ``max_chars`` (the agent loop's own cap never
+    re-cuts it and never strips the token). ``omitted`` in the marker counts
+    source characters not yet delivered. When nothing was cut and
+    (``emit_more_after=False`` or the source ends), ``text`` is returned
     unchanged with no marker.
     """
     if max_chars < 1:
@@ -120,6 +122,8 @@ def truncate_with_token(
             return text[:max_chars] + truncation_marker(max_chars, omitted, first), first
         token = TruncateToken(kind=kind, location=location, offset=offset + cut, limit=limit)
         return text[:cut] + truncation_marker(max_chars, omitted, token), token
+    if not emit_more_after:
+        return text, None
     more_after = offset + len(text) < total_len
     if not more_after:
         return text, None

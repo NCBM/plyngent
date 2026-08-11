@@ -45,6 +45,21 @@ def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
     assert parsed.offset == len(content)  # cursor lands exactly where content stops
 
 
+def test_read_file_default_truncates_at_cap(workspace: Path) -> None:
+    """Truncation is the default: a large read embeds a token without max_chars."""
+    (workspace / "huge.txt").write_text("\n".join(f"line-{i}" for i in range(10_000)), encoding="utf-8")
+    out = call_sync(read_file, "huge.txt")
+    header, _, rest = out.partition("\n")
+    assert header == "L1-10000"  # the requested slice (whole file)
+    assert "truncate_token=" in rest
+    # The slice is capped near the default tool-result cap.
+    assert len(rest) <= 32_000
+    # No marker when the file is small (no truncation occurred).
+    small = call_sync(read_file, "huge.txt", max_chars=0)
+    assert "Truncated" not in small
+    assert small.startswith("L1-10000\n")
+
+
 def test_read_file_max_chars_small_file_untouched(workspace: Path) -> None:
     (workspace / "small.txt").write_text("tiny", encoding="utf-8")
     out = call_sync(read_file, "small.txt", max_chars=200)

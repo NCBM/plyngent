@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 from plyngent.agent import ToolTag, mark_lineno_read, tool
+from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.tools.truncate_token import truncate_with_token
 from plyngent.tools.workspace import resolve_path
 
@@ -55,7 +56,7 @@ async def read_file(
     offset: int = 0,
     limit: int | None = None,
     with_lineno: bool = False,
-    max_chars: int | None = None,
+    max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
 ) -> str:
     """Read a text file under the workspace.
 
@@ -64,11 +65,10 @@ async def read_file(
     with its 1-based file line number (``     N|…``), matching ``edit_lineno``
     numbering, and those lines are marked readable for ``edit_lineno`` this turn.
 
-    ``max_chars`` caps the returned slice; a ``TRUNCATE_TOKEN`` is appended so
-    ``get_truncated`` can continue reading the rest without a new request.
-
-    The result starts with a 1-based inclusive line range ``L{begin}-{end}`` so
-    the caller knows exactly which file lines were read (offset is 0-based).
+    ``max_chars`` caps the returned slice (default: the agent's tool-result cap,
+    ``DEFAULT_TOOL_RESULT_MAX_CHARS``); a ``truncate_token`` is appended when cut
+    so ``get_truncated`` can continue reading the rest without a new request.
+    Pass ``max_chars < 1`` to read unbounded.
     """
     target = resolve_path(path)
     text, err = read_raw_text(path)
@@ -88,7 +88,7 @@ async def read_file(
         body = _format_with_lineno(slice_lines, start_lineno=start + 1)
     else:
         body = "".join(slice_lines)
-    if max_chars is not None and max_chars >= 1:
+    if max_chars >= 1:
         char_start = len("".join(lines[:start]))
         body, _ = truncate_with_token(
             body,
@@ -98,6 +98,9 @@ async def read_file(
             offset=char_start,
             limit=max_chars,
             total_len=len(text),
+            # read_file bounds the read via offset/limit; only mark when the
+            # returned slice itself was cut by max_chars (not just "file continues").
+            emit_more_after=False,
         )
     if not body:
         return ""
