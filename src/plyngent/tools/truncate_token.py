@@ -1,31 +1,66 @@
 """Truncate-token cursors for resuming truncated tool results.
 
-``fetch`` and ``read_file`` append a ``[TRUNCATE_TOKEN: ...]`` marker when they
-cut output short; the model passes the token to ``get_truncated`` to read the
-next chunk without re-requesting the whole source or raising limits.
+Every truncation site (the agent loop's generic tool-result cap,
+``run_command`` / ``run_command_batch`` per-stream caps, ``read_file``,
+``fetch``, and request-time compact shrinks) appends the same compact marker
+when output is cut short::
+
+    [Truncated (32000 chars max.; 500 omitted). truncate_token=...]
+
+The model passes the token to ``get_truncated`` to read the next chunk without
+re-requesting the whole source or raising limits. Tokens chain: each truncated
+chunk carries a fresh token, so ``get_truncated`` keeps resuming until the
+source is exhausted (then no marker is emitted).
+
+Resumable sources (``file`` / ``http``) are re-read by ``location`` +
+``offset``. Arbitrary tool output (run_command stdout, todo renders, …) has no
+resumable source, so its remainder lives in a short-lived in-memory store
+(``kind="memory"``) that is forgotten when the agent process exits — the model
+must re-run the tool after that.
 """
 
 from __future__ import annotations
 
 import base64
+import uuid
 from typing import Literal
 
 import msgspec
 
-type TruncateKind = Literal["file", "http"]
+type TruncateKind = Literal["file", "http", "memory"]
 
 
 class TruncateToken(msgspec.Struct, frozen=True):
     """Opaque cursor into a truncated source.
 
-    ``offset``/``limit`` are in characters (http bodies) or lines (files is
-    line-based via ``read_file``); ``get_truncated`` interprets by ``kind``.
+    ``offset``/``limit`` are in characters (http bodies, memory remainders) or
+    lines (files is line-based via ``read_file``); ``get_truncated`` interprets
+    by ``kind``. For ``memory``, ``location`` is a key into the in-memory
+    remainder store and ``offset``/``limit`` index characters of that stored
+    remainder.
     """
 
     kind: TruncateKind
     location: str
     offset: int
     limit: int
+
+
+# In-memory remainders for generic (non-resumable) tool output. Process-lifetime
+# only: forgotten when the agent exits. Single-user CLI → one process per agent.
+_MEMORY_REMAINDERS: dict[str, str] = {}
+
+
+def store_remainder(text: str) -> str:
+    """Store truncated-away output; return its opaque store key."""
+    key = f"mem-{uuid.uuid4().hex[:12]}"
+    _MEMORY_REMAINDERS[key] = text
+    return key
+
+
+def get_remainder(key: str) -> str | None:
+    """Fetch a stored remainder by key; None when expired/unknown."""
+    return _MEMORY_REMAINDERS.get(key)
 
 
 def encode_truncate_token(token: TruncateToken) -> str:
@@ -46,11 +81,9 @@ def decode_truncate_token(text: str) -> TruncateToken | None:
     return token
 
 
-def _truncated_marker(omitted: int, token: TruncateToken) -> str:
-    return (
-        f"\n...[truncated {omitted} chars; more via get_truncated token] "
-        f"[TRUNCATE_TOKEN: {encode_truncate_token(token)}]"
-    )
+def truncation_marker(max_chars: int, omitted: int, token: TruncateToken) -> str:
+    """The single truncation hint: ``[Truncated (N chars max.; M omitted). truncate_token=...]``."""
+    return f"\n[Truncated ({max_chars} chars max.; {omitted} omitted). truncate_token={encode_truncate_token(token)}]"
 
 
 def truncate_with_token(
@@ -63,34 +96,55 @@ def truncate_with_token(
     limit: int,
     total_len: int,
 ) -> tuple[str, TruncateToken | None]:
-    """Bound ``text`` to ``max_chars``; return (bounded_text, next_token).
+    """Bound ``text`` (a slice of the full source starting at ``offset``) to ``max_chars``.
 
-    ``text`` is a slice of the full source starting at ``offset``; ``total_len``
-    is the full source length. A token is embedded whenever more content remains
-    after the returned chunk, so ``get_truncated`` chains through truncations
-    and each chunk may itself carry a fresh token. The token advances by the
-    length actually returned (no content is skipped), and the marker is budgeted
-    so the total returned length stays near ``max_chars`` (the agent loop's own
-    cap never re-cuts it and never strips the token).
+    Returns ``(bounded_text, next_token)``. A token is embedded whenever more
+    source content remains after the returned chunk, so ``get_truncated``
+    chains through truncations; each chunk may itself carry a fresh token. The
+    token advances by the length actually returned (no content is skipped), and
+    the marker is budgeted so the total returned length stays near
+    ``max_chars`` (the agent loop's own cap never re-cuts it and never strips
+    the token). ``omitted`` in the marker counts source characters not yet
+    delivered. When nothing was cut and the source ends, ``text`` is returned
+    unchanged with no marker.
     """
     if max_chars < 1:
         return text, None
     if len(text) > max_chars:
-        omitted = len(text) - max_chars
         # First pass sizes the marker with an offset+max_chars token; re-encode
         # with the real cut so the cursor lands exactly where content stops.
         first = TruncateToken(kind=kind, location=location, offset=offset + max_chars, limit=limit)
-        cut = max_chars - len(_truncated_marker(omitted, first))
+        omitted = total_len - (offset + max_chars)
+        cut = max_chars - len(truncation_marker(max_chars, omitted, first))
         if cut < 1:
-            return text[:max_chars] + _truncated_marker(omitted, first), first
+            return text[:max_chars] + truncation_marker(max_chars, omitted, first), first
         token = TruncateToken(kind=kind, location=location, offset=offset + cut, limit=limit)
-        return text[:cut] + _truncated_marker(omitted, token), token
+        return text[:cut] + truncation_marker(max_chars, omitted, token), token
     more_after = offset + len(text) < total_len
     if not more_after:
         return text, None
+    omitted = total_len - (offset + len(text))
     token = TruncateToken(kind=kind, location=location, offset=offset + len(text), limit=limit)
-    marker = (
-        f"\n...[more content available; use get_truncated with the token] "
-        f"[TRUNCATE_TOKEN: {encode_truncate_token(token)}]"
+    return text + truncation_marker(max_chars, omitted, token), token
+
+
+def truncate_generic(text: str, max_chars: int) -> str:
+    """Cap arbitrary tool output; embed a memory truncate token (chainable).
+
+    The full remainder is kept in the in-memory store so ``get_truncated`` can
+    resume it. Returns ``text`` unchanged (no marker) when it fits within
+    ``max_chars``.
+    """
+    if max_chars < 1 or len(text) <= max_chars:
+        return text
+    key = store_remainder(text)
+    bounded, _ = truncate_with_token(
+        text,
+        max_chars,
+        kind="memory",
+        location=key,
+        offset=0,
+        limit=max_chars,
+        total_len=len(text),
     )
-    return text + marker, token
+    return bounded
