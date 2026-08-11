@@ -1,7 +1,19 @@
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+
 from plyngent.tools.file import edit_replace, listdir, read_file, write_file
 from tests.test_tools.helpers import call_sync
+
+get_truncated_module = importlib.import_module("plyngent.tools.file.get_truncated")
+
+
+def _extract_token(out: str) -> str | None:
+    for line in out.splitlines():
+        if "TRUNCATE_TOKEN:" in line:
+            return line.split("[TRUNCATE_TOKEN: ", 1)[1].rstrip("]")
+    return None
 
 
 def test_write_read_listdir_edit(workspace: object) -> None:
@@ -14,6 +26,28 @@ def test_write_read_listdir_edit(workspace: object) -> None:
     result = call_sync(edit_replace, "notes/a.txt", "world", "there")
     assert "replaced" in result
     assert call_sync(read_file, "notes/a.txt") == "hello there"
+
+
+def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
+    (workspace / "big.txt").write_text("a" * 1000, encoding="utf-8")
+    out = call_sync(read_file, "big.txt", max_chars=200)
+    content, _, marker = out.partition("\n...[")
+    assert content == "a" * len(content)
+    assert len(content) < 200
+    assert "TRUNCATE_TOKEN:" in marker
+    token = _extract_token(out)
+    assert token is not None
+    parsed = get_truncated_module.decode_truncate_token(token)
+    assert parsed is not None
+    assert parsed.kind == "file"
+    assert parsed.offset == len(content)  # cursor lands exactly where content stops
+
+
+def test_read_file_max_chars_small_file_untouched(workspace: Path) -> None:
+    (workspace / "small.txt").write_text("tiny", encoding="utf-8")
+    out = call_sync(read_file, "small.txt", max_chars=200)
+    assert out == "tiny"
+    assert "TRUNCATE_TOKEN:" not in out
 
 
 def test_edit_replace_first_only(workspace: object) -> None:
