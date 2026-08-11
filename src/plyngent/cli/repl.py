@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 import click
@@ -23,9 +24,13 @@ def _echo_user(text: str) -> None:
 
 
 def _echo_interrupted() -> None:
-    click.echo()
-    click.secho("interrupted", fg="yellow")
-    click.echo()
+    # A further Ctrl+C during this output must stay benign (same rule as
+    # retry._echo_cancel_lines): after a turn the SIGINT handler is removed, so
+    # the next Ctrl+C raises KeyboardInterrupt at an arbitrary bytecode.
+    with contextlib.suppress(KeyboardInterrupt):
+        click.echo()
+        click.secho("interrupted", fg="yellow")
+        click.echo()
 
 
 async def run_repl(state: ReplState) -> None:
@@ -49,33 +54,31 @@ async def run_repl(state: ReplState) -> None:
             click.echo()
             break
 
-        if entry is None:
-            continue
-
-        if entry.startswith("/"):
-            try:
-                cont = await handle_slash(state, entry)
-            except KeyboardInterrupt:
-                _echo_interrupted()
-                continue
-            if not cont:
-                break
-            if state.pending_user_text is not None:
-                text = state.pending_user_text
-                state.pending_user_text = None
-                _echo_user(text)
-                try:
-                    _ = await run_user_text_with_retries(state.agent, text)
-                except KeyboardInterrupt:
-                    _echo_interrupted()
-                finally:
-                    state.expire_yolo_once()
-            continue
-
-        _echo_user(entry)
+        # Between turns the turn-task SIGINT handler is removed (run_cancellable),
+        # so a stray Ctrl+C raises KeyboardInterrupt at whatever bytecode is
+        # executing — echoing user text, expire_yolo_once, gaps between
+        # statements. Swallow it and re-prompt instead of exiting the REPL.
         try:
-            _ = await run_user_text_with_retries(state.agent, entry)
+            if entry is None:
+                continue
+            if entry.startswith("/"):
+                cont = await handle_slash(state, entry)
+                if not cont:
+                    break
+                if state.pending_user_text is not None:
+                    text = state.pending_user_text
+                    state.pending_user_text = None
+                    _echo_user(text)
+                    try:
+                        _ = await run_user_text_with_retries(state.agent, text)
+                    finally:
+                        state.expire_yolo_once()
+                continue
+
+            _echo_user(entry)
+            try:
+                _ = await run_user_text_with_retries(state.agent, entry)
+            finally:
+                state.expire_yolo_once()
         except KeyboardInterrupt:
             _echo_interrupted()
-        finally:
-            state.expire_yolo_once()

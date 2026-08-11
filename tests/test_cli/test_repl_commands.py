@@ -593,3 +593,43 @@ async def test_repl_ctrl_c_from_turn_returns_to_prompt(
 
     await run_repl(state)  # must return normally (EOF), never raise KeyboardInterrupt
     assert calls["reads"] == 2
+
+
+async def test_repl_second_ctrl_c_after_cancel_returns_to_prompt(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second Ctrl+C landing outside the turn call (e.g. while echoing the
+    next user input, right after a cancel) must return to the prompt, not exit."""
+    from plyngent.cli import repl as repl_mod
+    from plyngent.cli.repl import run_repl
+
+    reads = ["first", "second", "third"]
+    calls: dict[str, int] = {"reads": 0, "echoes": 0}
+
+    def fake_read_entry() -> str:
+        calls["reads"] += 1
+        if calls["reads"] > len(reads):
+            raise EOFError
+        return reads[calls["reads"] - 1]
+
+    async def cancel_turn(_agent: object, _text: str) -> bool:
+        raise KeyboardInterrupt  # first Ctrl+C: cancels every turn
+
+    def echo_user(text: str) -> None:
+        calls["echoes"] += 1
+        if calls["echoes"] == 2:
+            # second Ctrl+C lands while echoing user text — outside the turn
+            # call, previously unguarded (used to exit the whole REPL).
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(repl_mod, "setup_readline", lambda _state: None)
+    monkeypatch.setattr(repl_mod, "read_repl_entry", fake_read_entry)
+    monkeypatch.setattr(repl_mod, "run_user_text_with_retries", cancel_turn)
+    monkeypatch.setattr(repl_mod, "_echo_user", echo_user)
+
+    await run_repl(state)  # must return normally (EOF), never raise KeyboardInterrupt
+    assert calls["reads"] == 4  # three entries + EOF
+    assert calls["echoes"] == 3  # the interrupting echo still counted, loop survived
+    assert "interrupted" in capsys.readouterr().out
