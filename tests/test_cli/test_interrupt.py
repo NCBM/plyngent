@@ -8,7 +8,9 @@ import pytest
 
 from plyngent.cli.interrupt import (
     allow_task_cancel,
+    install_keyboard_interrupt_sigint,
     pause_task_cancel_for_prompt,
+    raise_keyboard_interrupt_sigint,
     run_in_prompt_thread,
     set_sigint_reinstall,
 )
@@ -113,3 +115,71 @@ async def test_sigint_cancels_after_prompt_pause() -> None:
     assert cancelled.is_set()
     # Cleanup any leftover reinstall hook from run_cancellable
     set_sigint_reinstall(None)
+
+
+def test_install_keyboard_interrupt_sigint() -> None:
+    """Installs a non-default SIGINT handler that raises KeyboardInterrupt.
+
+    The handler must be a distinct function object: ``asyncio.run`` only skips
+    installing its own silent-cancel handler when the current handler is not
+    ``signal.default_int_handler``.
+    """
+    install_keyboard_interrupt_sigint()
+    try:
+        handler = signal.getsignal(signal.SIGINT)
+        assert handler is not signal.default_int_handler
+        assert handler is not signal.SIG_DFL
+        assert callable(handler)
+        with pytest.raises(KeyboardInterrupt):
+            handler(signal.SIGINT, None)  # type: ignore[call-arg]
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+def test_asyncio_run_keeps_keyboard_interrupt_sigint() -> None:
+    """Regression: Runner must not replace our handler with its own.
+
+    Previously the first Ctrl+C under ``asyncio.run`` silently cancelled the
+    main task (invisible at the REPL prompt) and the second raised
+    KeyboardInterrupt, which also cancelled ``memory.close()`` on a Ctrl+D exit.
+    With a non-default handler installed first, Runner leaves SIGINT alone.
+    """
+    import asyncio
+
+    install_keyboard_interrupt_sigint()
+    try:
+
+        async def quick() -> int:
+            return 7
+
+        assert asyncio.run(quick()) == 7
+        assert signal.getsignal(signal.SIGINT) is raise_keyboard_interrupt_sigint
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+async def test_run_cancellable_restores_previous_sigint() -> None:
+    """Regression: after a turn SIGINT is restored, not left as SIG_DFL.
+
+    ``loop.remove_signal_handler`` leaves SIG_DFL, which would terminate the
+    process on a stray Ctrl+C between turns instead of letting the REPL catch
+    a KeyboardInterrupt.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGINT, lambda: None)
+        loop.remove_signal_handler(signal.SIGINT)
+    except NotImplementedError, RuntimeError, ValueError:
+        pytest.skip("asyncio signal handlers not available on this platform")
+
+    previous = signal.getsignal(signal.SIGINT)
+
+    async def quick() -> None:
+        return None
+
+    try:
+        await run_cancellable(quick())
+        assert signal.getsignal(signal.SIGINT) is previous
+        assert signal.getsignal(signal.SIGINT) is not signal.SIG_DFL
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)

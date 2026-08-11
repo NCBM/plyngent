@@ -17,6 +17,7 @@ from plyngent.cli.editor import (
     resolve_config_path,
 )
 from plyngent.cli.exit_codes import EXIT_CANCELLED, EXIT_OK, EXIT_TURN_FAILED
+from plyngent.cli.interrupt import install_keyboard_interrupt_sigint
 from plyngent.cli.limits import install_cli_limit_hooks
 from plyngent.cli.repl import run_repl
 from plyngent.cli.retry import run_user_text_with_retries
@@ -484,6 +485,13 @@ def chat_cmd(
         raise click.ClickException(msg)
 
     root = workspace if workspace is not None else Path.cwd()
+    # asyncio.run installs its own SIGINT handler when the current one is the
+    # default: the first Ctrl+C then silently cancels the main task (invisible
+    # at the REPL prompt) and the second raises KeyboardInterrupt, which also
+    # cancels memory.close() on a Ctrl+D exit ("Aborted!"). Pre-install a plain
+    # KeyboardInterrupt-raising handler so Ctrl+C stays a normal KeyboardInterrupt
+    # that the REPL / turn-retry / oneshot code handles deliberately.
+    install_keyboard_interrupt_sigint()
     code = asyncio.run(
         _run_chat(
             config_path=config_path,

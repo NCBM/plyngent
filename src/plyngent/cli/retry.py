@@ -64,6 +64,11 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     task: asyncio.Task[T] = asyncio.create_task(coro)
     loop = asyncio.get_running_loop()
     installed = False
+    # What to restore once the turn-cancel handler is removed. remove_signal_handler
+    # leaves SIG_DFL, which would terminate the process on a stray Ctrl+C between
+    # turns; restore the handler from before (the CLI installs a
+    # KeyboardInterrupt-raising one so the REPL can catch it).
+    previous_sigint = signal.getsignal(signal.SIGINT)
 
     def _on_sigint() -> None:
         # allow_task_cancel() uses a process-level depth counter (not ContextVar)
@@ -98,6 +103,8 @@ async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
         if installed:
             with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
                 _ = loop.remove_signal_handler(signal.SIGINT)
+            with contextlib.suppress(ValueError):
+                _ = signal.signal(signal.SIGINT, previous_sigint)
         # Only cancel if still running (e.g. KeyboardInterrupt path above).
         # Do not cancel a finished task — that would mask success.
         if not task.done():

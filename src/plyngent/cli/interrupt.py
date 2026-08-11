@@ -29,6 +29,33 @@ def set_sigint_reinstall(callback: Callable[[], None] | None) -> None:
     _reinstall_holder[0] = callback
 
 
+def raise_keyboard_interrupt_sigint(signum: int, frame: FrameType | None) -> None:
+    """SIGINT handler: raise KeyboardInterrupt (same effect as the default).
+
+    A distinct function object — deliberately *not*
+    ``signal.default_int_handler`` — so that :func:`asyncio.run`'s Runner does
+    not recognise it and install its own silent-cancel handler on top.
+    """
+    del signum, frame
+    raise KeyboardInterrupt
+
+
+def install_keyboard_interrupt_sigint() -> None:
+    """Install :func:`raise_keyboard_interrupt_sigint` as the SIGINT handler.
+
+    ``asyncio.run`` (Runner) replaces the SIGINT handler with its own when the
+    current one *is* ``signal.default_int_handler``: the first Ctrl+C then
+    silently cancels the main task (invisible at the REPL prompt, leaving the
+    task marked cancelled) and only the second raises KeyboardInterrupt. A
+    later Ctrl+D (EOF) is then cancelled mid-``memory.close()`` and the CLI
+    exits with ``Aborted!``. Installing a plain KeyboardInterrupt-raising
+    handler first keeps every Ctrl+C a normal KeyboardInterrupt that the CLI
+    (prompt, turn-retry, oneshot) already handles deliberately.
+    """
+    with contextlib.suppress(ValueError):
+        _ = signal.signal(signal.SIGINT, raise_keyboard_interrupt_sigint)
+
+
 @contextmanager
 def pause_task_cancel_for_prompt() -> Generator[None]:
     """Disable turn-task cancel during blocking TTY prompts (confirm, etc.).
