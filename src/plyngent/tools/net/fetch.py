@@ -16,6 +16,7 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
+from plyngent.tools.truncate_token import truncate_with_token
 
 
 def format_fetch_result(
@@ -32,13 +33,20 @@ def format_fetch_result(
     warnings: list[str],
     body_kind: str,
     max_chars: int,
+    offset: int = 0,
 ) -> str:
-    text = body_text
-    char_truncated = False
-    if max_chars >= 1 and len(text) > max_chars:
-        omitted = len(text) - max_chars
-        text = text[:max_chars] + f"\n...[truncated {omitted} characters]"
-        char_truncated = True
+    start = max(0, offset)
+    body = body_text[start:]
+    body, token = truncate_with_token(
+        body,
+        max_chars,
+        kind="http",
+        location=final_url,
+        offset=start,
+        limit=max_chars,
+        total_len=len(body_text),
+    )
+    char_truncated = token is not None
     warn_line = "; ".join(warnings) if warnings else ""
     parts = [
         f"status={status}",
@@ -54,7 +62,7 @@ def format_fetch_result(
     if warn_line:
         parts.append(f"warnings={warn_line}")
     parts.append("--- body ---")
-    parts.append(text)
+    parts.append(body)
     return "\n".join(parts)
 
 
@@ -72,6 +80,7 @@ async def fetch(
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     follow_redirects: bool = True,
     allow_http_downgrade: bool = False,
+    offset: int = 0,
 ) -> str:
     """HTTP request (GET/POST/PUT/DELETE); return status, metadata, and truncated body.
 
@@ -122,6 +131,7 @@ async def fetch(
         warnings=result.warnings,
         body_kind=result.body_kind,
         max_chars=max_chars,
+        offset=offset,
     )
 
 

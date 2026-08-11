@@ -20,6 +20,7 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
+from plyngent.tools.truncate_token import decode_truncate_token
 from tests.test_tools.helpers import call_async
 
 if TYPE_CHECKING:
@@ -235,6 +236,36 @@ async def test_fetch_truncation_and_binary(workspace: Path, http_server: str) ->
     out_bin = await call_async(fetch, f"{http_server}/bin")
     assert "body_kind=binary" in out_bin
     assert "binary body omitted" in out_bin
+
+
+async def test_fetch_char_truncation_embeds_token(workspace: Path, http_server: str) -> None:
+    del workspace
+    port = int(http_server.rsplit(":", 1)[1])
+    grant_private_host("127.0.0.1", port)
+
+    out = await call_async(fetch, f"{http_server}/big", max_chars=1000)
+    assert "truncated=true" in out
+    body = out.split("--- body ---", 1)[-1]
+    assert "TRUNCATE_TOKEN:" in body
+    token_line = next(ln for ln in body.splitlines() if "TRUNCATE_TOKEN:" in ln)
+    token_str = token_line.split("[TRUNCATE_TOKEN: ", 1)[1].rstrip("]")
+    token = decode_truncate_token(token_str)
+    assert token is not None
+    assert token.kind == "http"
+    assert token.offset == 1000  # next chunk starts at max_chars
+    assert token.limit == 1000
+
+
+async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> None:
+    del workspace
+    port = int(http_server.rsplit(":", 1)[1])
+    grant_private_host("127.0.0.1", port)
+
+    # /big body is 5000 chars; offset 4900 leaves 100 chars, no token needed.
+    out = await call_async(fetch, f"{http_server}/big", max_chars=200, offset=4900)
+    body = out.split("--- body ---", 1)[-1]
+    assert body.strip() == "x" * 100
+    assert "TRUNCATE_TOKEN:" not in out
 
 
 async def test_fetch_private_denied_without_grant(workspace: Path, http_server: str) -> None:
