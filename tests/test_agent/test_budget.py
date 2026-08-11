@@ -15,7 +15,8 @@ def test_truncate_tool_result_long() -> None:
     assert "Truncated" in out
     assert "20" in out
     assert "30" in out
-    assert "configuration file" in out
+    assert "get_truncated" in out
+    assert "configuration file" not in out
 
 
 def test_truncate_tool_result_no_hint() -> None:
@@ -23,7 +24,7 @@ def test_truncate_tool_result_no_hint() -> None:
     out = truncate_tool_result(text, 20, hint=False)
     assert out.startswith("a" * 20)
     assert "truncated" in out
-    assert "configuration file" not in out
+    assert "get_truncated" not in out
 
 
 def test_estimate_message_chars() -> None:

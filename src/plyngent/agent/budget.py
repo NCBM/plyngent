@@ -50,7 +50,7 @@ def truncate_tool_result(
         return (
             f"{text[:max_chars]}\n"
             f"...[Truncated ({max_chars} chars max.; {omitted} chars omitted). "
-            f"You may ask for user to increase the limit via configuration file.]"
+            f"Use `get_truncated` when a `TRUNCATE_TOKEN` is shown.]"
         )
     return f"{text[:max_chars]}\n...[truncated {omitted} characters]"
 
