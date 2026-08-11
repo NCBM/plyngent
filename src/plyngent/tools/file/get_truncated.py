@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from plyngent.agent import ToolTag, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.tools.file.read import line_range_label, read_raw_text
@@ -24,9 +26,10 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
         return "error: invalid truncate token"
     if parsed.kind == "http":
         return await fetch.handler(parsed.location, offset=parsed.offset, max_chars=parsed.limit)
-    text = read_raw_text(parsed.location)
-    if text is None:
-        return f"error: not a file: {parsed.location}"
+    text, err = read_raw_text(parsed.location)
+    if err:
+        return err
+    text = cast("str", text)
     start = parsed.offset
     segment = text[start : start + max_chars]
     chunk, _ = truncate_with_token(

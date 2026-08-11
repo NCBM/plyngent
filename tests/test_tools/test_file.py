@@ -97,6 +97,12 @@ def test_read_offset_limit(workspace: object) -> None:
     assert call_sync(read_file, "lines.txt", offset=1, limit=2) == "L2-3\nb\nc\n"
 
 
+def test_read_file_missing_and_directory(workspace: Path) -> None:
+    (workspace / "sub").mkdir()
+    assert call_sync(read_file, "nope.txt") == "error: file not found: nope.txt"
+    assert call_sync(read_file, "sub") == "error: not a file: sub"
+
+
 def test_read_with_lineno(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "num.txt", "a\nb\nc\n")

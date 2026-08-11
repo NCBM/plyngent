@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from plyngent.agent import ToolTag, mark_lineno_read, tool
 from plyngent.tools.truncate_token import truncate_with_token
 from plyngent.tools.workspace import resolve_path
@@ -31,16 +33,19 @@ def line_range_label(text: str, start_char: int, end_char: int) -> str:
     return f"L{begin}-{end}"
 
 
-def read_raw_text(path: str) -> str | None:
-    """Full raw text of a workspace file; None when the path is not a regular file.
+def read_raw_text(path: str) -> tuple[str | None, str]:
+    """(text, error) for a workspace file read; ``error`` is ``""`` on success.
 
     Shared by ``read_file`` and ``get_truncated`` so truncate-token char offsets
     always refer to the raw file text (never the ``L{begin}-{end}`` header).
+    Missing paths and directories are distinguished for the caller.
     """
     target = resolve_path(path)
+    if not target.exists():
+        return None, f"error: file not found: {path}"
     if not target.is_file():
-        return None
-    return target.read_text(encoding="utf-8", errors="replace")
+        return None, f"error: not a file: {path}"
+    return target.read_text(encoding="utf-8", errors="replace"), ""
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
@@ -66,9 +71,10 @@ async def read_file(
     the caller knows exactly which file lines were read (offset is 0-based).
     """
     target = resolve_path(path)
-    text = read_raw_text(path)
-    if text is None:
-        return f"error: not a file: {path}"
+    text, err = read_raw_text(path)
+    if err:
+        return err
+    text = cast("str", text)
     lines = text.splitlines(keepends=True)
     if offset < 0:
         return "error: offset must be >= 0"
