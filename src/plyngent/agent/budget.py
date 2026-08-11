@@ -31,27 +31,23 @@ DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
 def truncate_tool_result(
     text: str,
     max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
-    *,
-    hint: bool = True,
 ) -> str:
     """Cap tool output so huge dumps do not flood model context.
 
-    This is the generic agent-loop cap for arbitrary tool results — there is no
-    resumable source, so no ``TRUNCATE_TOKEN`` is emitted here. Token-capable
-    sources (``read_file`` / ``fetch`` / ``get_truncated``) embed their own
-    ``[TRUNCATE_TOKEN: ...]`` marker via :func:`truncate_with_token`, and only
-    there does the result point the model at ``get_truncated`` (hint and token
-    always appear together). ``hint=False`` keeps the terse marker for internal
-    shrinks whose cap is not a user-facing knob (e.g. request-time compacting).
+    This is the generic agent-loop cap for arbitrary tool results. It embeds a
+    memory truncate token via :func:`truncate_generic` so the model can always
+    resume the remainder with ``get_truncated`` — resumable or not (remainders
+    live in the in-memory store for the process lifetime). The compact marker
+    ``[Truncated (N chars max.; M omitted). truncate_token=...]`` is emitted
+    only when output is actually cut.
     """
     if max_chars < 1:
         return text
     if len(text) <= max_chars:
         return text
-    omitted = len(text) - max_chars
-    if hint:
-        return f"{text[:max_chars]}\n...[Truncated ({max_chars} chars max.; {omitted} chars omitted)]"
-    return f"{text[:max_chars]}\n...[truncated {omitted} characters]"
+    from plyngent.tools.truncate_token import truncate_generic
+
+    return truncate_generic(text, max_chars)
 
 
 def estimate_message_chars(message: AnyChatMessage) -> int:
@@ -119,7 +115,7 @@ def _shrink_tool(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
         return message
     return msgspec.structs.replace(
         message,
-        content=truncate_tool_result(message.content, max_chars, hint=False),
+        content=truncate_tool_result(message.content, max_chars),
     )
 
 

@@ -40,21 +40,18 @@ def test_truncate_tool_result_short() -> None:
 def test_truncate_tool_result_long() -> None:
     text = "a" * 50
     out = truncate_tool_result(text, 20)
-    assert out.startswith("a" * 20)
     assert "Truncated" in out
     assert "20" in out
     assert "30" in out
-    # Generic tool results carry no resumable source → no token, no get_truncated.
-    assert "get_truncated" not in out
-    assert "TRUNCATE_TOKEN" not in out
+    # Generic tool results now embed a memory token too (resumable via get_truncated).
+    assert "truncate_token=" in out
 
 
 def test_truncate_tool_result_no_hint() -> None:
     text = "a" * 50
-    out = truncate_tool_result(text, 20, hint=False)
-    assert out.startswith("a" * 20)
-    assert "truncated" in out
-    assert "get_truncated" not in out
+    out = truncate_tool_result(text, 20)
+    assert "Truncated" in out
+    assert "truncate_token=" in out
 
 
 def test_compact_shrinks_old_tool_results() -> None:
@@ -94,7 +91,9 @@ def test_compact_shrinks_old_tool_results() -> None:
     )
     assert isinstance(compacted[2], ToolChatMessage)
     assert len(compacted[2].content) < original_len
-    assert "truncated" in compacted[2].content
+    assert "Truncated" in compacted[2].content
+    # Compact shrinks carry a token too (resumable via get_truncated).
+    assert "truncate_token=" in compacted[2].content
     # Full history unchanged
     assert isinstance(messages[2], ToolChatMessage)
     assert len(messages[2].content) == original_len
@@ -134,7 +133,7 @@ def test_compact_uses_api_calibration() -> None:
     # Raw est under budget → no compact
     no_api = compact_messages_for_request(messages, max_tokens=est + 100)
     assert isinstance(no_api[1], ToolChatMessage)
-    assert "truncated" not in no_api[1].content
+    assert "Truncated" not in no_api[1].content
     # Calibrate so measured size is 5x → over a mid budget → shrink old tool
     compacted = compact_messages_for_request(
         messages,
@@ -147,7 +146,7 @@ def test_compact_uses_api_calibration() -> None:
     assert isinstance(compacted[1], ToolChatMessage)
     old = messages[1]
     assert isinstance(old, ToolChatMessage)
-    assert "truncated" in compacted[1].content or len(compacted[1].content) < len(old.content)
+    assert "Truncated" in compacted[1].content or len(compacted[1].content) < len(old.content)
 
 
 def _response(message: AssistantChatMessage) -> ChatCompletionResponse:
