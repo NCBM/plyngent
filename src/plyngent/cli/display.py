@@ -31,7 +31,7 @@ _TOOL_ARGS_PREVIEW = 80
 
 # Tool calls that render as a single pretty summary line instead of
 # ``[tool]`` / ``[tool result]``.
-_PRETTY_TOOLS = frozenset({"read_file", "todo_push", "todo_update"})
+_PRETTY_TOOLS = frozenset({"read_file", "todo_push", "todo_update", "tree"})
 
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
@@ -108,10 +108,67 @@ def _todo_pretty(name: str, result: str) -> str:
     return f"* {label}:\n{result}"
 
 
+def _tree_line_stats(fmt: str, line: str) -> tuple[str, int] | None:
+    """Classify one ``tree`` result line as ``(kind, depth)`` or None (not an entry).
+
+    ``kind`` is ``"dir"`` or ``"file"``; depth is 0 for ``flat`` (no hierarchy).
+    """
+    stripped = line.strip()
+    if not stripped:
+        return None
+    kind: str | None = None
+    depth = 0
+    if fmt == "flat":
+        if not stripped.startswith("…"):
+            kind = "dir" if stripped.endswith("/") else "file"
+    elif fmt == "markdown":
+        if stripped.startswith("- ") and not stripped.startswith(("- …", "- error")):
+            kind = "dir" if stripped[2:].endswith("/") else "file"
+            depth = (len(line) - len(line.lstrip(" "))) // 2 + 1
+    elif "… (" not in stripped:
+        branch = "├── " if "├── " in line else ("└── " if "└── " in line else None)
+        if branch is not None:
+            name = line[line.index(branch) + len(branch) :].rstrip()
+            kind = "dir" if name.endswith("/") else "file"
+            depth = line.index(branch) // 4 + 1
+    if kind is None:
+        return None
+    return kind, depth
+
+
+def _tree_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``tree`` call: ``* Tree 'src' (3 dirs, 24 files, depth 3)``.
+
+    Flat trees have no depth, so the depth part is omitted for ``format=flat``.
+    """
+    path = _json_str_arg(args_json, "path") or "."
+    fmt = _json_str_arg(args_json, "format") or "markdown"
+    if result.startswith("error:"):
+        return f"* Tree '{path}' (error)"
+    dirs = 0
+    files = 0
+    depth = 0
+    for line in result.splitlines():
+        stats = _tree_line_stats(fmt, line)
+        if stats is None:
+            continue
+        kind, line_depth = stats
+        if kind == "dir":
+            dirs += 1
+        else:
+            files += 1
+        depth = max(depth, line_depth)
+    if depth:
+        return f"* Tree '{path}' ({dirs} dirs, {files} files, depth {depth})"
+    return f"* Tree '{path}' ({dirs} dirs, {files} files)"
+
+
 def _pretty_tool_result(name: str, args_json: str, result: str) -> str | None:
     """Pretty summary for a known tool call + result; None keeps the old style."""
     if name == "read_file":
         return _read_file_pretty(args_json, result)
+    if name == "tree":
+        return _tree_pretty(args_json, result)
     if name in {"todo_push", "todo_update"}:
         return _todo_pretty(name, result)
     return None

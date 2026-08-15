@@ -116,6 +116,44 @@ async def test_pretty_read_file_statuses(capsys: pytest.CaptureFixture[str]) -> 
         assert f"* Read 'a.txt' {status}" in out, f"status {status} not rendered for {content!r}"
 
 
+def _tree_call(args_json: str) -> ToolCallEvent:
+    return ToolCallEvent(
+        tool_call=AssistantFunctionToolCall(
+            id="1",
+            function=AssistantFunctionTool(name="tree", arguments=args_json),
+        )
+    )
+
+
+async def test_pretty_tree_markdown(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "- src/\n  - main.py\n  - nested/\n    - deep.txt\n- a.txt\n"
+    await render_events(_aiter([_tree_call('{"path": "."}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Tree '.' (2 dirs, 3 files, depth 3)" in out
+    assert "[tool]" not in out
+
+
+async def test_pretty_tree_flat_omits_depth(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "src/\nsrc/main.py\na.txt\n… (5 more paths not shown)"
+    await render_events(_aiter([_tree_call('{"path": ".", "format": "flat"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Tree '.' (1 dirs, 2 files)" in out
+    assert "depth" not in out
+
+
+async def test_pretty_tree_decorated(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "src/\n├── main.py\n└── nested/\n    └── deep.txt\n"
+    await render_events(_aiter([_tree_call('{"path": "src", "format": "decorated"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Tree 'src' (1 dirs, 2 files, depth 2)" in out
+
+
+async def test_pretty_tree_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_tree_call('{"path": "nope"}'), _result("error: not a directory: nope")]))
+    out = capsys.readouterr().out
+    assert "* Tree 'nope' (error)" in out
+
+
 async def test_pretty_todo_push(capsys: pytest.CaptureFixture[str]) -> None:
     call = ToolCallEvent(
         tool_call=AssistantFunctionToolCall(
