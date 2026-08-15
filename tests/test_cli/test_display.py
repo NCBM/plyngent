@@ -65,7 +65,7 @@ async def test_flush_markdown_on_source_change(
 
     call = AssistantFunctionToolCall(
         id="1",
-        function=AssistantFunctionTool(name="run_argv", arguments='{"argv": ["echo", "x"]}'),
+        function=AssistantFunctionTool(name="vcs_diff", arguments='{"path": ""}'),
     )
     await render_events(
         _aiter(
@@ -178,12 +178,12 @@ async def test_non_pretty_tool_keeps_old_style(capsys: pytest.CaptureFixture[str
     call = ToolCallEvent(
         tool_call=AssistantFunctionToolCall(
             id="3",
-            function=AssistantFunctionTool(name="run_argv", arguments='{"argv": ["ls"]}'),
+            function=AssistantFunctionTool(name="vcs_diff", arguments='{"path": ""}'),
         )
     )
-    await render_events(_aiter([call, _result("exit_code=0")]))
+    await render_events(_aiter([call, _result("diff --git a/x b/x")]))
     out = capsys.readouterr().out
-    assert "[tool] run_argv(" in out
+    assert "[tool] vcs_diff(" in out
     assert "[tool ok]" in out
 
 
@@ -349,3 +349,64 @@ async def test_pretty_grep_no_matches(capsys: pytest.CaptureFixture[str]) -> Non
     await render_events(_aiter([_pretty_call("grep_files", '{"pattern": "zzz"}'), _result("(no matches)")]))
     out = capsys.readouterr().out
     assert "* Grep 'zzz' in '.' (no matches)" in out
+
+
+async def test_pretty_run_argv_success(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "exit_code=0\ntimed_out=false\ncwd=.\ncmd=git status --short\n--- stdout ---\n M src/foo.py\n--- stderr ---\n"
+    )
+    await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["git", "status", "--short"]}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Run 'git status --short' → exit 0 (1 line)" in out
+    assert "[tool]" not in out
+    assert "[tool ok]" not in out
+
+
+async def test_pretty_run_argv_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "exit_code=1\ntimed_out=false\ncwd=.\ncmd=ls /nope\n--- stdout ---\n--- stderr ---\nls: cannot access '/nope'\n"
+    )
+    await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["ls", "/nope"]}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Run 'ls /nope' → exit 1 (1 line)" in out
+
+
+async def test_pretty_run_argv_timed_out(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "exit_code=\ntimed_out=true\ncwd=.\ncmd=sleep 10\n--- stdout ---\n--- stderr ---\n"
+    await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["sleep", "10"]}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Run 'sleep 10' → timed out (0 lines)" in out
+
+
+async def test_pretty_run_argv_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter([_pretty_call("run_argv", '{"argv": ["nope"]}'), _result("error: executable not found: 'nope'")])
+    )
+    out = capsys.readouterr().out
+    assert "* Run 'nope' (error: executable not found: 'nope')" in out
+
+
+async def test_pretty_run_argv_batch_stopped(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "steps=3 ran=2 stop_on_error=true stopped_early=true\n"
+        "--- step 1 ---\nexit_code=1\ntimed_out=false\ncwd=.\ncmd=git status\n"
+        "pipe_out=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
+        "--- step 2 ---\nexit_code=0\ntimed_out=false\ncwd=.\ncmd=git diff\n"
+        "pipe_out=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
+        "--- summary ---\nlast_exit=1\n"
+    )
+    await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Batch (2/3 steps ran, stopped early)" in out
+
+
+async def test_pretty_run_argv_batch_complete(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "steps=2 ran=2 stop_on_error=true stopped_early=false\n"
+        "--- step 1 ---\nexit_code=0\n--- stdout ---\n--- stderr ---\n"
+        "--- step 2 ---\nexit_code=0\n--- stdout ---\n--- stderr ---\n"
+        "--- summary ---\nlast_exit=0\n"
+    )
+    await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Batch (2/2 steps ran, last exit 0)" in out

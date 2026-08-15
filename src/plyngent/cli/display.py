@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shlex
 import sys
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Literal, cast
@@ -40,6 +41,8 @@ _PRETTY_TOOLS = frozenset(
         "listdir",
         "glob_paths",
         "grep_files",
+        "run_argv",
+        "run_argv_batch",
     }
 )
 
@@ -111,6 +114,16 @@ def _json_arg(args_json: str, key: str) -> object | None:
 def _json_str_arg(args_json: str, key: str) -> str | None:
     value = _json_arg(args_json, key)
     return value if isinstance(value, str) else None
+
+
+def _json_list_arg(args_json: str, key: str) -> list[str] | None:
+    value = _json_arg(args_json, key)
+    if isinstance(value, list):
+        raw_items = cast("list[object]", value)
+        items = [item for item in raw_items if isinstance(item, str)]
+        if len(items) == len(raw_items):
+            return items
+    return None
 
 
 def _pretty_line(prefix: str, *segments: tuple[str, str | None]) -> str:
@@ -253,6 +266,71 @@ def _grep_pretty(args_json: str, result: str) -> str:
     )
 
 
+def _section_line_count(result: str, section: str) -> int:
+    """Count non-empty lines in a ``--- section ---`` block of a tool result."""
+    lines = result.splitlines()
+    try:
+        start = lines.index(f"--- {section} ---") + 1
+    except ValueError:
+        return 0
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("--- ")), len(lines))
+    return sum(1 for line in lines[start:end] if line.strip())
+
+
+def _run_argv_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``run_argv`` call: ``* Run 'git status' → exit 0 (3 lines)``."""
+    argv = _json_list_arg(args_json, "argv")
+    cmd = shlex.join(argv) if argv else "?"
+    if result.startswith("error:"):
+        return _pretty_line(f"* Run '{cmd}' ", (f"({result})", "red"))
+    fields: dict[str, str] = {}
+    for line in result.splitlines():
+        if line.startswith("--- "):
+            break
+        if "=" in line:
+            key, _, value = line.partition("=")
+            fields[key] = value
+    out_lines = _section_line_count(result, "stdout") + _section_line_count(result, "stderr")
+    unit = "line" if out_lines == 1 else "lines"
+    if fields.get("timed_out") == "true":
+        status, fg = "timed out", "red"
+    else:
+        code = fields.get("exit_code", "")
+        status = f"exit {code or 'killed'}"
+        fg = "green" if code == "0" else "red"
+    return _pretty_line(f"* Run '{cmd}' ", (f"→ {status} ", fg), (f"({out_lines} {unit})", "dim"))
+
+
+def _run_argv_batch_pretty(_args_json: str, result: str) -> str:
+    """One-line summary for a ``run_argv_batch`` call: ``* Batch (2/3 steps ran, stopped early)``."""
+    if result.startswith("error:"):
+        return _pretty_line("* Batch ", (f"({result})", "red"))
+    lines = result.splitlines()
+    head = lines[0] if lines else ""
+    fields: dict[str, str] = {}
+    for part in head.split():
+        if "=" in part:
+            key, _, value = part.partition("=")
+            fields[key] = value
+    steps = fields.get("steps", "?")
+    ran = fields.get("ran", "?")
+    stopped_early = fields.get("stopped_early") == "true"
+    last_exit = ""
+    in_summary = False
+    for line in lines:
+        if line == "--- summary ---":
+            in_summary = True
+        elif in_summary and line.startswith("last_exit="):
+            last_exit = line.partition("=")[2]
+    if stopped_early:
+        tail = "stopped early"
+        fg = "yellow"
+    else:
+        tail = f"last exit {last_exit or 'killed'}"
+        fg = "green" if last_exit == "0" else "red"
+    return _pretty_line("* Batch ", (f"({ran}/{steps} steps ran, {tail})", fg))
+
+
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "read_file": _read_file_pretty,
     "tree": _tree_pretty,
@@ -261,6 +339,8 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "listdir": _listdir_pretty,
     "glob_paths": _glob_pretty,
     "grep_files": _grep_pretty,
+    "run_argv": _run_argv_pretty,
+    "run_argv_batch": _run_argv_batch_pretty,
 }
 
 
