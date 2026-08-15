@@ -410,3 +410,42 @@ async def test_pretty_run_argv_batch_complete(capsys: pytest.CaptureFixture[str]
     await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
     out = capsys.readouterr().out
     assert "* Batch (2/2 steps ran, last exit 0)" in out
+
+
+async def test_pretty_fetch(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "status=200\nmethod=GET\nfinal_url=https://example.com\ncontent_type=application/json\n"
+        "body_kind=json\nbytes=1229\ntruncated=false\nredirects=0\nsecurity=public\n--- body ---\n{...}\n"
+    )
+    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* GET 200 https://example.com (json, 1.2KB)" in out
+    assert "[tool]" not in out
+
+
+async def test_pretty_fetch_error_status(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "status=404\nmethod=GET\nfinal_url=https://example.com/nope\ncontent_type=text/html\n"
+        "body_kind=html\nbytes=45\ntruncated=false\nredirects=0\nsecurity=public\n--- body ---\nNot found\n"
+    )
+    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com/nope"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* GET 404 https://example.com/nope (html, 45B)" in out
+
+
+async def test_pretty_fetch_truncated(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "status=200\nmethod=GET\nfinal_url=https://example.com\ncontent_type=text/plain\n"
+        "body_kind=text\nbytes=50000\ntruncated=true\nredirects=0\nsecurity=public\n--- body ---\n..."
+    )
+    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* GET 200 https://example.com (text, 48.8KB, truncated)" in out
+
+
+async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result("error: fetch failed: boom")])
+    )
+    out = capsys.readouterr().out
+    assert "* GET (error: fetch failed: boom)" in out

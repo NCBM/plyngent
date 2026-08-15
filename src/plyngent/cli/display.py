@@ -43,6 +43,7 @@ _PRETTY_TOOLS = frozenset(
         "grep_files",
         "run_argv",
         "run_argv_batch",
+        "fetch",
     }
 )
 
@@ -331,6 +332,58 @@ def _run_argv_batch_pretty(_args_json: str, result: str) -> str:
     return _pretty_line("* Batch ", (f"({ran}/{steps} steps ran, {tail})", fg))
 
 
+def _human_bytes(value: str) -> str:
+    """Compact byte-count rendering: ``900B`` / ``1.2KB`` / ``3.4MB``."""
+    kib = 1024
+    try:
+        n = int(value)
+    except ValueError:
+        return ""
+    if n < kib:
+        return f"{n}B"
+    kb = n / kib
+    if kb < kib:
+        return f"{kb:.1f}KB"
+    mb = kb / kib
+    if mb < kib:
+        return f"{mb:.1f}MB"
+    return f"{mb / kib:.1f}GB"
+
+
+def _http_status_fg(status: str) -> str | None:
+    """Foreground color by HTTP status class (2xx green, 3xx yellow, 4xx/5xx red)."""
+    if status and status[0] in {"2", "3", "4", "5"}:
+        return {"2": "green", "3": "yellow", "4": "red", "5": "red"}[status[0]]
+    return None
+
+
+def _fetch_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``fetch`` call: ``* GET 200 https://… (json, 1.2KB)``."""
+    method = _json_str_arg(args_json, "method") or "GET"
+    if result.startswith("error:"):
+        return _pretty_line(f"* {method} ", (f"({result})", "red"))
+    fields: dict[str, str] = {}
+    for line in result.splitlines():
+        if line.startswith("--- "):
+            break
+        if "=" in line:
+            key, _, value = line.partition("=")
+            fields[key] = value
+    status = fields.get("status", "?")
+    url = fields.get("final_url", "?")
+    detail_parts: list[str] = []
+    kind = fields.get("body_kind", "")
+    if kind:
+        detail_parts.append(kind)
+    size = _human_bytes(fields.get("bytes", ""))
+    if size:
+        detail_parts.append(size)
+    if fields.get("truncated") == "true":
+        detail_parts.append("truncated")
+    detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+    return _pretty_line(f"* {method} {status} {url}", (detail, _http_status_fg(status)))
+
+
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "read_file": _read_file_pretty,
     "tree": _tree_pretty,
@@ -341,6 +394,7 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "grep_files": _grep_pretty,
     "run_argv": _run_argv_pretty,
     "run_argv_batch": _run_argv_batch_pretty,
+    "fetch": _fetch_pretty,
 }
 
 
