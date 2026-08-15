@@ -38,6 +38,18 @@ def test_edit_lineno_read_truncated_marks_only_displayed_lines(workspace: object
     assert "not read" in out and "90" in out
 
 
+def test_edit_lineno_error_shows_read_window(workspace: object) -> None:
+    """The unread error names the read window so the model can re-read precisely."""
+    del workspace
+    _ = call_sync(write_file, "j.txt", "a\nb\nc\nd\n")
+    _ = reset_lineno_tracker()
+    _ = call_sync(read_file, "j.txt", offset=1, limit=2, with_lineno=True)  # lines 2-3
+    out = call_sync(edit_lineno, "j.txt", 1, 1, "X\n")
+    assert "not read" in out
+    assert "read lines 2-3" in out
+    assert "margin" in out
+
+
 def test_edit_lineno_requires_all_lines_read(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "r.txt", "a\nb\nc\nd\ne\n")

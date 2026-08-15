@@ -111,13 +111,20 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
     if err is not None:
         return err
 
-    unread = _unread_lines_in_range(lineno_read_lines(str(target)), start_line, end_line, len(lines))
+    read_lines = lineno_read_lines(str(target))
+    unread = _unread_lines_in_range(read_lines, start_line, end_line, len(lines))
     if unread:
         preview = unread[:_UNREAD_PREVIEW]
         head = ", ".join(str(i) for i in preview)
         if len(unread) > _UNREAD_PREVIEW:
             head += f", … ({len(unread)} total)"
-        return f"error: lines {head} not read; call read_file(path, with_lineno=true) first to see current line numbers"
+        window = ""
+        if read_lines:
+            window = f" (this turn read lines {min(read_lines)}-{max(read_lines)})"
+        return (
+            f"error: lines {head} not read{window}; call read_file(path, with_lineno=true) "
+            "first — read with a small margin around the lines you plan to edit"
+        )
 
     recorded_mtime = lineno_read_mtime(str(target))
     if recorded_mtime is not None:

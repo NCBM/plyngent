@@ -64,6 +64,8 @@ async def read_file(
     (None = rest of file). When ``with_lineno`` is true, each line is prefixed
     with its 1-based file line number (``     N|…``), matching ``edit_lineno``
     numbering, and those lines are marked readable for ``edit_lineno`` this turn.
+    Only the displayed lines become editable, so read with a small margin around
+    any range you plan to edit with ``edit_lineno``.
 
     ``max_chars`` caps the returned slice (default: the agent's tool-result cap,
     ``DEFAULT_TOOL_RESULT_MAX_CHARS``); a ``truncate_token`` is appended when cut
