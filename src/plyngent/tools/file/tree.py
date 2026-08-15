@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError, get_path_denylist, resolve_path
@@ -9,6 +9,11 @@ from plyngent.tools.workspace import WorkspaceError, get_path_denylist, resolve_
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
+
+# Model-facing renderings. ``markdown`` (default) is the cheapest, most
+# reliable representation for the agent; ``flat`` gives directly-usable paths;
+# ``decorated`` keeps the classic box-drawing tree for human readers.
+type TreeFormat = Literal["markdown", "flat", "decorated"]
 
 DEFAULT_MAX_DEPTH = 4
 DEFAULT_MAX_ENTRIES = 50
@@ -144,6 +149,80 @@ def _render_tree(
         lines.append(f"{prefix}└── … ({more} more entries not shown)")
 
 
+def _render_tree_markdown(
+    directory: Path,
+    *,
+    prefix: str,
+    depth: int,
+    limits: _TreeLimits,
+    lines: list[str],
+) -> None:
+    """Nested ``- `` bullet list (2-space indent per level)."""
+    if depth >= limits.max_depth:
+        return
+
+    children = _list_children(directory, limits=limits)
+    if isinstance(children, str):
+        lines.append(f"{prefix}- {children}")
+        return
+
+    truncated = len(children) > limits.max_entries
+    shown = children[: limits.max_entries]
+    for child in shown:
+        try:
+            is_dir = child.is_dir()
+        except OSError:
+            lines.append(f"{prefix}- {child.name} [error: stat failed]")
+            continue
+        if is_dir:
+            lines.append(f"{prefix}- {child.name}/")
+            _render_tree_markdown(
+                child,
+                prefix=prefix + "  ",
+                depth=depth + 1,
+                limits=limits,
+                lines=lines,
+            )
+        else:
+            lines.append(f"{prefix}- {child.name}")
+
+    if truncated:
+        more = len(children) - limits.max_entries
+        lines.append(f"{prefix}- … ({more} more entries not shown)")
+
+
+def _flat_paths(directory: Path, *, limits: _TreeLimits) -> list[str]:
+    """All paths (dirs with trailing ``/``, files plain) in depth-first order.
+
+    Includes empty directories; bounded by *max_depth* (``max_entries`` is
+    applied to the total by the caller).
+    """
+    out: list[str] = []
+
+    def visit(child_dir: Path, rel: str, depth: int) -> None:
+        if depth >= limits.max_depth:
+            return
+        children = _list_children(child_dir, limits=limits)
+        if isinstance(children, str):
+            out.append(f"{rel or child_dir.name} [error: cannot list]")
+            return
+        for child in children:
+            try:
+                is_dir = child.is_dir()
+            except OSError:
+                out.append(f"{child.name} [error: stat failed]")
+                continue
+            child_rel = child.name if not rel else f"{rel}/{child.name}"
+            if is_dir:
+                out.append(f"{child_rel}/")
+                visit(child, child_rel, depth + 1)
+            else:
+                out.append(child_rel)
+
+    visit(directory, "", 0)
+    return out
+
+
 def _resolve_skip_basenames(skip_dirs: Sequence[str] | None) -> frozenset[str]:
     """None → default noise set; explicit list (including empty) replaces defaults."""
     if skip_dirs is None:
@@ -155,6 +234,7 @@ def _resolve_skip_basenames(skip_dirs: Sequence[str] | None) -> frozenset[str]:
 async def tree(
     path: str = ".",
     *,
+    format: TreeFormat = "markdown",  # noqa: A002 — model-facing param name
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_entries: int = DEFAULT_MAX_ENTRIES,
     skip_hidden_dirs: bool = True,
@@ -174,8 +254,15 @@ async def tree(
     ``apply_path_denylist`` (default true) hides entries whose full path matches
     the agent ``path_denylist`` policy.
 
+    ``format`` selects the representation (the model chooses per call):
+    ``markdown`` (default) renders a nested ``- `` bullet list — cheapest and
+    most reliable for the agent; ``flat`` lists one relative path per line
+    (directories with a trailing ``/``) so every path is directly usable
+    without reconstructing it; ``decorated`` uses the classic box-drawing tree.
+
     ``max_depth`` limits how deep directories are expanded (1 = origin + children).
-    ``max_entries`` caps how many entries are listed per directory.
+    ``max_entries`` caps entries per directory (``markdown``/``decorated``) or
+    the total number of lines (``flat``).
     """
     if max_depth < 1:
         return "error: max_depth must be >= 1"
@@ -189,8 +276,6 @@ async def tree(
     if not origin.is_dir():
         return f"error: not a directory: {path}"
 
-    root_label = path.rstrip("/\\") or "."
-    lines = [f"{root_label}/"]
     limits = _TreeLimits(
         max_depth=max_depth,
         max_entries=max_entries,
@@ -198,7 +283,18 @@ async def tree(
         skip_basenames=_resolve_skip_basenames(skip_dirs),
         apply_path_denylist=apply_path_denylist,
     )
-    _render_tree(
+
+    if format == "flat":
+        paths = _flat_paths(origin, limits=limits)
+        lines = paths[:max_entries]
+        if len(paths) > max_entries:
+            lines.append(f"… ({len(paths) - max_entries} more paths not shown)")
+        return "\n".join(lines)
+
+    root_label = path.rstrip("/\\") or "."
+    lines: list[str] = [] if format == "markdown" else [f"{root_label}/"]
+    renderer = _render_tree_markdown if format == "markdown" else _render_tree
+    renderer(
         origin,
         prefix="",
         depth=0,

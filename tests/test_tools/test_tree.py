@@ -67,7 +67,60 @@ def test_tree_origin_subdir(workspace: object) -> None:
     assert isinstance(workspace, Path)
     _build_sample(workspace)
     out = call_sync(tree, "src")
+    assert out.startswith("- ")
+    assert "- nested/" in out
+    assert "main.py" in out
+    assert "deep.txt" in out
+
+
+def test_tree_default_is_markdown(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _build_sample(workspace)
+    out = call_sync(tree, ".")
+    assert out.startswith("- ")
+    assert "- src/" in out
+    assert "├──" not in out
+
+
+def test_tree_markdown_format(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _build_sample(workspace)
+    out = call_sync(tree, ".", format="markdown", max_depth=3, max_entries=10)
+    assert "- src/" in out
+    # nested bullets are indented by 2 spaces per level
+    assert "  - main.py" in out
+    assert "  - nested/" in out
+    assert "    - deep.txt" in out
+    assert "more entries not shown" in out
+
+
+def test_tree_flat_format(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _build_sample(workspace)
+    out = call_sync(tree, ".", format="flat", max_entries=200)
+    assert "src/" in out  # dirs keep a trailing slash
+    assert "src/main.py" in out
+    assert "src/nested/deep.txt" in out
+    assert "a.txt" in out
+    assert "- " not in out
+    assert "├──" not in out
+
+
+def test_tree_flat_total_cap(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _build_sample(workspace)
+    out = call_sync(tree, "pkg", format="flat", max_depth=2, max_entries=10)
+    paths = [line for line in out.splitlines() if not line.startswith("…")]
+    assert len(paths) == 10
+    assert "more paths not shown" in out
+
+
+def test_tree_decorated_format(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _build_sample(workspace)
+    out = call_sync(tree, "src", format="decorated")
     assert out.startswith("src/")
+    assert "├──" in out
     assert "main.py" in out
     assert "deep.txt" in out
 
