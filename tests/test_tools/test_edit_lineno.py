@@ -66,6 +66,16 @@ def test_edit_lineno_requires_all_lines_read(workspace: object) -> None:
     assert "replaced lines 2-3" in out
 
 
+def test_edit_lineno_append_to_empty_file(workspace: object) -> None:
+    """An empty file has nothing to clobber, so appending needs no read."""
+    del workspace
+    _ = call_sync(write_file, "empty.txt", "")
+    _ = reset_lineno_tracker()
+    out = call_sync(edit_lineno, "empty.txt", 1, 1, "first\n")
+    assert "appended" in out
+    assert call_sync(read_file, "empty.txt") == "L1-1\nfirst\n"
+
+
 def test_edit_lineno_append_requires_last_line_read(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "ap.txt", "a\nb\nc\n")

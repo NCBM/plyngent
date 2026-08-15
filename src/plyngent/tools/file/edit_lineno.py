@@ -60,10 +60,11 @@ def _unread_lines_in_range(
     """Lines in ``start_line..end_line`` that were not read with line numbers.
 
     Appending (``start_line == n + 1``) requires the last line to be read, so
-    line numbers stay truthful; the append point itself is not a line.
+    line numbers stay truthful; the append point itself is not a line. An empty
+    file (``n == 0``) has nothing to clobber, so appending needs no read.
     """
     if start_line == n + 1:
-        return [] if n in read_lines else [n]
+        return [] if n == 0 or n in read_lines else [n]
     return sorted(set(range(start_line, end_line + 1)) - read_lines)
 
 
