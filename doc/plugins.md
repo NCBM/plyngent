@@ -50,6 +50,11 @@ Notes:
 - Optional soft-confirm bits: **`YOLO`** (eligible for YOLO auto-approve),
   **`TRUSTABLE`** (grant once per session after approve). Hard denylists are
   never YOLO-skipped.
+- Optional host-policy bit: **`READ_ONLY`** marks tools that never mutate host
+  state — they become eligible for read-only contexts such as
+  `/btw --tools=read` side turns or planning. Tools that only sometimes mutate
+  (e.g. `fetch` with a non-GET method) may still opt in; the handler must
+  enforce the constraint via the read-only context flag.
 - Docstring becomes the model-facing description; parameter schemas come from
   type hints.
 - Use `register=False` only for unit tests that build a private registry.

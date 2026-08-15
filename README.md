@@ -252,6 +252,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/yolo [on\|off\|once]` | Soft destructive confirms: sticky skip, off, or next turn only |
 
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
+| `/btw [--tools read\|no\|full] [--fresh]` | Side question without changing the main session (read-only tools by default) |
 | `/provider` `/model` | Switch without restarting |
 | `/model --persist` | Save current model id into `plyngent.toml` catalog |
 | `/models` | List config + remote `GET /models` (always re-fetches) |
