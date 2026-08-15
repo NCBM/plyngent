@@ -22,7 +22,7 @@ from plyngent.agent import (
 from plyngent.lmproto.openai_compatible.model import AssistantFunctionToolCall
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from plyngent.agent import AgentEvent
 
@@ -31,7 +31,17 @@ _TOOL_ARGS_PREVIEW = 80
 
 # Tool calls that render as a single pretty summary line instead of
 # ``[tool]`` / ``[tool result]``.
-_PRETTY_TOOLS = frozenset({"read_file", "todo_push", "todo_update", "tree"})
+_PRETTY_TOOLS = frozenset(
+    {
+        "read_file",
+        "todo_push",
+        "todo_update",
+        "tree",
+        "listdir",
+        "glob_paths",
+        "grep_files",
+    }
+)
 
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
@@ -195,15 +205,71 @@ def _tree_pretty(args_json: str, result: str) -> str:
     return _pretty_line(f"* Tree '{path}' ", (f"({dirs} dirs, {files} files)", None))
 
 
+def _listdir_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``listdir`` call: ``* List 'path' (3 dirs, 5 files)``."""
+    path = _json_str_arg(args_json, "path") or "."
+    if result.startswith("error:"):
+        return _pretty_line(f"* List '{path}' ", (f"({result})", "red"))
+    if result == "(empty)":
+        return _pretty_line(f"* List '{path}' ", ("(empty)", "dim"))
+    dirs = 0
+    files = 0
+    for line in result.splitlines():
+        if line.startswith("dir\t"):
+            dirs += 1
+        elif line.startswith("file\t"):
+            files += 1
+    return _pretty_line(f"* List '{path}' ", (f"({dirs} dirs, {files} files)", None))
+
+
+def _glob_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``glob_paths`` call: ``* Glob '**/*.py' in '.' (12 paths)``."""
+    pattern = _json_str_arg(args_json, "pattern") or "?"
+    path = _json_str_arg(args_json, "path") or "."
+    if result.startswith("error:"):
+        return _pretty_line(f"* Glob '{pattern}' in '{path}' ", (f"({result})", "red"))
+    if result == "(no matches)":
+        return _pretty_line(f"* Glob '{pattern}' in '{path}' ", ("(no matches)", "dim"))
+    count = sum(1 for line in result.splitlines() if line and not line.startswith("...[truncated"))
+    unit = "path" if count == 1 else "paths"
+    return _pretty_line(f"* Glob '{pattern}' in '{path}' ", (f"({count} {unit})", None))
+
+
+def _grep_pretty(args_json: str, result: str) -> str:
+    """One-line summary for a ``grep_files`` call: ``* Grep 'pat' in '.' (12 matches in 3 files)``."""
+    pattern = _json_str_arg(args_json, "pattern") or "?"
+    path = _json_str_arg(args_json, "path") or "."
+    if result.startswith("error:"):
+        return _pretty_line(f"* Grep '{pattern}' in '{path}' ", (f"({result})", "red"))
+    if result == "(no matches)":
+        return _pretty_line(f"* Grep '{pattern}' in '{path}' ", ("(no matches)", "dim"))
+    matches = [line for line in result.splitlines() if line and not line.startswith("...[truncated")]
+    files = len({line.split(":", 1)[0] for line in matches})
+    match_unit = "match" if len(matches) == 1 else "matches"
+    file_unit = "file" if files == 1 else "files"
+    return _pretty_line(
+        f"* Grep '{pattern}' in '{path}' ",
+        (f"({len(matches)} {match_unit} in {files} {file_unit})", None),
+    )
+
+
+_PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
+    "read_file": _read_file_pretty,
+    "tree": _tree_pretty,
+    "todo_push": lambda _args, result: _todo_pretty("todo_push", result),
+    "todo_update": lambda _args, result: _todo_pretty("todo_update", result),
+    "listdir": _listdir_pretty,
+    "glob_paths": _glob_pretty,
+    "grep_files": _grep_pretty,
+}
+
+
 def _pretty_tool_result(name: str, args_json: str, result: str) -> str | None:
     """Pretty summary for a known tool call + result; None keeps the old style."""
-    if name == "read_file":
-        return _read_file_pretty(args_json, result)
-    if name == "tree":
-        return _tree_pretty(args_json, result)
-    if name in {"todo_push", "todo_update"}:
-        return _todo_pretty(name, result)
-    return None
+    builder = _PRETTY_BUILDERS.get(name)
+    if builder is None:
+        return None
+    return builder(args_json, result)
 
 
 def _echo_stream(text: str) -> None:

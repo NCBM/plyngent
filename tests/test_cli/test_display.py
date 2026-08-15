@@ -286,3 +286,66 @@ async def test_tool_result_preview_first_line_and_count(capsys: pytest.CaptureFi
     out = capsys.readouterr().out
     assert "[tool ok] (no output)" in out
     set_markdown_enabled(True)
+
+
+def _pretty_call(name: str, args_json: str) -> ToolCallEvent:
+    return ToolCallEvent(
+        tool_call=AssistantFunctionToolCall(
+            id="1",
+            function=AssistantFunctionTool(name=name, arguments=args_json),
+        )
+    )
+
+
+async def test_pretty_listdir(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "dir\tsrc\nfile\tREADME.md\nfile\tpyproject.toml\n"
+    await render_events(_aiter([_pretty_call("listdir", '{"path": "src"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* List 'src' (1 dirs, 2 files)" in out
+    assert "[tool]" not in out
+    assert "[tool ok]" not in out
+
+
+async def test_pretty_listdir_empty(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("listdir", '{"path": "src"}'), _result("(empty)")]))
+    out = capsys.readouterr().out
+    assert "* List 'src' (empty)" in out
+
+
+async def test_pretty_listdir_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("listdir", '{"path": "nope"}'), _result("error: not a directory: nope")]))
+    out = capsys.readouterr().out
+    assert "* List 'nope' (error: not a directory: nope)" in out
+
+
+async def test_pretty_glob(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "src/a.py\nsrc/b.py\n"
+    await render_events(_aiter([_pretty_call("glob_paths", '{"pattern": "**/*.py"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Glob '**/*.py' in '.' (2 paths)" in out
+
+
+async def test_pretty_glob_no_matches(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("glob_paths", '{"pattern": "**/*.rs"}'), _result("(no matches)")]))
+    out = capsys.readouterr().out
+    assert "* Glob '**/*.rs' in '.' (no matches)" in out
+
+
+async def test_pretty_glob_truncated(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "a\nb\n...[truncated at 200 matches]"
+    await render_events(_aiter([_pretty_call("glob_paths", '{"pattern": "*"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Glob '*' in '.' (2 paths)" in out
+
+
+async def test_pretty_grep(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "src/a.py:3: x = 1\nsrc/a.py:9: x = 2\nsrc/b.py:1: y = 3\n"
+    await render_events(_aiter([_pretty_call("grep_files", '{"pattern": "x"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Grep 'x' in '.' (3 matches in 2 files)" in out
+
+
+async def test_pretty_grep_no_matches(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("grep_files", '{"pattern": "zzz"}'), _result("(no matches)")]))
+    out = capsys.readouterr().out
+    assert "* Grep 'zzz' in '.' (no matches)" in out
