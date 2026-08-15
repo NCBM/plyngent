@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.agent import ToolTag, invalidate_lineno_read, tool
+from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 
@@ -10,5 +10,6 @@ async def write_file(path: str, content: str) -> str:
     target = resolve_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     _ = target.write_text(content, encoding="utf-8")
-    invalidate_lineno_read(str(target))
+    # The write changes the file's mtime, so edit_lineno's freshness check
+    # rejects stale line numbers until the model re-reads with_lineno.
     return f"wrote {len(content)} characters to {path}"

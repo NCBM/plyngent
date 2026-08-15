@@ -68,10 +68,13 @@ def _copy_or_move_validated(
             else:
                 _ = shutil.copy2(source, dest, follow_symlinks=False)
                 label = _kind(source)
-            # A copy does not change the source, but the destination content is new.
+            # A copy does not change the source, but the destination content is
+            # new. copy2/copytree preserve the source mtime, so the freshness
+            # check alone could miss the change — invalidate explicitly.
             invalidate_lineno_read(str(dest))
             return f"copied {label} {src} -> {dest.relative_to(root)}"
         moved = Path(shutil.move(str(source), str(dest))).resolve()
+        # shutil.move preserves mtime too; drop read state for both paths.
         invalidate_lineno_read(str(source))
         invalidate_lineno_read(str(moved))
         return f"moved {_kind(moved)} {src} -> {moved.relative_to(root)}"

@@ -108,7 +108,7 @@ def test_edit_lineno_requires_rerun_after_write(workspace: object) -> None:
     _ = _read_lineno("f.txt")
     _ = call_sync(write_file, "f.txt", "changed\n")
     out = call_sync(edit_lineno, "f.txt", 1, 1, "x\n")
-    assert "not read" in out
+    assert "changed" in out and "re-read" in out
 
 
 def test_edit_lineno_requires_rerun_after_edit_replace(workspace: object) -> None:
@@ -117,7 +117,7 @@ def test_edit_lineno_requires_rerun_after_edit_replace(workspace: object) -> Non
     _ = _read_lineno("g.txt")
     _ = call_sync(edit_replace, "g.txt", "two", "TWO")
     out = call_sync(edit_lineno, "g.txt", 2, 2, "x\n")
-    assert "not read" in out
+    assert "changed" in out and "re-read" in out
 
 
 def test_edit_lineno_invalidates_after_successful_edit(workspace: object) -> None:
@@ -127,4 +127,19 @@ def test_edit_lineno_invalidates_after_successful_edit(workspace: object) -> Non
     _ = call_sync(edit_lineno, "h.txt", 2, 2, "B\n")
     # After the edit, line numbers are stale — must re-read before editing again.
     out = call_sync(edit_lineno, "h.txt", 2, 2, "C\n")
-    assert "not read" in out
+    assert "changed" in out and "re-read" in out
+
+
+def test_edit_lineno_detects_external_change(workspace: object) -> None:
+    """A mutation outside the file tools (run_argv, another process) is caught."""
+    import os
+    import time
+
+    assert isinstance(workspace, Path)
+    _ = call_sync(write_file, "i.txt", "one\ntwo\nthree\n")
+    _ = _read_lineno("i.txt")
+    # Simulate an external/process-tool mutation: rewrite content + new mtime.
+    _ = call_sync(write_file, "i.txt", "one\ntwo\nthree\nCHANGED\n")
+    os.utime(workspace / "i.txt", (time.time() + 1, time.time() + 1))
+    out = call_sync(edit_lineno, "i.txt", 1, 1, "x\n")
+    assert "changed since it was read" in out

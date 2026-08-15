@@ -2,6 +2,7 @@ from .chat import ChatAgent as ChatAgent
 from .chat import get_lineno_read_files as get_lineno_read_files
 from .chat import invalidate_lineno_read as invalidate_lineno_read
 from .chat import lineno_read_lines as lineno_read_lines
+from .chat import lineno_read_mtime as lineno_read_mtime
 from .chat import mark_lineno_read as mark_lineno_read
 from .chat import reset_lineno_tracker as reset_lineno_tracker
 from .chat import was_lineno_read as was_lineno_read

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from msgspec import UNSET
@@ -47,14 +48,18 @@ if TYPE_CHECKING:
 
 
 # Per-conversation tracking of lines read with ``with_lineno=True``, keyed by
-# resolved file path. Set to a fresh ``dict`` at the start of each user turn via
-# :func:`reset_lineno_tracker`; cleared after the assistant finishes.
-# Tool handlers read/write via :func:`get_lineno_read_files` /
-# :func:`lineno_read_lines` / :func:`mark_lineno_read`.
-_lineno_read_files: ContextVar[dict[str, set[int]] | None] = ContextVar("_lineno_read_files", default=None)
+# resolved file path, with the file's mtime at read time (so stale line numbers
+# after external/process mutations are detected). Set to a fresh ``dict`` at the
+# start of each user turn via :func:`reset_lineno_tracker`; cleared after the
+# assistant finishes. Tool handlers read/write via :func:`get_lineno_read_files` /
+# :func:`lineno_read_lines` / :func:`lineno_read_mtime` / :func:`mark_lineno_read`.
+_lineno_read_files: ContextVar[dict[str, tuple[set[int], int]] | None] = ContextVar(
+    "_lineno_read_files",
+    default=None,
+)
 
 
-def reset_lineno_tracker() -> Token[dict[str, set[int]] | None]:
+def reset_lineno_tracker() -> Token[dict[str, tuple[set[int], int]] | None]:
     """Replace the tracker with a fresh empty mapping; return the previous token.
 
     Call at the start of a new user turn. Restore with
@@ -80,17 +85,38 @@ def lineno_read_lines(path: str) -> set[int]:
     val = _lineno_read_files.get()
     if val is None:
         return set()
-    return set(val.get(path, ()))
+    entry = val.get(path)
+    return set(entry[0]) if entry is not None else set()
+
+
+def lineno_read_mtime(path: str) -> int | None:
+    """Return the file mtime (ns) recorded when *path* was read, or None."""
+    val = _lineno_read_files.get()
+    if val is None:
+        return None
+    entry = val.get(path)
+    return entry[1] if entry is not None else None
 
 
 def mark_lineno_read(path: str, lines: set[int]) -> None:
     """Record that *path* was read with line numbers this turn.
 
     ``lines`` are 1-based absolute file line numbers (``read_file`` slice).
+    The file's current mtime is recorded too, so edits can detect that the
+    file changed since the read (external/process mutations included).
     """
     val = _lineno_read_files.get()
-    if val is not None:
-        val.setdefault(path, set()).update(lines)
+    if val is None:
+        return
+    try:
+        mtime_ns = Path(path).stat().st_mtime_ns
+    except OSError:
+        mtime_ns = 0
+    entry = val.get(path)
+    if entry is None:
+        val[path] = (set(lines), mtime_ns)
+    else:
+        val[path] = (entry[0] | lines, mtime_ns)
 
 
 def invalidate_lineno_read(path: str) -> None:

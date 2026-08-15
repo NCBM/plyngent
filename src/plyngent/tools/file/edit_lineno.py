@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ToolTag, invalidate_lineno_read, lineno_read_lines, tool
+from plyngent.agent import ToolTag, lineno_read_lines, lineno_read_mtime, tool
 from plyngent.tools.workspace import resolve_path
 
 if TYPE_CHECKING:
@@ -119,10 +119,22 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
             head += f", … ({len(unread)} total)"
         return f"error: lines {head} not read; call read_file(path, with_lineno=true) first to see current line numbers"
 
+    recorded_mtime = lineno_read_mtime(str(target))
+    if recorded_mtime is not None:
+        try:
+            current_mtime = target.stat().st_mtime_ns
+        except OSError:
+            current_mtime = None
+        if current_mtime is not None and current_mtime != recorded_mtime:
+            return (
+                f"error: {path} changed since it was read (line numbers may be stale); "
+                "re-read with read_file(path, with_lineno=true)"
+            )
+
     if start_line == len(lines) + 1:
         result = _append_after(target, path, text, lines, new_content)
     else:
         result = _replace_range(target, path, lines, start_line, end_line, new_content)
-    # Line numbers are stale after a write; force a re-read before next edit.
-    invalidate_lineno_read(str(target))
+    # Line numbers are stale after a write; the fresh mtime makes the next
+    # edit_lineno reject until the file is re-read.
     return result
