@@ -51,6 +51,8 @@ _PRETTY_TOOLS = frozenset(
         "copy_path",
         "move_path",
         "delete_path",
+        "vcs_status",
+        "vcs_log",
     }
 )
 
@@ -360,6 +362,24 @@ def _mutator_pretty(name: str, args_json: str, result: str) -> str:
     return _pretty_line(f"* {verb} {target} ", ("(done)", "green"))
 
 
+def _vcs_status_pretty(_args_json: str, result: str) -> str:
+    """One-line summary for ``vcs_status``: ``* VCS Status (done)``."""
+    if result.startswith("error:"):
+        return _pretty_line("* VCS Status ", (f"({result})", "red"))
+    return _pretty_line("* VCS Status ", ("(done)", "green"))
+
+
+def _vcs_log_pretty(_args_json: str, result: str) -> str:
+    """One-line summary for ``vcs_log``: ``* VCS Log (5 commits)``."""
+    if result.startswith("error:"):
+        return _pretty_line("* VCS Log ", (f"({result})", "red"))
+    if result == "(no commits)":
+        return _pretty_line("* VCS Log ", ("(no commits)", "dim"))
+    commits = [line for line in result.splitlines() if line.strip()]
+    unit = "commit" if len(commits) == 1 else "commits"
+    return _pretty_line("* VCS Log ", (f"({len(commits)} {unit})", None))
+
+
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "read_file": _read_file_pretty,
     "tree": _tree_pretty,
@@ -377,6 +397,8 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "copy_path": lambda args, result: _mutator_pretty("copy_path", args, result),
     "move_path": lambda args, result: _mutator_pretty("move_path", args, result),
     "delete_path": lambda args, result: _mutator_pretty("delete_path", args, result),
+    "vcs_status": _vcs_status_pretty,
+    "vcs_log": _vcs_log_pretty,
 }
 
 

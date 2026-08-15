@@ -488,3 +488,45 @@ async def test_pretty_mutator_error(capsys: pytest.CaptureFixture[str]) -> None:
     )
     out = capsys.readouterr().out
     assert "* Copy 'x' → 'y' (error: source does not exist: x)" in out
+
+
+async def test_pretty_vcs_status_done(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("vcs_status", "{}"), _result("(clean)")]))
+    out = capsys.readouterr().out
+    assert "* VCS Status (done)" in out
+    assert "[tool]" not in out
+
+
+async def test_pretty_vcs_status_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("vcs_status", "{}"),
+                _result("error: no supported VCS detected under workspace (currently: git)"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* VCS Status (error: no supported VCS detected under workspace (currently: git))" in out
+
+
+async def test_pretty_vcs_log_count(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "5436457 2026-08-15 worldmozara core/tools: allow edit_lineno append\nabc1234 2026-08-14 worldmozara cli: fix\n"
+    )
+    await render_events(_aiter([_pretty_call("vcs_log", '{"limit": 2}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* VCS Log (2 commits)" in out
+
+
+async def test_pretty_vcs_log_single(capsys: pytest.CaptureFixture[str]) -> None:
+    content = "abc1234 2026-08-14 worldmozara x\n"
+    await render_events(_aiter([_pretty_call("vcs_log", '{"limit": 1}'), _result(content)]))
+    out = capsys.readouterr().out
+    assert "* VCS Log (1 commit)" in out
+
+
+async def test_pretty_vcs_log_no_commits(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("vcs_log", "{}"), _result("(no commits)")]))
+    out = capsys.readouterr().out
+    assert "* VCS Log (no commits)" in out
