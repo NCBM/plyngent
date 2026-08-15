@@ -248,3 +248,41 @@ def test_markdown_render_available_respects_plain_env(monkeypatch: pytest.Monkey
     monkeypatch.setenv("PLYNGENT_PLAIN", "1")
     assert markdown_render_available() is False
     monkeypatch.delenv("PLYNGENT_PLAIN", raising=False)
+
+
+async def test_pretty_verbose_shows_full_result(capsys: pytest.CaptureFixture[str]) -> None:
+    """Verbose mode prints the full tool result even for pretty tools."""
+    await render_events(
+        _aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\ntwo\n")]),
+        verbose=True,
+    )
+    out = capsys.readouterr().out
+    assert "[tool ok]" in out
+    assert "L1-4\none\ntwo" in out
+    assert "* Read" not in out
+
+
+async def test_pretty_plain_output_has_no_ansi(capsys: pytest.CaptureFixture[str]) -> None:
+    """Pretty summaries are plain text when stdout is not a TTY."""
+    await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\n")]))
+    out = capsys.readouterr().out
+    assert "\x1b[" not in out
+
+
+async def test_tool_result_preview_first_line_and_count(capsys: pytest.CaptureFixture[str]) -> None:
+    """Non-verbose preview shows the first line plus a line-count tail."""
+    set_markdown_enabled(False)
+    content = "first line\nsecond\nthird"
+    await render_events(_aiter([ToolResultEvent(message=ToolChatMessage(content=content, tool_call_id="1"))]))
+    out = capsys.readouterr().out
+    assert "[tool ok] first line (…2 more lines)" in out
+
+    await render_events(_aiter([ToolResultEvent(message=ToolChatMessage(content="only line", tool_call_id="2"))]))
+    out = capsys.readouterr().out
+    assert "[tool ok] only line" in out
+    assert "more" not in out
+
+    await render_events(_aiter([ToolResultEvent(message=ToolChatMessage(content="", tool_call_id="3"))]))
+    out = capsys.readouterr().out
+    assert "[tool ok] (no output)" in out
+    set_markdown_enabled(True)

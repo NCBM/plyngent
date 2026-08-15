@@ -74,38 +74,70 @@ def _preview(text: str, limit: int) -> str:
     return text[:limit] + "…"
 
 
-def _json_str_arg(args_json: str, key: str) -> str | None:
-    """Extract a string argument from a tool-call arguments JSON blob."""
+def _preview_result(content: str, limit: int) -> str:
+    """Non-verbose tool-result preview: first line + a ``(…N more lines)`` tail."""
+    lines = content.splitlines()
+    if not lines:
+        return "(no output)"
+    first = _preview(lines[0], limit)
+    more = len(lines) - 1
+    if more == 0:
+        return first
+    unit = "line" if more == 1 else "lines"
+    return f"{first} (…{more} more {unit})"
+
+
+def _json_arg(args_json: str, key: str) -> object | None:
+    """Extract a single argument value (any type) from a tool-call args JSON blob."""
     try:
         raw = json.loads(args_json)
     except ValueError:
         return None
     if isinstance(raw, dict):
-        value = cast("dict[str, object]", raw).get(key)
-        if isinstance(value, str):
-            return value
+        return cast("dict[str, object]", raw).get(key)
     return None
+
+
+def _json_str_arg(args_json: str, key: str) -> str | None:
+    value = _json_arg(args_json, key)
+    return value if isinstance(value, str) else None
+
+
+def _pretty_line(prefix: str, *segments: tuple[str, str | None]) -> str:
+    """Style a pretty tool summary: yellow ``* Verb`` prefix + colored detail segments.
+
+    ``segments`` are ``(text, fg)`` pairs; ``fg=None`` leaves a segment uncolored
+    and ``"dim"`` renders it dim. click.style emits ANSI codes only on a TTY,
+    so non-TTY output stays plain.
+    """
+    parts = [click.style(prefix, fg="yellow")]
+    for text, fg in segments:
+        if fg == "dim":
+            parts.append(click.style(text, dim=True))
+        else:
+            parts.append(click.style(text, fg=fg))
+    return "".join(parts)
 
 
 def _read_file_pretty(args_json: str, result: str) -> str:
     """One-line summary for a ``read_file`` call: ``* Read 'path' L1-4 (done)``."""
     path = _json_str_arg(args_json, "path") or "?"
     if result.startswith("error: file not found"):
-        return f"* Read '{path}' (file not found)"
+        return _pretty_line(f"* Read '{path}' ", ("(file not found)", "red"))
     if result.startswith("error: not a file"):
-        return f"* Read '{path}' (not a file)"
+        return _pretty_line(f"* Read '{path}' ", ("(not a file)", "red"))
     if result.startswith("error:"):
-        return f"* Read '{path}' (error)"
+        return _pretty_line(f"* Read '{path}' ", ("(error)", "red"))
     first = result.splitlines()[0] if result.splitlines() else ""
     if first.startswith("L") and "-" in first:
-        return f"* Read '{path}' {first} (done)"
-    return f"* Read '{path}' (done)"
+        return _pretty_line(f"* Read '{path}' ", (f"{first} ", "dim"), ("(done)", "green"))
+    return _pretty_line(f"* Read '{path}' ", ("(done)", "green"))
 
 
 def _todo_pretty(name: str, result: str) -> str:
     """Summary for todo push/update: header + the rendered todo stack."""
     label = "Todo Push" if name == "todo_push" else "Todo Update"
-    return f"* {label}:\n{result}"
+    return _pretty_line(f"* {label}:\n{result}")
 
 
 def _tree_line_stats(fmt: str, line: str) -> tuple[str, int] | None:
@@ -159,8 +191,8 @@ def _tree_pretty(args_json: str, result: str) -> str:
             files += 1
         depth = max(depth, line_depth)
     if depth:
-        return f"* Tree '{path}' ({dirs} dirs, {files} files, depth {depth})"
-    return f"* Tree '{path}' ({dirs} dirs, {files} files)"
+        return _pretty_line(f"* Tree '{path}' ", (f"({dirs} dirs, {files} files, depth {depth})", None))
+    return _pretty_line(f"* Tree '{path}' ", (f"({dirs} dirs, {files} files)", None))
 
 
 def _pretty_tool_result(name: str, args_json: str, result: str) -> str | None:
@@ -315,14 +347,13 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             content = event.message.content
             name, args, pretty_tool = pending_tools.pop(0) if pending_tools else ("", "", False)
             pretty_line = _pretty_tool_result(name, args, content) if pretty_tool else None
-            if pretty_line is not None:
-                click.secho(f"\n{pretty_line}", fg="yellow")
+            if pretty_line is not None and not show_full:
+                click.echo(f"\n{pretty_line}")
             elif show_full:
                 click.secho(f"[tool ok]\n{content}", fg="magenta")
             else:
-                preview = _preview(content, _TOOL_RESULT_PREVIEW)
-                one_line = preview.replace("\n", " ")
-                click.secho(f"[tool ok] {one_line}", fg="magenta")
+                preview = _preview_result(content, _TOOL_RESULT_PREVIEW)
+                click.secho(f"[tool ok] {preview}", fg="magenta")
         elif isinstance(event, ErrorEvent):
             flush_assistant()
             suffix = ""
