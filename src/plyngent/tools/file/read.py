@@ -49,7 +49,7 @@ def read_raw_text(path: str) -> tuple[str | None, str]:
     return target.read_text(encoding="utf-8", errors="replace"), ""
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def read_file(
     path: str,
     *,

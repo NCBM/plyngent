@@ -4,7 +4,7 @@ from plyngent.agent import ToolTag, tool
 from plyngent.prompting import NonInteractiveError, ask_async
 
 
-@tool(name="ask_user_line", tags=ToolTag.LOCAL)
+@tool(name="ask_user_line", tags=ToolTag.LOCAL | ToolTag.READ_ONLY)
 async def ask_user(question: str, default: str = "") -> str:
     """Ask the human a free-form one-line question and return their answer.
 

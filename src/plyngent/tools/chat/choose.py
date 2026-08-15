@@ -36,7 +36,7 @@ def parse_options(options: list[object]) -> list[ChoiceOption]:
     return out
 
 
-@tool(name="ask_user_choice", tags=ToolTag.LOCAL)
+@tool(name="ask_user_choice", tags=ToolTag.LOCAL | ToolTag.READ_ONLY)
 async def choose_user(
     question: str,
     options: list[str] | list[dict[str, object]],

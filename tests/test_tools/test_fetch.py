@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, override
 
 import pytest
 
+from plyngent.tools.context import read_only_context
 from plyngent.tools.danger import classify_danger
 from plyngent.tools.net import fetch, grant_private_host
 from plyngent.tools.net.policy import (
@@ -197,6 +198,23 @@ async def test_fetch_get_post_put_delete(workspace: Path, http_server: str) -> N
 
     out_del = await call_async(fetch, f"{base}/x", method="DELETE")
     assert "status=204" in out_del
+
+
+async def test_fetch_read_only_context_blocks_non_get(workspace: Path, http_server: str) -> None:
+    """In a read-only context fetch only allows GET; outside it POST works."""
+    del workspace
+    port = int(http_server.rsplit(":", 1)[1])
+    grant_private_host("127.0.0.1", port)
+
+    with read_only_context():
+        out = await call_async(fetch, f"{http_server}/hello")
+        assert "status=200" in out  # GET is fine in a read-only context
+        blocked = await call_async(fetch, f"{http_server}/echo", method="POST", body="hi")
+        assert blocked.startswith("error:")
+        assert "GET" in blocked
+
+    out_post = await call_async(fetch, f"{http_server}/echo", method="POST", body="hi")
+    assert "POST:hi" in out_post
 
 
 async def test_fetch_user_agent_passthrough(workspace: Path, http_server: str) -> None:

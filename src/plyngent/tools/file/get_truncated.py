@@ -15,7 +15,7 @@ from plyngent.tools.truncate_token import (
 )
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS) -> str:
     """Fetch the next chunk of a truncated result using its ``truncate_token``.
 

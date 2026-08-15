@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.context import is_read_only_context
 from plyngent.tools.net.client import http_fetch
 from plyngent.tools.net.policy import (
     DEFAULT_MAX_BODY_CHARS_IN,
@@ -66,7 +67,7 @@ def format_fetch_result(
     return "\n".join(parts)
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO | ToolTag.TRUSTABLE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO | ToolTag.TRUSTABLE | ToolTag.READ_ONLY)
 async def fetch(
     url: str,
     *,
@@ -92,9 +93,13 @@ async def fetch(
     Private/loopback/link-local hosts require an explicit human policy grant
     (not skipped by YOLO). HTTPS→HTTP redirects are blocked unless
     ``allow_http_downgrade`` is true.
+
+    Read-only contexts (e.g. ``/btw --tools=read``) accept only ``GET``.
     """
     try:
         verb = normalize_method(method)
+        if is_read_only_context() and verb != "GET":
+            return "error: fetch method must be GET in a read-only context (POST/PUT/DELETE mutate)"
         parsed = parse_fetch_url(url)
         hdrs = normalize_request_headers(headers, user_agent=user_agent)
         body_bytes: bytes | None = None

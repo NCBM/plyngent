@@ -48,7 +48,7 @@ async def _with_todo_stack(mutator: Callable[[TodoStack], str]) -> str:
     return result
 
 
-@tool(name="todo_list", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
+@tool(name="todo_list", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE | ToolTag.READ_ONLY)
 async def todo_list() -> str:
     """Show the LIFO stack of **task groups** (TOP group = current breakdown level).
 

@@ -151,7 +151,7 @@ def _resolve_skip_basenames(skip_dirs: Sequence[str] | None) -> frozenset[str]:
     return frozenset(name for name in skip_dirs if name)
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def tree(
     path: str = ".",
     *,

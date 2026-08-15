@@ -46,7 +46,7 @@ def parse_fields(fields: list[dict[str, object]]) -> list[FormField]:
     return out
 
 
-@tool(name="ask_user_form", tags=ToolTag.LOCAL)
+@tool(name="ask_user_form", tags=ToolTag.LOCAL | ToolTag.READ_ONLY)
 async def form_user(
     title: str,
     fields: list[dict[str, object]],

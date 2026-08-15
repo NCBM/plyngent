@@ -8,7 +8,7 @@ from plyngent.prompting import get_prompt_backend, read_line_with_timeout, run_p
 WAIT_PROMPT = "Waiting for {duration}s. Press Enter to disturb. Feel free to ship any reason before pressing Enter. "
 
 
-@tool(name="wait", tags=ToolTag.LOCAL)
+@tool(name="wait", tags=ToolTag.LOCAL | ToolTag.READ_ONLY)
 async def wait(duration: int, *, reason: str | None = None) -> str:
     """Wait ``duration`` seconds before continuing.
 

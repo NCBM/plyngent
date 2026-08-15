@@ -65,7 +65,7 @@ def _resolve_glob_base(path: str) -> tuple[Path, Path] | str:
     return root, base
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def glob_paths(
     pattern: str,
     path: str = ".",

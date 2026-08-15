@@ -4,7 +4,7 @@ from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import resolve_path
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def listdir(path: str = ".") -> str:
     """List entries in a directory under the workspace (name and type)."""
     target = resolve_path(path)

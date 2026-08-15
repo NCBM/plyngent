@@ -127,7 +127,7 @@ def _compile_pattern(pattern: str, *, case_insensitive: bool) -> re.Pattern[str]
         return f"error: invalid regex: {exc}"
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def grep_files(
     pattern: str,
     path: str = ".",

@@ -42,6 +42,7 @@ class ToolTag(Flag):
     YOLO = auto()  # soft-confirm: eligible for YOLO auto-approve
     INSTANCE_STATE = auto()  # needs instance-scoped state
     SESSION_STATE = auto()  # needs session-scoped state
+    READ_ONLY = auto()  # never mutates host state; safe for read-only contexts
 
 
 class ToolDefinition:
@@ -266,14 +267,22 @@ class ToolRegistry:
         session_state: object | None = None,
         yolo: bool | None = None,
         auto_bind_state: bool | None = None,
+        read_only_only: bool = False,
     ) -> ToolRegistry:
         """New registry with the same tools/hooks and rebound host state.
 
         *instance_state* / *session_state* are applied as given (use the parent
         registry's handles only when the caller passes them through).
+
+        With *read_only_only*, only :attr:`ToolTag.READ_ONLY` tools are kept
+        (e.g. for safe side turns / planning); hooks and policy flags are
+        preserved.
         """
+        definitions = self.definitions()
+        if read_only_only:
+            definitions = [d for d in definitions if d.tags & ToolTag.READ_ONLY]
         return ToolRegistry(
-            self.definitions(),
+            definitions,
             danger=self._danger,
             on_confirm=self._on_confirm,
             yolo=self._yolo if yolo is None else yolo,

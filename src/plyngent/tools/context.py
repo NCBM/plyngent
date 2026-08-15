@@ -137,6 +137,29 @@ def bind_session(state: SessionState | None) -> Generator[SessionState | None]:
         _session.reset(token)
 
 
+_read_only: ContextVar[bool] = ContextVar("plyngent_read_only_context", default=False)
+
+
+@contextmanager
+def read_only_context() -> Generator[None]:
+    """Mark the current context as read-only for tool execution.
+
+    Tools that may mutate depending on arguments (e.g. ``fetch`` with a
+    non-GET method) check :func:`is_read_only_context` and refuse to mutate
+    while it is set.
+    """
+    token = _read_only.set(True)
+    try:
+        yield
+    finally:
+        _read_only.reset(token)
+
+
+def is_read_only_context() -> bool:
+    """Whether tools currently run inside a read-only context."""
+    return _read_only.get()
+
+
 @contextmanager
 def bind_tool_context(
     *,

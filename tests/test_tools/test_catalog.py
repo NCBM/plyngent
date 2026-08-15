@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import ToolRegistry, ToolTag, tool
 from plyngent.tools import default_tool_definitions, register_builtin_tools
 from plyngent.tools.catalog import ToolCatalog, ToolSource, catalog_scope, get_catalog, registration_source
 from plyngent.tools.chat import CHAT_TOOLS
@@ -40,6 +40,45 @@ def test_public_surface_is_subset() -> None:
     # Todo series is the main PUBLIC surface today.
     assert "todo_list" in public
     assert "read_file" not in public
+
+
+def test_read_only_classification() -> None:
+    """READ_ONLY marks exactly the non-mutating builtins."""
+    register_builtin_tools()
+    read_only = {t.name for t in default_tool_definitions(surface="local") if t.tags & ToolTag.READ_ONLY}
+    assert read_only == {
+        "read_file",
+        "get_truncated",
+        "glob_paths",
+        "grep_files",
+        "listdir",
+        "tree",
+        "todo_list",
+        "wait",
+        "ask_user_line",
+        "ask_user_choice",
+        "ask_user_form",
+        "vcs_kind",
+        "vcs_status",
+        "vcs_diff",
+        "vcs_log",
+        "vcs_branch",
+        "fetch",
+    }
+
+
+def test_registry_clone_read_only_only() -> None:
+    """clone(read_only_only=True) keeps only READ_ONLY tools, nothing else."""
+    register_builtin_tools()
+    full = ToolRegistry(default_tool_definitions(surface="local"))
+    ro = full.clone(read_only_only=True)
+    assert 0 < len(ro) < len(full)
+    assert {t.name for t in ro.definitions()} == {t.name for t in full.definitions() if t.tags & ToolTag.READ_ONLY}
+    assert all(t.tags & ToolTag.READ_ONLY for t in ro.definitions())
+    assert "run_argv" not in ro
+    assert "edit_replace" not in ro
+    # Plain clone keeps every tool.
+    assert len(full.clone()) == len(full)
 
 
 def test_catalog_scope_empty_isolates_registration() -> None:
