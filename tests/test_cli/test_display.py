@@ -98,7 +98,7 @@ def _result(content: str) -> ToolResultEvent:
 async def test_pretty_read_file_done(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\ntwo\n")]))
     out = capsys.readouterr().out
-    assert "* Read 'a.txt' L1-4 (done)" in out
+    assert "* Read 'a.txt' (done)" in out
     assert "[tool]" not in out
     assert "[tool ok]" not in out
 
@@ -357,7 +357,7 @@ async def test_pretty_run_argv_success(capsys: pytest.CaptureFixture[str]) -> No
     )
     await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["git", "status", "--short"]}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Run 'git status --short' → exit 0 (1 line)" in out
+    assert "* Run $ git status --short (exit code 0)" in out
     assert "[tool]" not in out
     assert "[tool ok]" not in out
 
@@ -368,14 +368,14 @@ async def test_pretty_run_argv_failure(capsys: pytest.CaptureFixture[str]) -> No
     )
     await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["ls", "/nope"]}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Run 'ls /nope' → exit 1 (1 line)" in out
+    assert "* Run $ ls /nope (exit code 1)" in out
 
 
 async def test_pretty_run_argv_timed_out(capsys: pytest.CaptureFixture[str]) -> None:
     result = "exit_code=\ntimed_out=true\ncwd=.\ncmd=sleep 10\n--- stdout ---\n--- stderr ---\n"
     await render_events(_aiter([_pretty_call("run_argv", '{"argv": ["sleep", "10"]}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Run 'sleep 10' → timed out (0 lines)" in out
+    assert "* Run $ sleep 10 (timed out)" in out
 
 
 async def test_pretty_run_argv_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -383,7 +383,7 @@ async def test_pretty_run_argv_error(capsys: pytest.CaptureFixture[str]) -> None
         _aiter([_pretty_call("run_argv", '{"argv": ["nope"]}'), _result("error: executable not found: 'nope'")])
     )
     out = capsys.readouterr().out
-    assert "* Run 'nope' (error: executable not found: 'nope')" in out
+    assert "* Run $ nope (error: executable not found: 'nope')" in out
 
 
 async def test_pretty_run_argv_batch_stopped(capsys: pytest.CaptureFixture[str]) -> None:
@@ -397,7 +397,7 @@ async def test_pretty_run_argv_batch_stopped(capsys: pytest.CaptureFixture[str])
     )
     await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Batch (2/3 steps ran, stopped early)" in out
+    assert "* Run batch (stopped early)" in out
 
 
 async def test_pretty_run_argv_batch_complete(capsys: pytest.CaptureFixture[str]) -> None:
@@ -409,7 +409,7 @@ async def test_pretty_run_argv_batch_complete(capsys: pytest.CaptureFixture[str]
     )
     await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Batch (2/2 steps ran, last exit 0)" in out
+    assert "* Run batch (done)" in out
 
 
 async def test_pretty_fetch(capsys: pytest.CaptureFixture[str]) -> None:
@@ -419,7 +419,7 @@ async def test_pretty_fetch(capsys: pytest.CaptureFixture[str]) -> None:
     )
     await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* GET 200 https://example.com (json, 1.2KB)" in out
+    assert "* Fetch GET https://example.com (200)" in out
     assert "[tool]" not in out
 
 
@@ -430,7 +430,7 @@ async def test_pretty_fetch_error_status(capsys: pytest.CaptureFixture[str]) -> 
     )
     await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com/nope"}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* GET 404 https://example.com/nope (html, 45B)" in out
+    assert "* Fetch GET https://example.com/nope (404)" in out
 
 
 async def test_pretty_fetch_truncated(capsys: pytest.CaptureFixture[str]) -> None:
@@ -440,7 +440,7 @@ async def test_pretty_fetch_truncated(capsys: pytest.CaptureFixture[str]) -> Non
     )
     await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* GET 200 https://example.com (text, 48.8KB, truncated)" in out
+    assert "* Fetch GET https://example.com (200)" in out
 
 
 async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -448,34 +448,43 @@ async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
         _aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result("error: fetch failed: boom")])
     )
     out = capsys.readouterr().out
-    assert "* GET (error: fetch failed: boom)" in out
+    assert "* Fetch GET https://example.com (error: fetch failed: boom)" in out
 
 
 async def test_pretty_mutators(capsys: pytest.CaptureFixture[str]) -> None:
     cases = [
-        ("write_file", "wrote 120 characters to src/x.py", "* Wrote 120 characters to src/x.py"),
+        ("write_file", '{"path": "src/x.py"}', "wrote 120 characters to src/x.py", "* Write 'src/x.py' (120 chars)"),
         (
             "edit_replace",
+            '{"path": "src/a.py"}',
             "replaced 1 occurrence in src/a.py ('x' → 'y')",
-            "* Edited: replaced 1 occurrence in src/a.py ('x' → 'y')",
+            "* Edit 'src/a.py' (done)",
         ),
         (
             "edit_lineno",
+            '{"path": "src/a.py"}',
             "replaced lines 3-5 (3 lines; first: 'pass') with 2 lines in src/a.py",
-            "* Edited: replaced lines 3-5 (3 lines; first: 'pass') with 2 lines in src/a.py",
+            "* Edit 'src/a.py' (done)",
         ),
-        ("copy_path", "copied file a.txt -> b.txt", "* Copied file a.txt -> b.txt"),
-        ("move_path", "moved directory src -> dst", "* Moved directory src -> dst"),
-        ("delete_path", "deleted file tmp/x.txt", "* Deleted file tmp/x.txt"),
+        (
+            "copy_path",
+            '{"src": "a.txt", "dst": "b.txt"}',
+            "copied file a.txt -> b.txt",
+            "* Copy 'a.txt' → 'b.txt' (done)",
+        ),
+        ("move_path", '{"src": "src", "dst": "dst"}', "moved directory src -> dst", "* Move 'src' → 'dst' (done)"),
+        ("delete_path", '{"path": "tmp/x.txt"}', "deleted file tmp/x.txt", "* Delete 'tmp/x.txt' (done)"),
     ]
-    for name, content, expected in cases:
-        await render_events(_aiter([_pretty_call(name, "{}"), _result(content)]))
+    for name, args, content, expected in cases:
+        await render_events(_aiter([_pretty_call(name, args), _result(content)]))
         out = capsys.readouterr().out
         assert expected in out, f"{name}: expected {expected!r} in {out!r}"
         assert "[tool ok]" not in out
 
 
 async def test_pretty_mutator_error(capsys: pytest.CaptureFixture[str]) -> None:
-    await render_events(_aiter([_pretty_call("copy_path", "{}"), _result("error: source does not exist: x")]))
+    await render_events(
+        _aiter([_pretty_call("copy_path", '{"src": "x", "dst": "y"}'), _result("error: source does not exist: x")])
+    )
     out = capsys.readouterr().out
-    assert "* Copied (error: source does not exist: x)" in out
+    assert "* Copy 'x' → 'y' (error: source does not exist: x)" in out

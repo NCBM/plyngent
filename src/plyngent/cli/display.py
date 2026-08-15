@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shlex
 import sys
 from contextvars import ContextVar
@@ -150,7 +151,7 @@ def _pretty_line(prefix: str, *segments: tuple[str, str | None]) -> str:
 
 
 def _read_file_pretty(args_json: str, result: str) -> str:
-    """One-line summary for a ``read_file`` call: ``* Read 'path' L1-4 (done)``."""
+    """One-line summary for a ``read_file`` call: ``* Read 'path' (done)``."""
     path = _json_str_arg(args_json, "path") or "?"
     if result.startswith("error: file not found"):
         return _pretty_line(f"* Read '{path}' ", ("(file not found)", "red"))
@@ -158,9 +159,6 @@ def _read_file_pretty(args_json: str, result: str) -> str:
         return _pretty_line(f"* Read '{path}' ", ("(not a file)", "red"))
     if result.startswith("error:"):
         return _pretty_line(f"* Read '{path}' ", ("(error)", "red"))
-    first = result.splitlines()[0] if result.splitlines() else ""
-    if first.startswith("L") and "-" in first:
-        return _pretty_line(f"* Read '{path}' ", (f"{first} ", "dim"), ("(done)", "green"))
     return _pretty_line(f"* Read '{path}' ", ("(done)", "green"))
 
 
@@ -273,23 +271,12 @@ def _grep_pretty(args_json: str, result: str) -> str:
     )
 
 
-def _section_line_count(result: str, section: str) -> int:
-    """Count non-empty lines in a ``--- section ---`` block of a tool result."""
-    lines = result.splitlines()
-    try:
-        start = lines.index(f"--- {section} ---") + 1
-    except ValueError:
-        return 0
-    end = next((i for i in range(start, len(lines)) if lines[i].startswith("--- ")), len(lines))
-    return sum(1 for line in lines[start:end] if line.strip())
-
-
 def _run_argv_pretty(args_json: str, result: str) -> str:
-    """One-line summary for a ``run_argv`` call: ``* Run 'git status' → exit 0 (3 lines)``."""
+    """One-line summary for a ``run_argv`` call: ``* Run $ git status --short (exit code 0)``."""
     argv = _json_list_arg(args_json, "argv")
     cmd = shlex.join(argv) if argv else "?"
     if result.startswith("error:"):
-        return _pretty_line(f"* Run '{cmd}' ", (f"({result})", "red"))
+        return _pretty_line(f"* Run $ {cmd} ", (f"({result})", "red"))
     fields: dict[str, str] = {}
     for line in result.splitlines():
         if line.startswith("--- "):
@@ -297,63 +284,26 @@ def _run_argv_pretty(args_json: str, result: str) -> str:
         if "=" in line:
             key, _, value = line.partition("=")
             fields[key] = value
-    out_lines = _section_line_count(result, "stdout") + _section_line_count(result, "stderr")
-    unit = "line" if out_lines == 1 else "lines"
     if fields.get("timed_out") == "true":
-        status, fg = "timed out", "red"
-    else:
-        code = fields.get("exit_code", "")
-        status = f"exit {code or 'killed'}"
-        fg = "green" if code == "0" else "red"
-    return _pretty_line(f"* Run '{cmd}' ", (f"→ {status} ", fg), (f"({out_lines} {unit})", "dim"))
+        return _pretty_line(f"* Run $ {cmd} ", ("(timed out)", "red"))
+    code = fields.get("exit_code", "")
+    fg = "green" if code == "0" else "red"
+    return _pretty_line(f"* Run $ {cmd} ", (f"(exit code {code or 'killed'})", fg))
 
 
 def _run_argv_batch_pretty(_args_json: str, result: str) -> str:
-    """One-line summary for a ``run_argv_batch`` call: ``* Batch (2/3 steps ran, stopped early)``."""
+    """One-line summary for a ``run_argv_batch`` call: ``* Run batch (done)``."""
     if result.startswith("error:"):
-        return _pretty_line("* Batch ", (f"({result})", "red"))
+        return _pretty_line("* Run batch ", (f"({result})", "red"))
     lines = result.splitlines()
     head = lines[0] if lines else ""
-    fields: dict[str, str] = {}
+    stopped_early = False
     for part in head.split():
-        if "=" in part:
-            key, _, value = part.partition("=")
-            fields[key] = value
-    steps = fields.get("steps", "?")
-    ran = fields.get("ran", "?")
-    stopped_early = fields.get("stopped_early") == "true"
-    last_exit = ""
-    in_summary = False
-    for line in lines:
-        if line == "--- summary ---":
-            in_summary = True
-        elif in_summary and line.startswith("last_exit="):
-            last_exit = line.partition("=")[2]
+        if part == "stopped_early=true":
+            stopped_early = True
     if stopped_early:
-        tail = "stopped early"
-        fg = "yellow"
-    else:
-        tail = f"last exit {last_exit or 'killed'}"
-        fg = "green" if last_exit == "0" else "red"
-    return _pretty_line("* Batch ", (f"({ran}/{steps} steps ran, {tail})", fg))
-
-
-def _human_bytes(value: str) -> str:
-    """Compact byte-count rendering: ``900B`` / ``1.2KB`` / ``3.4MB``."""
-    kib = 1024
-    try:
-        n = int(value)
-    except ValueError:
-        return ""
-    if n < kib:
-        return f"{n}B"
-    kb = n / kib
-    if kb < kib:
-        return f"{kb:.1f}KB"
-    mb = kb / kib
-    if mb < kib:
-        return f"{mb:.1f}MB"
-    return f"{mb / kib:.1f}GB"
+        return _pretty_line("* Run batch ", ("(stopped early)", "yellow"))
+    return _pretty_line("* Run batch ", ("(done)", "green"))
 
 
 def _http_status_fg(status: str) -> str | None:
@@ -364,53 +314,50 @@ def _http_status_fg(status: str) -> str | None:
 
 
 def _fetch_pretty(args_json: str, result: str) -> str:
-    """One-line summary for a ``fetch`` call: ``* GET 200 https://… (json, 1.2KB)``."""
+    """One-line summary for a ``fetch`` call: ``* Fetch GET https://… (200)``."""
     method = _json_str_arg(args_json, "method") or "GET"
+    url = _json_str_arg(args_json, "url") or "?"
     if result.startswith("error:"):
-        return _pretty_line(f"* {method} ", (f"({result})", "red"))
-    fields: dict[str, str] = {}
+        return _pretty_line(f"* Fetch {method} {url} ", (f"({result})", "red"))
+    status = ""
     for line in result.splitlines():
         if line.startswith("--- "):
             break
-        if "=" in line:
-            key, _, value = line.partition("=")
-            fields[key] = value
-    status = fields.get("status", "?")
-    url = fields.get("final_url", "?")
-    detail_parts: list[str] = []
-    kind = fields.get("body_kind", "")
-    if kind:
-        detail_parts.append(kind)
-    size = _human_bytes(fields.get("bytes", ""))
-    if size:
-        detail_parts.append(size)
-    if fields.get("truncated") == "true":
-        detail_parts.append("truncated")
-    detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
-    return _pretty_line(f"* {method} {status} {url}", (detail, _http_status_fg(status)))
+        if line.startswith("status="):
+            status = line.partition("=")[2]
+            break
+    return _pretty_line(f"* Fetch {method} {url} ", (f"({status or 'done'})", _http_status_fg(status)))
 
 
 _MUTATOR_VERBS: dict[str, str] = {
-    "edit_replace": "Edited",
-    "edit_lineno": "Edited",
-    "write_file": "Wrote",
-    "copy_path": "Copied",
-    "move_path": "Moved",
-    "delete_path": "Deleted",
+    "edit_replace": "Edit",
+    "edit_lineno": "Edit",
+    "write_file": "Write",
+    "copy_path": "Copy",
+    "move_path": "Move",
+    "delete_path": "Delete",
 }
 
-_MUTATOR_LOWER_PREFIXES = ("wrote ", "copied ", "moved ", "deleted ")
 
-
-def _mutator_pretty(name: str, result: str) -> str:
-    """One-line summary for file-mutation tools: ``* Wrote 120 characters to src/x.py``."""
+def _mutator_pretty(name: str, args_json: str, result: str) -> str:
+    """One-line summary for a file mutation: ``* Wrote 'path' (120 chars)`` / ``* Edit 'path' (done)``."""
     verb = _MUTATOR_VERBS[name]
+    if name in {"copy_path", "move_path"}:
+        src = _json_str_arg(args_json, "src") or "?"
+        dst = _json_str_arg(args_json, "dst") or "?"
+        target = f"'{src}' → '{dst}'"
+    else:
+        path = _json_str_arg(args_json, "path") or "?"
+        target = f"'{path}'"
     if result.startswith("error:"):
-        return _pretty_line(f"* {verb} ", (f"({result})", "red"))
-    for prefix in _MUTATOR_LOWER_PREFIXES:
-        if result.startswith(prefix):
-            return _pretty_line(f"* {verb} {result[len(prefix) :]}")
-    return _pretty_line(f"* {verb}: {result}")
+        return _pretty_line(f"* {verb} {target} ", (f"({result})", "red"))
+    if name == "write_file":
+        # write_file keeps its brief detail: ``wrote 120 characters to path``.
+        match = re.match(r"wrote (\d+) characters to (.+)$", result)
+        if match:
+            chars, path = match.groups()
+            return _pretty_line(f"* Write '{path}' ", (f"({chars} chars)", None))
+    return _pretty_line(f"* {verb} {target} ", ("(done)", "green"))
 
 
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
@@ -424,12 +371,12 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "run_argv": _run_argv_pretty,
     "run_argv_batch": _run_argv_batch_pretty,
     "fetch": _fetch_pretty,
-    "edit_replace": lambda _args, result: _mutator_pretty("edit_replace", result),
-    "edit_lineno": lambda _args, result: _mutator_pretty("edit_lineno", result),
-    "write_file": lambda _args, result: _mutator_pretty("write_file", result),
-    "copy_path": lambda _args, result: _mutator_pretty("copy_path", result),
-    "move_path": lambda _args, result: _mutator_pretty("move_path", result),
-    "delete_path": lambda _args, result: _mutator_pretty("delete_path", result),
+    "edit_replace": lambda args, result: _mutator_pretty("edit_replace", args, result),
+    "edit_lineno": lambda args, result: _mutator_pretty("edit_lineno", args, result),
+    "write_file": lambda args, result: _mutator_pretty("write_file", args, result),
+    "copy_path": lambda args, result: _mutator_pretty("copy_path", args, result),
+    "move_path": lambda args, result: _mutator_pretty("move_path", args, result),
+    "delete_path": lambda args, result: _mutator_pretty("delete_path", args, result),
 }
 
 
