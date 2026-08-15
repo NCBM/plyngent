@@ -209,3 +209,91 @@ async def test_run_aside_tools_clones_registry_with_fresh_session() -> None:
         pass
     assert hits == ["ok"]
     assert "aside" not in main_session.extras
+
+
+async def test_run_aside_read_only_clone_excludes_write_tools() -> None:
+    """A read-only-cloned registry passed to run_aside exposes no write tools."""
+    hits: list[str] = []
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.READ_ONLY, register=False)
+    async def peek() -> str:
+        hits.append("peek")
+        return "peeked"
+
+    @tool(tags=ToolTag.LOCAL, register=False)
+    async def write_thing() -> str:
+        hits.append("write")
+        return "wrote"
+
+    registry = ToolRegistry([peek, write_thing], auto_bind_state=True)
+
+    def make_client(first_tool: str | None) -> Any:
+        calls = 0
+
+        class _Client:
+            @overload
+            async def chat_completions(
+                self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+            ) -> ChatCompletionResponse: ...
+
+            @overload
+            async def chat_completions(
+                self, param: ChatCompletionsParam, *, stream: Literal[True]
+            ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+            async def chat_completions(
+                self, param: ChatCompletionsParam, *, stream: bool = False
+            ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+                del stream, param
+                nonlocal calls
+                calls += 1
+                if calls == 1 and first_tool is not None:
+                    from plyngent.lmproto.openai_compatible.model import (
+                        AssistantFunctionTool,
+                        AssistantFunctionToolCall,
+                    )
+
+                    message = AssistantChatMessage(
+                        content="",
+                        tool_calls=[
+                            AssistantFunctionToolCall(
+                                id="c1",
+                                function=AssistantFunctionTool(name=first_tool, arguments="{}"),
+                            )
+                        ],
+                    )
+                    finish = "tool_calls"
+                else:
+                    message = AssistantChatMessage(content="done")
+                    finish = "stop"
+                return ChatCompletionResponse(
+                    id="1",
+                    object="chat.completion",
+                    created=0,
+                    model="m",
+                    choices=[
+                        ChatCompletionChoice(
+                            index=0,
+                            message=message,
+                            logprobs={},
+                            finish_reason=finish,
+                        )
+                    ],
+                    system_fingerprint="",
+                    usage={},
+                )
+
+        return _Client()
+
+    # Read-only tool is available to the side turn.
+    agent_peek = ChatAgent(make_client("peek"), model="m", tools=registry, stream=False)
+    async for _ in agent_peek.run_aside("go", tools=registry.clone(read_only_only=True)):
+        pass
+    assert hits == ["peek"]
+
+    # Write tool is not in the read-only clone: the call errors, never runs.
+    hits.clear()
+    agent_write = ChatAgent(make_client("write_thing"), model="m", tools=registry, stream=False)
+    async for _ in agent_write.run_aside("go", tools=registry.clone(read_only_only=True)):
+        pass
+    assert hits == []

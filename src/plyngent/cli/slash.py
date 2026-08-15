@@ -24,6 +24,7 @@ from plyngent.runtime import ProviderNotSupportedError
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
 
+    from plyngent.agent import ToolRegistry
     from plyngent.cli.state import ReplState, YoloMode
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
@@ -83,7 +84,8 @@ HELP_FOOTER = (
     "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
     "\n"
     "Side questions: /btw … answers without changing the main session\n"
-    "(optional --tools / --fresh). Tab completes slash commands and arguments.\n"
+    "(--tools=read by default: read-only tools; --tools no/full opt-in; --fresh).\n"
+    "Tab completes slash commands and arguments.\n"
     "Use --session ID or /resume to continue a prior chat after restart.\n"
     "\n"
     'Multiline: start a message with """ then end a later line with """.\n'
@@ -928,11 +930,12 @@ def _format_tool_tags(tags: object) -> str:
 @slash.command("btw")
 @click.argument("question", nargs=-1, required=False)
 @click.option(
-    "--tools/--no-tools",
-    "with_tools",
-    default=False,
+    "--tools",
+    "tools_mode",
+    type=click.Choice(["no", "read", "full"]),
+    default="read",
     show_default=True,
-    help="Allow tools on the side turn (shared workspace; forked session grants/todo).",
+    help=("Tool access on the side turn: read = read-only tools only (default), no = no tools, full = all tools."),
 )
 @click.option(
     "--fresh",
@@ -945,48 +948,73 @@ def btw_cmd(
     state: ReplState,
     question: tuple[str, ...],
     *,
-    with_tools: bool,
+    tools_mode: str,
     fresh: bool,
 ) -> None:
     """Ask a side question without changing the main session transcript or DB.
 
     Uses the current model and (unless ``--fresh``) a copy of main history.
-    Tools are **off** by default; ``--tools`` clones the main tool registry with
-    a fresh session bag and the shared instance workspace.
+    Tools default to **read-only** (``--tools=read``): file/vcs/ask/fetch-GET
+    reads with no state mutation. ``--tools=no`` turns tools off and
+    ``--tools=full`` clones the whole main registry with a fresh session bag
+    and the shared instance workspace.
     """
     text = " ".join(question).strip()
     if not text:
-        click.echo("usage: /btw [--tools] [--fresh] <question>")
+        click.echo("usage: /btw [--tools read|no|full] [--fresh] <question>")
         return
     if state.agent.pending_retry_text is not None:
         click.echo("error: finish or /retry the main turn before /btw")
         return
-    if with_tools and (not state.tools_enabled or state.agent.tools is None):
-        click.echo("error: --tools requires tools on (/tools on)")
-        return
+
+    tools_on = state.tools_enabled and state.agent.tools is not None
+    explicit = click.get_current_context().get_parameter_source("tools_mode") is not click.core.ParameterSource.DEFAULT
+    if tools_mode != "no" and not tools_on:
+        # Explicitly requesting tools while they are off is an error; the
+        # default (read) silently falls back to no tools so bare /btw still
+        # works under /tools off.
+        if tools_mode == "full" or explicit:
+            click.echo("error: --tools requires tools on (/tools on)")
+            return
+        tools_mode = "no"
 
     from plyngent.cli.display import render_events
     from plyngent.cli.retry import run_cancellable
-    from plyngent.tools.context import SessionState
+    from plyngent.tools.context import SessionState, read_only_context
 
     click.secho("btw: ", fg="magenta", nl=False)
     click.echo(text)
-    tools_arg: bool = with_tools
-    aside_session = SessionState() if with_tools else None
-    aside_instance = state.instance_state if with_tools else None
+    if tools_mode == "no":
+        tools_arg: ToolRegistry | bool = False
+        aside_session = None
+        aside_instance = None
+    elif tools_mode == "full":
+        tools_arg = True
+        aside_session = SessionState()
+        aside_instance = state.instance_state
+    else:  # read
+        assert state.agent.tools is not None
+        # Read-only clone: keep the main session view so read-only session
+        # reads (e.g. todo_list) see the real state (they cannot mutate it).
+        tools_arg = state.agent.tools.clone(read_only_only=True)
+        aside_session = state.session_state
+        aside_instance = state.instance_state
 
     async def _run() -> None:
-        await run_cancellable(
-            render_events(
-                state.agent.run_aside(
-                    text,
-                    include_history=not fresh,
-                    tools=tools_arg,
-                    instance_state=aside_instance,
-                    session_state=aside_session,
-                )
+        side = render_events(
+            state.agent.run_aside(
+                text,
+                include_history=not fresh,
+                tools=tools_arg,
+                instance_state=aside_instance,
+                session_state=aside_session,
             )
         )
+        if tools_mode == "read":
+            with read_only_context():
+                await run_cancellable(side)
+        else:
+            await run_cancellable(side)
 
     try:
         _await(_run())

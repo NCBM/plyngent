@@ -633,3 +633,108 @@ async def test_repl_second_ctrl_c_after_cancel_returns_to_prompt(
     assert calls["reads"] == 4  # three entries + EOF
     assert calls["echoes"] == 3  # the interrupting echo still counted, loop survived
     assert "interrupted" in capsys.readouterr().out
+
+
+async def test_btw_default_read_falls_back_when_tools_off(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    """Bare /btw (default --tools=read) still works under /tools off: no tools."""
+    assert state.tools_enabled is False
+    state.agent.stream = False  # DummyClient only completes via non-stream path
+    assert await handle_slash(state, "/btw hello") is True
+    out = capsys.readouterr().out
+    assert "btw: hello" in out
+    assert "btw done" in out
+    assert "error" not in out
+
+
+async def test_btw_explicit_tools_errors_when_off(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    """Explicitly requesting read/full tools while they are off is an error."""
+    state.agent.stream = False  # DummyClient only completes via non-stream path
+    assert await handle_slash(state, "/btw --tools read q") is True
+    assert "error: --tools requires tools on" in capsys.readouterr().out
+    assert await handle_slash(state, "/btw --tools full q") is True
+    assert "error: --tools requires tools on" in capsys.readouterr().out
+    # Explicit no is fine.
+    assert await handle_slash(state, "/btw --tools no q") is True
+    out = capsys.readouterr().out
+    assert "btw done" in out
+    assert "error" not in out
+
+
+async def test_btw_read_mode_wires_read_only_clone(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--tools=read passes a read-only clone + read-only context + main session."""
+
+    from plyngent.agent import ToolRegistry, ToolTag, tool
+    from plyngent.tools.context import is_read_only_context
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.READ_ONLY, register=False)
+    async def ro_tool() -> str:
+        return "ro"
+
+    @tool(tags=ToolTag.LOCAL, register=False)
+    async def w_tool() -> str:
+        return "w"
+
+    state.tools_enabled = True
+    state.agent.tools = ToolRegistry([ro_tool, w_tool], auto_bind_state=True)
+    captured: dict[str, object] = {}
+
+    async def fake_run_aside(_text: str, **kwargs: object) -> AsyncIterator[object]:
+        captured["tools"] = kwargs.get("tools")
+        captured["session_state"] = kwargs.get("session_state")
+        captured["read_only"] = is_read_only_context()
+        if False:
+            yield None
+
+    monkeypatch.setattr(state.agent, "run_aside", fake_run_aside)
+
+    assert await handle_slash(state, "/btw --tools read hi") is True
+    assert "btw done" in capsys.readouterr().out
+
+    tools = captured["tools"]
+    assert isinstance(tools, ToolRegistry)
+    assert {t.name for t in tools.definitions()} == {"ro_tool"}
+    assert captured["session_state"] is state.session_state
+    assert captured["read_only"] is True
+
+
+async def test_btw_full_mode_clones_full_registry(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--tools=full keeps the whole registry with a fresh session, no context."""
+
+    from plyngent.agent import ToolRegistry, ToolTag, tool
+    from plyngent.tools.context import is_read_only_context
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.READ_ONLY, register=False)
+    async def ro_tool() -> str:
+        return "ro"
+
+    @tool(tags=ToolTag.LOCAL, register=False)
+    async def w_tool() -> str:
+        return "w"
+
+    state.tools_enabled = True
+    state.agent.tools = ToolRegistry([ro_tool, w_tool], auto_bind_state=True)
+    captured: dict[str, object] = {}
+
+    async def fake_run_aside(_text: str, **kwargs: object) -> AsyncIterator[object]:
+        captured["tools"] = kwargs.get("tools")
+        captured["session_state"] = kwargs.get("session_state")
+        captured["read_only"] = is_read_only_context()
+        if False:
+            yield None
+
+    monkeypatch.setattr(state.agent, "run_aside", fake_run_aside)
+
+    assert await handle_slash(state, "/btw --tools full hi") is True
+    assert "btw done" in capsys.readouterr().out
+
+    assert captured["tools"] is True
+    assert captured["session_state"] is not state.session_state
+    assert captured["read_only"] is False

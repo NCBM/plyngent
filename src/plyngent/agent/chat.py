@@ -569,7 +569,8 @@ class ChatAgent:
         - Tools default **off**. ``tools=True`` clones this agent's registry with
           a **fresh session** bag (unless *session_state* is passed) and the
           given *instance_state* (CLI typically shares the host instance for
-          workspace identity).
+          workspace identity). A caller-built :class:`ToolRegistry` (e.g. a
+          ``clone(read_only_only=True)`` subset) is used as-is.
         """
         text = user_text.strip()
         if not text:
