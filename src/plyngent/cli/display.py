@@ -53,6 +53,7 @@ _PRETTY_TOOLS = frozenset(
         "delete_path",
         "vcs_status",
         "vcs_log",
+        "wait",
     }
 )
 
@@ -380,6 +381,15 @@ def _vcs_log_pretty(_args_json: str, result: str) -> str:
     return _pretty_line("* VCS Log ", (f"({len(commits)} {unit})", None))
 
 
+def _wait_pretty(_args_json: str, result: str) -> str:
+    """One-line summary for a ``wait`` call: ``* Wait (5s)`` / ``* Wait (disturbed)``."""
+    if result.startswith("error:"):
+        return _pretty_line("* Wait ", (f"({result})", "red"))
+    if result.startswith("waited "):
+        return _pretty_line("* Wait ", (f"({result.removeprefix('waited ')})", "green"))
+    return _pretty_line("* Wait ", ("(disturbed)", "yellow"))
+
+
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "read_file": _read_file_pretty,
     "tree": _tree_pretty,
@@ -399,6 +409,7 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "delete_path": lambda args, result: _mutator_pretty("delete_path", args, result),
     "vcs_status": _vcs_status_pretty,
     "vcs_log": _vcs_log_pretty,
+    "wait": _wait_pretty,
 }
 
 

@@ -530,3 +530,23 @@ async def test_pretty_vcs_log_no_commits(capsys: pytest.CaptureFixture[str]) -> 
     await render_events(_aiter([_pretty_call("vcs_log", "{}"), _result("(no commits)")]))
     out = capsys.readouterr().out
     assert "* VCS Log (no commits)" in out
+
+
+async def test_pretty_wait_waited(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("wait", '{"duration": 5}'), _result("waited 5s")]))
+    out = capsys.readouterr().out
+    assert "* Wait (5s)" in out
+    assert "[tool]" not in out
+
+
+async def test_pretty_wait_disturbed(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("wait", '{"duration": 30}'), _result("disturbed by user: ship it")]))
+    out = capsys.readouterr().out
+    assert "* Wait (disturbed)" in out
+
+
+async def test_pretty_wait_error(capsys: pytest.CaptureFixture[str]) -> None:
+    content = "error: duration must not be negative"
+    await render_events(_aiter([_pretty_call("wait", '{"duration": -1}'), _result(content)]))
+    out = capsys.readouterr().out
+    assert "* Wait (error: duration must not be negative)" in out
