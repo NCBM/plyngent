@@ -44,6 +44,12 @@ _PRETTY_TOOLS = frozenset(
         "run_argv",
         "run_argv_batch",
         "fetch",
+        "edit_replace",
+        "edit_lineno",
+        "write_file",
+        "copy_path",
+        "move_path",
+        "delete_path",
     }
 )
 
@@ -384,6 +390,29 @@ def _fetch_pretty(args_json: str, result: str) -> str:
     return _pretty_line(f"* {method} {status} {url}", (detail, _http_status_fg(status)))
 
 
+_MUTATOR_VERBS: dict[str, str] = {
+    "edit_replace": "Edited",
+    "edit_lineno": "Edited",
+    "write_file": "Wrote",
+    "copy_path": "Copied",
+    "move_path": "Moved",
+    "delete_path": "Deleted",
+}
+
+_MUTATOR_LOWER_PREFIXES = ("wrote ", "copied ", "moved ", "deleted ")
+
+
+def _mutator_pretty(name: str, result: str) -> str:
+    """One-line summary for file-mutation tools: ``* Wrote 120 characters to src/x.py``."""
+    verb = _MUTATOR_VERBS[name]
+    if result.startswith("error:"):
+        return _pretty_line(f"* {verb} ", (f"({result})", "red"))
+    for prefix in _MUTATOR_LOWER_PREFIXES:
+        if result.startswith(prefix):
+            return _pretty_line(f"* {verb} {result[len(prefix) :]}")
+    return _pretty_line(f"* {verb}: {result}")
+
+
 _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "read_file": _read_file_pretty,
     "tree": _tree_pretty,
@@ -395,6 +424,12 @@ _PRETTY_BUILDERS: dict[str, Callable[[str, str], str]] = {
     "run_argv": _run_argv_pretty,
     "run_argv_batch": _run_argv_batch_pretty,
     "fetch": _fetch_pretty,
+    "edit_replace": lambda _args, result: _mutator_pretty("edit_replace", result),
+    "edit_lineno": lambda _args, result: _mutator_pretty("edit_lineno", result),
+    "write_file": lambda _args, result: _mutator_pretty("write_file", result),
+    "copy_path": lambda _args, result: _mutator_pretty("copy_path", result),
+    "move_path": lambda _args, result: _mutator_pretty("move_path", result),
+    "delete_path": lambda _args, result: _mutator_pretty("delete_path", result),
 }
 
 

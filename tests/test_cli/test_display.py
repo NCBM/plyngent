@@ -449,3 +449,33 @@ async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
     )
     out = capsys.readouterr().out
     assert "* GET (error: fetch failed: boom)" in out
+
+
+async def test_pretty_mutators(capsys: pytest.CaptureFixture[str]) -> None:
+    cases = [
+        ("write_file", "wrote 120 characters to src/x.py", "* Wrote 120 characters to src/x.py"),
+        (
+            "edit_replace",
+            "replaced 1 occurrence in src/a.py ('x' → 'y')",
+            "* Edited: replaced 1 occurrence in src/a.py ('x' → 'y')",
+        ),
+        (
+            "edit_lineno",
+            "replaced lines 3-5 (3 lines; first: 'pass') with 2 lines in src/a.py",
+            "* Edited: replaced lines 3-5 (3 lines; first: 'pass') with 2 lines in src/a.py",
+        ),
+        ("copy_path", "copied file a.txt -> b.txt", "* Copied file a.txt -> b.txt"),
+        ("move_path", "moved directory src -> dst", "* Moved directory src -> dst"),
+        ("delete_path", "deleted file tmp/x.txt", "* Deleted file tmp/x.txt"),
+    ]
+    for name, content, expected in cases:
+        await render_events(_aiter([_pretty_call(name, "{}"), _result(content)]))
+        out = capsys.readouterr().out
+        assert expected in out, f"{name}: expected {expected!r} in {out!r}"
+        assert "[tool ok]" not in out
+
+
+async def test_pretty_mutator_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("copy_path", "{}"), _result("error: source does not exist: x")]))
+    out = capsys.readouterr().out
+    assert "* Copied (error: source does not exist: x)" in out
