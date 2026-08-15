@@ -83,14 +83,10 @@ async def read_file(
     if start >= len(lines):
         return ""
     slice_lines = lines[start:end]
-    if with_lineno:
-        mark_lineno_read(str(target), set(range(start + 1, end + 1)))
-        body = _format_with_lineno(slice_lines, start_lineno=start + 1)
-    else:
-        body = "".join(slice_lines)
+    body = _format_with_lineno(slice_lines, start_lineno=start + 1) if with_lineno else "".join(slice_lines)
     if max_chars >= 1:
         char_start = len("".join(lines[:start]))
-        body, _ = truncate_with_token(
+        body, token = truncate_with_token(
             body,
             max_chars,
             kind="file",
@@ -102,10 +98,21 @@ async def read_file(
             # returned slice itself was cut by max_chars (not just "file continues").
             emit_more_after=False,
         )
+    else:
+        token = None
     if not body:
         return ""
     if with_lineno:
-        return body  # per-line numbers already show the range
+        # Mark only the lines actually displayed: complete numbered lines in the
+        # returned body (the [Truncated] marker, when present, is not a file line).
+        # The max_chars-truncated tail was never shown, so it stays unread —
+        # edit_lineno must not trust line numbers the model never saw.
+        counted = body
+        if token is not None:
+            counted = body.split("\n[Truncated", 1)[0]
+        shown = counted.count("\n")
+        mark_lineno_read(str(target), set(range(start + 1, start + 1 + shown)))
+        return body
     begin = start + 1
     end_line = start + len(slice_lines)
     return f"L{begin}-{end_line}\n{body}"

@@ -22,6 +22,22 @@ def test_edit_lineno_replace_middle(workspace: object) -> None:
     assert call_sync(read_file, "a.txt") == "L1-4\none\nTWO\nTHREE\nfour\n"
 
 
+def test_edit_lineno_read_truncated_marks_only_displayed_lines(workspace: object) -> None:
+    """A max_chars-truncated numbered read must not mark the unseen tail."""
+    del workspace
+    _ = call_sync(write_file, "t.txt", "".join(f"line {i}\n" for i in range(1, 101)))
+    # Displayed complete lines are editable...
+    _ = reset_lineno_tracker()
+    _ = call_sync(read_file, "t.txt", with_lineno=True, max_chars=80)
+    out = call_sync(edit_lineno, "t.txt", 5, 5, "FIVE\n")
+    assert "replaced lines 5-5" in out
+    # ...but the truncated tail (never shown) stays unread.
+    _ = reset_lineno_tracker()
+    _ = call_sync(read_file, "t.txt", with_lineno=True, max_chars=80)
+    out = call_sync(edit_lineno, "t.txt", 90, 90, "X\n")
+    assert "not read" in out and "90" in out
+
+
 def test_edit_lineno_requires_all_lines_read(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "r.txt", "a\nb\nc\nd\ne\n")
