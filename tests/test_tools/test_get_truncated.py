@@ -44,6 +44,40 @@ async def test_get_truncated_file_chains_without_gap(workspace: Path) -> None:
     assert total_read == 1000
 
 
+async def test_get_truncated_numbered_continues_and_marks(workspace: Path) -> None:
+    """A numbered read's token resumes the numbered view, gap-free and editable."""
+    from plyngent.agent import reset_lineno_tracker
+    from plyngent.tools.file import edit_lineno, read_file
+
+    (workspace / "big.txt").write_text("".join(f"line {i}\n" for i in range(1, 101)), encoding="utf-8")
+    reset_lineno_tracker()
+    first = await call_async(read_file, "big.txt", with_lineno=True, max_chars=120)
+    token = _extract_token(first)
+    assert token is not None
+    parsed = decode_truncate_token(token)
+    assert parsed is not None
+    assert parsed.kind == "file"
+    assert parsed.numbered is True
+    # The token points at the raw start of the next line (no skip, no overlap).
+    body = first.split("\n[Truncated", 1)[0]
+    shown = body.count("\n")
+    expected_raw = sum(len(f"line {i}\n") for i in range(1, shown + 1))
+    assert parsed.offset == expected_raw
+
+    # Continuation is numbered and starts right after the displayed lines.
+    cont = await call_async(get_truncated, token, max_chars=200)
+    numbered = [ln for ln in cont.splitlines() if "|" in ln and ln.strip().split("|", 1)[0].strip().isdigit()]
+    assert numbered
+    first_num = int(numbered[0].split("|", 1)[0].strip())
+    assert first_num == shown + 1
+
+    # Resumed lines are editable via edit_lineno; unseen lines stay unread.
+    out = await call_async(edit_lineno, "big.txt", first_num, first_num, "EDITED\n")
+    assert "replaced lines" in out
+    out2 = await call_async(edit_lineno, "big.txt", 90, 90, "X\n")
+    assert "not read" in out2
+
+
 async def test_get_truncated_file_missing(workspace: Path) -> None:
     token = encode_truncate_token(TruncateToken(kind="file", location="nope.txt", offset=0, limit=200))
     out = await call_async(get_truncated, token, max_chars=200)

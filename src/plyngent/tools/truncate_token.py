@@ -37,13 +37,15 @@ class TruncateToken(msgspec.Struct, frozen=True):
     lines (files is line-based via ``read_file``); ``get_truncated`` interprets
     by ``kind``. For ``memory``, ``location`` is a key into the in-memory
     remainder store and ``offset``/``limit`` index characters of that stored
-    remainder.
+    remainder. ``numbered`` marks file tokens from ``read_file(with_lineno)``:
+    the continuation resumes the numbered view instead of raw text.
     """
 
     kind: TruncateKind
     location: str
     offset: int
     limit: int
+    numbered: bool = False
 
 
 # In-memory remainders for generic (non-resumable) tool output. Process-lifetime

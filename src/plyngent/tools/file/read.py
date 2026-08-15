@@ -4,7 +4,7 @@ from typing import cast
 
 from plyngent.agent import ToolTag, mark_lineno_read, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
-from plyngent.tools.truncate_token import truncate_with_token
+from plyngent.tools.truncate_token import TruncateToken, truncate_with_token, truncation_marker
 from plyngent.tools.workspace import resolve_path
 
 _LINENO_WIDTH = 6
@@ -84,8 +84,8 @@ async def read_file(
         return ""
     slice_lines = lines[start:end]
     body = _format_with_lineno(slice_lines, start_lineno=start + 1) if with_lineno else "".join(slice_lines)
+    char_start = len("".join(lines[:start]))
     if max_chars >= 1:
-        char_start = len("".join(lines[:start]))
         body, token = truncate_with_token(
             body,
             max_chars,
@@ -110,7 +110,25 @@ async def read_file(
         counted = body
         if token is not None:
             counted = body.split("\n[Truncated", 1)[0]
-        shown = counted.count("\n")
+            shown = counted.count("\n")
+            # The truncate cursor counts *numbered* chars (each line carries an
+            # "N|" prefix), which would over-advance into raw text and skip
+            # lines on continuation. Rebase the token onto raw characters of the
+            # complete lines shown (at least one, so the cursor always moves)
+            # and mark it as the numbered view for get_truncated.
+            consumed_lines = max(shown, 1)
+            raw_consumed = sum(len(ln) for ln in slice_lines[:consumed_lines])
+            corrected = TruncateToken(
+                kind="file",
+                location=path,
+                offset=char_start + raw_consumed,
+                limit=max_chars,
+                numbered=True,
+            )
+            omitted = len(text) - (char_start + raw_consumed)
+            body = counted + truncation_marker(max_chars, omitted, corrected)
+        else:
+            shown = counted.count("\n")
         mark_lineno_read(str(target), set(range(start + 1, start + 1 + shown)))
         return body
     begin = start + 1
