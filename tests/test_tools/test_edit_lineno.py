@@ -19,6 +19,7 @@ def test_edit_lineno_replace_middle(workspace: object) -> None:
     _ = _read_lineno("a.txt")
     out = call_sync(edit_lineno, "a.txt", 2, 3, "TWO\nTHREE\n")
     assert "replaced lines 2-3" in out
+    assert "first: 'two'" in out  # old-content excerpt for self-correction
     assert call_sync(read_file, "a.txt") == "L1-4\none\nTWO\nTHREE\nfour\n"
 
 

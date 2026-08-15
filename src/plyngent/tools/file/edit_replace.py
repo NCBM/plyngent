@@ -18,15 +18,31 @@ def _count_non_overlapping(text: str, needle: str) -> int:
         start = index + len(needle)
 
 
-def _success_message(path: str, *, replaced: int, found: int) -> str:
+def _excerpt(text: str, limit: int = 40) -> str:
+    """Collapse newlines and truncate for a one-line message excerpt."""
+    one = text.replace("\r\n", " ").replace("\n", " ")
+    if len(one) > limit:
+        return one[:limit] + "…"
+    return one
+
+
+def _success_message(
+    path: str,
+    *,
+    replaced: int,
+    found: int,
+    old_string: str,
+    new_string: str,
+) -> str:
     remaining = found - replaced
     unit = "occurrence" if replaced == 1 else "occurrences"
+    change = f" ('{_excerpt(old_string)}' → '{_excerpt(new_string)}')"
     if remaining == 0:
         if found == 1:
-            return f"replaced 1 occurrence in {path}"
-        return f"replaced {replaced} {unit} in {path} (all {found} matches)"
+            return f"replaced 1 occurrence in {path}{change}"
+        return f"replaced {replaced} {unit} in {path}{change} (all {found} matches)"
     return (
-        f"replaced {replaced} {unit} in {path} "
+        f"replaced {replaced} {unit} in {path}{change} "
         f"({replaced} of {found} matches; {remaining} remain — "
         f"raise max_replaces or use a more specific old_string)"
     )
@@ -56,4 +72,10 @@ async def edit_replace(path: str, old_string: str, new_string: str, max_replaces
     _ = target.write_text(updated, encoding="utf-8")
     # The write changes the file's mtime, so edit_lineno's freshness check
     # rejects stale line numbers until the model re-reads with_lineno.
-    return _success_message(path, replaced=n, found=found)
+    return _success_message(
+        path,
+        replaced=n,
+        found=found,
+        old_string=old_string,
+        new_string=new_string,
+    )

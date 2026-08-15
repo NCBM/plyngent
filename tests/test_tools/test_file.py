@@ -74,6 +74,7 @@ def test_edit_replace_first_only(workspace: object) -> None:
     assert call_sync(read_file, "t.txt") == "L1-1\nbb aa"
     assert "1 of 2" in result or "1 of 2 matches" in result
     assert "remain" in result
+    assert "'aa' → 'bb'" in result  # old→new excerpt for self-correction
 
 
 def test_edit_replace_max_replaces(workspace: object) -> None:

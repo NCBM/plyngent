@@ -77,6 +77,14 @@ def _append_after(target: Path, path: str, text: str, lines: list[str], new_cont
     return f"appended content after line {n} in {path}"
 
 
+def _excerpt(text: str, limit: int = 40) -> str:
+    """Collapse newlines and truncate for a one-line message excerpt."""
+    one = text.replace("\r\n", " ").replace("\n", " ")
+    if len(one) > limit:
+        return one[:limit] + "…"
+    return one
+
+
 def _replace_range(
     target: Path,
     path: str,
@@ -92,7 +100,11 @@ def _replace_range(
     new_lines = lines[: start_line - 1] + replacement + lines[end:]
     _ = target.write_text("".join(new_lines), encoding="utf-8")
     removed = end - start_line + 1
-    return f"replaced lines {start_line}-{end} ({removed} lines) with {len(replacement)} lines in {path}"
+    old_first = _excerpt(lines[start_line - 1].rstrip("\r\n"))
+    return (
+        f"replaced lines {start_line}-{end} ({removed} lines; first: {old_first!r}) "
+        f"with {len(replacement)} lines in {path}"
+    )
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
