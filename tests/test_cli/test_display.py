@@ -98,9 +98,17 @@ def _result(content: str) -> ToolResultEvent:
 async def test_pretty_read_file_done(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\ntwo\n")]))
     out = capsys.readouterr().out
-    assert "* Read 'a.txt' (done)" in out
+    assert "* Read 'a.txt' L1-4 (done)" in out
     assert "[tool]" not in out
     assert "[tool ok]" not in out
+
+
+async def test_pretty_read_file_numbered_no_range(capsys: pytest.CaptureFixture[str]) -> None:
+    """Numbered reads carry no L header, so the summary falls back to ``(done)``."""
+    content = "    1|one\n    2|two\n"
+    await render_events(_aiter([_read_call('{"path": "a.txt", "with_lineno": true}'), _result(content)]))
+    out = capsys.readouterr().out
+    assert "* Read 'a.txt' (done)" in out
 
 
 async def test_pretty_read_file_statuses(capsys: pytest.CaptureFixture[str]) -> None:

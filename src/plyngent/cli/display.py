@@ -154,7 +154,7 @@ def _pretty_line(prefix: str, *segments: tuple[str, str | None]) -> str:
 
 
 def _read_file_pretty(args_json: str, result: str) -> str:
-    """One-line summary for a ``read_file`` call: ``* Read 'path' (done)``."""
+    """One-line summary for a ``read_file`` call: ``* Read 'path' L1-4 (done)``."""
     path = _json_str_arg(args_json, "path") or "?"
     if result.startswith("error: file not found"):
         return _pretty_line(f"* Read '{path}' ", ("(file not found)", "red"))
@@ -162,6 +162,9 @@ def _read_file_pretty(args_json: str, result: str) -> str:
         return _pretty_line(f"* Read '{path}' ", ("(not a file)", "red"))
     if result.startswith("error:"):
         return _pretty_line(f"* Read '{path}' ", ("(error)", "red"))
+    first = result.splitlines()[0] if result.splitlines() else ""
+    if first.startswith("L") and "-" in first:
+        return _pretty_line(f"* Read '{path}' ", (f"{first} ", "dim"), ("(done)", "green"))
     return _pretty_line(f"* Read '{path}' ", ("(done)", "green"))
 
 
