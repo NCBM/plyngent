@@ -144,3 +144,51 @@ async def test_wait_tool_times_out(monkeypatch) -> None:
         registry = ToolRegistry([wait])
         out = await registry.execute("wait", '{"duration": 3}')
     assert out == "waited 3s"
+
+
+async def test_wait_tool_prompt_two_lines_with_reason(monkeypatch) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        wait_module,
+        "read_line_with_timeout",
+        lambda prompt, timeout: prompts.append(prompt) or None,
+    )
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 5, "reason": "tests are slow"}')
+    assert out == "waited 5s"
+    assert prompts == ["Waiting for 5s (tests are slow). Press Enter to disturb.\nReason (optional): "]
+
+
+async def test_wait_tool_prompt_two_lines_no_reason(monkeypatch) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        wait_module,
+        "read_line_with_timeout",
+        lambda prompt, timeout: prompts.append(prompt) or None,
+    )
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 5}')
+    assert out == "waited 5s"
+    assert prompts == ["Waiting for 5s. Press Enter to disturb.\nReason (optional): "]
+
+
+def test_wait_prompt_plain_when_not_a_tty() -> None:
+    """Prompt styling is stripped when stdout is not a TTY (pytest capture)."""
+    prompt = wait_module._wait_prompt(5, reason="tests")
+    assert "\x1b[" not in prompt
+    assert prompt == "Waiting for 5s (tests). Press Enter to disturb.\nReason (optional): "
+
+
+def test_wait_prompt_colored_on_tty(monkeypatch) -> None:
+    """On a TTY the prompt is styled: cyan status, yellow input prompt."""
+
+    class _FakeStdout:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(wait_module.sys, "stdout", _FakeStdout())
+    prompt = wait_module._wait_prompt(5, reason="tests")
+    assert "\x1b[36m" in prompt  # cyan status
+    assert "\x1b[33m" in prompt  # yellow input prompt
