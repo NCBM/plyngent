@@ -237,14 +237,28 @@ class ReplState:
             session_state=self.session_state,
         )
 
+    def _mcp_instructions_text(self) -> str:
+        """Compose connected MCP servers' initialize ``instructions`` into one block.
+
+        Only meaningful when tools are on (MCP tools are registered under the
+        same condition); the text is attributed per server so the model can
+        weigh its provenance. Gated by ``[agent] mcp_instructions`` in callers.
+        """
+        if self.mcp_manager is None or not self.tools_enabled:
+            return ""
+        parts = [f"MCP server {name!r} instructions:\n{text}" for name, text in self.mcp_manager.instructions()]
+        return "\n\n".join(parts)
+
     def _make_agent(self) -> ChatAgent:
         from plyngent.cli.limits import prompt_continue_limit_async
         from plyngent.config import compose_agent_system_content
 
         agent_cfg = self.config.agent_config
+        mcp_text = self._mcp_instructions_text() if agent_cfg.mcp_instructions else ""
         system_prompt = compose_agent_system_content(
             agent_cfg.system_prompt,
             agent_cfg.tool_directives,
+            mcp_text,
         )
         on_limit = prompt_continue_limit_async if self.interactive_limits else None
         peak = 0

@@ -120,3 +120,111 @@ async def test_mcp_tools_registered_on_tools_rebuild(state: ReplState) -> None:
         assert out == "echo: hi"
     finally:
         await manager.aclose()
+
+
+async def test_slash_mcp_list_shows_instructions(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guidance = "Prefer `echo` for repeating text back."
+    manager = McpManager(
+        McpConfig(
+            servers={
+                "fake": _server_config(env={"PLYNGENT_MCP_FAKE_INSTRUCTIONS": guidance}),
+            },
+            disable=[],
+        )
+    )
+    await manager.ensure_started()
+    state.mcp_manager = manager
+    try:
+        assert await handle_slash(state, "/mcp list") is True
+        out = capsys.readouterr().out
+        assert f"instructions ({len(guidance)} chars)" in out
+        assert guidance in out
+    finally:
+        await manager.aclose()
+
+
+async def _make_tools_state(
+    tmp_path: Path,
+    *,
+    agent_toml: str,
+    manager: McpManager,
+) -> tuple[ReplState, MemoryStore]:
+    """ReplState with tools on + a started MCP manager (agent built from TOML)."""
+    memory = await MemoryStore.open(DatabaseConfig())
+    provider = OpenAIProvider(access_key_or_token="sk-test")
+    document = tomlkit.parse(agent_toml) if agent_toml else tomlkit.document()
+    config = ConfigStore(path=tmp_path / "plyngent.toml", document=document)
+    config.providers = {"local": provider}
+    st = ReplState(
+        config=config,
+        memory=memory,
+        workspace=tmp_path,
+        provider_name="local",
+        provider=provider,
+        model="gpt-test",
+        tools_enabled=True,
+        mcp_manager=manager,
+    )
+    return st, memory
+
+
+async def test_mcp_instructions_folded_into_agent_system_prompt(tmp_path: Path) -> None:
+    from plyngent.tools.catalog import catalog_scope
+
+    guidance = "Prefer `echo` for repeating text back to the user."
+    manager = McpManager(
+        McpConfig(
+            servers={
+                "fake": _server_config(env={"PLYNGENT_MCP_FAKE_INSTRUCTIONS": guidance}),
+            },
+            disable=[],
+        )
+    )
+    await manager.ensure_started()
+    try:
+        with catalog_scope(empty=True):
+            state, memory = await _make_tools_state(tmp_path, agent_toml="", manager=manager)
+        try:
+            prompt = state.agent.system_prompt
+            assert prompt is not None
+            assert "MCP server 'fake' instructions:" in prompt
+            assert guidance in prompt
+        finally:
+            await memory.close()
+    finally:
+        await manager.aclose()
+
+
+async def test_mcp_instructions_flag_off_skips_server_text(tmp_path: Path) -> None:
+    from plyngent.tools.catalog import catalog_scope
+
+    guidance = "Prefer `echo` for repeating text back to the user."
+    manager = McpManager(
+        McpConfig(
+            servers={
+                "fake": _server_config(env={"PLYNGENT_MCP_FAKE_INSTRUCTIONS": guidance}),
+            },
+            disable=[],
+        )
+    )
+    await manager.ensure_started()
+    try:
+        with catalog_scope(empty=True):
+            state, memory = await _make_tools_state(
+                tmp_path,
+                agent_toml="[agent]\nmcp_instructions = false\n",
+                manager=manager,
+            )
+        try:
+            prompt = state.agent.system_prompt
+            assert prompt is not None
+            assert guidance not in prompt
+            assert "MCP server" not in prompt
+            assert "### Workspace" in prompt  # host tool playbook still composed
+        finally:
+            await memory.close()
+    finally:
+        await manager.aclose()

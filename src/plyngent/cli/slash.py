@@ -1147,6 +1147,9 @@ def plugins_slash_cmd(state: ReplState, action: str | None, name: str | None) ->
         raise click.UsageError(str(exc)) from exc
 
 
+_MCP_PREVIEW_MAX_CHARS = 120
+
+
 def _print_mcp_status(state: ReplState) -> None:
     manager = state.mcp_manager
     if manager is None:
@@ -1162,6 +1165,14 @@ def _print_mcp_status(state: ReplState) -> None:
             (conn for conn in manager.connections() if conn.name == name),
             None,
         )
+        if connection is not None and connection.instructions:
+            preview = " ".join(connection.instructions.split())
+            if len(preview) > _MCP_PREVIEW_MAX_CHARS:
+                preview = f"{preview[: _MCP_PREVIEW_MAX_CHARS - 3]}..."
+            click.secho(
+                f"    instructions ({len(connection.instructions)} chars): {preview}",
+                fg="bright_black",
+            )
         if connection is not None and connection.error is not None:
             for line in connection.stderr_tail()[-3:]:
                 click.secho(f"    {line}", fg="bright_black")
