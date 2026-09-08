@@ -1147,6 +1147,53 @@ def plugins_slash_cmd(state: ReplState, action: str | None, name: str | None) ->
         raise click.UsageError(str(exc)) from exc
 
 
+def _print_mcp_status(state: ReplState) -> None:
+    manager = state.mcp_manager
+    if manager is None:
+        click.echo("mcp: no servers configured (or none enabled)")
+        return
+    rows = manager.statuses()
+    if not rows:
+        click.echo("mcp: no servers configured (or none enabled)")
+        return
+    for name, status, count in rows:
+        click.echo(f"  {name}\t{status}\ttools={count}")
+        connection = next(
+            (conn for conn in manager.connections() if conn.name == name),
+            None,
+        )
+        if connection is not None and connection.error is not None:
+            for line in connection.stderr_tail()[-3:]:
+                click.secho(f"    {line}", fg="bright_black")
+
+
+@slash.command("mcp")
+@click.argument("action", required=False, type=click.Choice(["list", "reconnect"]))
+@click.pass_obj
+def mcp_slash_cmd(state: ReplState, action: str | None) -> None:
+    """List MCP server statuses, or reconnect after config edits.
+
+    ``/mcp`` or ``/mcp list`` — per-server connection status and tool count.
+    ``/mcp reconnect`` — re-read the config file, restart every enabled
+    server, and rebuild the tool registry (adopts newly added servers too).
+    """
+    act = (action or "list").lower()
+    if act == "list":
+        _print_mcp_status(state)
+        return
+    from plyngent.runtime import McpManager
+
+    state.config.reload()
+    if state.mcp_manager is None:
+        state.mcp_manager = McpManager(state.config.mcp_config)
+    else:
+        _await(state.mcp_manager.restart(state.config.mcp_config))
+    _await(state.mcp_manager.ensure_started())
+    _slash_rebuild_tools_if_on(state)
+    click.echo(f"mcp reconnected; tools={'on' if state.tools_enabled else 'off'}")
+    _print_mcp_status(state)
+
+
 @slash.command("yolo")
 @click.argument("mode", required=False, type=YOLO_MODE, metavar="[on|off|once]")
 @click.pass_obj

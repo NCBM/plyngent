@@ -26,7 +26,7 @@ from plyngent.cli.state import ReplState
 from plyngent.config.models import DatabaseConfig
 from plyngent.memory import MemoryStore
 from plyngent.prompting import NonInteractiveBackend, configure_prompting
-from plyngent.runtime import ProviderNotSupportedError, create_client
+from plyngent.runtime import McpManager, ProviderNotSupportedError, create_client
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -132,6 +132,24 @@ def _setup_hooks(*, interactive: bool) -> None:
         from plyngent.tools.process.pty_session import PtyManager
 
         PtyManager.set_limit_continue_hook(None)
+
+
+async def _start_mcp_manager(store: ConfigStore) -> McpManager | None:
+    """Start configured MCP servers before the REPL state is built.
+
+    Returns ``None`` when nothing is enabled. Failures degrade to a warning
+    per server (the rest of the session, including LLM traffic, continues).
+    """
+    manager = McpManager(store.mcp_config)
+    if not manager.enabled_servers():
+        return None
+    await manager.ensure_started()
+    for name, status, count in manager.statuses():
+        if status.startswith("error"):
+            click.secho(f"warning: mcp server {name!r} failed: {status}", fg="yellow", err=True)
+        else:
+            click.secho(f"mcp: {name} ({status}, tools={count})", fg="bright_black", err=True)
+    return manager
 
 
 async def _bind_session(
@@ -285,6 +303,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         except ProviderNotSupportedError as exc:
             raise click.ClickException(str(exc)) from exc
 
+        mcp_manager = await _start_mcp_manager(store)
         state = ReplState(
             config=store,
             memory=memory,
@@ -297,6 +316,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             stream_enabled=stream,
             interactive_limits=interactive,
             yolo=yolo,
+            mcp_manager=mcp_manager,
         )
         # Path denylist and policy confirm live on instance.workspace (no process bag).
         state.instance_state.workspace.path_denylist = tuple(store.agent_config.path_denylist or ())
@@ -353,6 +373,8 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             set_fetch_policy_confirm_hook(None, instance=state_obj.instance_state)
             clear_private_grants(instance=state_obj.instance_state)
             clear_ssrf_assume_public_cidrs()
+            if state_obj.mcp_manager is not None:
+                await state_obj.mcp_manager.aclose()
             await state_obj.instance_state.shutdown()
         else:
             # No ReplState: only PTY class cleanup (temps require instance allowlist).

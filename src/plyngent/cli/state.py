@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from plyngent.config.store import ConfigStore
     from plyngent.memory import MemoryStore
     from plyngent.memory.database.schema import Session as SessionRow
+    from plyngent.runtime.mcp_client import McpManager
 
 type YoloMode = Literal["off", "on", "once"]
 
@@ -65,6 +66,8 @@ class ReplState:
     todo_stack: TodoStack = field(default_factory=TodoStack)
     instance_state: InstanceState = field(default_factory=InstanceState)
     session_state: SessionState = field(default_factory=SessionState)
+    # MCP connections started by the host app before this state was built.
+    mcp_manager: McpManager | None = None
     _todo_persist_tasks: set[object] = field(default_factory=set, init=False, repr=False)
     # Session ids for Tab complete (updated when listing/creating/resuming).
     _session_id_cache: list[int] = field(default_factory=list, init=False, repr=False)
@@ -215,6 +218,11 @@ class ReplState:
             plugins_cfg.enable,
             disable=plugins_cfg.disable,
         )
+        if self.mcp_manager is not None:
+            from plyngent.tools.mcp import register_mcp_tools
+
+            # Connections were started by the host; registration is sync-only.
+            _ = register_mcp_tools(self.mcp_manager, self.config.mcp_config)
         # Local surface: builtins + allowlisted plugins (import registers into catalog).
         tools = catalog.select(surface="local")
         yolo = self.effective_yolo() != "off"
