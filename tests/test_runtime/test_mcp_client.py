@@ -1,0 +1,106 @@
+"""MCP stdio client + manager against the bundled fake server subprocess."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from plyngent.config.models import McpConfig, McpServerConfig
+from plyngent.runtime.mcp_client import (
+    McpConnectionError,
+    McpManager,
+    McpServerConnection,
+)
+
+_FAKE_SERVER = Path(__file__).parent / "mcp_fake_server.py"
+
+
+def _server_config(**overrides: object) -> McpServerConfig:
+    base: dict[str, object] = {
+        "command": sys.executable,
+        "args": [str(_FAKE_SERVER)],
+        "timeout": 5.0,
+    }
+    return McpServerConfig(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+async def test_connection_handshake_lists_and_calls_tools() -> None:
+    connection = McpServerConnection("fake", _server_config())
+    await connection.start()
+    try:
+        assert connection.connected
+        assert connection.error is None
+        assert [tool.name for tool in connection.tools] == ["echo", "fail", "slow"]
+        echo = connection.tools[0]
+        assert echo.description == "Echo the given text back."
+        assert echo.input_schema["type"] == "object"
+
+        result = await connection.call_tool("echo", {"text": "hello"})
+        assert result == "echo: hello"
+    finally:
+        await connection.aclose()
+
+
+async def test_tool_error_returns_error_text() -> None:
+    connection = McpServerConnection("fake", _server_config())
+    await connection.start()
+    try:
+        result = await connection.call_tool("fail", {})
+        assert result == "error: boom"
+    finally:
+        await connection.aclose()
+
+
+async def test_request_timeout_raises() -> None:
+    connection = McpServerConnection("fake", _server_config(timeout=0.2))
+    await connection.start()
+    try:
+        with pytest.raises(McpConnectionError, match="timed out"):
+            await connection.call_tool("slow", {})
+    finally:
+        await connection.aclose()
+
+
+async def test_spawn_failure_records_error() -> None:
+    connection = McpServerConnection("bad", _server_config(command="/nonexistent/plyngent-mcp-binary"))
+    await connection.start()
+    assert not connection.connected
+    assert connection.error is not None
+    assert "spawn" in connection.status
+    await connection.aclose()
+
+
+async def test_close_terminates_subprocess() -> None:
+    connection = McpServerConnection("fake", _server_config())
+    await connection.start()
+    proc = connection._proc
+    assert proc is not None
+    await connection.aclose()
+    assert connection._proc is None
+    assert proc.returncode is not None
+
+
+async def test_manager_start_status_and_call() -> None:
+    manager = McpManager(McpConfig(servers={"fake": _server_config()}, disable=[]))
+    await manager.ensure_started()
+    try:
+        assert [(name, status, count) for name, status, count in manager.statuses()] == [("fake", "connected", 3)]
+        assert await manager.call("fake", "echo", {"text": "hi"}) == "echo: hi"
+    finally:
+        await manager.aclose()
+    assert manager.statuses() == [("fake", "not started", 0)]
+
+
+async def test_manager_disable_and_restart() -> None:
+    manager = McpManager(McpConfig(servers={"fake": _server_config()}, disable=["fake"]))
+    await manager.ensure_started()
+    assert manager.connections() == []
+    with pytest.raises(McpConnectionError, match="not connected"):
+        await manager.call("fake", "echo", {})
+
+    await manager.restart(McpConfig(servers={"fake": _server_config()}, disable=[]))
+    await manager.ensure_started()
+    assert manager.statuses() == [("fake", "connected", 3)]
+    await manager.aclose()
