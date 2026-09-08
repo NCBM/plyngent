@@ -29,6 +29,9 @@
 # MCP (Model Context Protocol) servers exposed as agent tools.
 # Defining a server opts it in; tools appear as mcp__<server>__<tool> with
 # LOCAL tags (confirm flow applies). Names in disable stay disconnected.
+# A server's initialize ``instructions`` (usage guidance) is folded into the
+# agent system prompt when tools are on ([agent] mcp_instructions = false
+# disables; /mcp previews what each server sent).
 # [mcp.servers.docs]
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
@@ -57,6 +60,9 @@ confirm_destructive = true
 path_denylist = ["/secrets/", ".ssh/", ".gnupg/"]
 # Soft context budget in estimated tokens (~4 chars/token when API usage missing).
 max_context_tokens = 200000
+# Fold connected MCP servers' initialize ``instructions`` (usage guidance)
+# into the agent system prompt when tools are on. false = ignore server text.
+# mcp_instructions = true
 # How open-todo nags are injected into model context:
 # developer (default) | user | synthetic_tool | none
 # (legacy system is treated as developer)

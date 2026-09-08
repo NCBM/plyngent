@@ -147,6 +147,9 @@ access_key_or_token = "sk-..."
 # tool_directives = '''### Workspace ...'''
 confirm_destructive = true
 max_context_tokens = 200000
+# Fold MCP server initialize ``instructions`` (usage guidance) into the
+# system prompt when tools are on (default true; false ignores server text).
+# mcp_instructions = true
 
 # Optional plugins (entry-point names); default load none. See doc/plugins.md.
 # [plugins]
@@ -157,7 +160,7 @@ Per-provider **`timeout`** is passed to the HTTP session for chat/completions, R
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 
-**MCP servers** (Model Context Protocol over stdio): define servers under `[mcp.servers.<name>]` (`command` + `args`, optional `env`/`cwd`/`timeout`/`read_only`) and their tools become agent tools namespaced `mcp__<server>__<tool>` (LOCAL tags; `read_only = true` also marks them READ_ONLY, eligible for `/btw --tools=read`). Names in `[mcp].disable` stay disconnected. In the REPL, `/mcp` lists per-server status and tool counts; `/mcp reconnect` re-reads the config file and restarts every enabled server (adopts newly added ones).
+**MCP servers** (Model Context Protocol over stdio): define servers under `[mcp.servers.<name>]` (`command` + `args`, optional `env`/`cwd`/`timeout`/`read_only`) and their tools become agent tools namespaced `mcp__<server>__<tool>` (LOCAL tags; `read_only = true` also marks them READ_ONLY, eligible for `/btw --tools=read`). Names in `[mcp].disable` stay disconnected. A server may also return optional `instructions` (usage guidance) in its MCP `initialize` response; when tools are on those are folded into the agent system prompt as `MCP server <name> instructions:` blocks (`[agent] mcp_instructions = false` disables), and `/mcp` previews them. In the REPL, `/mcp` lists per-server status and tool counts; `/mcp reconnect` re-reads the config file and restarts every enabled server (adopts newly added ones).
 
 Supported provider presets today:
 
