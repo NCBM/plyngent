@@ -157,6 +157,8 @@ Per-provider **`timeout`** is passed to the HTTP session for chat/completions, R
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 
+**MCP servers** (Model Context Protocol over stdio): define servers under `[mcp.servers.<name>]` (`command` + `args`, optional `env`/`cwd`/`timeout`/`read_only`) and their tools become agent tools namespaced `mcp__<server>__<tool>` (LOCAL tags; `read_only = true` also marks them READ_ONLY, eligible for `/btw --tools=read`). Names in `[mcp].disable` stay disconnected. In the REPL, `/mcp` lists per-server status and tool counts; `/mcp reconnect` re-reads the config file and restarts every enabled server (adopts newly added ones).
+
 Supported provider presets today:
 
 | Preset | API used by the agent | Notes |
