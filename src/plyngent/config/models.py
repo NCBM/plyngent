@@ -70,19 +70,15 @@ call `todo_clear` (or pop finished TOP groups) so no hygiene noise is left behin
 """
 
 
-def compose_agent_system_content(
-    system_prompt: str,
-    tool_directives: str,
-) -> str | None:
-    """Join persona + tool playbook into one system body, or ``None`` if both empty.
+def compose_agent_system_content(*parts: str) -> str | None:
+    """Join persona + tool playbook + extra blocks into one system body.
 
-    Non-empty parts are stripped and joined with a blank line. Either field may
-    be ``""`` to disable that part while keeping the other.
+    Returns ``None`` when every part is empty. Non-empty parts are stripped and
+    joined with a blank line. Any part may be ``""`` to disable that block
+    (e.g. ``system_prompt = ""`` keeps the tool playbook).
     """
-    parts = [part.strip() for part in (system_prompt, tool_directives) if part and part.strip()]
-    if not parts:
-        return None
-    return "\n\n".join(parts)
+    joined = "\n\n".join(part.strip() for part in parts if part and part.strip())
+    return joined or None
 
 
 class DatabaseConfig(Struct, omit_defaults=True):
@@ -106,6 +102,9 @@ class AgentConfig(Struct, omit_defaults=True):
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     # Tool how-to (omit → DEFAULT_TOOL_DIRECTIVES; "" disables playbook only).
     tool_directives: str = DEFAULT_TOOL_DIRECTIVES
+    # Fold connected MCP servers' initialize ``instructions`` (usage guidance)
+    # into the agent system prompt when tools are on. false = ignore server text.
+    mcp_instructions: bool = True
     max_tool_result_chars: int = 32_000
     parallel_tools: bool = True
     confirm_destructive: bool = True

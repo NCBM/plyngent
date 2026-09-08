@@ -19,6 +19,7 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     store = load(path)
     assert store.agent_config.system_prompt == DEFAULT_SYSTEM_PROMPT
     assert store.agent_config.tool_directives == DEFAULT_TOOL_DIRECTIVES
+    assert store.agent_config.mcp_instructions is True
     assert "professional coding agent" in store.agent_config.system_prompt
     assert "### Workspace" in store.agent_config.tool_directives
     assert store.agent_config.max_tool_result_chars == 32_000
@@ -64,6 +65,9 @@ def test_compose_empty_combinations() -> None:
     assert compose_agent_system_content("Only persona", "") == "Only persona"
     assert compose_agent_system_content("", "Only tools") == "Only tools"
     assert compose_agent_system_content("Persona", "Tools") == "Persona\n\nTools"
+    assert compose_agent_system_content("", "", "") is None
+    assert compose_agent_system_content("Persona", "Tools", "Extra") == "Persona\n\nTools\n\nExtra"
+    assert compose_agent_system_content("Persona", "", "Extra") == "Persona\n\nExtra"
 
 
 def test_agent_section_parse(tmp_path: Path) -> None:
@@ -156,6 +160,19 @@ tool_directives = ""
         )
         is None
     )
+
+
+def test_agent_mcp_instructions_flag(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text(
+        """
+[agent]
+mcp_instructions = false
+""",
+        encoding="utf-8",
+    )
+    store = load(path)
+    assert store.agent_config.mcp_instructions is False
 
 
 def test_plugins_section_parse(tmp_path: Path) -> None:
