@@ -32,6 +32,7 @@ async def test_connection_handshake_lists_and_calls_tools() -> None:
     try:
         assert connection.connected
         assert connection.error is None
+        assert connection.instructions is None
         assert [tool.name for tool in connection.tools] == ["echo", "fail", "slow"]
         echo = connection.tools[0]
         assert echo.description == "Echo the given text back."
@@ -39,6 +40,20 @@ async def test_connection_handshake_lists_and_calls_tools() -> None:
 
         result = await connection.call_tool("echo", {"text": "hello"})
         assert result == "echo: hello"
+    finally:
+        await connection.aclose()
+
+
+async def test_initialize_captures_server_instructions() -> None:
+    guidance = "Use echo to repeat text back to the user."
+    connection = McpServerConnection(
+        "fake",
+        _server_config(env={"PLYNGENT_MCP_FAKE_INSTRUCTIONS": guidance}),
+    )
+    await connection.start()
+    try:
+        assert connection.connected
+        assert connection.instructions == guidance
     finally:
         await connection.aclose()
 
@@ -87,10 +102,29 @@ async def test_manager_start_status_and_call() -> None:
     await manager.ensure_started()
     try:
         assert [(name, status, count) for name, status, count in manager.statuses()] == [("fake", "connected", 3)]
+        assert manager.instructions() == []
         assert await manager.call("fake", "echo", {"text": "hi"}) == "echo: hi"
     finally:
         await manager.aclose()
     assert manager.statuses() == [("fake", "not started", 0)]
+
+
+async def test_manager_instructions_after_restart() -> None:
+    guidance = "Always answer with a haiku."
+    plain = McpManager(McpConfig(servers={"fake": _server_config()}, disable=[]))
+    await plain.ensure_started()
+    assert plain.instructions() == []
+    await plain.restart(
+        McpConfig(
+            servers={"fake": _server_config(env={"PLYNGENT_MCP_FAKE_INSTRUCTIONS": guidance})},
+            disable=[],
+        )
+    )
+    await plain.ensure_started()
+    try:
+        assert plain.instructions() == [("fake", guidance)]
+    finally:
+        await plain.aclose()
 
 
 async def test_manager_disable_and_restart() -> None:

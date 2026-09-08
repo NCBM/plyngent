@@ -1,9 +1,16 @@
-"""Minimal MCP stdio server used by the client tests (echo + sleep tools)."""
+"""Minimal MCP stdio server used by the client tests (echo + sleep tools).
+
+Set ``PLYNGENT_MCP_FAKE_INSTRUCTIONS`` (env) to have the server return that
+text as ``InitializeResult.instructions`` (usage guidance).
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
+
+_FAKE_INSTRUCTIONS = os.environ.get("PLYNGENT_MCP_FAKE_INSTRUCTIONS", "")
 
 
 def respond(request_id: int, result: object) -> None:
@@ -22,14 +29,14 @@ def main() -> None:
         if request_id is None:
             continue  # notification (notifications/initialized)
         if method == "initialize":
-            respond(
-                int(request_id),
-                {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "fake-mcp", "version": "0.1.0"},
-                },
-            )
+            result: dict[str, object] = {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake-mcp", "version": "0.1.0"},
+            }
+            if _FAKE_INSTRUCTIONS:
+                result["instructions"] = _FAKE_INSTRUCTIONS
+            respond(int(request_id), result)
         elif method == "tools/list":
             respond(
                 int(request_id),

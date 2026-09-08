@@ -92,6 +92,8 @@ class McpServerConnection:
     error: str | None
     tools: list[McpTool]
     tools_stale: bool
+    # Server usage guidance from the initialize result (InitializeResult.instructions).
+    instructions: str | None
 
     _config: McpServerConfig
     _proc: asyncio.subprocess.Process | None
@@ -111,6 +113,7 @@ class McpServerConnection:
         self.error = None
         self.tools = []
         self.tools_stale = False
+        self.instructions = None
 
     @property
     def status(self) -> str:
@@ -258,7 +261,7 @@ class McpServerConnection:
         self._send(payload)
 
     async def _initialize(self) -> None:
-        _ = await self._request(
+        result = await self._request(
             "initialize",
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -266,6 +269,10 @@ class McpServerConnection:
                 "clientInfo": {"name": MCP_CLIENT_NAME, "version": _client_version()},
             },
         )
+        # Optional server usage guidance (MCP spec: InitializeResult.instructions).
+        # Hosts surface this to the model when the server's tools are in play.
+        instructions = result.get("instructions")
+        self.instructions = instructions.strip() if isinstance(instructions, str) and instructions.strip() else None
         await self._notify("notifications/initialized")
 
     async def list_tools(self) -> list[McpTool]:
@@ -341,6 +348,21 @@ class McpManager:
                 rows.append((name, "not started", 0))
             else:
                 rows.append((name, connection.status, len(connection.tools)))
+        return rows
+
+    def instructions(self) -> list[tuple[str, str]]:
+        """(server, text) initialize ``instructions`` for every connected server.
+
+        Only non-empty guidance is returned, in config order. Hosts may fold
+        these into the agent system context (see cli.state.ReplState).
+        """
+        rows: list[tuple[str, str]] = []
+        for name in self.enabled_servers():
+            connection = self._connections.get(name)
+            if connection is not None and connection.connected:
+                text = (connection.instructions or "").strip()
+                if text:
+                    rows.append((name, text))
         return rows
 
     def connections(self) -> list[McpServerConnection]:
