@@ -143,6 +143,44 @@ class PluginsConfig(Struct, omit_defaults=True):
     disable: list[str] = field(default_factory=list)
 
 
+class McpServerConfig(Struct, omit_defaults=True):
+    """One MCP server definition (stdio transport today).
+
+    TOML example::
+
+        [mcp.servers.docs]
+        command = "npx"
+        args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+        env = { RUST_LOG = "info" }
+        # cwd = "/path"            # spawn working directory (empty = inherit)
+        # timeout = 30.0            # per-request timeout in seconds
+        # read_only = true          # mark every tool READ_ONLY (safe side turns)
+
+    ``url`` is reserved for the streamable-HTTP transport; empty = stdio.
+    A defined server is connected unless its name appears in ``[mcp].disable``.
+    """
+
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    cwd: str = ""
+    timeout: float = 30.0
+    read_only: bool = False
+    url: str = ""
+
+
+class McpConfig(Struct, omit_defaults=True):
+    """Model Context Protocol servers exposed as agent tools.
+
+    Defining a server under ``[mcp.servers.<name>]`` is the opt-in; tools are
+    namespaced ``mcp__<server>__<tool>`` and registered with LOCAL tags. Names
+    in ``disable`` stay disconnected even when defined.
+    """
+
+    servers: dict[str, McpServerConfig] = field(default_factory=dict)
+    disable: list[str] = field(default_factory=list)
+
+
 class NetworkingConfig(Struct, omit_defaults=True):
     """Host-side network policy for tools such as ``fetch``.
 

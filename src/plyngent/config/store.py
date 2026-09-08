@@ -9,6 +9,7 @@ import tomlkit
 from .models import (
     AgentConfig,
     DatabaseConfig,
+    McpConfig,
     ModelConfig,
     NetworkingConfig,
     PluginsConfig,
@@ -54,6 +55,29 @@ def _parse_networking(raw: dict[str, object]) -> NetworkingConfig:
         return msgspec.convert(raw, NetworkingConfig)
     except msgspec.ValidationError:
         return NetworkingConfig()
+
+
+def _parse_mcp(raw: dict[str, object]) -> McpConfig:
+    """Parse the ``[mcp]`` section, falling back to defaults.
+
+    Unknown keys (typos like ``cmds``) are rejected the same way as providers:
+    a malformed section silently degrades to "no MCP servers" instead of a
+    half-parsed one.
+    """
+    try:
+        config = msgspec.convert(raw, McpConfig)
+    except msgspec.ValidationError:
+        return McpConfig()
+    known = {"servers", "disable"}
+    if set(raw) - known:
+        return McpConfig()
+    known_server = {"command", "args", "env", "cwd", "timeout", "read_only", "url"}
+    servers_raw = cast("dict[str, object]", raw.get("servers", {}))
+    for name, raw_entry in servers_raw.items():
+        entry = cast("dict[str, object]", raw_entry)
+        if not isinstance(raw_entry, dict) or not name.strip() or set(entry) - known_server:
+            return McpConfig()
+    return config
 
 
 def _parse_providers(
@@ -125,6 +149,7 @@ class ConfigStore:
     _agent: AgentConfig
     _plugins: PluginsConfig
     _networking: NetworkingConfig
+    _mcp: McpConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -137,6 +162,7 @@ class ConfigStore:
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
+        self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -186,6 +212,13 @@ class ConfigStore:
     def networking_config(self) -> NetworkingConfig:
         """Typed networking section (e.g. Fake-IP SSRF exemptions)."""
         return self._networking
+
+    # -- mcp (read-only) --
+
+    @property
+    def mcp_config(self) -> McpConfig:
+        """Typed MCP section (server definitions + disable list)."""
+        return self._mcp
 
     def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
         """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
@@ -390,6 +423,7 @@ class ConfigStore:
         self._agent = _parse_agent(cast("dict[str, object]", raw.get("agent", {})))
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
+        self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --

@@ -26,6 +26,19 @@
 # [networking]
 # ssrf_assume_public_cidrs = ["198.18.0.0/15"]
 
+# MCP (Model Context Protocol) servers exposed as agent tools.
+# Defining a server opts it in; tools appear as mcp__<server>__<tool> with
+# LOCAL tags (confirm flow applies). Names in disable stay disconnected.
+# [mcp.servers.docs]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+# env = { RUST_LOG = "info" }
+# cwd = "/path"              # spawn working directory (empty = inherit)
+# timeout = 30.0             # per-request timeout (seconds)
+# read_only = true           # mark every tool READ_ONLY (eligible for /btw --tools=read)
+# [mcp]
+# disable = ["docs"]         # defined but never connected
+
 [agent]
 # Persona (omit → built-in coding-agent line). tool_directives is the tool playbook.
 # Override with multi-line literals (prefer ''' so nested " is fine):
