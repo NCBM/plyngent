@@ -12,7 +12,7 @@ from plyngent.agent.tools import ToolDefinition, ToolTag
 if TYPE_CHECKING:
     from collections.abc import Container, Generator
 
-type ToolSourceKind = Literal["builtin", "plugin"]
+type ToolSourceKind = Literal["builtin", "plugin", "mcp"]
 type ToolSurface = Literal["local", "public"]
 
 
@@ -29,8 +29,8 @@ class ToolSource:
     def __str__(self) -> str:
         if self.kind == "builtin":
             return "builtin"
-        plugin = self.plugin_id or "?"
-        return f"plugin:{plugin}"
+        id_part = self.plugin_id or "?"
+        return f"{self.kind}:{id_part}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +151,13 @@ class ToolCatalog:
 
     def clear(self) -> None:
         self._by_name.clear()
+
+    def purge_kind(self, kind: ToolSourceKind) -> int:
+        """Remove every entry registered from *kind*; return the count removed."""
+        doomed = [name for name, entry in self._by_name.items() if entry.source.kind == kind]
+        for name in doomed:
+            del self._by_name[name]
+        return len(doomed)
 
     def snapshot(self) -> dict[str, RegisteredTool]:
         return dict(self._by_name)
