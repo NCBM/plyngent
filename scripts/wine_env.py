@@ -22,7 +22,7 @@ DEFAULT_WIN_PYTHON = "3.14"
 DEFAULT_WIN_UV_VERSION = "0.11.28"
 # typings/ is required for Wine basedpyright: pywinpty's shipped types are incomplete
 # (e.g. kill(sig) required); pyright default stubPath is ``typings/``.
-VIEW_LINKS = ("src", "tests", "scripts", "typings", "README.md", "LICENSE", "CLAUDE.md", "doc")
+VIEW_LINKS = ("src", "tests", "scripts", "typings", "README.md", "LICENSE", "AGENTS.md", "doc")
 VIEW_COPIES = ("pyproject.toml", "pdm.lock")
 
 

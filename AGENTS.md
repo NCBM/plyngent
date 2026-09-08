@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -139,7 +139,7 @@ Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` i
   - G3: multiline `"""` … `"""` input (`cli/input_text.py`); `/edit` via `$EDITOR` (`edit_text_in_editor`)
   - G4: `plyngent chat -p/--prompt` (+ non-TTY stdin); exit codes 0/1/2/3; `--yes` / non-interactive confirm deny; `--stream/--no-stream`, `--quiet`
   - G5: PTY master FD non-inheritable; `read_pty`/`close_pty` via `to_thread`; `PtyManager.close_all()` on chat exit; `--log-level`; clearer invalid TOML errors; export/status stay secret-free
-  - G6: README, `doc/plyngent.example.toml`, CLAUDE overview/CLI notes
+  - G6: README, `doc/plyngent.example.toml`, AGENTS overview/CLI notes
 
   Phase G complete for single-user CLI polish. Next roadmap work is Phase H or optional F (cost/tokenizer).
 

@@ -302,7 +302,7 @@ plyngent --log-level INFO chat ...
 
 ## Architecture (short)
 
-See [doc/architecture.md](doc/architecture.md) and [CLAUDE.md](CLAUDE.md) for developers.
+See [doc/architecture.md](doc/architecture.md) and [AGENTS.md](AGENTS.md) for developers.
 
 - **`lmproto/`** — OpenAI-compatible, OpenAI Responses, Anthropic Messages, DeepSeek msgspec models and async SSE clients  
 - **`agent/`** — kind-based tool loop (`chat_completions` / `responses` / `messages`), streaming, usage, compact  
