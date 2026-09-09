@@ -69,6 +69,8 @@ class ReplState:
     markdown_enabled: bool = True
     # One-shot / scripts: never prompt to raise tool-loop limits.
     interactive_limits: bool = True
+    # Auto-raise tool/PTY limits without prompting (--auto-continue / config).
+    auto_continue_limits: bool = False
     # Soft destructive-tool confirms: None → derive from config.confirm_destructive.
     # off = confirm; on = skip (sticky); once = skip next user turn then off.
     yolo: YoloMode | None = None
@@ -97,6 +99,9 @@ class ReplState:
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
         self._install_config_access()
+        from plyngent.cli.limits import set_auto_continue_default
+
+        set_auto_continue_default(enabled=self.auto_continue_limits)
         self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self.sync_display_flags()
@@ -340,7 +345,7 @@ class ReplState:
         return "\n\n".join(parts)
 
     def _make_agent(self) -> ChatAgent:
-        from plyngent.cli.limits import prompt_continue_limit_async
+        from plyngent.cli.limits import auto_continue_enabled, prompt_continue_limit_async
         from plyngent.config import compose_agent_system_content
 
         agent_cfg = self.config.agent_config
@@ -350,7 +355,7 @@ class ReplState:
             agent_cfg.tool_directives,
             mcp_text,
         )
-        on_limit = prompt_continue_limit_async if self.interactive_limits else None
+        on_limit = prompt_continue_limit_async if (self.interactive_limits or auto_continue_enabled()) else None
         peak = 0
         band = 0
         last_req = None

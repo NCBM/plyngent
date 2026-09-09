@@ -124,9 +124,14 @@ def _read_prompt_text(prompt: str | None, *, stdin_isatty: bool) -> str | None:
     return text or None
 
 
-def _setup_hooks(*, interactive: bool) -> None:
-    """Install interactive limit hooks (workspace policy is set on ReplState)."""
-    if interactive:
+def _setup_hooks(*, interactive: bool, auto_continue: bool) -> None:
+    """Install limit hooks (workspace policy is set on ReplState).
+
+    ``auto_continue`` keeps the PTY/limit hook installed for one-shot runs so
+    ``--auto-continue`` / ``[agent] auto_continue_limits`` can raise limits
+    without a prompt; otherwise non-interactive runs keep today's deny.
+    """
+    if interactive or auto_continue:
         install_cli_limit_hooks()
     else:
         from plyngent.tools.process.pty_session import PtyManager
@@ -221,6 +226,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
     prompt_text: str | None,
     stream: bool,
     yes: bool,
+    auto_continue: bool,
     quiet: bool,
 ) -> int:
     oneshot = prompt_text is not None
@@ -236,7 +242,8 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         if store.recoverable_providers:
             _warn_recoverable_providers(store.recoverable_providers)
 
-    _setup_hooks(interactive=interactive)
+    auto_effective = auto_continue or store.agent_config.auto_continue_limits
+    _setup_hooks(interactive=interactive, auto_continue=auto_effective)
     # --yes forces sticky YOLO; else derive from config.confirm_destructive.
     from plyngent.cli.state import YoloMode
 
@@ -315,6 +322,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             max_rounds=max_rounds,
             stream_enabled=stream,
             interactive_limits=interactive,
+            auto_continue_limits=auto_effective,
             yolo=yolo,
             mcp_manager=mcp_manager,
         )
@@ -481,6 +489,12 @@ def main(ctx: click.Context, log_level: str) -> None:
     help="Enable YOLO: skip destructive-tool confirms (sticky for this process).",
 )
 @click.option(
+    "--auto-continue",
+    is_flag=True,
+    default=False,
+    help="Auto-raise tool/PTY limits without prompting (like answering yyy).",
+)
+@click.option(
     "--quiet",
     is_flag=True,
     default=False,
@@ -498,6 +512,7 @@ def chat_cmd(
     prompt: str | None,
     stream: bool,  # noqa: FBT001
     yes: bool,  # noqa: FBT001
+    auto_continue: bool,  # noqa: FBT001
     quiet: bool,  # noqa: FBT001
 ) -> None:
     """Interactive chat REPL, or one-shot with ``-p`` / stdin.
@@ -538,6 +553,7 @@ def chat_cmd(
             prompt_text=prompt_text,
             stream=stream,
             yes=yes,
+            auto_continue=auto_continue,
             quiet=quiet,
         )
     )

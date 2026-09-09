@@ -36,14 +36,17 @@ def _echo_interrupted() -> None:
 async def run_repl(state: ReplState) -> None:
     """Interactive chat loop with readline editing, history, and Tab completion."""
     setup_readline(state)
+    from plyngent.cli.limits import auto_continue_enabled
+
     yolo = state.effective_yolo()
     yolo_part = f"  yolo={yolo}" if yolo != "off" else ""
+    auto_part = "  limit_auto=on" if auto_continue_enabled() else ""
     click.echo(
         f"plyngent chat  provider={state.provider_name}  model={state.model}  "
         f"session={state.session_id}  tools={'on' if state.tools_enabled else 'off'}  "
         f"rounds={state.max_rounds}  messages={len(state.agent.messages)}  "
         f"stream={'on' if state.agent.stream else 'off'}  "
-        f"verbose={'on' if state.verbose else 'off'}{yolo_part}"
+        f"verbose={'on' if state.verbose else 'off'}{yolo_part}{auto_part}"
     )
     click.echo('Type /help for commands. Multiline: """ … """. Empty line is ignored.')
 

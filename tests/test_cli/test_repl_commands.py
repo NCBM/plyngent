@@ -94,6 +94,32 @@ async def test_help_and_clear(state: ReplState) -> None:
     assert state.agent.messages == []
 
 
+async def test_auto_continue_limits_installs_on_limit(tmp_path: Path) -> None:
+    from plyngent.cli.limits import auto_continue_enabled, reset_auto_continue
+
+    memory = await MemoryStore.open(DatabaseConfig())
+    provider = OpenAIProvider(access_key_or_token="sk-test")
+    config = ConfigStore(path=tmp_path / "plyngent.toml", document=tomlkit.document())
+    config.providers = {"local": provider}
+    try:
+        st = ReplState(
+            config=config,
+            memory=memory,
+            workspace=tmp_path,
+            provider_name="local",
+            provider=provider,
+            model="gpt-test",
+            tools_enabled=False,
+            interactive_limits=False,
+            auto_continue_limits=True,
+        )
+        assert auto_continue_enabled() is True
+        assert st.agent.on_limit is not None
+    finally:
+        reset_auto_continue()
+        await memory.close()
+
+
 async def test_help_command_usage_line(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
     assert await handle_slash(state, "/help compact") is True
     out = capsys.readouterr().out

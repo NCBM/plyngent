@@ -27,6 +27,7 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.confirm_destructive is True
     assert store.agent_config.path_denylist == []
     assert store.agent_config.allow_paths == {}
+    assert store.agent_config.auto_continue_limits is False
     assert store.agent_config.max_context_tokens == 200_000
     assert store.plugins_config.enable == []
     assert store.plugins_config.disable == []
@@ -83,6 +84,7 @@ parallel_tools = false
 confirm_destructive = false
 path_denylist = ["/secrets/", ".ssh/"]
 max_context_tokens = 5000
+auto_continue_limits = true
 """,
         encoding="utf-8",
     )
@@ -94,6 +96,7 @@ max_context_tokens = 5000
     assert store.agent_config.confirm_destructive is False
     assert store.agent_config.path_denylist == ["/secrets/", ".ssh/"]
     assert store.agent_config.max_context_tokens == 5000
+    assert store.agent_config.auto_continue_limits is True
     composed = compose_agent_system_content(
         store.agent_config.system_prompt,
         store.agent_config.tool_directives,

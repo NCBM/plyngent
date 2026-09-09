@@ -80,6 +80,16 @@ def test_prompt_continue_limit_noninteractive_denies() -> None:
         assert prompt_continue_limit("limit") is False
 
 
+def test_setup_hooks_installs_pty_hook_for_auto_continue(clean_auto_continue: None) -> None:
+    del clean_auto_continue
+    from plyngent.cli.app import _setup_hooks
+
+    _setup_hooks(interactive=False, auto_continue=True)
+    assert PtyManager._limit_continue is not None
+    _setup_hooks(interactive=False, auto_continue=False)
+    assert PtyManager._limit_continue is None
+
+
 def test_pty_offer_raise_uses_auto_continue(clean_auto_continue: None) -> None:
     del clean_auto_continue
     PtyManager.set_limit_continue_hook(prompt_continue_limit)

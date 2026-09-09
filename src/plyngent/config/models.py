@@ -117,6 +117,9 @@ class AgentConfig(Struct, omit_defaults=True):
     # Static directory pre-allow (resolved path → mode); never prompts.
     # Denylist still applies, and the path must exist when chat starts.
     allow_paths: dict[str, AllowPathMode] = field(default_factory=dict)
+    # Auto-raise tool/PTY limits without prompting (same as answering ``yyy``);
+    # process-wide, so every turn skips the limit confirm.
+    auto_continue_limits: bool = False
     max_context_tokens: int = 200_000
 
     # How to inject todo stack nags into model context (see agent/todo_nag.py).
