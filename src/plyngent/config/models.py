@@ -10,6 +10,9 @@ from msgspec import Struct, field
 #                           ``https://api.deepseek.com/anthropic``)
 type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
 
+# Static directory pre-allow mode for ``[agent].allow_paths`` (path → mode).
+type AllowPathMode = Literal["read", "write", "exec"]
+
 # Built-in persona when ``[agent].system_prompt`` is omitted.
 # Set ``system_prompt = ""`` to omit the persona block only.
 # Override with a multi-line TOML literal (prefer ''' so nested " is fine).
@@ -111,6 +114,9 @@ class AgentConfig(Struct, omit_defaults=True):
     parallel_tools: bool = True
     confirm_destructive: bool = True
     path_denylist: list[str] = field(default_factory=list)
+    # Static directory pre-allow (resolved path → mode); never prompts.
+    # Denylist still applies, and the path must exist when chat starts.
+    allow_paths: dict[str, AllowPathMode] = field(default_factory=dict)
     max_context_tokens: int = 200_000
 
     # How to inject todo stack nags into model context (see agent/todo_nag.py).

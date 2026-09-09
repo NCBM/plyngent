@@ -30,7 +30,7 @@ from plyngent.tools.workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from plyngent.tools.context import InstanceState, SessionState
 
@@ -120,6 +120,32 @@ def active_grant_count() -> int:
     if session is not None:
         total += len(session.access_grants)
     return total
+
+
+def set_config_access(entries: Mapping[str, str]) -> tuple[list[Path], list[str]]:
+    """Install static TOML pre-allow entries on the bound instance policy.
+
+    Replaces any previous config grants. Returns ``(applied roots, skipped
+    keys)``; entries are skipped when the mode is unknown or the path does not
+    exist (the host warns about skipped keys).
+    """
+    policy = require_bound_instance().workspace
+    policy.config_allow.clear()
+    applied: list[Path] = []
+    skipped: list[str] = []
+    for raw_path, raw_mode in entries.items():
+        mode = parse_access_mode(raw_mode)
+        resolved: Path | None
+        try:
+            resolved = Path(raw_path).expanduser().resolve()
+        except OSError:
+            resolved = None
+        if mode is None or resolved is None or not resolved.exists():
+            skipped.append(raw_path)
+            continue
+        policy.config_allow[resolved] = mode
+        applied.append(resolved)
+    return applied, skipped
 
 
 def _resolve_target(path: str) -> Path | str:

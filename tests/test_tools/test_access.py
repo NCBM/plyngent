@@ -12,11 +12,13 @@ from plyngent.tools import (
     AccessDecision,
     AccessMode,
     SessionState,
+    WorkspaceError,
     active_workspace_policy,
     get_directory_access_confirm_hook,
     grant_session_access,
     request_directory_access,
     resolve_path,
+    set_config_access,
     set_directory_access_confirm_hook,
     set_path_denylist,
 )
@@ -234,3 +236,28 @@ async def test_grant_cap(
         assert session.access_grants == {}
     finally:
         policy.config_allow.clear()
+
+
+def test_set_config_access_installs_and_skips(
+    workspace: object,
+    session: SessionState,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    del workspace, session
+    outside = tmp_path_factory.mktemp("config-allow").resolve()
+    target = outside / "data.txt"
+    _ = target.write_text("x", encoding="utf-8")
+    missing = outside / "missing"
+    applied, skipped = set_config_access(
+        {
+            str(outside): "read",
+            str(missing): "read",
+            str(target): "sudo",
+        }
+    )
+    assert applied == [outside]
+    assert sorted(skipped) == sorted([str(missing), str(target)])
+    assert active_workspace_policy().config_allow == {outside: AccessMode.READ}
+    assert resolve_path(str(target), required=AccessMode.READ) == target
+    with pytest.raises(WorkspaceError, match="escapes"):
+        _ = resolve_path(str(target), required=AccessMode.WRITE)

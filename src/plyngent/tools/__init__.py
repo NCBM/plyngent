@@ -8,6 +8,7 @@ from .access import get_directory_access_confirm_hook as get_directory_access_co
 from .access import grant_process_access as grant_process_access
 from .access import grant_session_access as grant_session_access
 from .access import request_directory_access as request_directory_access
+from .access import set_config_access as set_config_access
 from .access import set_directory_access_confirm_hook as set_directory_access_confirm_hook
 from .catalog import ToolCatalog as ToolCatalog
 from .catalog import ToolSource as ToolSource

@@ -26,6 +26,7 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.parallel_tools is True
     assert store.agent_config.confirm_destructive is True
     assert store.agent_config.path_denylist == []
+    assert store.agent_config.allow_paths == {}
     assert store.agent_config.max_context_tokens == 200_000
     assert store.plugins_config.enable == []
     assert store.plugins_config.disable == []
@@ -160,6 +161,33 @@ tool_directives = ""
         )
         is None
     )
+
+
+def test_agent_allow_paths_parse(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text(
+        """
+[agent]
+allow_paths = { "/data/datasets" = "read", "/tmp/build" = "exec" }
+""",
+        encoding="utf-8",
+    )
+    store = load(path)
+    assert store.agent_config.allow_paths == {"/data/datasets": "read", "/tmp/build": "exec"}
+
+
+def test_agent_allow_paths_invalid_mode_falls_back(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text(
+        """
+[agent]
+allow_paths = { "/data" = "sudo" }
+""",
+        encoding="utf-8",
+    )
+    store = load(path)
+    # Invalid field value resets the whole [agent] section to defaults.
+    assert store.agent_config.allow_paths == {}
 
 
 def test_agent_mcp_instructions_flag(tmp_path: Path) -> None:
