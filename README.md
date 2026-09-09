@@ -152,6 +152,8 @@ max_context_tokens = 200000
 # mcp_instructions = true
 # Static out-of-workspace pre-allow (path → read|write|exec); never prompts.
 # allow_paths = { "/data/datasets" = "read", "/tmp/build" = "exec" }
+# Auto-raise tool/PTY limits without prompting (same as answering yyy).
+# auto_continue_limits = false
 
 # Optional plugins (entry-point names); default load none. See doc/plugins.md.
 # [plugins]
@@ -216,9 +218,12 @@ plyngent chat --session 3
 | `--stream` / `--no-stream` | Streaming deltas (default on) |
 | `--quiet` | Less status on stderr |
 | `--yes` | YOLO on: skip destructive-tool confirms for this process |
+| `--auto-continue` | Auto-raise tool/PTY limits without prompting (like answering `yyy`) |
 | `--log-level` | On the root CLI: `DEBUG`, `INFO`, `WARNING`, … |
 
 Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`. Each session remembers the last **provider** and **model** (restored on resume so you are not re-prompted).
+
+When a tool-loop or PTY limit is hit, the prompt accepts `y` (continue once), `n` (stop), or `yyy` — **stop asking for the rest of this turn** (the next user turn prompts again). `--auto-continue` / `[agent] auto_continue_limits = true` skip the prompt for every turn.
 
 ### One-shot (scripts / CI)
 
