@@ -16,6 +16,8 @@ from plyngent.cli.interrupt import (
 )
 from plyngent.cli.limits import prompt_continue_limit, prompt_continue_limit_async
 from plyngent.cli.retry import run_cancellable
+from plyngent.prompting import temporary_backend
+from tests.test_prompting import ScriptedBackend
 
 if TYPE_CHECKING:
     pass
@@ -39,12 +41,16 @@ def test_nested_pause_depth() -> None:
 
 
 def test_prompt_continue_limit_under_pause(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _confirm(*_a: object, **_k: object) -> bool:
-        assert allow_task_cancel() is False
-        return True
+    backend = ScriptedBackend(["y"])
 
-    monkeypatch.setattr("click.confirm", _confirm)
-    assert prompt_continue_limit("too many rounds") is True
+    def _read_line(prompt: str, *, default: str | None = None, completions: object = None) -> str:
+        del prompt, default, completions
+        assert allow_task_cancel() is False
+        return "y"
+
+    monkeypatch.setattr(backend, "read_line", _read_line)
+    with temporary_backend(backend):
+        assert prompt_continue_limit("too many rounds") is True
 
 
 async def test_run_in_prompt_thread_pauses_cancel() -> None:
@@ -60,11 +66,9 @@ async def test_run_in_prompt_thread_pauses_cancel() -> None:
 
 
 async def test_prompt_continue_limit_async(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _confirm(*_a: object, **_k: object) -> bool:
-        return True
-
-    monkeypatch.setattr("click.confirm", _confirm)
-    assert await prompt_continue_limit_async("too many rounds") is True
+    del monkeypatch
+    with temporary_backend(ScriptedBackend(["y"])):
+        assert await prompt_continue_limit_async("too many rounds") is True
 
 
 async def test_sigint_cancels_after_prompt_pause() -> None:

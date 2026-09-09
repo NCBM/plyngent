@@ -4,6 +4,7 @@ import contextlib
 import selectors
 import shutil
 import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from plyngent.cli.interrupt import pause_task_cancel_for_prompt
@@ -30,6 +31,43 @@ type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
 _BOX_MIN_WIDTH = 40
 _BOX_MAX_WIDTH = 100
 _BOX_PAD = 2  # spaces inside left/right borders
+
+# Limit prompts accept ``yyy`` to stop asking for the rest of the turn.
+_CONTINUE_PROMPT = "Raise limit and continue? [Y/n/yyy] (yyy = stop asking this turn): "
+_CONTINUE_YES_TOKENS = frozenset({"", "y", "yes"})
+_CONTINUE_AUTO_TOKEN = "yyy"
+
+
+@dataclass
+class _AutoContinue:
+    """Auto-continue layers: process default (flag/config) + ``yyy`` turn skip."""
+
+    default: bool = False
+    turn: bool = False
+
+
+_auto_continue = _AutoContinue()
+
+
+def auto_continue_enabled() -> bool:
+    """Whether limit prompts are auto-approved (process default or ``yyy``)."""
+    return _auto_continue.default or _auto_continue.turn
+
+
+def set_auto_continue_default(*, enabled: bool) -> None:
+    """Set the process-wide default (``--auto-continue`` / ``[agent]`` config)."""
+    _auto_continue.default = bool(enabled)
+
+
+def reset_auto_continue_turn() -> None:
+    """Clear the ``yyy`` skip at a turn boundary."""
+    _auto_continue.turn = False
+
+
+def reset_auto_continue() -> None:
+    """Clear both layers (chat exit / tests)."""
+    _auto_continue.default = False
+    _auto_continue.turn = False
 
 
 def _terminal_width() -> int:
@@ -107,10 +145,33 @@ def _echo_continue_limit(reason: str) -> None:
     backend.echo()
 
 
+def _echo_auto_continue(reason: str) -> None:
+    """Echo the limit reason plus the ``yyy`` notice (no prompt)."""
+    backend = get_prompt_backend()
+    backend.secho(f"[limit] {reason}", fg="yellow")
+    backend.secho("[limit] auto-continuing (yyy) — no more limit prompts this turn", fg="bright_black")
+    backend.echo()
+
+
+def _decide_continue_limit(reason: str) -> bool:
+    """Shared limit decision for the sync/async prompts (may read a line)."""
+    if auto_continue_enabled():
+        _echo_auto_continue(reason)
+        return True
+    backend = get_prompt_backend()
+    if not backend.is_interactive():
+        return False
+    _echo_continue_limit(reason)
+    token = backend.read_line(_CONTINUE_PROMPT, default="y").strip().lower()
+    if token == _CONTINUE_AUTO_TOKEN:
+        _auto_continue.turn = True
+        return True
+    return token in _CONTINUE_YES_TOKENS
+
+
 def _prompt_continue_limit_sync(reason: str) -> bool:
     try:
-        _echo_continue_limit(reason)
-        return confirm("Raise limit and continue?", default=True)
+        return _decide_continue_limit(reason)
     except NonInteractiveError:
         return False
 
@@ -122,15 +183,11 @@ def prompt_continue_limit(reason: str) -> bool:
 
 
 async def prompt_continue_limit_async(reason: str) -> bool:
-    """Async variant: confirm off the event loop so the turn is not cancelled."""
+    """Async variant: prompt off the event loop so the turn is not cancelled."""
     try:
         from plyngent.prompting import run_prompt_async
 
-        def _run() -> bool:
-            _echo_continue_limit(reason)
-            return confirm("Raise limit and continue?", default=True)
-
-        return await run_prompt_async(_run)
+        return await run_prompt_async(lambda: _decide_continue_limit(reason))
     except NonInteractiveError:
         return False
 
