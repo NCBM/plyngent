@@ -18,10 +18,13 @@ from plyngent.prompting import (
     confirm,
     get_prompt_backend,
 )
+from plyngent.tools.access import AccessDecision
 from plyngent.tools.process.pty_session import PtyManager
+from plyngent.tools.workspace import AccessMode, parse_access_mode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from pathlib import Path
 type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
 
 _BOX_MIN_WIDTH = 40
@@ -285,6 +288,62 @@ def prompt_policy_fetch_confirm(
             return raw.strip().lower() in {"y", "yes"}
     except NonInteractiveError, KeyboardInterrupt, EOFError:
         return False
+
+
+def prompt_directory_access_confirm(
+    path: Path,
+    mode: AccessMode,
+    reason: str,
+    timeout_seconds: float,
+) -> AccessDecision | str | None:
+    """Ask whether to grant access to *path* at *mode* (timed; default deny).
+
+    ``y`` approves the requested level; ``read`` / ``write`` / ``exec`` approve
+    that level instead. The host's hook decides YOLO/``--yes`` before calling
+    this. Timeout, cancel, or non-interactive → ``None`` (deny).
+    """
+    lines = [
+        f"request: {mode.name.lower()} access to {path}",
+        f"kind: {'directory' if path.is_dir() else 'file'}",
+    ]
+    if reason:
+        lines.append(f"why: {reason}")
+    lines.append(f"(timeout {timeout_seconds:g}s defaults to DENY)")
+    try:
+        with pause_task_cancel_for_prompt():
+            backend = get_prompt_backend()
+            if not backend.is_interactive():
+                return None
+            backend.echo()
+            backend.secho(
+                format_tool_confirm_box("request_directory_access", "\n".join(lines)),
+                fg="yellow",
+            )
+            backend.echo()
+            prompt = (
+                f"[access] allow {path} ({mode.name.lower()})? [y/N|read|write|exec] (timeout {timeout_seconds:g}s): "
+            )
+            with contextlib.suppress(OSError):
+                _ = sys.stderr.write(prompt)
+                _ = sys.stderr.flush()
+            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            if raw is None:
+                with contextlib.suppress(OSError, NonInteractiveError):
+                    backend.secho(
+                        f"[access] timed out after {timeout_seconds:g}s — denied",
+                        fg="red",
+                        err=True,
+                    )
+                return None
+            token = raw.strip().lower()
+            if token in {"y", "yes"}:
+                return AccessDecision(mode)
+            level = parse_access_mode(token)
+            if level is not None:
+                return AccessDecision(level)
+            return None
+    except NonInteractiveError, KeyboardInterrupt, EOFError:
+        return None
 
 
 async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:

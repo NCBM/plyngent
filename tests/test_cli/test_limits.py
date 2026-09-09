@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from plyngent.cli.limits import (
     format_tool_confirm_box,
     install_cli_limit_hooks,
@@ -54,3 +56,37 @@ def test_policy_confirm_noninteractive_denies() -> None:
 
     with temporary_backend(NonInteractiveBackend()):
         assert prompt_policy_command_confirm("sudo", ["sudo", "id"], 1.0) is False
+
+
+def test_directory_access_prompt_noninteractive_denies() -> None:
+    from pathlib import Path
+
+    from plyngent.cli.limits import prompt_directory_access_confirm
+    from plyngent.prompting import NonInteractiveBackend
+    from plyngent.tools.workspace import AccessMode
+
+    with temporary_backend(NonInteractiveBackend()):
+        assert prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 1.0) is None
+
+
+def test_directory_access_prompt_yes_and_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    from plyngent.cli import limits
+    from plyngent.tools.access import AccessDecision
+    from plyngent.tools.workspace import AccessMode
+
+    target = Path("/tmp")
+    with temporary_backend(ScriptedBackend([])):
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "y\n")
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == AccessDecision(
+            AccessMode.READ
+        )
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "exec\n")
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == AccessDecision(
+            AccessMode.EXEC
+        )
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "n\n")
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: None)
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None

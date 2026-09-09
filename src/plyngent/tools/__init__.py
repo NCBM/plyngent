@@ -1,6 +1,7 @@
 from .access import ACCESS_TOOLS as ACCESS_TOOLS
 from .access import MAX_ACCESS_GRANTS as MAX_ACCESS_GRANTS
 from .access import AccessDecision as AccessDecision
+from .access import access_grant_rows as access_grant_rows
 from .access import active_grant_count as active_grant_count
 from .access import clear_process_access as clear_process_access
 from .access import clear_session_access as clear_session_access
@@ -8,6 +9,7 @@ from .access import get_directory_access_confirm_hook as get_directory_access_co
 from .access import grant_process_access as grant_process_access
 from .access import grant_session_access as grant_session_access
 from .access import request_directory_access as request_directory_access
+from .access import revoke_access as revoke_access
 from .access import set_config_access as set_config_access
 from .access import set_directory_access_confirm_hook as set_directory_access_confirm_hook
 from .catalog import ToolCatalog as ToolCatalog

@@ -74,6 +74,8 @@ class SessionState:
     todo: TodoStack | None = None
     # Host hook after todo tools mutate (e.g. CLI memory persist).
     on_todo_change: Callable[[], None] | None = None
+    # Host hook after directory-access grants change (e.g. CLI memory persist).
+    on_access_change: Callable[[], None] | None = None
     # Soft-confirm grants live map: tool_name → True (Phase 1 key is tool name).
     # Durable copy lives under data["grants"] (see plyngent.tools.grants).
     grants: dict[str, bool] = field(default_factory=dict)

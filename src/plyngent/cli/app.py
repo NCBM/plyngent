@@ -333,6 +333,10 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
                 prompt_policy_fetch_confirm,
                 instance=state.instance_state,
             )
+        from plyngent.tools.access import set_directory_access_confirm_hook
+
+        # Installed for one-shot too: the hook itself honours --yes / non-TTY.
+        set_directory_access_confirm_hook(state.directory_access_confirm_hook, instance=state.instance_state)
         # Seed cache if we already fetched; else warm in background for Tab.
         if remote_ids is not None:
             state.seed_remote_models(remote_ids)
@@ -373,6 +377,10 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             set_fetch_policy_confirm_hook(None, instance=state_obj.instance_state)
             clear_private_grants(instance=state_obj.instance_state)
             clear_ssrf_assume_public_cidrs()
+            from plyngent.tools.access import clear_process_access, set_directory_access_confirm_hook
+
+            set_directory_access_confirm_hook(None, instance=state_obj.instance_state)
+            clear_process_access(instance=state_obj.instance_state)
             if state_obj.mcp_manager is not None:
                 await state_obj.mcp_manager.aclose()
             await state_obj.instance_state.shutdown()

@@ -80,6 +80,12 @@ def set_directory_access_confirm_hook(
     inst.extras[_HOOK_KEY] = hook
 
 
+def _notify_access_change(session: SessionState | None) -> None:
+    """Fire the host's persist hook after the live session map changes."""
+    if session is not None and session.on_access_change is not None:
+        session.on_access_change()
+
+
 def grant_session_access(
     path: Path | str,
     mode: AccessMode,
@@ -90,6 +96,7 @@ def grant_session_access(
     resolved = Path(path).expanduser().resolve()
     sess = session if session is not None else require_session()
     sess.access_grants[resolved] = mode
+    _notify_access_change(sess)
     return resolved
 
 
@@ -100,9 +107,10 @@ def grant_process_access(path: Path | str, mode: AccessMode) -> Path:
     return resolved
 
 
-def clear_process_access() -> None:
+def clear_process_access(*, instance: InstanceState | None = None) -> None:
     """Drop process-scoped (``--yes``) grants."""
-    require_bound_instance().workspace.yolo_allow.clear()
+    inst = instance if instance is not None else require_bound_instance()
+    inst.workspace.yolo_allow.clear()
 
 
 def clear_session_access(*, session: SessionState | None = None) -> None:
@@ -110,6 +118,7 @@ def clear_session_access(*, session: SessionState | None = None) -> None:
     sess = session if session is not None else get_session()
     if sess is not None:
         sess.access_grants.clear()
+        _notify_access_change(sess)
 
 
 def active_grant_count() -> int:
@@ -122,14 +131,19 @@ def active_grant_count() -> int:
     return total
 
 
-def set_config_access(entries: Mapping[str, str]) -> tuple[list[Path], list[str]]:
-    """Install static TOML pre-allow entries on the bound instance policy.
+def set_config_access(
+    entries: Mapping[str, str],
+    *,
+    instance: InstanceState | None = None,
+) -> tuple[list[Path], list[str]]:
+    """Install static TOML pre-allow entries on the instance policy bag.
 
     Replaces any previous config grants. Returns ``(applied roots, skipped
     keys)``; entries are skipped when the mode is unknown or the path does not
     exist (the host warns about skipped keys).
     """
-    policy = require_bound_instance().workspace
+    inst = instance if instance is not None else require_bound_instance()
+    policy = inst.workspace
     policy.config_allow.clear()
     applied: list[Path] = []
     skipped: list[str] = []
@@ -146,6 +160,47 @@ def set_config_access(entries: Mapping[str, str]) -> tuple[list[Path], list[str]
         policy.config_allow[resolved] = mode
         applied.append(resolved)
     return applied, skipped
+
+
+def access_grant_rows(
+    *,
+    instance: InstanceState | None = None,
+    session: SessionState | None = None,
+) -> list[tuple[Path, AccessMode, str]]:
+    """``(path, mode, source)`` rows: session, then process, then config."""
+    inst = instance if instance is not None else require_bound_instance()
+    sess = session if session is not None else get_session()
+    rows: list[tuple[Path, AccessMode, str]] = []
+    if sess is not None:
+        rows.extend((path, mode, "session") for path, mode in sess.access_grants.items())
+    rows.extend((path, mode, "process") for path, mode in inst.workspace.yolo_allow.items())
+    rows.extend((path, mode, "config") for path, mode in inst.workspace.config_allow.items())
+    return rows
+
+
+def revoke_access(
+    path: Path | str,
+    *,
+    source: str,
+    instance: InstanceState | None = None,
+    session: SessionState | None = None,
+) -> bool:
+    """Remove the exact resolved *path* from one store; false if not present.
+
+    ``config`` grants are owned by ``[agent].allow_paths`` and are not removed
+    here (the caller should point the human at the config file).
+    """
+    resolved = Path(path).expanduser().resolve()
+    if source == "session":
+        sess = session if session is not None else get_session()
+        if sess is None or sess.access_grants.pop(resolved, None) is None:
+            return False
+        _notify_access_change(sess)
+        return True
+    if source == "process":
+        inst = instance if instance is not None else require_bound_instance()
+        return inst.workspace.yolo_allow.pop(resolved, None) is not None
+    return False
 
 
 def _resolve_target(path: str) -> Path | str:

@@ -521,6 +521,7 @@ def config_cmd(state: ReplState) -> None:
 def status_cmd(state: ReplState) -> None:
     """Show session/provider/tools/rounds status."""
     from plyngent.agent.budget import estimate_messages_chars
+    from plyngent.tools.access import access_grant_rows
 
     pending = state.agent.pending_retry_text
     pending_disp = "yes" if pending else "no"
@@ -555,6 +556,7 @@ def status_cmd(state: ReplState) -> None:
         f"usage_last_turn={last_u.format_line(billed=True)}  "
         f"rounds={last_rounds}\n"
         f"usage_session={session_u.format_line(billed=True)}\n"
+        f"grants={len(access_grant_rows(instance=state.instance_state, session=state.session_state))}  "
         f"workspace={state.workspace}"
     )
 
@@ -1203,6 +1205,70 @@ def mcp_slash_cmd(state: ReplState, action: str | None) -> None:
     _slash_rebuild_tools_if_on(state)
     click.echo(f"mcp reconnected; tools={'on' if state.tools_enabled else 'off'}")
     _print_mcp_status(state)
+
+
+@slash.command("grants")
+@click.argument("action", required=False, type=click.Choice(["list", "revoke"]))
+@click.argument("target", required=False)
+@click.pass_obj
+def grants_cmd(state: ReplState, action: str | None, target: str | None) -> None:
+    """List or revoke directory-access grants.
+
+    ``/grants`` or ``/grants list`` — session, process, then config grants.
+    ``/grants revoke <index|all>`` — drop one grant or all session/process
+    grants. Config grants come from ``[agent].allow_paths``; edit the TOML.
+    """
+    from plyngent.tools.access import (
+        access_grant_rows,
+        clear_process_access,
+        clear_session_access,
+        revoke_access,
+    )
+
+    act = (action or "list").lower()
+    if act == "list":
+        rows = access_grant_rows(instance=state.instance_state, session=state.session_state)
+        if not rows:
+            click.echo("no directory-access grants")
+            return
+        click.echo(f"directory-access grants ({len(rows)}):")
+        for index, (path, mode, source) in enumerate(rows):
+            click.echo(f"  {index}\t{path}\t{mode.name.lower()}\t{source}")
+        click.echo("revoke with /grants revoke <index> or /grants revoke all")
+        return
+
+    if target is None or not target.strip():
+        msg = "/grants revoke requires an index or 'all'"
+        raise click.UsageError(msg)
+    token = target.strip().lower()
+    if token == "all":
+        clear_session_access(session=state.session_state)
+        clear_process_access(instance=state.instance_state)
+        _await(state.persist_access_grants())
+        click.echo("revoked all session/process access grants (config grants unchanged)")
+        return
+    if not token.isdigit():
+        msg = "/grants revoke expects an index or 'all'"
+        raise click.UsageError(msg)
+    rows = access_grant_rows(instance=state.instance_state, session=state.session_state)
+    index = int(token)
+    if index < 0 or index >= len(rows):
+        msg = f"no grant at index {index}"
+        raise click.UsageError(msg)
+    path, _mode, source = rows[index]
+    if source == "config":
+        click.echo(f"config grant {path} is not revocable here; edit [agent].allow_paths")
+        return
+    if revoke_access(
+        path,
+        source=source,
+        instance=state.instance_state,
+        session=state.session_state,
+    ):
+        _await(state.persist_access_grants())
+        click.echo(f"revoked {path} ({source})")
+    else:
+        click.echo(f"grant not found: {path}")
 
 
 @slash.command("yolo")

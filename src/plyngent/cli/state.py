@@ -26,15 +26,29 @@ from plyngent.tools import InstanceState, SessionState
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from plyngent.config.models import Provider
     from plyngent.config.store import ConfigStore
     from plyngent.memory import MemoryStore
     from plyngent.memory.database.schema import Session as SessionRow
     from plyngent.runtime.mcp_client import McpManager
+    from plyngent.tools.access import AccessDecision
+    from plyngent.tools.workspace import AccessMode
 
 type YoloMode = Literal["off", "on", "once"]
+
+
+def _parsed_access_grants(raw: Mapping[str, str]) -> dict[Path, AccessMode]:
+    """Parse stored ``{path: mode}`` grants into resolved keys (skip bad modes)."""
+    from plyngent.tools.workspace import parse_access_mode
+
+    grants: dict[Path, AccessMode] = {}
+    for path_str, mode_str in raw.items():
+        mode = parse_access_mode(mode_str)
+        if mode is not None:
+            grants[Path(path_str).expanduser().resolve()] = mode
+    return grants
 
 
 @dataclass
@@ -82,6 +96,7 @@ class ReplState:
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
+        self._install_config_access()
         self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self.sync_display_flags()
@@ -148,11 +163,17 @@ class ReplState:
         self._todo_persist_tasks.add(task)
         task.add_done_callback(self._todo_persist_tasks.discard)
 
-    def _session_data_for_todo(self, *, grants: dict[str, bool] | None = None) -> SessionState:
+    def _session_data_for_todo(
+        self,
+        *,
+        grants: dict[str, bool] | None = None,
+        access_grants: dict[Path, AccessMode] | None = None,
+    ) -> SessionState:
         """Build a SessionState with live todo + MemoryViewStore seed (durable tree).
 
         *grants* defaults to empty (new session / startup). Pass the previous map
         only when intentionally preserving soft-confirm trust across rebinds.
+        *access_grants* seeds session directory grants (empty clears them).
         """
         grant_map = dict(grants or {})
         store = MemoryViewStore({"todo": self.todo_stack.to_raw(), "grants": dict(grant_map)})
@@ -161,7 +182,9 @@ class ReplState:
             data=session_data_view(store=store),
             todo=self.todo_stack,
             on_todo_change=self._todo_on_change,
+            on_access_change=self._on_access_change,
             grants=grant_map,
+            access_grants=dict(access_grants or {}),
         )
 
     def _bind_todo_tools(self) -> None:
@@ -202,6 +225,67 @@ class ReplState:
         self._bind_todo_tools()
         if hasattr(self, "agent"):
             self.agent.todo_stack = self.todo_stack
+
+    def _on_access_change(self) -> None:
+        """Schedule memory persist for live directory-access grants."""
+        import asyncio
+
+        if self.session_id is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self.persist_access_grants())
+        self._todo_persist_tasks.add(task)
+        task.add_done_callback(self._todo_persist_tasks.discard)
+
+    async def persist_access_grants(self) -> None:
+        """Write live session directory grants to the active session row."""
+        if self.session_id is None:
+            return
+        payload = {str(path): mode.name.lower() for path, mode in self.session_state.access_grants.items()}
+        _ = await self.memory.update_session_access_grants(self.session_id, payload)
+
+    async def load_access_grants(self) -> None:
+        """Load durable session directory grants into the live map (replace)."""
+        self.session_state.access_grants.clear()
+        if self.session_id is None:
+            return
+        raw = await self.memory.get_session_access_grants(self.session_id)
+        self.session_state.access_grants.update(_parsed_access_grants(raw))
+
+    def directory_access_confirm_hook(
+        self,
+        path: Path,
+        mode: AccessMode,
+        reason: str,
+        timeout_seconds: float,
+    ) -> AccessDecision | str | None:
+        """Directory-access confirm: YOLO/``--yes`` auto-approves, else ask."""
+        from plyngent.cli.limits import prompt_directory_access_confirm
+        from plyngent.tools.access import AccessDecision as Decision
+
+        if self.effective_yolo() != "off":
+            return Decision(mode, persist=False)
+        return prompt_directory_access_confirm(path, mode, reason, timeout_seconds)
+
+    def _install_config_access(self) -> None:
+        """Install ``[agent].allow_paths`` static grants on the policy bag."""
+        import click
+
+        from plyngent.tools.access import set_config_access
+
+        _applied, skipped = set_config_access(
+            self.config.agent_config.allow_paths,
+            instance=self.instance_state,
+        )
+        if skipped:
+            click.secho(
+                f"warning: ignored allow_paths entries (missing path or bad mode): {', '.join(skipped)}",
+                fg="yellow",
+                err=True,
+            )
 
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
@@ -645,6 +729,7 @@ class ReplState:
             self.agent = self._make_agent()
         await self.agent.load_history()
         await self.load_todo_stack()
+        await self.load_access_grants()
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
         """Resume most recently updated session for this workspace, or create one."""
@@ -660,6 +745,7 @@ class ReplState:
             self.agent = self._make_agent()
         await self.agent.load_history()
         await self.load_todo_stack()
+        await self.load_access_grants()
         _ = await self.memory.touch_session(latest.sid)
         return "resume"
 
