@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.file.tree import VCS_DIR_NAMES
-from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, get_workspace_root, resolve_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,7 +57,7 @@ def _collect_glob(
 def _resolve_glob_base(path: str) -> tuple[Path, Path] | str:
     try:
         root = get_workspace_root()
-        base = resolve_path(path)
+        base = resolve_path(path, required=AccessMode.READ)
     except WorkspaceError as exc:
         return f"error: {exc}"
     if not base.is_dir():

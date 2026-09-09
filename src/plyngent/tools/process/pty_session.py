@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from plyngent.tools.process.pty_backend import PtyHandle, pty_available, spawn_pty
 from plyngent.tools.process.pty_terminal import sanitize_pty_output_for_tool
-from plyngent.tools.workspace import WorkspaceError, check_command_allowed, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, check_command_allowed, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -122,7 +122,7 @@ class PtyManager:
             msg = "PTY is not available on this platform (Windows needs pywinpty)"
             raise WorkspaceError(msg)
         check_command_allowed(command)
-        workdir = resolve_path(cwd)
+        workdir = resolve_path(cwd, required=AccessMode.EXEC)
         if not workdir.is_dir():
             msg = f"cwd is not a directory: {cwd}"
             raise WorkspaceError(msg)

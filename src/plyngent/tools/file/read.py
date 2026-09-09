@@ -5,7 +5,7 @@ from typing import cast
 from plyngent.agent import ToolTag, mark_lineno_read, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.tools.truncate_token import TruncateToken, truncate_with_token, truncation_marker
-from plyngent.tools.workspace import resolve_path
+from plyngent.tools.workspace import AccessMode, resolve_path
 
 _LINENO_WIDTH = 6
 
@@ -41,7 +41,7 @@ def read_raw_text(path: str) -> tuple[str | None, str]:
     always refer to the raw file text (never the ``L{begin}-{end}`` header).
     Missing paths and directories are distinguished for the caller.
     """
-    target = resolve_path(path)
+    target = resolve_path(path, required=AccessMode.READ)
     if not target.exists():
         return None, f"error: file not found: {path}"
     if not target.is_file():
@@ -72,7 +72,7 @@ async def read_file(
     so ``get_truncated`` can continue reading the rest without a new request.
     Pass ``max_chars < 1`` to read unbounded.
     """
-    target = resolve_path(path)
+    target = resolve_path(path, required=AccessMode.READ)
     text, err = read_raw_text(path)
     if err:
         return err

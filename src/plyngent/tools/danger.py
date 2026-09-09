@@ -4,7 +4,7 @@ import json
 import shlex
 from typing import TYPE_CHECKING, cast
 
-from plyngent.tools.workspace import WorkspaceError, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -140,7 +140,7 @@ def _write_file_reason(args: Mapping[str, object]) -> str | None:
     if not isinstance(path, str) or not path:
         return None
     try:
-        target = resolve_path(path)
+        target = resolve_path(path, required=AccessMode.WRITE)
     except WorkspaceError:
         # Path policy will fail later; no soft-confirm without a resolved target.
         return None
@@ -160,7 +160,7 @@ def _copy_path_reason(args: Mapping[str, object]) -> str | None:
     if not isinstance(dst, str) or not dst:
         return f"copy {src!r} → {dst!r} (overwrite)"
     try:
-        target = resolve_path(dst)
+        target = resolve_path(dst, required=AccessMode.WRITE)
     except WorkspaceError:
         return None
     if target.exists():

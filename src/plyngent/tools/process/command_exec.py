@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from plyngent.tools.workspace import (
+    AccessMode,
     WorkspaceError,
     check_command_allowed,
     get_workspace_root,
@@ -61,7 +62,7 @@ def format_command_result(
 
 def resolve_workdir(cwd: str) -> tuple["Path", str]:
     """Return (absolute workdir, display path relative to workspace when possible)."""
-    workdir = resolve_path(cwd)
+    workdir = resolve_path(cwd, required=AccessMode.EXEC)
     if not workdir.is_dir():
         msg = f"not a directory: {cwd}"
         raise WorkspaceError(msg)

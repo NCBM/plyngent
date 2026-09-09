@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.file.tree import VCS_DIR_NAMES
-from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, get_workspace_root, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -65,7 +65,7 @@ def _iter_files(base: Path, *, skip_hidden_dirs: bool) -> list[Path]:
 
 def _resolve_files(path: str, *, skip_hidden_dirs: bool) -> list[Path] | str:
     try:
-        base = resolve_path(path)
+        base = resolve_path(path, required=AccessMode.READ)
     except WorkspaceError as exc:
         return f"error: {exc}"
     if not base.exists():

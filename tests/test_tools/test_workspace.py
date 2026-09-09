@@ -3,13 +3,18 @@ from __future__ import annotations
 import pytest
 
 from plyngent.tools import (
+    AccessMode,
     WorkspaceError,
+    active_workspace_policy,
     check_command_allowed,
     get_workspace_root,
+    mode_covers,
+    parse_access_mode,
     resolve_path,
     set_command_denylist,
     set_path_denylist,
 )
+from plyngent.tools.context import SessionState, bind_session
 
 
 def test_resolve_relative_and_absolute(workspace: object) -> None:
@@ -25,6 +30,89 @@ def test_escape_rejected(workspace: object) -> None:
     del workspace
     with pytest.raises(WorkspaceError, match="escapes"):
         _ = resolve_path("../outside")
+
+
+def test_escape_error_hints_request_tool(workspace: object) -> None:
+    del workspace
+    with pytest.raises(WorkspaceError, match="request_directory_access"):
+        _ = resolve_path("../outside")
+
+
+def test_access_mode_parse_and_covers() -> None:
+    assert parse_access_mode(" Read ") is AccessMode.READ
+    assert parse_access_mode("EXEC") is AccessMode.EXEC
+    assert parse_access_mode("bogus") is None
+    assert mode_covers(AccessMode.EXEC, AccessMode.WRITE)
+    assert mode_covers(AccessMode.WRITE, AccessMode.WRITE)
+    assert not mode_covers(AccessMode.READ, AccessMode.WRITE)
+
+
+def test_config_grant_modes(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:
+    del workspace
+    outside = tmp_path_factory.mktemp("granted")
+    target = outside / "data.txt"
+    _ = target.write_text("x", encoding="utf-8")
+    policy = active_workspace_policy()
+    policy.config_allow[outside] = AccessMode.READ
+    try:
+        assert resolve_path(str(target), required=AccessMode.READ) == target
+        with pytest.raises(WorkspaceError, match="escapes"):
+            _ = resolve_path(str(target), required=AccessMode.WRITE)
+        policy.config_allow[outside] = AccessMode.WRITE
+        assert resolve_path(str(target), required=AccessMode.WRITE) == target
+        with pytest.raises(WorkspaceError, match="escapes"):
+            _ = resolve_path(str(target), required=AccessMode.EXEC)
+    finally:
+        policy.config_allow.clear()
+
+
+def test_session_grant_covers_subtree(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:
+    del workspace
+    outside = tmp_path_factory.mktemp("session")
+    nested = outside / "a" / "b"
+    nested.mkdir(parents=True)
+    with bind_session(SessionState(access_grants={outside: AccessMode.EXEC})):
+        assert resolve_path(str(nested), required=AccessMode.EXEC) == nested
+    with pytest.raises(WorkspaceError, match="escapes"):
+        _ = resolve_path(str(nested), required=AccessMode.READ)
+
+
+def test_file_grant_is_exact_path(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:
+    del workspace
+    outside = tmp_path_factory.mktemp("file-grant")
+    granted = outside / "one.txt"
+    sibling = outside / "two.txt"
+    _ = granted.write_text("1", encoding="utf-8")
+    _ = sibling.write_text("2", encoding="utf-8")
+    policy = active_workspace_policy()
+    policy.config_allow[granted] = AccessMode.READ
+    try:
+        assert resolve_path(str(granted), required=AccessMode.READ) == granted
+        with pytest.raises(WorkspaceError, match="escapes"):
+            _ = resolve_path(str(sibling), required=AccessMode.READ)
+        # A file grant does not cover its parent directory.
+        with pytest.raises(WorkspaceError, match="escapes"):
+            _ = resolve_path(str(outside), required=AccessMode.READ)
+    finally:
+        policy.config_allow.clear()
+
+
+def test_denylist_wins_over_grant(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:
+    del workspace
+    outside = tmp_path_factory.mktemp("denied")
+    secret = outside / "secret"
+    secret.mkdir()
+    key = secret / "key"
+    _ = key.write_text("k", encoding="utf-8")
+    policy = active_workspace_policy()
+    policy.config_allow[outside] = AccessMode.WRITE
+    set_path_denylist(["/secret/"])
+    try:
+        with pytest.raises(WorkspaceError, match="matched '/secret/'"):
+            _ = resolve_path(str(key), required=AccessMode.READ)
+    finally:
+        set_path_denylist(None)
+        policy.config_allow.clear()
 
 
 def test_path_denylist(workspace: object) -> None:

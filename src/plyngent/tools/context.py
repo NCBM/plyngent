@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
-    from plyngent.tools.workspace import WorkspacePolicy
+    from plyngent.tools.workspace import AccessMode, WorkspacePolicy
 
 
 def _default_instance_data() -> PersistentDataView[Any]:
@@ -78,6 +78,9 @@ class SessionState:
     # Durable copy lives under data["grants"] (see plyngent.tools.grants).
     grants: dict[str, bool] = field(default_factory=dict)
     extras: dict[str, Any] = field(default_factory=dict)
+    # Directory-access grants for this session (resolved path → mode). Config /
+    # process-scoped grants live on WorkspacePolicy; see plyngent.tools.access.
+    access_grants: dict[Path, AccessMode] = field(default_factory=dict)
 
     def has_grant(self, tool_name: str) -> bool:
         return bool(self.grants.get(tool_name))

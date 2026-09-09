@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools.workspace import WorkspaceError, get_path_denylist, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, get_path_denylist, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -270,7 +270,7 @@ async def tree(
         return "error: max_entries must be >= 1"
 
     try:
-        origin = resolve_path(path)
+        origin = resolve_path(path, required=AccessMode.READ)
     except WorkspaceError as exc:
         return f"error: {exc}"
     if not origin.is_dir():

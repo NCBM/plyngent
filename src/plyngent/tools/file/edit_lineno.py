@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, lineno_read_lines, lineno_read_mtime, tool
-from plyngent.tools.workspace import resolve_path
+from plyngent.tools.workspace import AccessMode, resolve_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -114,7 +114,7 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
 
     ``new_content`` may be multi-line. Use an empty string to delete the range.
     """
-    target = resolve_path(path)
+    target = resolve_path(path, required=AccessMode.WRITE)
     if not target.is_file():
         return f"error: not a file: {path}"
 

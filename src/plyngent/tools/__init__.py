@@ -66,6 +66,7 @@ from .workspace import (
     DEFAULT_COMMAND_DENYLIST as DEFAULT_COMMAND_DENYLIST,
 )
 from .workspace import DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS as DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
+from .workspace import AccessMode as AccessMode
 from .workspace import WorkspaceError as WorkspaceError
 from .workspace import WorkspacePolicy as WorkspacePolicy
 from .workspace import active_workspace_policy as active_workspace_policy
@@ -80,6 +81,8 @@ from .workspace import get_policy_confirm_timeout as get_policy_confirm_timeout
 from .workspace import get_workspace_root as get_workspace_root
 from .workspace import grant_policy_command as grant_policy_command
 from .workspace import list_workspace_allowlist as list_workspace_allowlist
+from .workspace import mode_covers as mode_covers
+from .workspace import parse_access_mode as parse_access_mode
 from .workspace import pop_owned_temporary_workspaces as pop_owned_temporary_workspaces
 from .workspace import remove_workspace_allowlist as remove_workspace_allowlist
 from .workspace import resolve_path as resolve_path

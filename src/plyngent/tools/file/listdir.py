@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools.workspace import resolve_path
+from plyngent.tools.workspace import AccessMode, resolve_path
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.READ_ONLY)
 async def listdir(path: str = ".") -> str:
     """List entries in a directory under the workspace (name and type)."""
-    target = resolve_path(path)
+    target = resolve_path(path, required=AccessMode.READ)
     if not target.is_dir():
         return f"error: not a directory: {path}"
     lines: list[str] = []

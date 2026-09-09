@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
-    from plyngent.tools.context import InstanceState
+    from plyngent.tools.context import InstanceState, SessionState
 
 DEFAULT_COMMAND_DENYLIST: frozenset[str] = frozenset(
     {
@@ -39,6 +40,36 @@ MAX_TEMPORARY_WORKSPACES = 16
 # Timed human override for command denylist (independent of YOLO soft-confirm).
 DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS = 30.0
 
+
+class AccessMode(IntEnum):
+    """Ordered access level for path grants outside the workspace root.
+
+    A grant satisfies a requirement when its value is ``>=`` the requirement
+    (``read`` < ``write`` < ``exec``); ``exec`` also implies file writes.
+    """
+
+    READ = 1
+    WRITE = 2
+    EXEC = 3
+
+
+_ACCESS_MODE_NAMES: dict[str, AccessMode] = {
+    "read": AccessMode.READ,
+    "write": AccessMode.WRITE,
+    "exec": AccessMode.EXEC,
+}
+
+
+def parse_access_mode(value: str) -> AccessMode | None:
+    """Parse a case-insensitive mode token (``read`` / ``write`` / ``exec``)."""
+    return _ACCESS_MODE_NAMES.get(value.strip().lower())
+
+
+def mode_covers(granted: AccessMode, required: AccessMode) -> bool:
+    """Whether a grant at *granted* satisfies a tool that needs *required*."""
+    return granted >= required
+
+
 # Hook: (basename, argv, timeout_seconds) -> True allow for this session basename.
 type PolicyConfirmHook = Callable[[str, Sequence[str], float], bool]
 
@@ -63,12 +94,22 @@ class WorkspacePolicy:
     policy_allowed_commands: set[str] = field(default_factory=set)
     policy_confirm_hook: PolicyConfirmHook | None = None
     policy_confirm_timeout_seconds: float = DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
+    # Static TOML pre-allow (resolved path → mode); never prompts.
+    config_allow: dict[Path, AccessMode] = field(default_factory=dict)
+    # Process-scoped YOLO / --yes grants (resolved path → mode); never persisted.
+    yolo_allow: dict[Path, AccessMode] = field(default_factory=dict)
 
 
 def _bound_instance() -> InstanceState | None:
     from plyngent.tools.context import get_instance
 
     return get_instance()
+
+
+def _bound_session() -> SessionState | None:
+    from plyngent.tools.context import get_session
+
+    return get_session()
 
 
 def require_bound_instance() -> InstanceState:
@@ -243,11 +284,36 @@ def _under_any_root(resolved: Path, instance: InstanceState, policy: WorkspacePo
     return False
 
 
-def resolve_path(path: str | Path) -> Path:
-    """Resolve ``path`` under the workspace root or an allowlisted temp root.
+def _grants_cover(grants: Mapping[Path, AccessMode], resolved: Path, required: AccessMode) -> bool:
+    """Whether any granted root covers *resolved* at *required* mode.
+
+    A grant path covers itself and its subtree; a file grant therefore only
+    matches that exact file (a file has no children).
+    """
+    for root, granted in grants.items():
+        if mode_covers(granted, required) and (resolved == root or resolved.is_relative_to(root)):
+            return True
+    return False
+
+
+def _path_grant_covers(resolved: Path, required: AccessMode) -> bool:
+    """Whether a config / session / process grant covers *resolved*."""
+    policy = active_workspace_policy()
+    if _grants_cover(policy.config_allow, resolved, required):
+        return True
+    if _grants_cover(policy.yolo_allow, resolved, required):
+        return True
+    session = _bound_session()
+    return session is not None and _grants_cover(session.access_grants, resolved, required)
+
+
+def resolve_path(path: str | Path, *, required: AccessMode = AccessMode.WRITE) -> Path:
+    """Resolve ``path`` under the workspace root, an allowlist root, or a grant.
 
     Relative paths resolve against the **primary** workspace root. Absolute
-    paths may also land under a temporary workspace allowlist entry.
+    paths may also land under a temporary workspace allowlist entry or a
+    directory-access grant; ``required`` is the access mode the caller needs
+    (default :attr:`AccessMode.WRITE`, the conservative choice).
     """
     instance = require_bound_instance()
     policy = instance.workspace
@@ -256,8 +322,11 @@ def resolve_path(path: str | Path) -> Path:
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.expanduser().resolve()
-    if not _under_any_root(resolved, instance, policy):
-        msg = f"path escapes workspace root ({root}): {path}"
+    if not _under_any_root(resolved, instance, policy) and not _path_grant_covers(resolved, required):
+        msg = (
+            f"path escapes workspace root ({root}): {path}; "
+            "call request_directory_access to request access to a directory outside the workspace"
+        )
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.
     resolved_str = str(resolved).replace("\\", "/")

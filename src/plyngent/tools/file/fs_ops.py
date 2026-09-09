@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from plyngent.agent import ToolTag, invalidate_lineno_read, tool
-from plyngent.tools.workspace import WorkspaceError, get_workspace_root, resolve_path
+from plyngent.tools.workspace import AccessMode, WorkspaceError, get_workspace_root, resolve_path
 
 
 def _kind(path: Path) -> str:
@@ -26,18 +26,28 @@ def _remove_existing(path: Path) -> None:
 
 def _resolve_pair(src: str, dst: str) -> tuple[Path, Path, Path] | str:
     try:
-        source = resolve_path(src)
-        dest = resolve_path(dst)
+        source = resolve_path(src, required=AccessMode.READ)
+        dest = resolve_path(dst, required=AccessMode.WRITE)
         root = get_workspace_root()
     except WorkspaceError as exc:
         return f"error: {exc}"
     return source, dest, root
 
 
-def _prepare_dest(source: Path, dest: Path, root: Path, *, overwrite: bool, dst_label: str) -> Path | str:
+def _display(path: Path, root: Path) -> str:
+    """Workspace-relative display path, falling back to absolute outside the root."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _prepare_dest(source: Path, dest: Path, *, overwrite: bool, dst_label: str) -> Path | str:
     """Resolve copy/move destination; return error string on conflict."""
     if source.is_file() and dest.is_dir():
-        dest = resolve_path(str((dest / source.name).relative_to(root)))
+        # ``dest`` may be outside the primary root (temp workspace / grant), so
+        # resolve the child directly instead of relativizing against the root.
+        dest = resolve_path(str(dest / source.name), required=AccessMode.WRITE)
     if dest.exists() or dest.is_symlink():
         if not overwrite:
             return f"error: destination exists: {dst_label} (set overwrite=true)"
@@ -56,7 +66,7 @@ def _copy_or_move_validated(
     overwrite: bool,
     action: str,
 ) -> str:
-    prepared = _prepare_dest(source, dest, root, overwrite=overwrite, dst_label=dst)
+    prepared = _prepare_dest(source, dest, overwrite=overwrite, dst_label=dst)
     if isinstance(prepared, str):
         return prepared
     dest = prepared
@@ -72,12 +82,12 @@ def _copy_or_move_validated(
             # new. copy2/copytree preserve the source mtime, so the freshness
             # check alone could miss the change — invalidate explicitly.
             invalidate_lineno_read(str(dest))
-            return f"copied {label} {src} -> {dest.relative_to(root)}"
+            return f"copied {label} {src} -> {_display(dest, root)}"
         moved = Path(shutil.move(str(source), str(dest))).resolve()
         # shutil.move preserves mtime too; drop read state for both paths.
         invalidate_lineno_read(str(source))
         invalidate_lineno_read(str(moved))
-        return f"moved {_kind(moved)} {src} -> {moved.relative_to(root)}"
+        return f"moved {_kind(moved)} {src} -> {_display(moved, root)}"
     except WorkspaceError as exc:
         return f"error: {exc}"
     except OSError as exc:
@@ -147,7 +157,7 @@ async def delete_path(path: str, *, recursive: bool = False) -> str:
     ``recursive=true`` (uses ``shutil.rmtree``). The workspace root cannot be deleted.
     """
     try:
-        target = resolve_path(path)
+        target = resolve_path(path, required=AccessMode.WRITE)
         root = get_workspace_root()
     except WorkspaceError as exc:
         return f"error: {exc}"

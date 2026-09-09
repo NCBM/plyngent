@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools.workspace import resolve_path
+from plyngent.tools.workspace import AccessMode, resolve_path
 
 
 def _count_non_overlapping(text: str, needle: str) -> int:
@@ -60,7 +60,7 @@ async def edit_replace(path: str, old_string: str, new_string: str, max_replaces
         return "error: old_string must not be empty"
     if max_replaces < 1:
         return "error: max_replaces must be >= 1"
-    target = resolve_path(path)
+    target = resolve_path(path, required=AccessMode.WRITE)
     if not target.is_file():
         return f"error: not a file: {path}"
     text = target.read_text(encoding="utf-8", errors="replace")
