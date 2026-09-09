@@ -381,6 +381,9 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
 
             set_directory_access_confirm_hook(None, instance=state_obj.instance_state)
             clear_process_access(instance=state_obj.instance_state)
+            from plyngent.cli.limits import reset_auto_continue
+
+            reset_auto_continue()
             if state_obj.mcp_manager is not None:
                 await state_obj.mcp_manager.aclose()
             await state_obj.instance_state.shutdown()

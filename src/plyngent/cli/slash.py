@@ -1018,11 +1018,17 @@ def btw_cmd(
         else:
             await run_cancellable(side)
 
+    from plyngent.cli.limits import reset_auto_continue_turn
+
+    # Aside is its own exchange: a ``yyy`` from the main turn must not leak in.
+    reset_auto_continue_turn()
     try:
         _await(_run())
     except Exception as exc:  # noqa: BLE001 — surface side-turn failures
         click.secho(f"error: btw failed: {exc}", fg="red")
         return
+    finally:
+        reset_auto_continue_turn()
     click.secho("(btw done — main session unchanged)", fg="bright_black")
 
 

@@ -10,6 +10,7 @@ import click
 
 from plyngent.cli.display import render_events
 from plyngent.cli.interrupt import allow_task_cancel, set_sigint_reinstall
+from plyngent.cli.limits import reset_auto_continue_turn
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Coroutine
@@ -184,7 +185,23 @@ async def run_turn_with_retries(
     further attempts use ``agent.retry`` so the user message is not duplicated.
 
     Ctrl+C cancels the in-flight task; user message stays in DB for ``/retry``.
+
+    The ``yyy`` limit auto-continue is turn-scoped: cleared before and after the
+    turn, so a retry of the same turn keeps it but the next user turn prompts.
     """
+    reset_auto_continue_turn()
+    try:
+        return await _run_turn_with_retries(agent, starter=starter, delays=delays)
+    finally:
+        reset_auto_continue_turn()
+
+
+async def _run_turn_with_retries(
+    agent: ChatAgent,
+    *,
+    starter: Callable[[], AsyncIterator[AgentEvent]],
+    delays: tuple[float, ...],
+) -> bool:
     max_retries = len(delays)
     attempt = 0
     current: Callable[[], AsyncIterator[AgentEvent]] = starter

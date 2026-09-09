@@ -108,6 +108,12 @@ class ReplState:
         set_verbose_tool_results(self.verbose)
         set_markdown_enabled(self.markdown_enabled)
 
+    def _reset_limit_auto_continue(self) -> None:
+        """Drop a ``yyy`` skip on session change (it is turn-scoped)."""
+        from plyngent.cli.limits import reset_auto_continue_turn
+
+        reset_auto_continue_turn()
+
     def _workspace_key(self) -> str:
         key = normalize_workspace(self.workspace)
         if key is None:
@@ -658,6 +664,7 @@ class ReplState:
         return False
 
     async def new_session(self, name: str = "chat") -> None:
+        self._reset_limit_auto_continue()
         session = await self.memory.create_session(
             name=name,
             workspace=self.workspace,
@@ -696,6 +703,7 @@ class ReplState:
         """Load a session; on workspace mismatch, prompt keep / rebind / abort."""
         from plyngent.cli.limits import prompt_workspace_mismatch
 
+        self._reset_limit_auto_continue()
         row = await self.memory.get_session(session_id)
         if row is None:
             msg = f"session not found: {session_id}"
@@ -733,6 +741,7 @@ class ReplState:
 
     async def resume_latest_or_new(self, name: str = "chat") -> str:
         """Resume most recently updated session for this workspace, or create one."""
+        self._reset_limit_auto_continue()
         latest = await self.memory.get_latest_session(workspace=self.workspace)
         if latest is None:
             await self.new_session(name=name)

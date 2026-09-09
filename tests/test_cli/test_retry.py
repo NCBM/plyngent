@@ -30,6 +30,8 @@ from plyngent.memory import MemoryStore
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from plyngent.agent import AgentEvent
+
 
 def test_default_retry_delays_schedule() -> None:
     assert DEFAULT_MAX_AUTO_RETRIES == 10
@@ -294,6 +296,43 @@ async def test_second_ctrl_c_during_retry_announce_stays_benign(
     monkeypatch.setattr("plyngent.cli.retry.click.secho", raiser)
 
     assert await _wait_for_retry(1, 3, 0.01) is True
+
+
+async def test_turn_boundaries_reset_auto_continue() -> None:
+    from plyngent.cli.limits import (
+        auto_continue_enabled,
+        prompt_continue_limit,
+        reset_auto_continue,
+    )
+    from plyngent.prompting import temporary_backend
+    from tests.test_prompting import ScriptedBackend
+
+    reset_auto_continue()
+    try:
+        with temporary_backend(ScriptedBackend(["yyy"])):
+            assert prompt_continue_limit("limit") is True
+        assert auto_continue_enabled() is True
+
+        store = await MemoryStore.open(DatabaseConfig())
+        try:
+            session = await store.create_session(name="t")
+            client = FlakyClient(fail_times=0)
+            agent = ChatAgent(client, model="m", memory=store, session_id=session.sid)
+            seen: list[bool] = []
+
+            async def starter() -> AsyncIterator[AgentEvent]:
+                seen.append(auto_continue_enabled())
+                async for event in agent.run("hi"):
+                    yield event
+
+            ok = await run_turn_with_retries(agent, starter=starter, delays=())
+            assert ok is True
+            assert seen == [False]  # cleared before the turn starts
+            assert auto_continue_enabled() is False  # cleared after the turn ends
+        finally:
+            await store.close()
+    finally:
+        reset_auto_continue()
 
 
 async def test_manual_retry_after_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
