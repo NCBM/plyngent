@@ -241,6 +241,31 @@ class MemoryStore:
             await session.refresh(row)
             return row
 
+    async def get_session_access_grants(self, sid: int) -> dict[str, str]:
+        """Return stored directory-access grants (resolved path → mode)."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            raw = row.access_grants
+            if raw is None:
+                return {}
+            return {str(k): str(v) for k, v in cast("dict[object, object]", raw).items()}
+
+    async def update_session_access_grants(self, sid: int, grants: Mapping[str, str]) -> Session:
+        """Persist directory-access grants for a session (empty clears)."""
+        async with self._session_factory() as session:
+            row = await session.get(Session, sid)
+            if row is None:
+                msg = f"session not found: {sid}"
+                raise ValueError(msg)
+            row.access_grants = dict(grants)
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
     async def update_session_context_usage(
         self,
         sid: int,
@@ -400,18 +425,30 @@ def _migrate_session_v3(sync_conn: object, columns: set[str]) -> None:
         _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN reminder_last_band INTEGER"))
 
 
+def _migrate_session_v4(sync_conn: object, columns: set[str]) -> None:
+    """Post-v0.5.0: add ``access_grants`` JSON for session directory-access grants."""
+    from sqlalchemy.engine import Connection
+
+    if not isinstance(sync_conn, Connection):
+        return
+    if "access_grants" not in columns:
+        _ = sync_conn.execute(text("ALTER TABLE session ADD COLUMN access_grants JSON"))
+
+
 # Latest schema version this build knows. Bump (and append a step to
 # _SCHEMA_MIGRATIONS) when a new release adds or changes columns.
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 # Ordered (version, step) pairs. Each step receives the current ``session``
 # column set (read once) and adds only its own missing columns, so it is
 # idempotent for DBs that were upgraded incrementally without a version stamp.
-# Version 1 shipped in v0.1.0, version 2 in v0.1.2, version 3 post-v0.2.0.
+# Version 1 shipped in v0.1.0, version 2 in v0.1.2, version 3 post-v0.2.0,
+# version 4 post-v0.5.0.
 _SCHEMA_MIGRATIONS: tuple[tuple[int, MigrationStep], ...] = (
     (1, _migrate_session_v1),
     (2, _migrate_session_v2),
     (3, _migrate_session_v3),
+    (4, _migrate_session_v4),
 )
 
 

@@ -34,6 +34,8 @@ class Session(PlyngentBase):
     model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # Todo/task stack JSON for multi-step sub-tasks (optional).
     todo_stack: Mapped[dict[str, object] | None] = mapped_column(JSON(), nullable=True)
+    # Directory-access grants approved for this session (resolved path → mode).
+    access_grants: Mapped[dict[str, str] | None] = mapped_column(JSON(), nullable=True)
     # Last model request context size (API prompt_tokens preferred).
     last_prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
     peak_prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)

@@ -34,6 +34,21 @@ async def test_create_session_uses_default_user(store: MemoryStore) -> None:
     assert session.uid == user.uid
 
 
+async def test_session_access_grants_roundtrip(store: MemoryStore) -> None:
+    session = await store.create_session(name="grants")
+    assert await store.get_session_access_grants(session.sid) == {}
+    _ = await store.update_session_access_grants(
+        session.sid,
+        {"/data/datasets": "read", "/tmp/build": "exec"},
+    )
+    assert await store.get_session_access_grants(session.sid) == {
+        "/data/datasets": "read",
+        "/tmp/build": "exec",
+    }
+    _ = await store.update_session_access_grants(session.sid, {})
+    assert await store.get_session_access_grants(session.sid) == {}
+
+
 async def test_session_context_usage_roundtrip(store: MemoryStore) -> None:
     session = await store.create_session(name="usage")
     row = await store.update_session_context_usage(
@@ -293,9 +308,9 @@ async def test_schema_migrations_stamp_version(tmp_path: object) -> None:
     db_path = tmp_path / "fresh.db"
     store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
     await store.close()
-    assert await _user_version(db_path) == 3
+    assert await _user_version(db_path) == 4
     columns = await _session_columns(db_path)
-    assert {"workspace", "provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+    assert {"workspace", "provider_name", "model", "todo_stack", "access_grants", "last_prompt_tokens"} <= columns
 
 
 async def test_legacy_db_migrated_to_latest(tmp_path: object) -> None:
@@ -311,9 +326,9 @@ async def test_legacy_db_migrated_to_latest(tmp_path: object) -> None:
     session = await store.create_session(name="migrated")
     await store.close()
 
-    assert await _user_version(db_path) == 3
+    assert await _user_version(db_path) == 4
     columns = await _session_columns(db_path)
-    assert {"workspace", "provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+    assert {"workspace", "provider_name", "model", "todo_stack", "access_grants", "last_prompt_tokens"} <= columns
     assert session.sid is not None
 
 
@@ -335,10 +350,10 @@ async def test_partially_migrated_legacy_db_noops_remaining_steps(tmp_path: obje
     session = await store.create_session(name="partial", workspace=tmp_path)
     await store.close()
 
-    assert await _user_version(db_path) == 3
+    assert await _user_version(db_path) == 4
     columns = await _session_columns(db_path)
     assert "workspace" in columns
-    assert {"provider_name", "model", "todo_stack", "last_prompt_tokens"} <= columns
+    assert {"provider_name", "model", "todo_stack", "access_grants", "last_prompt_tokens"} <= columns
     assert session.workspace is not None
 
 
@@ -350,8 +365,8 @@ async def test_stamped_db_skips_migrations_on_reopen(tmp_path: object) -> None:
     db_path = tmp_path / "stamped.db"
     store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
     await store.close()
-    assert await _user_version(db_path) == 3
+    assert await _user_version(db_path) == 4
 
     store = await MemoryStore.open(DatabaseConfig(url=str(db_path)))
     await store.close()
-    assert await _user_version(db_path) == 3
+    assert await _user_version(db_path) == 4
