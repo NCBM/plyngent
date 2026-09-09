@@ -6,6 +6,7 @@ import inspect
 
 from plyngent.agent import ToolRegistry, ToolTag, tool
 from plyngent.tools import default_tool_definitions, register_builtin_tools
+from plyngent.tools.access import ACCESS_TOOLS
 from plyngent.tools.catalog import ToolCatalog, ToolSource, catalog_scope, get_catalog, registration_source
 from plyngent.tools.chat import CHAT_TOOLS
 from plyngent.tools.file import FILE_TOOLS
@@ -18,7 +19,7 @@ from plyngent.tools.vcs import VCS_TOOLS
 def test_default_tool_names_match_group_lists() -> None:
     register_builtin_tools()
     selected = default_tool_definitions(surface="local")
-    groups = [*FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS, *NET_TOOLS]
+    groups = [*ACCESS_TOOLS, *FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS, *NET_TOOLS]
     assert sorted(t.name for t in selected) == sorted(t.name for t in groups)
     assert len(selected) == len(groups)
 

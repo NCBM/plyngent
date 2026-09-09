@@ -1,3 +1,14 @@
+from .access import ACCESS_TOOLS as ACCESS_TOOLS
+from .access import MAX_ACCESS_GRANTS as MAX_ACCESS_GRANTS
+from .access import AccessDecision as AccessDecision
+from .access import active_grant_count as active_grant_count
+from .access import clear_process_access as clear_process_access
+from .access import clear_session_access as clear_session_access
+from .access import get_directory_access_confirm_hook as get_directory_access_confirm_hook
+from .access import grant_process_access as grant_process_access
+from .access import grant_session_access as grant_session_access
+from .access import request_directory_access as request_directory_access
+from .access import set_directory_access_confirm_hook as set_directory_access_confirm_hook
 from .catalog import ToolCatalog as ToolCatalog
 from .catalog import ToolSource as ToolSource
 from .catalog import catalog_scope as catalog_scope
@@ -75,11 +86,13 @@ from .workspace import check_command_allowed as check_command_allowed
 from .workspace import clear_policy_allowed_commands as clear_policy_allowed_commands
 from .workspace import clear_workspace_allowlist as clear_workspace_allowlist
 from .workspace import clear_workspace_root as clear_workspace_root
+from .workspace import denylist_match as denylist_match
 from .workspace import get_command_denylist as get_command_denylist
 from .workspace import get_path_denylist as get_path_denylist
 from .workspace import get_policy_confirm_timeout as get_policy_confirm_timeout
 from .workspace import get_workspace_root as get_workspace_root
 from .workspace import grant_policy_command as grant_policy_command
+from .workspace import granted_access_mode as granted_access_mode
 from .workspace import list_workspace_allowlist as list_workspace_allowlist
 from .workspace import mode_covers as mode_covers
 from .workspace import parse_access_mode as parse_access_mode
@@ -91,3 +104,4 @@ from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
 from .workspace import set_workspace_root as set_workspace_root
+from .workspace import within_workspace_roots as within_workspace_roots

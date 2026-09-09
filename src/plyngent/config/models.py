@@ -23,6 +23,8 @@ DEFAULT_TOOL_DIRECTIVES = """\
 ### Workspace
 - Explore with `tree`/`listdir`/`glob_paths`/`grep_files`/`read_file` when unsure.
 - Stay under the workspace (or a path from `new_temporary_workspace`). Respect path denylists.
+- Need a path outside the workspace? Call `request_directory_access` \
+(human approves; denylists apply) instead of retrying an escaped path.
 
 ### Files
 - Prefer file tools over shell. `edit_replace` fails usually means a bad match — \

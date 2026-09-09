@@ -284,27 +284,46 @@ def _under_any_root(resolved: Path, instance: InstanceState, policy: WorkspacePo
     return False
 
 
-def _grants_cover(grants: Mapping[Path, AccessMode], resolved: Path, required: AccessMode) -> bool:
-    """Whether any granted root covers *resolved* at *required* mode.
-
-    A grant path covers itself and its subtree; a file grant therefore only
-    matches that exact file (a file has no children).
-    """
-    for root, granted in grants.items():
-        if mode_covers(granted, required) and (resolved == root or resolved.is_relative_to(root)):
-            return True
-    return False
+def granted_access_mode(resolved: Path) -> AccessMode | None:
+    """Highest config / session / process mode covering *resolved*, if any."""
+    policy = active_workspace_policy()
+    session = _bound_session()
+    buckets: list[Mapping[Path, AccessMode]] = [policy.config_allow, policy.yolo_allow]
+    if session is not None:
+        buckets.append(session.access_grants)
+    best: AccessMode | None = None
+    for grants in buckets:
+        for root, granted in grants.items():
+            if (resolved == root or resolved.is_relative_to(root)) and (best is None or granted > best):
+                best = granted
+    return best
 
 
 def _path_grant_covers(resolved: Path, required: AccessMode) -> bool:
     """Whether a config / session / process grant covers *resolved*."""
-    policy = active_workspace_policy()
-    if _grants_cover(policy.config_allow, resolved, required):
-        return True
-    if _grants_cover(policy.yolo_allow, resolved, required):
-        return True
-    session = _bound_session()
-    return session is not None and _grants_cover(session.access_grants, resolved, required)
+    granted = granted_access_mode(resolved)
+    return granted is not None and mode_covers(granted, required)
+
+
+def within_workspace_roots(resolved: Path) -> bool:
+    """Whether *resolved* is under the primary root(s) or a temp allowlist root."""
+    instance = require_bound_instance()
+    return _under_any_root(resolved, instance, instance.workspace)
+
+
+def denylist_match(resolved: Path, *, directory: bool = False) -> str | None:
+    """Return the path denylist pattern matching *resolved*, or ``None``.
+
+    *directory* also matches a trailing-separator pattern (``/secret/``) against
+    the directory path itself, not just its children.
+    """
+    resolved_str = str(resolved).replace("\\", "/")
+    if directory and not resolved_str.endswith("/"):
+        resolved_str += "/"
+    for pattern in active_workspace_policy().path_denylist:
+        if pattern and pattern.replace("\\", "/") in resolved_str:
+            return pattern
+    return None
 
 
 def resolve_path(path: str | Path, *, required: AccessMode = AccessMode.WRITE) -> Path:
@@ -329,11 +348,10 @@ def resolve_path(path: str | Path, *, required: AccessMode = AccessMode.WRITE) -
         )
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.
-    resolved_str = str(resolved).replace("\\", "/")
-    for pattern in policy.path_denylist:
-        if pattern and pattern.replace("\\", "/") in resolved_str:
-            msg = f"path denied by policy (matched {pattern!r}): {path}"
-            raise WorkspaceError(msg)
+    matched = denylist_match(resolved)
+    if matched is not None:
+        msg = f"path denied by policy (matched {matched!r}): {path}"
+        raise WorkspaceError(msg)
     return resolved
 
 
