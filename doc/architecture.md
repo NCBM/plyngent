@@ -27,8 +27,8 @@
     - agent: Kind-based tool loop, streaming, usage, compact; bridges:
       ``responses_bridge``/``responses_dispatch``, ``messages_bridge``/``messages_dispatch``;
       ``@tool`` / tags / registry. History stays chat-completions-shaped.
-    - tools: Workspace file/process/VCS/chat/todo/net tools; catalog; plugins;
-      instance/session context and views.
+    - tools: Workspace file/process/VCS/chat/todo/net tools + directory-access
+      grants (`access`); catalog; plugins; instance/session context and views.
     - prompting: Shared ask/choose/form for CLI and tools.
     - cli: Click entry, slash registry, REPL, one-shot chat.
     - web: Web service (Phase H; not implemented).

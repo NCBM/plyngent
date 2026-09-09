@@ -150,6 +150,8 @@ max_context_tokens = 200000
 # Fold MCP server initialize ``instructions`` (usage guidance) into the
 # system prompt when tools are on (default true; false ignores server text).
 # mcp_instructions = true
+# Static out-of-workspace pre-allow (path → read|write|exec); never prompts.
+# allow_paths = { "/data/datasets" = "read", "/tmp/build" = "exec" }
 
 # Optional plugins (entry-point names); default load none. See doc/plugins.md.
 # [plugins]
@@ -263,6 +265,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
 | `/todos` | Todo/task stack: list, push, pop, done, clear |
+| `/grants` | Directory-access grants: list, or `revoke <index\|all>` |
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |
 
@@ -272,15 +275,16 @@ User messages are saved immediately. On API error or Ctrl+C, partial assistant/t
 
 - **Workspace** = root for file/process/VCS tools (default cwd).
 - **Session** = SQLite chat bound to a workspace path.
+- Paths outside the workspace need a **directory-access grant**: the model calls `request_directory_access` (`read` / `write` / `exec`), the human approves at the requested level or another one (timed y/N, default deny; `--yes`/`/yolo` auto-approve as a process-only grant), and approval lasts for the session (`/grants` lists/revokes). Static pre-allow lives under `[agent].allow_paths`. The path denylist always wins, and grants gate path-resolving tools only — they are **not** a sandbox (`run_argv`/PTY reach the whole filesystem).
 - Resuming a session from another directory prompts: keep session workspace, rebind to current, or abort.
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `get_truncated` (resume any truncated result via its `truncate_token=...`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `request_directory_access` (out-of-workspace access grants), `get_truncated` (resume any truncated result via its `truncate_token=...`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
 
 Safety defaults:
 
-- Paths stay under the workspace; optional `path_denylist` substrings (`tree` also skips denylisted children by default).
+- Paths stay under the workspace unless granted (`request_directory_access` / `[agent].allow_paths`); optional `path_denylist` substrings always apply (`tree` also skips denylisted children by default).
 - Command basename denylist (e.g. dangerous shells/utilities).
 - Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.

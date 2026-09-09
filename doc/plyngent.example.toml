@@ -58,6 +58,11 @@ max_tool_result_chars = 32000
 parallel_tools = true
 confirm_destructive = true
 path_denylist = ["/secrets/", ".ssh/", ".gnupg/"]
+# Static out-of-workspace pre-allow (path → read|write|exec); never prompts.
+# The model can also request access at runtime via request_directory_access
+# (human approves; /grants lists or revokes). Denylist still applies, and
+# grants are a tool-policy gate, not a sandbox (commands reach the FS).
+# allow_paths = { "/data/datasets" = "read", "/tmp/build" = "exec" }
 # Soft context budget in estimated tokens (~4 chars/token when API usage missing).
 max_context_tokens = 200000
 # Fold connected MCP servers' initialize ``instructions`` (usage guidance)
