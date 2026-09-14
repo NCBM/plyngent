@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import pytest
 
-from plyngent.agent import ChatAgent
+from plyngent.agent import ChatAgent, ToolRegistry, tool
 from plyngent.cli.retry import (
     DEFAULT_MAX_AUTO_RETRIES,
     DEFAULT_RETRY_DELAYS_SECONDS,
@@ -17,6 +17,8 @@ from plyngent.cli.retry import (
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
+    AssistantFunctionTool,
+    AssistantFunctionToolCall,
     ChatCompletionChoice,
     ChatCompletionChunk,
     ChatCompletionResponse,
@@ -365,3 +367,120 @@ async def test_manual_retry_after_exhausted(monkeypatch: pytest.MonkeyPatch) -> 
     assert loaded[0].content == "hold-me"
     assert sum(1 for m in loaded if isinstance(m, UserChatMessage)) == 1
     await store.close()
+
+
+class StepClient:
+    """Scripted chat completions: each step is a response or a raised exception."""
+
+    steps: list[ChatCompletionResponse | Exception]
+    calls: int
+
+    def __init__(self, steps: list[ChatCompletionResponse | Exception]) -> None:
+        self.steps = list(steps)
+        self.calls = 0
+
+    @overload
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+    ) -> ChatCompletionResponse: ...
+
+    @overload
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: Literal[True]
+    ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+    async def chat_completions(
+        self, param: ChatCompletionsParam, *, stream: bool = False
+    ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+        del param
+        self.calls += 1
+        step = self.steps.pop(0) if self.steps else RuntimeError("no more scripted steps")
+        if isinstance(step, Exception):
+            raise step
+        if stream:
+            return _as_stream(step)
+        return step
+
+
+def _tool_call(name: str) -> AssistantChatMessage:
+    return AssistantChatMessage(
+        content="",
+        tool_calls=[
+            AssistantFunctionToolCall(
+                id="1",
+                function=AssistantFunctionTool(name=name, arguments="{}"),
+            )
+        ],
+    )
+
+
+def _capture_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record retry waits instead of sleeping; returns the collected delays."""
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> bool:
+        waits.append(seconds)
+        return True
+
+    monkeypatch.setattr("plyngent.cli.retry.sleep_cancellable", fake_sleep)
+    return waits
+
+
+async def test_retry_budget_resets_after_a_completed_round(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A round the model answered restarts the retry budget and its delays."""
+    waits = _capture_waits(monkeypatch)
+
+    @tool(register=False)
+    def ping() -> str:
+        return "pong"
+
+    client = StepClient(
+        [
+            RuntimeError("connection lost"),  # attempt 1: no round completed
+            _response(_tool_call("ping")),  # attempt 2, round 1: answered
+            RuntimeError("connection lost"),  # attempt 2, round 2: dropped again
+            _response(AssistantChatMessage(content="done")),  # attempt 3: completes
+        ]
+    )
+    agent = ChatAgent(client, model="m", tools=ToolRegistry([ping]), stream=False)
+
+    ok = await run_turn_with_retries(
+        agent,
+        starter=lambda: agent.run("hold-me"),
+        delays=(5.0, 10.0, 15.0),
+    )
+    out = capsys.readouterr().out
+    assert ok is True
+    assert waits == [5.0, 5.0]  # the delay schedule restarted from the first step
+    assert out.count("auto-retry 1/3") == 2
+    assert "auto-retry 2/3" not in out
+
+
+async def test_retry_budget_keeps_counting_without_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Consecutive failures with no completed round share one budget."""
+    waits = _capture_waits(monkeypatch)
+    client = StepClient(
+        [
+            RuntimeError("connection lost"),
+            RuntimeError("connection lost"),
+            _response(AssistantChatMessage(content="done")),
+        ]
+    )
+    agent = ChatAgent(client, model="m", stream=False)
+
+    ok = await run_turn_with_retries(
+        agent,
+        starter=lambda: agent.run("hold-me"),
+        delays=(5.0, 10.0, 15.0),
+    )
+    out = capsys.readouterr().out
+    assert ok is True
+    assert waits == [5.0, 10.0]
+    assert "auto-retry 1/3" in out
+    assert "auto-retry 2/3" in out

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import click
 
+from plyngent.agent import AssistantMessageEvent
 from plyngent.cli.display import render_events
 from plyngent.cli.interrupt import allow_task_cancel, set_sigint_reinstall
 from plyngent.cli.limits import reset_auto_continue_turn
@@ -186,6 +187,10 @@ async def run_turn_with_retries(
 
     Ctrl+C cancels the in-flight task; user message stays in DB for ``/retry``.
 
+    The retry budget counts *consecutive* failures: an attempt that completed a
+    model round proves the connection answered, so the next failure starts a
+    fresh budget (and the short first delay) again.
+
     The ``yyy`` limit auto-continue is turn-scoped: cleared before and after the
     turn, so a retry of the same turn keeps it but the next user turn prompts.
     """
@@ -196,7 +201,7 @@ async def run_turn_with_retries(
         reset_auto_continue_turn()
 
 
-async def _run_turn_with_retries(
+async def _run_turn_with_retries(  # noqa: C901 — attempt / cancel / error state machine
     agent: ChatAgent,
     *,
     starter: Callable[[], AsyncIterator[AgentEvent]],
@@ -204,10 +209,21 @@ async def _run_turn_with_retries(
 ) -> bool:
     max_retries = len(delays)
     attempt = 0
+    recovered = False
     current: Callable[[], AsyncIterator[AgentEvent]] = starter
+
+    async def note_completed_round(events: AsyncIterator[AgentEvent]) -> AsyncIterator[AgentEvent]:
+        """Yield *events*, recording that a full model round came back."""
+        nonlocal recovered
+        async for event in events:
+            if isinstance(event, AssistantMessageEvent):
+                recovered = True
+            yield event
+
     while True:
+        recovered = False
         try:
-            await run_cancellable(render_events(current()))
+            await run_cancellable(render_events(note_completed_round(current())))
         except asyncio.CancelledError:
             # Do not auto-retry cancelled turns — user intent was stop, not retry.
             _echo_cancel_lines("", "cancelled; user message kept — use /retry to try again", "")
@@ -219,6 +235,10 @@ async def _run_turn_with_retries(
             click.secho(f"error: {exc}", fg="red")
             if agent.pending_retry_text is not None:
                 current = agent.retry
+            if recovered:
+                # The connection answered a round before failing again, so this
+                # is a fresh outage: restart the budget and the delay schedule.
+                attempt = 0
             if attempt >= max_retries:
                 if agent.pending_retry_text is not None:
                     click.secho(
