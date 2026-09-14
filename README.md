@@ -276,7 +276,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |
 
-User messages are saved immediately. On API error or Ctrl+C, partial assistant/tool output is discarded but the user message stays so `/retry` works after resume. Interactive auto-retry uses 10s / 20s / 30s delays.
+User messages are saved immediately. On API error or Ctrl+C, partial assistant/tool output is discarded but the user message stays so `/retry` works after resume. Interactive auto-retry waits 5s, 10s, 15s, 20s, then +10s each step (10 attempts); an attempt that gets a full model round back **resets that budget**, so a connection that recovers and drops again starts over from 5s.
 
 ## Workspace model
 
