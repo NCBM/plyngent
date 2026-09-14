@@ -225,6 +225,8 @@ Sessions resume the **most recently updated** session for the current workspace 
 
 When a tool-loop or PTY limit is hit, the prompt accepts `y` (continue once), `n` (stop), or `yyy` — **stop asking for the rest of this turn** (the next user turn prompts again). `--auto-continue` / `[agent] auto_continue_limits = true` skip the prompt for every turn.
 
+Tool calls show progress as they run: known tools (`read_file`, `run_argv`, `grep_files`, …) print a `* Read 'src/x.py' ` prefix the moment the call starts, and the outcome (`L1-80 (done)`, `(exit code 0)`) is appended once the result lands. Piped output and `--verbose` print the finished line as before.
+
 ### One-shot (scripts / CI)
 
 ```bash
