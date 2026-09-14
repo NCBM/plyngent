@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ReasoningDeltaEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
+from plyngent.agent import ErrorEvent, ReasoningDeltaEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from plyngent.cli.display import (
     get_markdown_enabled,
     markdown_render_available,
@@ -558,3 +558,94 @@ async def test_pretty_wait_error(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(_aiter([_pretty_call("wait", '{"duration": -1}'), _result(content)]))
     out = capsys.readouterr().out
     assert "* Wait (error: duration must not be negative)" in out
+
+
+async def test_pretty_prefix_shown_while_call_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An interactive terminal shows the prefix before the tool has a result."""
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+    while_running: list[str] = []
+
+    async def events() -> AsyncIterator[AgentEvent]:
+        yield _read_call('{"path": "a.txt"}')
+        while_running.append(capsys.readouterr().out)  # tool still running here
+        yield _result("L1-4\none\ntwo\n")
+
+    await render_events(events())
+    assert while_running == ["\n* Read 'a.txt' "]
+    assert capsys.readouterr().out == "L1-4 (done)\n\n"
+
+
+async def test_pretty_prefix_absent_when_not_a_tty(capsys: pytest.CaptureFixture[str]) -> None:
+    """Non-interactive output stays one whole-line write (pipes, logs, tests)."""
+    while_running: list[str] = []
+
+    async def events() -> AsyncIterator[AgentEvent]:
+        yield _read_call('{"path": "a.txt"}')
+        while_running.append(capsys.readouterr().out)
+        yield _result("L1-4\none\ntwo\n")
+
+    await render_events(events())
+    assert while_running == [""]
+    assert capsys.readouterr().out == "\n* Read 'a.txt' L1-4 (done)\n\n"
+
+
+async def test_pretty_verbose_keeps_full_result_output(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verbose mode stays a full log: no prefix line, whole result."""
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+    set_verbose_tool_results(True)
+    try:
+        await render_events(_aiter([_read_call('{"path": "a.txt"}'), _result("L1-4\none\n")]))
+    finally:
+        set_verbose_tool_results(False)
+    out = capsys.readouterr().out
+    assert "[tool ok]\nL1-4\none\n" in out
+    assert "* Read 'a.txt' " not in out
+
+
+async def test_pretty_parallel_batch_erases_open_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second call in the batch erases the open prefix; results print whole."""
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("read_file", '{"path": "a.txt"}'),
+                _pretty_call("read_file", '{"path": "b.txt"}'),
+                _result("L1-4\none\n"),
+                _result("L1-9\ntwo\n"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "\x1b[2K\x1b[1A" in out  # the in-flight prefix was erased
+    assert "* Read 'a.txt' L1-4 (done)\n" in out
+    assert "* Read 'b.txt' L1-9 (done)\n" in out
+
+
+async def test_pretty_prefix_closed_before_error_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Another event ends an open prefix line instead of appending to it."""
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+    await render_events(
+        _aiter(
+            [
+                _read_call('{"path": "a.txt"}'),
+                ErrorEvent(message="boom", source="tool"),
+                _result("error: tool 'read_file' failed: boom"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Read 'a.txt' \n" in out
+    assert "[error] source=tool boom\n" in out
+    assert "* Read 'a.txt' (error)\n" in out
