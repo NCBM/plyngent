@@ -70,6 +70,46 @@ async def test_registry_handler_error() -> None:
     assert "failed" in result
 
 
+async def test_registry_reports_missing_required_arguments() -> None:
+    """A missing required arg is explained with the accepted names, not a TypeError."""
+    called: list[str] = []
+
+    @tool(register=False)
+    def pick(question: str, options: list[str], *, allow_custom: bool = True) -> str:
+        del allow_custom
+        called.append(question)
+        return options[0]
+
+    registry = ToolRegistry([pick])
+    result = await registry.execute("pick", '{"question": "Which?"}')
+    assert result == (
+        "error: `pick` is missing required argument(s): options; it accepts: allow_custom, options, question"
+    )
+    assert called == []  # the handler never ran
+    assert await registry.execute("pick", '{"question": "Which?", "options": ["a"]}') == "a"
+    assert called == ["Which?"]
+
+
+async def test_registry_missing_arg_skips_confirm_hook() -> None:
+    """The human is not asked to confirm a call that can never run."""
+    confirms: list[str] = []
+
+    def confirm(name: str, args: object, reason: str) -> bool:
+        del args, reason
+        confirms.append(name)
+        return True
+
+    @tool(register=False)
+    def write(path: str, content: str) -> str:
+        del content
+        return path
+
+    registry = ToolRegistry([write], danger=lambda name, args: "writes a file", on_confirm=confirm)
+    result = await registry.execute("write", '{"path": "x"}')
+    assert "missing required argument(s): content" in result
+    assert confirms == []
+
+
 def test_tool_items() -> None:
     @tool(register=False)
     def f(x: int) -> int:

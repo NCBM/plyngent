@@ -201,6 +201,30 @@ def tool[**PS, R](
     return decorator
 
 
+def _missing_required_error(definition: ToolDefinition, args: Mapping[str, object]) -> str | None:
+    """Model-facing error when a call omits a required argument.
+
+    The JSON schema already declares what is required, so the model gets the
+    exact argument names back instead of the handler's bare ``TypeError``
+    (``missing 1 required positional argument``). Unknown *extra* arguments are
+    left to the handler: a declared schema is not proof that no other key is
+    accepted (MCP servers may document only part of their input).
+    """
+    schema = definition.parameters
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return None
+    missing = [name for name in cast("list[object]", required) if isinstance(name, str) and name not in args]
+    if not missing:
+        return None
+    properties = schema.get("properties")
+    accepted: list[str] = []
+    if isinstance(properties, dict):
+        accepted = sorted(str(key) for key in cast("dict[object, object]", properties))
+    hint = f"; it accepts: {', '.join(accepted)}" if accepted else ""
+    return f"error: `{definition.name}` is missing required argument(s): {', '.join(missing)}{hint}"
+
+
 class ToolRegistry:
     """Name → tool definition map with execution helpers."""
 
@@ -434,6 +458,11 @@ class ToolRegistry:
         if not isinstance(raw_args, dict):
             return "error: tool arguments must be a JSON object"
         args = {str(key): value for key, value in cast("dict[object, object]", raw_args).items()}
+        # Argument shape/coverage problems are answered before any confirm prompt:
+        # the human should never be asked about a call that cannot run.
+        missing_error = _missing_required_error(definition, args)
+        if missing_error is not None:
+            return missing_error
 
         async def _run() -> str:
             missing = self._check_state_tags(definition)

@@ -333,3 +333,29 @@ def test_wait_prompt_renders_fractional_seconds() -> None:
     prompt = wait_module._wait_prompt(2.5, reason=None)
     assert prompt.startswith("Waiting for 2.5s.")
     assert wait_module._wait_prompt(5, reason=None).startswith("Waiting for 5s.")
+
+
+async def test_choose_user_reports_missing_options() -> None:
+    """A call without the required ``options`` lists what the tool accepts."""
+    backend = ScriptedBackend(["1"])
+    with temporary_backend(backend):
+        registry = ToolRegistry([choose_user])
+        out = await registry.execute("ask_user_choice", json.dumps({"question": "Pick"}))
+    assert out.startswith("error:")
+    assert "missing required argument(s): options" in out
+    assert "it accepts: allow_custom, default, options, question" in out
+    assert backend.lines == ["1"]  # the human was never asked
+
+
+async def test_form_user_reports_missing_fields() -> None:
+    registry = ToolRegistry([form_user])
+    out = await registry.execute("ask_user_form", json.dumps({"title": "Setup"}))
+    assert out.startswith("error:")
+    assert "missing required argument(s): fields" in out
+
+
+async def test_wait_reports_missing_duration() -> None:
+    registry = ToolRegistry([wait])
+    out = await registry.execute("wait", "{}")
+    assert out.startswith("error:")
+    assert "missing required argument(s): duration" in out
