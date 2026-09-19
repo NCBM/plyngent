@@ -9,6 +9,7 @@ from msgspec import UNSET
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
     AssistantFunctionToolCall,
+    DeveloperChatMessage,
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from plyngent.memory import MemoryStore
 
     from .events import AgentEvent
+    from .notices import Notice
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
     from .types import AnyLLMClient
@@ -138,12 +140,16 @@ def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
     Incomplete when the last non-system message is a user message (failed before
     any commit), or tool results after a complete tool batch (failed on a later
     model round — keep tools so retry does not re-execute side effects).
+    Trailing developer messages (host notices, directive checkpoints) belong to
+    the turn but never end it, so they are skipped when reading the tail.
     """
     # Skip leading system prompt only.
     start = 0
     if messages and isinstance(messages[0], SystemChatMessage):
         start = 1
     body = list(messages[start:])
+    while body and isinstance(body[-1], DeveloperChatMessage):
+        _ = body.pop()
     if not body:
         return None
     last = body[-1]
@@ -420,6 +426,21 @@ class ChatAgent:
         if load:
             await self.load_history()
 
+    async def push_notice(self, notice: Notice) -> DeveloperChatMessage:
+        """Append a host notice for the model and persist it with the transcript.
+
+        Notices are trailing ``developer`` messages, never system-prompt edits:
+        the model reads the newest host state last. Hosts with a durable session
+        store them as normal history (a side agent without memory keeps its
+        notice local to that exchange). The checkpoint cursor stays ahead of the
+        new message, so it is never re-persisted by a later tool batch.
+        """
+        message = notice.to_message()
+        self.messages.append(message)
+        await self._persist(message)
+        self._persist_from = len(self.messages)
+        return message
+
     async def _persist(self, message: AnyChatMessage) -> None:
         if self.memory is not None and self.session_id is not None:
             _ = await self.memory.append_message(self.session_id, message)
@@ -461,8 +482,6 @@ class ChatAgent:
 
     def _developer_tail_end(self, start: int) -> int:
         """Extend *start* through trailing developer checkpoint messages."""
-        from plyngent.lmproto.openai_compatible.model import DeveloperChatMessage
-
         end = start
         while end < len(self.messages) and isinstance(self.messages[end], DeveloperChatMessage):
             end += 1
