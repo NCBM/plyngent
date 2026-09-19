@@ -167,7 +167,8 @@ async def _bind_session(
 ) -> None:
     if session_id is not None:
         try:
-            await state.resume_session(session_id)
+            # Startup resume: this process did not run the session's last turn.
+            await state.resume_session(session_id, restarted=True)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
         if not quiet and not oneshot:
@@ -184,7 +185,7 @@ async def _bind_session(
                 err=True,
             )
         return
-    mode = await state.resume_latest_or_new()
+    mode = await state.resume_latest_or_new(restarted=True)
     if quiet:
         return
     if mode == "resume":
@@ -324,6 +325,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             interactive_limits=interactive,
             auto_continue_limits=auto_effective,
             yolo=yolo,
+            quiet=quiet,
             mcp_manager=mcp_manager,
         )
         # Path denylist and policy confirm live on instance.workspace (no process bag).

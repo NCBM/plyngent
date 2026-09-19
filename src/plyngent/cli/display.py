@@ -27,7 +27,7 @@ from plyngent.lmproto.openai_compatible.model import AssistantFunctionToolCall
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from plyngent.agent import AgentEvent
+    from plyngent.agent import AgentEvent, Notice
 
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
@@ -70,6 +70,12 @@ def interactive_terminal() -> bool:
 def markdown_render_available() -> bool:
     """True when stdout is a TTY and plain mode is not forced via env."""
     return interactive_terminal()
+
+
+def echo_notice(notice: Notice, *, err: bool = False) -> None:
+    """Show a host notice to the user; the model gets the full body."""
+    text = f"[notice] {notice.kind}: {notice.summary}" if notice.summary else f"[notice] {notice.kind}"
+    click.secho(text, fg="yellow", err=err)
 
 
 def _preview(text: str, limit: int) -> str:

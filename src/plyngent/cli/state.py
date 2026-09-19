@@ -11,6 +11,8 @@ from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.agent.todo_stack import TodoStack
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from plyngent.agent.types import AnyLLMClient
 from plyngent.cli.models_source import (
     DEFAULT_MODELS_CACHE_TTL,
@@ -65,6 +67,8 @@ class ReplState:
     max_rounds: int = DEFAULT_MAX_ROUNDS
     stream_enabled: bool = True
     verbose: bool = False
+    # Less status on stderr (--quiet); host notices are still pushed to the model.
+    quiet: bool = False
     # End-of-turn Rich markdown for assistant text (TTY only).
     markdown_enabled: bool = True
     # One-shot / scripts: never prompt to raise tool-loop limits.
@@ -704,8 +708,12 @@ class ReplState:
             await self.new_session()
         return was_current
 
-    async def resume_session(self, session_id: int) -> None:
-        """Load a session; on workspace mismatch, prompt keep / rebind / abort."""
+    async def resume_session(self, session_id: int, *, restarted: bool = False) -> None:
+        """Load a session; on workspace mismatch, prompt keep / rebind / abort.
+
+        With *restarted* (a session resumed by a freshly started process) the
+        model gets a notice about the process-scoped state that a restart drops.
+        """
         from plyngent.cli.limits import prompt_workspace_mismatch
 
         self._reset_limit_auto_continue()
@@ -743,9 +751,15 @@ class ReplState:
         await self.agent.load_history()
         await self.load_todo_stack()
         await self.load_access_grants()
+        if restarted:
+            await self._notice_restart(last_active=row.updated_at)
 
-    async def resume_latest_or_new(self, name: str = "chat") -> str:
-        """Resume most recently updated session for this workspace, or create one."""
+    async def resume_latest_or_new(self, name: str = "chat", *, restarted: bool = False) -> str:
+        """Resume most recently updated session for this workspace, or create one.
+
+        With *restarted* the resumed session gets the new-process notice; a
+        freshly created session has nothing to explain, so it gets none.
+        """
         self._reset_limit_auto_continue()
         latest = await self.memory.get_latest_session(workspace=self.workspace)
         if latest is None:
@@ -760,8 +774,21 @@ class ReplState:
         await self.agent.load_history()
         await self.load_todo_stack()
         await self.load_access_grants()
+        if restarted:
+            # Before touch_session: the stamp should be the previous run's activity.
+            await self._notice_restart(last_active=latest.updated_at)
         _ = await self.memory.touch_session(latest.sid)
         return "resume"
+
+    async def _notice_restart(self, *, last_active: datetime | None) -> None:
+        """Tell the model — and the user — that this session outlived a restart."""
+        from plyngent.agent import resume_notice
+        from plyngent.cli.display import echo_notice
+
+        notice = resume_notice(last_active=last_active)
+        _ = await self.agent.push_notice(notice)
+        if not self.quiet:
+            echo_notice(notice, err=True)
 
     async def compact_to_new_session(self, *, name: str | None = None) -> tuple[int, int, str]:
         """Soft-compact + model-summarize current history into a new workspace session.
