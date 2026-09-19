@@ -221,7 +221,7 @@ plyngent chat --session 3
 | `--auto-continue` | Auto-raise tool/PTY limits without prompting (like answering `yyy`) |
 | `--log-level` | On the root CLI: `DEBUG`, `INFO`, `WARNING`, … |
 
-Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`. Each session remembers the last **provider** and **model** (restored on resume so you are not re-prompted).
+Sessions resume the **most recently updated** session for the current workspace unless you pass `--new` or `--session`. Each session remembers the last **provider** and **model** (restored on resume so you are not re-prompted). A session resumed by a fresh `plyngent` process also gets a `[notice] resume: …` line: the model is told that process-scoped state — PTY sessions, running commands, temporary workspaces — did not survive the restart, and that an unfinished turn may have been cut off. The notice is kept with the transcript; `--quiet` hides only the user-facing line.
 
 When a tool-loop or PTY limit is hit, the prompt accepts `y` (continue once), `n` (stop), or `yyy` — **stop asking for the rest of this turn** (the next user turn prompts again). `--auto-continue` / `[agent] auto_continue_limits = true` skip the prompt for every turn.
 
@@ -266,7 +266,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/yolo [on\|off\|once]` | Soft destructive confirms: sticky skip, off, or next turn only |
 
 | `/retry` | Re-run incomplete last user turn (after error/cancel) |
-| `/btw [--tools read\|no\|full] [--fresh]` | Side question without changing the main session (read-only tools by default) |
+| `/btw [--tools read\|no\|full] [--fresh]` | Side question without changing the main session (read-only tools by default; the model is told the exchange is unsaved and how its tools are scoped) |
 | `/provider` `/model` | Switch without restarting |
 | `/model --persist` | Save current model id into `plyngent.toml` catalog |
 | `/models` | List config + remote `GET /models` (always re-fetches) |
