@@ -300,7 +300,7 @@ Safety defaults:
   `write_pty` is literal text only; use `write_pty_keys` for `\xHH`, `ctrl+x`, `key=esc|enter|…`.
   For passwords/sudo/ssh prompts use `ask_into_pty` (human types locally; answer never returns to the model).
 
-- Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`) returns an error that shows the shape to send — the human is not shown a garbage prompt.
+- Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`), a call that omits a required argument, or a non-numeric `wait` duration (numeric strings are accepted) returns an error showing the shape/names to send — the human never sees a garbage prompt, and no confirm prompt fires for a call that cannot run.
 
 ## Usage / context (CLI)
 
