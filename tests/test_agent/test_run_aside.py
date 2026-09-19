@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import pytest
 
-from plyngent.agent import ChatAgent, ToolRegistry, ToolTag, tool
+from plyngent.agent import ChatAgent, ToolRegistry, ToolTag, aside_notice, tool
 from plyngent.agent.todo_stack import TodoStack
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
@@ -16,6 +16,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    DeveloperChatMessage,
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
@@ -118,6 +119,47 @@ async def test_run_aside_fresh_skips_history() -> None:
     payload = client.payloads[0]
     users = [m.content for m in payload if isinstance(m, UserChatMessage)]
     assert users == ["q"]
+
+
+@pytest.mark.asyncio
+async def test_run_aside_notice_reaches_model_but_not_history() -> None:
+    """The aside notice is the model's last instruction; the host keeps none."""
+    client = ScriptedClient(["ok"])
+    agent = ChatAgent(cast("Any", client), model="m", stream=False)
+    agent.messages.append(UserChatMessage(content="prior main"))
+    before = list(agent.messages)
+    notice = aside_notice(tools_mode="read")
+
+    async for _ in agent.run_aside("side?", include_history=True, tools=False, notice=notice):
+        pass
+
+    payload = client.payloads[0]
+    assert isinstance(payload[-2], DeveloperChatMessage)
+    assert payload[-2].content == notice.to_message().content
+    assert "read-only" in payload[-2].content
+    assert isinstance(payload[-1], UserChatMessage)
+    assert payload[-1].content == "side?"
+    assert agent.messages == before
+
+
+@pytest.mark.asyncio
+async def test_run_aside_fresh_history_still_carries_notice() -> None:
+    client = ScriptedClient(["ok"])
+    agent = ChatAgent(cast("Any", client), model="m", stream=False)
+
+    async for _ in agent.run_aside(
+        "q",
+        include_history=False,
+        tools=False,
+        notice=aside_notice(tools_mode="no"),
+    ):
+        pass
+
+    payload = client.payloads[0]
+    assert isinstance(payload[0], DeveloperChatMessage)
+    assert "Tools are disabled" in payload[0].content
+    assert isinstance(payload[-1], UserChatMessage)
+    assert payload[-1].content == "q"
 
 
 @pytest.mark.asyncio

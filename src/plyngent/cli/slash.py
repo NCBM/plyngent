@@ -980,10 +980,13 @@ def btw_cmd(
             return
         tools_mode = "no"
 
-    from plyngent.cli.display import render_events
+    from plyngent.agent import aside_notice
+    from plyngent.cli.display import echo_notice, render_events
     from plyngent.cli.retry import run_cancellable
     from plyngent.tools.context import SessionState, read_only_context
 
+    aside = aside_notice(tools_mode=tools_mode)
+    echo_notice(aside)
     click.secho("btw: ", fg="magenta", nl=False)
     click.echo(text)
     if tools_mode == "no":
@@ -1008,6 +1011,7 @@ def btw_cmd(
                 text,
                 include_history=not fresh,
                 tools=tools_arg,
+                notice=aside,
                 instance_state=aside_instance,
                 session_state=aside_session,
             )

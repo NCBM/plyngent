@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import pytest
 import tomlkit
 
-from plyngent.agent import ChatAgent
+from plyngent.agent import ChatAgent, Notice
 from plyngent.cli.slash import handle_slash
 from plyngent.cli.state import ReplState
 from plyngent.config.models import DatabaseConfig, OpenAIProvider
@@ -764,3 +764,63 @@ async def test_btw_full_mode_clones_full_registry(
     assert captured["tools"] is True
     assert captured["session_state"] is not state.session_state
     assert captured["read_only"] is False
+
+
+async def test_btw_sends_notice_and_shows_it(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The aside request carries a notice; it never enters the main transcript."""
+    captured: dict[str, object] = {}
+
+    async def fake_run_aside(_text: str, **kwargs: object) -> AsyncIterator[object]:
+        captured.update(kwargs)
+        if False:
+            yield None
+
+    monkeypatch.setattr(state.agent, "run_aside", fake_run_aside)
+    before = list(state.agent.messages)
+
+    assert await handle_slash(state, "/btw --tools no hello") is True
+
+    notice = captured["notice"]
+    assert isinstance(notice, Notice)
+    assert notice.kind == "aside"
+    assert "Tools are disabled" in notice.body
+    # Side turns are not persisted, so nothing is pushed into the main history.
+    assert state.agent.messages == before
+    out = capsys.readouterr().out
+    assert "[notice] aside:" in out
+    assert "btw: hello" in out
+
+
+async def test_btw_read_notice_states_read_only_scope(
+    state: ReplState,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from plyngent.agent import ToolRegistry, ToolTag, tool
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.READ_ONLY, register=False)
+    async def ro_tool() -> str:
+        return "ro"
+
+    state.tools_enabled = True
+    state.agent.tools = ToolRegistry([ro_tool], auto_bind_state=True)
+    captured: dict[str, object] = {}
+
+    async def fake_run_aside(_text: str, **kwargs: object) -> AsyncIterator[object]:
+        captured.update(kwargs)
+        if False:
+            yield None
+
+    monkeypatch.setattr(state.agent, "run_aside", fake_run_aside)
+
+    assert await handle_slash(state, "/btw hi") is True
+
+    notice = captured["notice"]
+    assert isinstance(notice, Notice)
+    assert "read-only" in notice.body
+    assert "not saved" in notice.body
+    assert "[notice] aside: read tools" in capsys.readouterr().out

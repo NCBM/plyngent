@@ -603,19 +603,24 @@ class ChatAgent:
         tools: ToolRegistry | bool | None = False,
         max_rounds: int | None = None,
         system_prompt: str | None = None,
+        notice: Notice | None = None,
         instance_state: object | None = None,
         session_state: object | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Run a side turn that does not mutate this agent or its memory.
 
         - Message list is forked (optional history copy); never written back.
-        - ``memory`` / ``session_id`` are unset on the side agent (no DB).
+        - ``memory`` / ``session_id`` are unset on the side agent (no DB), so a
+          *notice* stays local to this exchange.
         - ``todo_stack`` is unset (no nags / main stack thrash).
         - Tools default **off**. ``tools=True`` clones this agent's registry with
           a **fresh session** bag (unless *session_state* is passed) and the
           given *instance_state* (CLI typically shares the host instance for
           workspace identity). A caller-built :class:`ToolRegistry` (e.g. a
           ``clone(read_only_only=True)`` subset) is used as-is.
+        - *notice* is appended after the forked history, i.e. right before the
+          side question, so the model knows this exchange's rules (unsaved,
+          read-only tools, …).
         """
         text = user_text.strip()
         if not text:
@@ -640,6 +645,8 @@ class ChatAgent:
             session_state=aside_session,
         )
         history = list(self.messages) if include_history else []
+        if notice is not None:
+            history.append(notice.to_message())
         rounds = self.max_rounds if max_rounds is None else max_rounds
         if aside_tools is None and max_rounds is None:
             rounds = 1
