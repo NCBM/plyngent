@@ -11,11 +11,15 @@ import asyncio
 import importlib.metadata
 import json
 import os
+import subprocess
+import sys
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from plyngent.config.models import McpConfig, McpServerConfig
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -43,6 +47,19 @@ def _client_version() -> str:
         return importlib.metadata.version("plyngent")
     except importlib.metadata.PackageNotFoundError:
         return "0.0.0"
+
+
+def _isolated_spawn_kwargs() -> dict[str, Any]:
+    """Spawn kwargs that keep a server out of our process/console group.
+
+    Ctrl+C in the terminal is delivered to every process in the foreground
+    process group (POSIX) / console process group (Windows), so without this a
+    single Ctrl+C during a turn also killed every MCP server — killing in-flight
+    tool calls and leaving the connection dead until ``/mcp reconnect``.
+    """
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 class McpConnectionError(RuntimeError):
@@ -143,6 +160,7 @@ class McpServerConnection:
                 stderr=asyncio.subprocess.PIPE,
                 env=os.environ | self._config.env,
                 cwd=self._config.cwd or None,
+                **_isolated_spawn_kwargs(),
             )
         except (OSError, ValueError) as exc:
             self.error = f"spawn {self._config.command!r}: {exc}"

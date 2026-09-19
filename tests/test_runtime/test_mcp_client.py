@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -95,6 +96,26 @@ async def test_close_terminates_subprocess() -> None:
     await connection.aclose()
     assert connection._proc is None
     assert proc.returncode is not None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups only")
+async def test_server_spawned_outside_our_process_group() -> None:
+    """Regression: a terminal Ctrl+C must not reach the MCP server.
+
+    The tty delivers SIGINT to every process in the foreground process group, so
+    a server spawned in *our* group died on any Ctrl+C during a turn (killing
+    in-flight tool calls and leaving the connection dead). ``start_new_session``
+    moves the server into its own session/group.
+    """
+    connection = McpServerConnection("fake", _server_config())
+    await connection.start()
+    try:
+        proc = connection._proc
+        assert proc is not None
+        assert os.getpgid(proc.pid) != os.getpgid(0)
+        assert os.getsid(proc.pid) != os.getsid(0)
+    finally:
+        await connection.aclose()
 
 
 async def test_manager_start_status_and_call() -> None:
