@@ -1,21 +1,28 @@
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ToolTag, tool
 from plyngent.prompting import FormField, NonInteractiveError, form_async
 from plyngent.tools.chat.choose import parse_options
+from plyngent.tools.chat.shape import first_error, list_error, string_error
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-def parse_fields(fields: list[dict[str, object]]) -> list[FormField]:
+def parse_fields(fields: Sequence[object]) -> list[FormField]:
     """Normalize a list of field dicts into ``FormField`` list."""
     if not fields:
         msg = "fields must be a non-empty list"
         raise ValueError(msg)
     out: list[FormField] = []
     for item_obj in fields:
-        raw_map = {str(key): value for key, value in item_obj.items()}
+        if not isinstance(item_obj, dict):
+            msg = "each field must be an object with name/prompt"
+            raise TypeError(msg)
+        raw_map = {str(key): value for key, value in cast("dict[object, object]", item_obj).items()}
         name = raw_map.get("name")
         prompt = raw_map.get("prompt")
         if not isinstance(name, str) or not name:
@@ -61,6 +68,18 @@ async def form_user(
     optional ``allow_custom`` (default true).
     When ``confirm_submit`` is true, the human reviews a summary before submit.
     """
+    shape_error = first_error(
+        string_error("ask_user_form", "title", title),
+        list_error(
+            "ask_user_form",
+            "fields",
+            fields,
+            items="objects",
+            example='[{"name": "port", "prompt": "Which port?"}]',
+        ),
+    )
+    if shape_error is not None:
+        return f"error: {shape_error}"
     try:
         parsed = parse_fields(fields)
     except (TypeError, ValueError) as exc:

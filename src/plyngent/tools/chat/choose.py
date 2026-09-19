@@ -4,6 +4,7 @@ from typing import cast
 
 from plyngent.agent import ToolTag, tool
 from plyngent.prompting import ChoiceOption, NonInteractiveError, choose_async
+from plyngent.tools.chat.shape import first_error, list_error, string_error
 
 
 def parse_options(options: list[object]) -> list[ChoiceOption]:
@@ -51,6 +52,19 @@ async def choose_user(
     When ``allow_custom`` is true (default), free-text answers are accepted.
     Returns the chosen option value (or custom text).
     """
+    shape_error = first_error(
+        string_error("ask_user_choice", "question", question),
+        list_error(
+            "ask_user_choice",
+            "options",
+            options,
+            items="strings or objects with a label",
+            example='["alpha", "beta"]',
+        ),
+        string_error("ask_user_choice", "default", default),
+    )
+    if shape_error is not None:
+        return f"error: {shape_error}"
     try:
         parsed = parse_options([cast("object", o) for o in options])
     except (TypeError, ValueError) as exc:

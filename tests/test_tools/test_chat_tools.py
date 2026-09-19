@@ -192,3 +192,85 @@ def test_wait_prompt_colored_on_tty(monkeypatch) -> None:
     prompt = wait_module._wait_prompt(5, reason="tests")
     assert "\x1b[36m" in prompt  # cyan status
     assert "\x1b[33m" in prompt  # yellow input prompt
+
+
+def test_shape_of_names_json_types() -> None:
+    from plyngent.tools.chat.shape import first_error, shape_of
+
+    assert shape_of("x") == "a string"
+    assert shape_of([]) == "an array"
+    assert shape_of({}) == "an object"
+    assert shape_of(True) == "a boolean"  # bool is not reported as a number
+    assert shape_of(3) == "a number"
+    assert shape_of(3.5) == "a number"
+    assert shape_of(None) == "null"
+    assert first_error(None, "boom", "later") == "boom"
+    assert first_error(None, None) is None
+
+
+async def test_ask_user_line_rejects_non_string_args() -> None:
+    """Mis-typed args get explained instead of reaching the human as garbage."""
+    backend = ScriptedBackend(["unused"])
+    with temporary_backend(backend):
+        registry = ToolRegistry([ask_user])
+        bad_question = await registry.execute("ask_user_line", json.dumps({"question": ["a", "b"]}))
+        bad_default = await registry.execute(
+            "ask_user_line",
+            json.dumps({"question": "Which?", "default": 5}),
+        )
+    assert bad_question.startswith("error:")
+    assert "`question`" in bad_question
+    assert "got an array" in bad_question
+    assert bad_default.startswith("error:")
+    assert "`default`" in bad_default
+    assert "got a number" in bad_default
+    assert backend.lines == ["unused"]  # the prompt never happened
+
+
+async def test_choose_user_rejects_string_options() -> None:
+    """``options="alpha, beta"`` used to build a menu of single characters."""
+    backend = ScriptedBackend(["1"])
+    with temporary_backend(backend):
+        registry = ToolRegistry([choose_user])
+        out = await registry.execute(
+            "ask_user_choice",
+            json.dumps({"question": "Pick", "options": "alpha, beta"}),
+        )
+    assert out.startswith("error:")
+    assert "`options`" in out
+    assert "not a string" in out
+    assert '["alpha", "beta"]' in out
+    assert backend.lines == ["1"]
+
+
+async def test_choose_user_rejects_object_options() -> None:
+    registry = ToolRegistry([choose_user])
+    out = await registry.execute(
+        "ask_user_choice",
+        json.dumps({"question": "Pick", "options": {"alpha": 1}}),
+    )
+    assert out.startswith("error:")
+    assert "got an object" in out
+
+
+async def test_form_user_rejects_string_fields() -> None:
+    backend = ScriptedBackend(["ncbm"], confirms=[True])
+    with temporary_backend(backend):
+        registry = ToolRegistry([form_user])
+        out = await registry.execute(
+            "ask_user_form",
+            json.dumps({"title": "Setup", "fields": '[{"name": "user"}]'}),
+        )
+    assert out.startswith("error:")
+    assert "`fields`" in out
+    assert "not a string" in out
+    assert backend.lines == ["ncbm"]
+
+
+async def test_form_user_rejects_non_object_field() -> None:
+    registry = ToolRegistry([form_user])
+    out = await registry.execute(
+        "ask_user_form",
+        json.dumps({"title": "Setup", "fields": ["user"]}),
+    )
+    assert out == "error: each field must be an object with name/prompt"
