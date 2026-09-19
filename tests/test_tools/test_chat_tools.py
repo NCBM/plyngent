@@ -274,3 +274,62 @@ async def test_form_user_rejects_non_object_field() -> None:
         json.dumps({"title": "Setup", "fields": ["user"]}),
     )
     assert out == "error: each field must be an object with name/prompt"
+
+
+async def test_wait_accepts_numeric_string_duration(monkeypatch) -> None:
+    """A model sending "5" instead of 5 still waits."""
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(wait_module.asyncio, "sleep", fake_sleep)
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", json.dumps({"duration": "5"}))
+    assert out == "waited 5s"
+    assert slept == [5.0]
+
+
+async def test_wait_accepts_fractional_duration(monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(wait_module.asyncio, "sleep", fake_sleep)
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", json.dumps({"duration": 2.5}))
+    assert out == "waited 2.5s"
+    assert slept == [2.5]
+
+
+async def test_wait_rejects_bad_duration_shapes() -> None:
+    cases: list[tuple[object, str]] = [
+        ("soon", "non-numeric string"),
+        ([5], "an array"),
+        ({"seconds": 5}, "an object"),
+        (True, "a boolean"),
+    ]
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        for value, expected in cases:
+            out = await registry.execute("wait", json.dumps({"duration": value}))
+            assert out.startswith("error:"), f"{value!r} was accepted: {out!r}"
+            assert "`duration`" in out
+            assert expected in out, f"{value!r}: {out!r}"
+
+
+async def test_wait_rejects_non_string_reason() -> None:
+    with temporary_backend(NonInteractiveBackend()):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", json.dumps({"duration": 0, "reason": ["why"]}))
+    assert out.startswith("error:")
+    assert "`reason`" in out
+
+
+def test_wait_prompt_renders_fractional_seconds() -> None:
+    prompt = wait_module._wait_prompt(2.5, reason=None)
+    assert prompt.startswith("Waiting for 2.5s.")
+    assert wait_module._wait_prompt(5, reason=None).startswith("Waiting for 5s.")

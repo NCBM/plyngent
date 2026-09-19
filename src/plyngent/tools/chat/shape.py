@@ -54,3 +54,21 @@ def list_error(tool: str, field: str, value: object, *, items: str, example: str
     if not isinstance(value, list):
         return f"`{tool}` expects `{field}` as a JSON array of {items}, got {shape_of(value)}; pass e.g. {example}"
     return None
+
+
+def number_arg(tool: str, field: str, value: object, *, example: str) -> tuple[float | None, str | None]:
+    """Coerce *value* to a float, accepting numeric strings; else ``(None, error)``.
+
+    Models often send numbers as strings, which is accepted here. Booleans are
+    not numbers for this purpose, and neither is non-numeric text.
+    """
+    if isinstance(value, bool):
+        return None, f"`{tool}` expects `{field}` as a number, got a boolean; pass e.g. {example}"
+    if isinstance(value, (int, float)):
+        return float(value), None
+    if isinstance(value, str):
+        try:
+            return float(value.strip()), None
+        except ValueError:
+            return None, f"`{tool}` expects `{field}` as a number, got a non-numeric string; pass e.g. {example}"
+    return None, f"`{tool}` expects `{field}` as a number, got {shape_of(value)}; pass e.g. {example}"
