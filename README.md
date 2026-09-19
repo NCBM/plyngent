@@ -300,6 +300,8 @@ Safety defaults:
   `write_pty` is literal text only; use `write_pty_keys` for `\xHH`, `ctrl+x`, `key=esc|enter|…`.
   For passwords/sudo/ssh prompts use `ask_into_pty` (human types locally; answer never returns to the model).
 
+- Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`) returns an error that shows the shape to send — the human is not shown a garbage prompt.
+
 ## Usage / context (CLI)
 
 - **Context size** prefers API `prompt_tokens` from the last model call; otherwise a char-based estimate (~4 chars/token).
