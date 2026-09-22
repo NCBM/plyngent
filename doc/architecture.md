@@ -23,11 +23,15 @@
     - config: Plyngent configuration center (TOML), including ``[plugins]`` and
       ``[networking]`` (e.g. fetch SSRF Fake-IP CIDR exemptions). Model entries
       may override provider ``preset`` / ``url`` for mixed API routing.
+      ``[skills]`` holds the skill roots, discovery sources, catalog limits, and
+      the standing write grant.
     - runtime: ``create_client`` maps effective provider preset → protocol client.
+    - skills: Skill discovery (ordered roots, ``SKILL.md`` frontmatter subset,
+      mtime-cached store) and the read/write path rules the tools use.
     - agent: Kind-based tool loop, streaming, usage, compact; bridges:
       ``responses_bridge``/``responses_dispatch``, ``messages_bridge``/``messages_dispatch``;
       ``@tool`` / tags / registry. History stays chat-completions-shaped.
-    - tools: Workspace file/process/VCS/chat/todo/net tools + directory-access
+    - tools: Workspace file/process/VCS/chat/todo/net/skill tools + directory-access
       grants (`access`); catalog; plugins; instance/session context and views.
     - prompting: Shared ask/choose/form for CLI and tools.
     - cli: Click entry, slash registry, REPL, one-shot chat.

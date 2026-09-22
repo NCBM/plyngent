@@ -155,6 +155,16 @@ max_context_tokens = 200000
 # Auto-raise tool/PTY limits without prompting (same as answering yyy).
 # auto_continue_limits = false
 
+# Optional skills (instruction directories). See doc/skills.md.
+# [skills]
+# enabled = true                  # false = no skill tools, no prompt catalog
+# paths = ["~/team-skills"]       # explicit roots, highest priority
+# discover = ["plyngent", "claude"]  # our user dir + other harnesses' dirs
+# include_project_roots = true    # also <workspace>/.claude/skills
+# inject_catalog = true           # fold name + description into the system prompt
+# max_catalog_skills = 50
+# allow_write = false             # true = skip the per-write grant prompt
+
 # Optional plugins (entry-point names); default load none. See doc/plugins.md.
 # [plugins]
 # enable = ["acme"]
@@ -163,6 +173,8 @@ max_context_tokens = 200000
 Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_argv`, PTY, policy confirm) are separate.
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
+
+**Skills** (instruction directories with a `SKILL.md`): discovered under `[skills].paths`, our own user skills directory, and other harnesses' skill directories (`~/.claude/skills`, plus `<workspace>/.claude/skills` when `include_project_roots`). The catalog — name, source, description — is folded into the system prompt when tools are on; the model reads a `SKILL.md` with `skill_read`, searches with `skill_search`, and creates or updates skills with `skill_create` / `skill_edit` behind a timed `once`/`session`/`no` grant (`[skills].allow_write = true` for a standing one; the path denylist still wins and `--yes`/`/yolo` never skips it). Reading needs no grant: skill roots are read-only roots, so `read_file` / `grep_files` see them too while writes stay denied. Details: [doc/skills.md](doc/skills.md).
 
 **MCP servers** (Model Context Protocol over stdio): define servers under `[mcp.servers.<name>]` (`command` + `args`, optional `env`/`cwd`/`timeout`/`read_only`) and their tools become agent tools namespaced `mcp__<server>__<tool>` (LOCAL tags; `read_only = true` also marks them READ_ONLY, eligible for `/btw --tools=read`). Names in `[mcp].disable` stay disconnected. A server may also return optional `instructions` (usage guidance) in its MCP `initialize` response; when tools are on those are folded into the agent system prompt as `MCP server <name> instructions:` blocks (`[agent] mcp_instructions = false` disables), and `/mcp` previews them. In the REPL, `/mcp` lists per-server status and tool counts; `/mcp reconnect` re-reads the config file and restarts every enabled server (adopts newly added ones).
 
@@ -272,6 +284,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
 | `/todos` | Todo/task stack: list, push, pop, done, clear |
+| `/skills [list\|search\|read\|reload]` | List discovered skills, regex-search them, print a `SKILL.md` (or one bundled file), or rescan the roots |
 | `/grants` | Directory-access grants: list, or `revoke <index\|all>` |
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |
@@ -289,7 +302,9 @@ Ctrl+C cancels the in-flight turn, and during the auto-retry countdown it cancel
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `request_directory_access` (out-of-workspace access grants), `get_truncated` (resume any truncated result via its `truncate_token=...`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `request_directory_access` (out-of-workspace access grants), `get_truncated` (resume any truncated result via its `truncate_token=...`), skills (`skill_list` / `skill_read` / `skill_search` / `skill_create` / `skill_edit`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+
+**Skills** are instruction directories shared with other harnesses: a folder with a `SKILL.md` (YAML frontmatter — `name`, `description`, … — plus a Markdown body) and optional bundled files (scripts, references). Discovery, roots, grants, and the authoring format are documented in [doc/skills.md](doc/skills.md); the short version is that the catalog (name + description) goes into the system prompt, the body is read on demand with `skill_read`, and writing a skill is a separate grant (a timed `once`/`session`/`no` prompt, or `[skills].allow_write`) that is **not** a directory-access grant and is never skipped by YOLO.
 
 Safety defaults:
 

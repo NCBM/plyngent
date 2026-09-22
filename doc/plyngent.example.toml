@@ -26,6 +26,24 @@
 # [networking]
 # ssrf_assume_public_cidrs = ["198.18.0.0/15"]
 
+# Skills: instruction directories holding a SKILL.md (YAML frontmatter with at
+# least name/description, then a Markdown body) plus optional bundled files.
+# Discovery roots in priority order: explicit `paths`, our own user config
+# directory (<config dir>/skills), other harnesses' skill directories
+# (~/.claude/skills; plus <workspace>/.claude/skills when include_project_roots).
+# The catalog (name + description) is folded into the system prompt when tools
+# are on; the model reads bodies with skill_read and searches with skill_search.
+# Reading needs no grant (the roots are read-only roots); creating or editing a
+# skill asks once/session, or stands with allow_write = true. See doc/skills.md.
+# [skills]
+# enabled = true
+# paths = ["~/team-skills", "/srv/skills"]
+# discover = ["plyngent", "claude"]
+# include_project_roots = true
+# inject_catalog = true
+# max_catalog_skills = 50
+# allow_write = false
+
 # MCP (Model Context Protocol) servers exposed as agent tools.
 # Defining a server opts it in; tools appear as mcp__<server>__<tool> with
 # LOCAL tags (confirm flow applies). Names in disable stay disconnected.
