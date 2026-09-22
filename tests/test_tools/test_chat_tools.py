@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import json
 
+import pytest
+
 from plyngent.agent import ToolRegistry
-from plyngent.prompting import NonInteractiveBackend, temporary_backend
+from plyngent.prompting import NonInteractiveBackend, PromptCancelledError, temporary_backend
 from plyngent.tools.chat import CHAT_TOOLS, ask_user, choose_user, form_user, wait
 from tests.test_prompting import ScriptedBackend
 
@@ -144,6 +146,20 @@ async def test_wait_tool_times_out(monkeypatch) -> None:
         registry = ToolRegistry([wait])
         out = await registry.execute("wait", '{"duration": 3}')
     assert out == "waited 3s"
+
+
+async def test_wait_tool_cancelled_by_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl+C during the wait prompt cancels the wait; the turn continues."""
+
+    def _cancelled(prompt: str, timeout: float) -> str:
+        del prompt, timeout
+        raise PromptCancelledError
+
+    monkeypatch.setattr(wait_module, "read_line_with_timeout", _cancelled)
+    with temporary_backend(ScriptedBackend([])):
+        registry = ToolRegistry([wait])
+        out = await registry.execute("wait", '{"duration": 30}')
+    assert out == "cancelled by user"
 
 
 async def test_wait_tool_prompt_two_lines_with_reason(monkeypatch) -> None:

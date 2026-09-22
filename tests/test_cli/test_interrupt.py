@@ -21,7 +21,13 @@ from plyngent.cli.interrupt import (
 )
 from plyngent.cli.limits import prompt_continue_limit
 from plyngent.cli.retry import run_cancellable, sleep_cancellable
-from plyngent.prompting import temporary_backend
+from plyngent.prompting import (
+    PromptCancelledError,
+    configure_prompting,
+    prompt_cancelled,
+    run_cancellable_prompt_async,
+    temporary_backend,
+)
 from tests.test_prompting import ScriptedBackend
 
 if TYPE_CHECKING:
@@ -222,6 +228,37 @@ async def test_off_loop_prompt_cancel_hook_is_preferred(router: None) -> None:
         await _deliver_sigint()
     assert hooks == ["read"]
     assert turn_calls == []
+
+
+async def test_sigint_cancels_off_loop_prompt_read(router: None) -> None:
+    """Wiring: SIGINT aborts a poll-based read (not the turn) and clears the flag."""
+    del router
+    turn_calls: list[str] = []
+    seen: list[str] = []
+
+    def _poll_read(prompt: str, timeout: float) -> str:
+        """Stand-in for ``read_line_with_timeout``: polls the cancel flag."""
+        del prompt
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if prompt_cancelled():
+                seen.append("cancelled")
+                raise PromptCancelledError
+            time.sleep(0.01)
+        seen.append("timed out")
+        return ""
+
+    with temporary_backend(ScriptedBackend([])):
+        configure_prompting(pause_factory=off_loop_prompt)
+        with sigint_cancels(FakeTarget(turn_calls, "turn")):
+            reader = asyncio.create_task(run_cancellable_prompt_async(_poll_read, "p> ", 30.0))
+            await asyncio.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGINT)
+            with pytest.raises(PromptCancelledError):
+                await asyncio.wait_for(reader, timeout=5)
+    assert seen == ["cancelled"]
+    assert turn_calls == []
+    assert not prompt_cancelled()  # cleared for the next prompt
 
 
 async def test_pause_task_cancel_for_prompt_swaps_sigint(router: None) -> None:

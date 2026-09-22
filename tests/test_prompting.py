@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import io
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -9,14 +11,32 @@ from plyngent.prompting import (
     FormField,
     NonInteractiveBackend,
     NonInteractiveError,
+    PromptCancelledError,
     _read_line_with_timeout_posix,
     ask,
+    cancel_prompt_read,
     choose,
+    configure_prompting,
     confirm,
     form,
+    prompt_cancelled,
     read_line_with_timeout,
+    reset_prompting,
+    run_cancellable_prompt_async,
+    run_prompt_async,
     temporary_backend,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+
+
+@pytest.fixture(autouse=True)
+def reset_prompting_state() -> Iterator[None]:
+    """Prompting state (backend, SIGINT guard, cancel flag) is process-global."""
+    reset_prompting()
+    yield
+    reset_prompting()
 
 
 def _ready_poll(r, w, x, t):
@@ -49,6 +69,43 @@ def test_read_line_with_timeout_eof_returns_none() -> None:
 
 def test_read_line_with_timeout_negative_timeout() -> None:
     assert read_line_with_timeout("p> ", -1) is None
+
+
+def test_read_line_with_timeout_cancelled() -> None:
+    """A cancel request (SIGINT during an off-loop prompt) ends the read."""
+    stream = io.StringIO()
+    cancel_prompt_read()
+    try:
+        assert prompt_cancelled()
+        with pytest.raises(PromptCancelledError):
+            _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_never_poll)
+    finally:
+        stream.close()
+
+
+async def test_run_prompt_async_clears_cancel_flag() -> None:
+    """A stale cancel request must not leak into the next prompt read."""
+    cancel_prompt_read()
+    with temporary_backend(NonInteractiveBackend()):
+        assert await run_prompt_async(lambda: "ok") == "ok"
+    assert not prompt_cancelled()
+
+
+async def test_run_prompt_async_passes_cancel_hook_only_when_cancellable() -> None:
+    """The CLI guard gets the read's cancel hook for poll-based reads only."""
+    seen: list[object] = []
+
+    @contextlib.contextmanager
+    def _guard(cancel: object) -> Generator[None]:
+        seen.append(cancel)
+        yield
+
+    with temporary_backend(NonInteractiveBackend()):
+        # temporary_backend resets the guard, so install it inside.
+        configure_prompting(pause_factory=_guard)
+        assert await run_cancellable_prompt_async(lambda: "a") == "a"
+        assert await run_prompt_async(lambda: "b") == "b"
+    assert seen == [cancel_prompt_read, None]
 
 
 class ScriptedBackend:

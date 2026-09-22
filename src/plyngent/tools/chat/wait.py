@@ -7,7 +7,12 @@ import sys
 from click import style
 
 from plyngent.agent import ToolTag, tool
-from plyngent.prompting import get_prompt_backend, read_line_with_timeout, run_prompt_async
+from plyngent.prompting import (
+    PromptCancelledError,
+    get_prompt_backend,
+    read_line_with_timeout,
+    run_cancellable_prompt_async,
+)
 from plyngent.tools.chat.shape import first_error, number_arg, string_error
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -36,7 +41,10 @@ async def _interactive_wait(seconds: float, reason: str | None) -> str:
     """Show the two-line wait prompt and report how the wait ended."""
     label = f"{seconds:g}"
     prompt = _wait_prompt(seconds, reason=reason)
-    line = await run_prompt_async(read_line_with_timeout, prompt, seconds)
+    try:
+        line = await run_cancellable_prompt_async(read_line_with_timeout, prompt, seconds)
+    except PromptCancelledError:
+        return "cancelled by user"
     if line is None:
         return f"waited {label}s"
     text = line.strip()
@@ -51,8 +59,9 @@ async def wait(duration: int, *, reason: str | None = None) -> str:
 
     Interactive sessions show a two-line prompt: a status line, then an
     optional-reason input — pressing Enter (optionally after typing a reason)
-    "disturbs" the wait so the turn continues immediately. Non-interactive runs
-    simply sleep the full duration.
+    "disturbs" the wait so the turn continues immediately, and Ctrl+C cancels
+    the wait (the turn continues). Non-interactive runs simply sleep the full
+    duration.
     """
     seconds, duration_error = number_arg("wait", "duration", duration, example="5")
     reason_error = None if reason is None else string_error("wait", "reason", reason)

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import select
 import sys
+import threading
 import time
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -17,6 +18,30 @@ if TYPE_CHECKING:
 
 class NonInteractiveError(RuntimeError):
     """Raised when a prompt is required but no interactive backend is available."""
+
+
+class PromptCancelledError(RuntimeError):
+    """Raised by a poll-based prompt read when the human cancels it (Ctrl+C).
+
+    Only poll-based reads (``read_line_with_timeout``) can observe the cancel:
+    they check :func:`prompt_cancelled` between polls, so the reader thread
+    returns and nothing is left blocked on stdin.
+    """
+
+
+# Set by the SIGINT target registered for a poll-based prompt read (see
+# cli.interrupt.off_loop_prompt); cleared around each off-loop prompt.
+_prompt_cancel = threading.Event()
+
+
+def prompt_cancelled() -> bool:
+    """Whether the in-flight poll-based prompt read was cancelled by SIGINT."""
+    return _prompt_cancel.is_set()
+
+
+def cancel_prompt_read() -> None:
+    """Ask the in-flight poll-based prompt read to return (thread-safe)."""
+    _prompt_cancel.set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +142,8 @@ def _read_line_with_timeout_posix(
 
     Returns the line (without trailing newline), ``""`` for an empty Enter, or
     ``None`` when the timeout elapses before any line is complete (EOF too).
+    Raises :class:`PromptCancelledError` when :func:`prompt_cancelled` turns true
+    while waiting (the poll loop notices within one interval).
     """
     _ = sys.stdout.write(prompt)
     _ = sys.stdout.flush()
@@ -125,6 +152,8 @@ def _read_line_with_timeout_posix(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None
+        if prompt_cancelled():
+            raise PromptCancelledError
         ready, _, _ = poll([stream], [], [], min(remaining, 0.1))
         if not ready:
             continue
@@ -143,6 +172,8 @@ def _read_line_with_timeout_windows(prompt: str, timeout: float) -> str | None:
     deadline = time.monotonic() + timeout
     buf: list[str] = []
     while time.monotonic() < deadline:
+        if prompt_cancelled():
+            raise PromptCancelledError
         if msvcrt.kbhit():
             ch = msvcrt.getwch()
             if ch in ("\r", "\n"):
@@ -171,7 +202,9 @@ def read_line_with_timeout(prompt: str, timeout: float) -> str | None:
 
     Returns the typed line (without trailing newline), ``""`` for an empty
     Enter, or ``None`` when the timeout elapses first (EOF too). Ctrl+C
-    propagates as :class:`KeyboardInterrupt`. POSIX polls stdin via ``select``;
+    propagates as :class:`KeyboardInterrupt`; :func:`cancel_prompt_read` (the
+    SIGINT target of an off-loop prompt read) raises
+    :class:`PromptCancelledError` instead. POSIX polls stdin via ``select``;
     Windows uses ``msvcrt`` char polling (best-effort).
     """
     if timeout < 0:
@@ -263,16 +296,18 @@ class NonInteractiveBackend:
 
 
 _backend: PromptBackend = ClickPromptBackend()
-_pause_factory: Callable[[], AbstractContextManager[None]] | None = None
+# CLI hook: context manager around an off-loop prompt. It receives the read's
+# cancel hook (poll-based reads) or None (reads that cannot be interrupted).
+_pause_factory: Callable[[Callable[[], None] | None], AbstractContextManager[None]] | None = None
 _prompt_lock = asyncio.Lock()
 
 
 def configure_prompting(
     *,
     backend: PromptBackend | None = None,
-    pause_factory: Callable[[], AbstractContextManager[None]] | None = None,
+    pause_factory: Callable[[Callable[[], None] | None], AbstractContextManager[None]] | None = None,
 ) -> None:
-    """Install process-wide prompt backend and optional cancel-pause context."""
+    """Install process-wide prompt backend and optional SIGINT guard for prompts."""
     global _backend, _pause_factory  # noqa: PLW0603
     if backend is not None:
         _backend = backend
@@ -284,10 +319,11 @@ def get_prompt_backend() -> PromptBackend:
 
 
 def reset_prompting() -> None:
-    """Restore default Click backend and clear pause hook (tests)."""
+    """Restore default Click backend, clear the pause hook and cancel flag (tests)."""
     global _backend, _pause_factory  # noqa: PLW0603
     _backend = ClickPromptBackend()
     _pause_factory = None
+    _prompt_cancel.clear()
 
 
 def _normalize_options(
@@ -464,13 +500,45 @@ def form(
         backend.echo("Starting over…")
 
 
-async def run_prompt_async[**P, R](func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-    """Run a blocking prompt off the event loop, serialized, with optional SIGINT pause."""
+async def _prompt_off_loop[R](
+    func: Callable[..., R],
+    *args: object,
+    cancel_hook: Callable[[], None] | None,
+    **kwargs: object,
+) -> R:
+    """Shared body: run *func* off the event loop under the CLI's SIGINT guard."""
     async with _prompt_lock:
-        if _pause_factory is not None:
-            with _pause_factory():
-                return await asyncio.to_thread(func, *args, **kwargs)
-        return await asyncio.to_thread(func, *args, **kwargs)
+        _prompt_cancel.clear()
+        try:
+            if _pause_factory is not None:
+                with _pause_factory(cancel_hook):
+                    return await asyncio.to_thread(func, *args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
+        finally:
+            _prompt_cancel.clear()
+
+
+async def run_prompt_async[**P, R](func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    """Run a blocking prompt off the event loop, serialized, SIGINT-guarded.
+
+    While the prompt waits, a Ctrl+C must not cancel the enclosing turn: the CLI
+    guard registers the prompt as the SIGINT target. readline-based reads cannot
+    be interrupted without abandoning the reader thread on stdin, so they ignore
+    the interrupt with a one-line hint (see :func:`run_cancellable_prompt_async`
+    for poll-based reads).
+    """
+    return await _prompt_off_loop(func, *args, cancel_hook=None, **kwargs)
+
+
+async def run_cancellable_prompt_async[**P, R](func: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    """Run a *poll-based* prompt read off the event loop; Ctrl+C cancels it.
+
+    Only for reads that observe :func:`prompt_cancelled`
+    (``read_line_with_timeout``): the SIGINT raises :class:`PromptCancelledError`
+    in the reader thread, so it returns to the caller instead of leaving a thread
+    blocked on stdin (and without cancelling the enclosing turn).
+    """
+    return await _prompt_off_loop(func, *args, cancel_hook=cancel_prompt_read, **kwargs)
 
 
 async def ask_async(prompt: str, *, default: str | None = None) -> str:
