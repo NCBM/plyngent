@@ -257,7 +257,7 @@ Type `/help` in the REPL for the live list. Common ones:
 |---------|---------|
 | `/status` | Provider, session, context/usage estimates |
 | `/history [N \| last [N]]` | Conversation grouped by turn: default = the last turn (your message + the model's answer); `N` = turn N, `last N` = the last N turns |
-| `/history -v` / `-vv` | `-v` prints every row of the selected turn(s) (tool calls/results, notices); `-vv` prints full bodies (and the local system row). `--message N` prints one message in full, `--preview` one-lines every row. Numbers are display ordinals shown by `/history`, never database rows (they restart after `/clear`) |
+| `/history -v` / `-vv` | The turn's ends (your message, the answer) always print in full; `-v` adds every intermediate row (tool calls/results, notices) as a one-liner, `-vv` prints those in full too, and `--preview` collapses every row. `--message N` prints one message in full. Numbers are display ordinals shown by `/history`, never database rows (they restart after `/clear`) |
 | `/sessions` | Sessions for this workspace |
 | `/new` `/resume` `/rename` `/delete` | Session lifecycle (`/delete` confirms) |
 | `/export [md\|json] [path]` | Transcript from DB (no secrets) |
