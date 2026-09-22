@@ -13,6 +13,10 @@ type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
 # Static directory pre-allow mode for ``[agent].allow_paths`` (path → mode).
 type AllowPathMode = Literal["read", "write", "exec"]
 
+# Built-in skill discovery sources (``[skills].discover``): our own user config
+# directory, and the skill directories other harnesses install into.
+type SkillDiscoverySource = Literal["plyngent", "claude"]
+
 # Built-in persona when ``[agent].system_prompt`` is omitted.
 # Set ``system_prompt = ""`` to omit the persona block only.
 # Override with a multi-line TOML literal (prefer ''' so nested " is fine).
@@ -204,6 +208,34 @@ class NetworkingConfig(Struct, omit_defaults=True):
     """
 
     ssrf_assume_public_cidrs: list[str] = field(default_factory=list)
+
+
+class SkillsConfig(Struct, omit_defaults=True):
+    """Skill directories the agent may discover, read, and (with a grant) edit.
+
+    A skill is a directory holding a ``SKILL.md`` (YAML frontmatter with at least
+    ``name`` / ``description``, then a Markdown body) plus optional bundled files
+    (scripts, references, templates). Roots are scanned in this order:
+
+    1. ``paths`` — explicit roots, highest priority
+    2. ``discover`` sources in order: ``plyngent`` = our user config dir
+       (``<user config>/skills``), ``claude`` = Claude Code's skill dirs
+       (``~/.claude/skills``; plus ``<workspace>/.claude/skills`` when
+       ``include_project_roots``)
+
+    A skill found in several roots shadows the lower-priority copies: they stay
+    listed, never hidden. ``enabled = false`` registers no skill tools at all and
+    injects no catalog. Writing needs an explicit grant (a confirm per call, or
+    ``allow_write`` for a standing one); reads need none.
+    """
+
+    enabled: bool = True
+    paths: list[str] = field(default_factory=list)
+    discover: list[SkillDiscoverySource] = field(default_factory=lambda: ["plyngent", "claude"])
+    include_project_roots: bool = True
+    inject_catalog: bool = True
+    max_catalog_skills: int = 50
+    allow_write: bool = False
 
 
 class ModelConfig(Struct, omit_defaults=True):

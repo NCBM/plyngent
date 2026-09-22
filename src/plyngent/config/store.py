@@ -14,6 +14,7 @@ from .models import (
     NetworkingConfig,
     PluginsConfig,
     Provider,
+    SkillsConfig,
 )
 
 if TYPE_CHECKING:
@@ -55,6 +56,14 @@ def _parse_networking(raw: dict[str, object]) -> NetworkingConfig:
         return msgspec.convert(raw, NetworkingConfig)
     except msgspec.ValidationError:
         return NetworkingConfig()
+
+
+def _parse_skills(raw: dict[str, object]) -> SkillsConfig:
+    """Parse the ``[skills]`` section, falling back to defaults."""
+    try:
+        return msgspec.convert(raw, SkillsConfig)
+    except msgspec.ValidationError:
+        return SkillsConfig()
 
 
 def _parse_mcp(raw: dict[str, object]) -> McpConfig:
@@ -150,6 +159,7 @@ class ConfigStore:
     _plugins: PluginsConfig
     _networking: NetworkingConfig
     _mcp: McpConfig
+    _skills: SkillsConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -163,6 +173,7 @@ class ConfigStore:
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
+        self._skills = _parse_skills(cast("dict[str, object]", raw.get("skills", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -219,6 +230,13 @@ class ConfigStore:
     def mcp_config(self) -> McpConfig:
         """Typed MCP section (server definitions + disable list)."""
         return self._mcp
+
+    # -- skills (read-only) --
+
+    @property
+    def skills_config(self) -> SkillsConfig:
+        """Typed skills section (roots, discovery sources, catalog limits)."""
+        return self._skills
 
     def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
         """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
