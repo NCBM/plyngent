@@ -88,7 +88,7 @@ a note: the skill stays listable instead of vanishing.
 ## Grants: reading vs writing
 
 - **Reading needs no grant.** The host registers the roots as read-only roots, so
-  `read_file`, `grep_files`, and `listdir` see skill files too. Writes are denied
+  `read_file`, `regex_files`, and `listdir` see skill files too. Writes are denied
   by the path policy — a skill directory never becomes a write grant.
 - **Writing needs a grant.** `skill_create` / `skill_edit` ask the human for the
   skill directory: `o` once, `s` for the rest of the chat, anything else (or a
