@@ -54,7 +54,7 @@ async def ask_into_pty(
 
     ``message`` is shown to the human (what to enter), not the secret itself.
     ``secret=true`` uses no-echo input. ``submit=true`` (default) appends a
-    newline after the answer. Empty input and Ctrl+C cancel without writing.
+    newline after the answer. Empty input cancels without writing.
     """
     label = message.strip() or ("Secret" if secret else "Input")
     try:
