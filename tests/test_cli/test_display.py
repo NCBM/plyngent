@@ -350,17 +350,17 @@ async def test_pretty_glob_truncated(capsys: pytest.CaptureFixture[str]) -> None
     assert "* Glob '*' in '.' (2 paths)" in out
 
 
-async def test_pretty_grep(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_pretty_regex_files(capsys: pytest.CaptureFixture[str]) -> None:
     result = "src/a.py:3: x = 1\nsrc/a.py:9: x = 2\nsrc/b.py:1: y = 3\n"
     await render_events(_aiter([_pretty_call("regex_files", '{"pattern": "x"}'), _result(result)]))
     out = capsys.readouterr().out
-    assert "* Grep 'x' in '.' (3 matches in 2 files)" in out
+    assert "* Search 'x' in '.' (3 matches in 2 files)" in out
 
 
-async def test_pretty_grep_no_matches(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_pretty_regex_files_no_matches(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(_aiter([_pretty_call("regex_files", '{"pattern": "zzz"}'), _result("(no matches)")]))
     out = capsys.readouterr().out
-    assert "* Grep 'zzz' in '.' (no matches)" in out
+    assert "* Search 'zzz' in '.' (no matches)" in out
 
 
 async def test_pretty_run_argv_success(capsys: pytest.CaptureFixture[str]) -> None:

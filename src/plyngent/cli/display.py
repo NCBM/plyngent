@@ -335,7 +335,7 @@ def _glob_detail(_args_json: str, result: str) -> str:
 def _regex_prefix(args_json: str) -> str:
     pattern = _json_str_arg(args_json, "pattern") or "?"
     path = _json_str_arg(args_json, "path") or "."
-    return _pretty_prefix(f"* Grep '{pattern}' in '{path}' ")
+    return _pretty_prefix(f"* Search '{pattern}' in '{path}' ")
 
 
 def _regex_detail(_args_json: str, result: str) -> str:
