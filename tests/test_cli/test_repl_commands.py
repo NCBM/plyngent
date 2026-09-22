@@ -134,8 +134,8 @@ async def test_help_history_no_fake_options(state: ReplState, capsys: pytest.Cap
     assert await handle_slash(state, "/help history") is True
     out = capsys.readouterr().out
     assert "Usage: /history" in out
-    # Real flags for full/preview are documented; Click's meta --help is not.
-    assert "--full" in out
+    # Real flags are documented; Click's meta --help is not.
+    assert "--verbose" in out
     assert "--preview" in out
     assert "  --help" not in out
 
@@ -496,70 +496,6 @@ async def test_resume(state: ReplState) -> None:
     assert sid is not None
     state.agent.messages.clear()
     assert await handle_slash(state, f"/resume {sid}") is True
-
-
-async def test_history(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    from plyngent.lmproto.openai_compatible.model import AssistantChatMessage, UserChatMessage
-
-    state.agent.messages = [
-        UserChatMessage(content="hello"),
-        AssistantChatMessage(content="hi there"),
-    ]
-    assert await handle_slash(state, "/history") is True
-    out = capsys.readouterr().out
-    assert "mode=preview" in out
-    assert "user: hello" in out
-    assert "assistant: hi there" in out
-
-
-async def test_history_last_full(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    from plyngent.lmproto.openai_compatible.model import AssistantChatMessage, UserChatMessage
-
-    long_body = "# Title\n\n" + ("paragraph text. " * 20)
-    state.agent.messages = [
-        UserChatMessage(content="hello"),
-        AssistantChatMessage(content=long_body),
-    ]
-    assert await handle_slash(state, "/history last") is True
-    out = capsys.readouterr().out
-    assert "mode=full" in out
-    assert "assistant:" in out
-    # Full mode should not use the 200-char preview ellipsis on the body alone
-    assert long_body[:50] in out or "Title" in out
-
-
-async def test_history_one_full(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    from plyngent.lmproto.openai_compatible.model import UserChatMessage
-
-    state.agent.messages = [UserChatMessage(content="only me")]
-    assert await handle_slash(state, "/history 1") is True
-    out = capsys.readouterr().out
-    assert "mode=full" in out
-    assert "only me" in out
-
-
-async def test_history_one_preview_flag(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    from plyngent.lmproto.openai_compatible.model import UserChatMessage
-
-    state.agent.messages = [UserChatMessage(content="x" * 250)]
-    assert await handle_slash(state, "/history 1 --preview") is True
-    out = capsys.readouterr().out
-    assert "mode=preview" in out
-    assert "…" in out
-
-
-async def test_history_full_flag(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    from plyngent.lmproto.openai_compatible.model import AssistantChatMessage, UserChatMessage
-
-    body = "full " * 100
-    state.agent.messages = [
-        UserChatMessage(content="u"),
-        AssistantChatMessage(content=body),
-    ]
-    assert await handle_slash(state, "/history 2 --full") is True
-    out = capsys.readouterr().out
-    assert "mode=full" in out
-    assert body[:40] in out
 
 
 async def test_rounds(state: ReplState) -> None:

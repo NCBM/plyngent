@@ -186,7 +186,8 @@ def test_complete_slash_args_from_registry(tmp_path: object) -> None:
     assert "push" in complete_slash_args(state, "/todos", "p")
     assert "pop" in complete_slash_args(state, "/todos", "p")
     assert "--persist" in complete_slash_args(state, "/model", "--p")
-    assert "--full" in complete_slash_args(state, "/history", "--f")
+    assert "--verbose" in complete_slash_args(state, "/history", "--v")
+    assert complete_slash_args(state, "/history", "la") == ["last"]
     assert "32" in complete_slash_args(state, "/rounds", "3")
 
     from plyngent.agent.todo_stack import TodoStack

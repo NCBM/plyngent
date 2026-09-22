@@ -2,23 +2,15 @@ from __future__ import annotations
 
 import os
 import shlex
-from typing import TYPE_CHECKING, Any, cast, override
+from typing import TYPE_CHECKING, Any, Literal, cast, override
 
 import awaitlet  # pyright: ignore[reportMissingTypeStubs]
 import click
 from click.shell_completion import CompletionItem
-from msgspec import UNSET
 
 from plyngent.cli.models_source import DEFAULT_MODELS_CACHE_TTL, model_choices_for_provider
 from plyngent.cli.retry import retry_pending_with_retries
 from plyngent.cli.selection import select_model, select_provider
-from plyngent.lmproto.openai_compatible.model import (
-    AssistantChatMessage,
-    AssistantFunctionToolCall,
-    DeveloperChatMessage,
-    SystemChatMessage,
-    UserChatMessage,
-)
 from plyngent.runtime import ProviderNotSupportedError
 
 if TYPE_CHECKING:
@@ -26,10 +18,7 @@ if TYPE_CHECKING:
 
     from plyngent.agent import ToolRegistry
     from plyngent.cli.state import ReplState, YoloMode
-    from plyngent.lmproto.openai_compatible.model import AnyChatMessage
 
-_DEFAULT_HISTORY_LINES = 20
-_CONTENT_PREVIEW = 200
 _COMPACT_PREVIEW = 400
 _ON_OFF_CHOICES = ("on", "off")
 _YOLO_MODE_CHOICES = ("on", "off", "once")
@@ -49,33 +38,77 @@ _TODO_ACTION_CHOICES = (
 _ROUNDS_CHOICES = ("8", "16", "32", "64", "128")
 
 
-class HistoryLimitType(click.ParamType[int]):
-    """``N`` (int >= 1) or the shortcut ``last`` (equivalent to ``1``)."""
+class HistoryTargetType(click.ParamType[int | Literal["last"]]):
+    """``N`` (turn number >= 1) or the keyword ``last`` (most recent turn)."""
 
-    name: str = "history_limit"
+    name: str = "history_target"
 
     @override
-    def convert(self, value: object, param: click.Parameter | None, ctx: click.Context | None) -> int:
-        if isinstance(value, int):
-            if value < 1:
-                self.fail("must be >= 1", param, ctx)
-            return value
-        text = str(value).strip().lower()
+    def convert(
+        self,
+        value: object,
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> int | Literal["last"]:
+        text = value.strip().lower() if isinstance(value, str) else str(value)
         if text == "last":
-            return 1
+            return "last"
         try:
             n = int(text, 10)
         except ValueError:
-            self.fail("expected an integer N or 'last'", param, ctx)
+            self.fail("expected a turn number N or 'last'", param, ctx)
         if n < 1:
             self.fail("must be >= 1", param, ctx)
         return n
 
     @override
     def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
-        del ctx, param
-        tokens = ("last", "1", "5", "10", "20")
-        return [CompletionItem(token) for token in tokens if incomplete == "" or token.startswith(incomplete.lower())]
+        del param
+        tokens = ["last"]
+        state = _repl_state(ctx)
+        if state is not None:
+            from plyngent.cli.transcript import build_transcript
+
+            turns = build_transcript(state.agent.messages).turns
+            # Recent turn numbers are the ones a human is likely to jump back to.
+            tokens += [str(turn.ordinal) for turn in turns[-5:]]
+        token = incomplete.strip().lower()
+        return [CompletionItem(item) for item in tokens if item.startswith(token)]
+
+
+HISTORY_TARGET = HistoryTargetType()
+
+
+class HistoryRowNumberType(click.ParamType[int]):
+    """One-based display number of a transcript row (``/history --message N``)."""
+
+    name: str = "history_message"
+
+    @override
+    def convert(self, value: object, param: click.Parameter | None, ctx: click.Context | None) -> int:
+        try:
+            n = int(str(value), 10)
+        except ValueError:
+            self.fail("expected a message number N", param, ctx)
+        if n < 1:
+            self.fail("must be >= 1", param, ctx)
+        return n
+
+    @override
+    def shell_complete(self, ctx: click.Context, param: click.Parameter, incomplete: str) -> list[CompletionItem]:
+        del param
+        state = _repl_state(ctx)
+        if state is None:
+            return []
+        from plyngent.cli.transcript import build_transcript
+
+        transcript = build_transcript(state.agent.messages)
+        token = incomplete.strip()
+        recent = range(max(1, transcript.messages - 4), transcript.messages + 1)
+        return [CompletionItem(str(n)) for n in recent if str(n).startswith(token)]
+
+
+HISTORY_ROW_NUMBER = HistoryRowNumberType()
 
 
 HELP_FOOTER = (
@@ -1367,65 +1400,61 @@ def rounds_cmd(state: ReplState, n: int | None) -> None:
 
 
 @slash.command("history")
-@click.argument("n", required=False, type=HistoryLimitType())
+@click.argument("target", required=False, type=HISTORY_TARGET)
+@click.argument("count", required=False, type=click.IntRange(min=1), metavar="[N]")
 @click.option(
-    "--full",
-    "mode_full",
-    is_flag=True,
-    default=False,
-    help="Print full message bodies (markdown for assistant when TTY).",
+    "--message",
+    "message_no",
+    type=HISTORY_ROW_NUMBER,
+    default=None,
+    metavar="N",
+    help="Print message N (display number) instead of a turn.",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    "verbose",
+    count=True,
+    help="Print every row of the turn(s); repeat (-vv) for full bodies.",
 )
 @click.option(
     "--preview",
     "mode_preview",
     is_flag=True,
     default=False,
-    help="Force short previews even for a single message.",
+    help="One-line preview for every printed row.",
 )
 @click.pass_obj
 def history_cmd(
     state: ReplState,
-    n: int | None,
+    target: int | Literal["last"] | None,
+    count: int | None,
     *,
-    mode_full: bool,
+    message_no: int | None,
+    verbose: int,
     mode_preview: bool,
 ) -> None:
-    """Show recent messages (default: last 20 as short previews).
+    """Show conversation history, grouped by turn.
 
-    ``/history last`` or ``/history 1`` shows the last message in full with Rich
-    markdown when available. Use ``--full`` for multiple messages in full;
-    ``--preview`` forces the short form even for a single message.
+    ``/history`` — the last turn: your message and the model's final answer
+    ``/history N`` — turn N (numbered from the first turn of this session)
+    ``/history last [N]`` — the last N turns (default 1)
+    ``/history --message N`` — one message (display number, not a DB row)
+    ``-v`` adds every intermediate row (tool calls/results, notices); ``-vv``
+    prints full bodies for all of them; ``--preview`` collapses to one line each.
     """
-    if mode_full and mode_preview:
-        msg = "use only one of --full / --preview"
-        raise click.UsageError(msg)
-    limit = _DEFAULT_HISTORY_LINES if n is None else n
-    messages = state.agent.messages
-    if not messages:
-        click.echo("(no messages in this session)")
-        return
-    start = max(0, len(messages) - limit)
-    slice_msgs = messages[start:]
-    # Full: --full, or single-message window (last / 1) unless --preview.
-    full = mode_full or (len(slice_msgs) == 1 and not mode_preview)
-    mode_tag = "full" if full else "preview"
-    click.echo(f"session={state.session_id}  messages={len(messages)}  showing={len(slice_msgs)}  mode={mode_tag}")
-    for offset, message in enumerate(slice_msgs):
-        idx = start + offset
-        if full:
-            _print_history_message_full(idx, message)
-        else:
-            click.echo(_format_history_message(idx, message))
-    if state.agent.pending_retry_text is not None:
-        pending = state.agent.pending_retry_text
-        if full:
-            click.secho("(pending retry) user:", fg="yellow")
-            click.echo(pending)
-        else:
-            click.secho(
-                f"(pending retry) user: {_preview_content(pending)}",
-                fg="yellow",
-            )
+    from plyngent.cli import transcript as transcript_mod
+
+    transcript_mod.echo_history(
+        state.agent.messages,
+        session_id=state.session_id,
+        pending_retry_text=state.agent.pending_retry_text,
+        target=target,
+        count=count,
+        message_no=message_no,
+        verbose=verbose,
+        preview=mode_preview,
+    )
 
 
 @slash.command("todos")
@@ -1517,98 +1546,6 @@ def retry_cmd(state: ReplState) -> None:
     model loop without re-executing those tool calls.
     """
     _ = _await(retry_pending_with_retries(state.agent))
-
-
-def _preview_content(text: str | None) -> str:
-    if not text:
-        return ""
-    if len(text) <= _CONTENT_PREVIEW:
-        return text
-    return text[:_CONTENT_PREVIEW] + "…"
-
-
-def _print_history_assistant_full(index: int, message: AssistantChatMessage) -> None:
-    from plyngent.cli.display import markdown_render_available, print_markdown
-
-    click.secho(f"{index}. assistant:", fg="cyan")
-    content = message.content
-    has_text = isinstance(content, str) and content.strip()
-    if has_text and isinstance(content, str):
-        if markdown_render_available():
-            print_markdown(content, label="")
-        else:
-            click.echo(content)
-    reasoning = message.reasoning_content
-    has_reason = isinstance(reasoning, str) and reasoning.strip()
-    if has_reason and isinstance(reasoning, str):
-        click.secho("reasoning:", fg="bright_black")
-        click.echo(reasoning)
-    tool_calls = message.tool_calls
-    has_tools = tool_calls is not UNSET and bool(tool_calls)
-    if has_tools and tool_calls is not UNSET:
-        for call in tool_calls:
-            if isinstance(call, AssistantFunctionToolCall):
-                click.secho(
-                    f"  tool_call {call.id}: {call.function.name}({call.function.arguments})",
-                    fg="yellow",
-                )
-            else:
-                click.secho(f"  tool_call custom id={call.id}", fg="yellow")
-    if not (has_text or has_reason or has_tools):
-        click.echo("(empty)")
-    click.echo()
-
-
-def _print_history_message_full(index: int, message: AnyChatMessage) -> None:
-    """Print one history message with full body; Rich markdown for assistant text."""
-    if isinstance(message, UserChatMessage):
-        click.secho(f"{index}. user:", fg="green")
-        click.echo(message.content or "")
-        click.echo()
-        return
-    if isinstance(message, DeveloperChatMessage):
-        click.secho(f"{index}. developer:", fg="blue")
-        click.echo(message.content or "")
-        click.echo()
-        return
-    if isinstance(message, SystemChatMessage):
-        click.secho(f"{index}. system:", fg="bright_black")
-        click.echo(message.content or "")
-        click.echo()
-        return
-    if isinstance(message, AssistantChatMessage):
-        _print_history_assistant_full(index, message)
-        return
-    # ToolChatMessage (remaining AnyChatMessage arm)
-    click.secho(f"{index}. tool({message.tool_call_id}):", fg="magenta")
-    click.echo(message.content or "")
-    click.echo()
-
-
-def _format_history_message(index: int, message: AnyChatMessage) -> str:
-    if isinstance(message, UserChatMessage):
-        return f"{index}. user: {_preview_content(message.content)}"
-    if isinstance(message, DeveloperChatMessage):
-        return f"{index}. developer: {_preview_content(message.content)}"
-    if isinstance(message, SystemChatMessage):
-        return f"{index}. system: {_preview_content(message.content)}"
-    if isinstance(message, AssistantChatMessage):
-        parts: list[str] = []
-        if isinstance(message.content, str) and message.content:
-            parts.append(_preview_content(message.content))
-        tool_calls = message.tool_calls
-        if tool_calls is not UNSET and tool_calls:
-            names: list[str] = []
-            for call in tool_calls:
-                if isinstance(call, AssistantFunctionToolCall):
-                    names.append(call.function.name)
-                else:
-                    names.append("custom")
-            parts.append(f"tool_calls=[{', '.join(names)}]")
-        body = " ".join(parts) if parts else "(empty)"
-        return f"{index}. assistant: {body}"
-    # ToolChatMessage
-    return f"{index}. tool({message.tool_call_id}): {_preview_content(message.content)}"
 
 
 def _run_slash_argv(args: Sequence[str], state: ReplState) -> None:
