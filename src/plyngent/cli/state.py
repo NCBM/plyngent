@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from plyngent.memory import MemoryStore
     from plyngent.memory.database.schema import Session as SessionRow
     from plyngent.runtime.mcp_client import McpManager
+    from plyngent.skills import SkillStore
     from plyngent.tools.access import AccessDecision
     from plyngent.tools.workspace import AccessMode
 
@@ -88,6 +89,8 @@ class ReplState:
     session_state: SessionState = field(default_factory=SessionState)
     # MCP connections started by the host app before this state was built.
     mcp_manager: McpManager | None = None
+    # Discovered skills (None when ``[skills].enabled`` is false).
+    skills: SkillStore | None = field(default=None, init=False, repr=False)
     _todo_persist_tasks: set[object] = field(default_factory=set, init=False, repr=False)
     # Session ids for Tab complete (updated when listing/creating/resuming).
     _session_id_cache: list[int] = field(default_factory=list, init=False, repr=False)
@@ -103,6 +106,7 @@ class ReplState:
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
         self._install_config_access()
+        self._install_skills()
         from plyngent.cli.limits import set_auto_continue_default
 
         set_auto_continue_default(enabled=self.auto_continue_limits)
@@ -302,6 +306,71 @@ class ReplState:
                 err=True,
             )
 
+    def _install_skills(self) -> None:
+        """Build the skill store and expose its roots read-only to path tools.
+
+        Roots follow ``[skills]`` (explicit paths first, then our own user
+        directory and other harnesses' directories, with the project-scope ones
+        tied to the current workspace). Writing is *not* part of this: the roots
+        are read-only, and skill writes go through the write policy installed
+        below, so a skill directory never becomes a general write grant.
+        """
+        from plyngent.cli.limits import prompt_skill_write_confirm
+        from plyngent.config.path import get_default_path
+        from plyngent.skills import SkillStore, build_roots
+        from plyngent.tools.skills import SkillWritePolicy, set_skill_write_policy
+        from plyngent.tools.workspace import set_static_read_roots
+
+        cfg = self.config.skills_config
+        set_skill_write_policy(
+            SkillWritePolicy(allow_all=cfg.allow_write, confirm=prompt_skill_write_confirm),
+            instance=self.instance_state,
+        )
+        if not cfg.enabled:
+            self.skills = None
+            self.instance_state.skills = None
+            _ = set_static_read_roots([], instance=self.instance_state)
+            return
+        roots = build_roots(
+            cfg,
+            workspace=self.workspace,
+            user_config_dir=get_default_path().parent,
+            home=Path.home(),
+        )
+        self.skills = SkillStore(roots)
+        self.instance_state.skills = self.skills
+        _ = set_static_read_roots([root.path for root in roots], instance=self.instance_state)
+
+    def reload_skills(self) -> None:
+        """Rescan the roots (after an external edit or a config change)."""
+        if self.skills is not None:
+            self.skills.reload()
+
+    def _skills_text(self) -> str:
+        """Fold the discovered skills into the system prompt (like MCP instructions).
+
+        Only names, sources, and descriptions: the bodies stay on disk so a turn
+        pays for the skill it actually reads. Notes and shadowed copies are left
+        to ``skill_list``, which the model can call when something looks off.
+        """
+        cfg = self.config.skills_config
+        if self.skills is None or not self.tools_enabled or not cfg.inject_catalog:
+            return ""
+        skills = self.skills.skills
+        if not skills:
+            return ""
+        limit = max(0, cfg.max_catalog_skills)
+        shown = skills[:limit]
+        lines = [
+            "### Skills",
+            "Available skills (read a skill's SKILL.md with `skill_read` before following it):",
+        ]
+        lines.extend(f"- {skill.name} ({skill.root.label}): {skill.description}" for skill in shown)
+        if len(skills) > len(shown):
+            lines.append(f"- … and {len(skills) - len(shown)} more; use `skill_search` or `skill_list`")
+        lines.append("Search all skills with `skill_search`; create or update one with `skill_create` / `skill_edit`.")
+        return "\n".join(lines)
+
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
@@ -309,6 +378,7 @@ class ReplState:
         from plyngent.tools.catalog import register_builtin_tools
         from plyngent.tools.danger import classify_danger
         from plyngent.tools.plugins import load_plugin_tools
+        from plyngent.tools.skills import SKILL_TOOL_NAMES
 
         plugins_cfg = self.config.plugins_config
         catalog = register_builtin_tools()
@@ -323,7 +393,9 @@ class ReplState:
             # Connections were started by the host; registration is sync-only.
             _ = register_mcp_tools(self.mcp_manager, self.config.mcp_config)
         # Local surface: builtins + allowlisted plugins (import registers into catalog).
-        tools = catalog.select(surface="local")
+        # ``[skills].enabled = false`` drops the skill tools from the surface.
+        excluded = None if self.config.skills_config.enabled else set(SKILL_TOOL_NAMES)
+        tools = catalog.select(surface="local", exclude_names=excluded)
         yolo = self.effective_yolo() != "off"
         # Always attach soft-confirm path so non-YOLO tools still prompt under YOLO mode.
         return ToolRegistry(
@@ -357,6 +429,7 @@ class ReplState:
         system_prompt = compose_agent_system_content(
             agent_cfg.system_prompt,
             agent_cfg.tool_directives,
+            self._skills_text(),
             mcp_text,
         )
         on_limit = prompt_continue_limit_async if (self.interactive_limits or auto_continue_enabled()) else None
@@ -539,6 +612,8 @@ class ReplState:
 
         self.config.reload()
         self.instance_state.workspace.path_denylist = tuple(self.config.agent_config.path_denylist or ())
+        # Roots and their switches came from the file that was just re-read.
+        self._install_skills()
 
         selectable = self.config.selectable_providers()
         preferred_provider = self.provider_name if self.provider_name in selectable else None
@@ -576,6 +651,8 @@ class ReplState:
         self.workspace = resolved
         self.instance_state.workspace_root = resolved
         self.instance_state.workspace.root = resolved
+        # Project-scope skill roots follow the workspace.
+        self._install_skills()
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_instance_state(self.instance_state)
 

@@ -387,6 +387,9 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
         if isinstance(state_obj, ReplState):
             state_obj.instance_state.workspace.policy_confirm_hook = None
             state_obj.instance_state.workspace.policy_allowed_commands.clear()
+            from plyngent.tools.skills import set_skill_write_policy
+
+            set_skill_write_policy(None, instance=state_obj.instance_state)
             from plyngent.tools.net import (
                 clear_private_grants,
                 clear_ssrf_assume_public_cidrs,

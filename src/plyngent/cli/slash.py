@@ -590,6 +590,7 @@ def status_cmd(state: ReplState) -> None:
         f"rounds={last_rounds}\n"
         f"usage_session={session_u.format_line(billed=True)}\n"
         f"grants={len(access_grant_rows(instance=state.instance_state, session=state.session_state))}  "
+        f"skills={len(state.skills.skills) if state.skills is not None else 'off'}  "
         f"workspace={state.workspace}"
     )
 
@@ -1248,6 +1249,54 @@ def mcp_slash_cmd(state: ReplState, action: str | None) -> None:
     _slash_rebuild_tools_if_on(state)
     click.echo(f"mcp reconnected; tools={'on' if state.tools_enabled else 'off'}")
     _print_mcp_status(state)
+
+
+@slash.command("skills")
+@click.argument("action", required=False, type=click.Choice(["list", "search", "read", "reload"]))
+@click.argument("target", required=False)
+@click.option("--file", "file", default="", help="File inside the skill (with ``read``).")
+@click.pass_obj
+def skills_slash_cmd(state: ReplState, action: str | None, target: str | None, file: str) -> None:
+    """List skills, search or read them, or rescan the roots.
+
+    ``/skills`` or ``/skills list`` — discovered skills with their source root.
+    ``/skills search PATTERN`` — regex over every skill's contents.
+    ``/skills read NAME [--file F]`` — print a skill's SKILL.md (or one file).
+    ``/skills reload`` — rescan the roots after an external edit.
+    """
+    from plyngent.tools.context import bind_tool_context
+    from plyngent.tools.skills import SKILL_TOOL_NAMES, format_skill_table, skill_read, skill_search
+
+    if state.skills is None:
+        click.echo("skills: disabled (set [skills].enabled = true)")
+        return
+    act = (action or "list").lower()
+    if act == "reload":
+        state.reload_skills()
+        _slash_rebuild_tools_if_on(state)
+        click.echo(f"skills reloaded: {len(state.skills.skills)} visible; tools rebuilt")
+        return
+    # The tool handlers read the bound instance (the registry binds it for a
+    # model call; a slash command has to do it itself).
+    with bind_tool_context(instance=state.instance_state, session=state.session_state):
+        if act == "search":
+            if not target:
+                msg = "/skills search requires a pattern"
+                raise click.UsageError(msg)
+            click.echo(_await(skill_search.handler(target)))
+            return
+        if act == "read":
+            if not target:
+                msg = "/skills read requires a skill name"
+                raise click.UsageError(msg)
+            click.echo(_await(skill_read.handler(target, file or "SKILL.md")))
+            return
+    click.echo(format_skill_table(state.skills))
+    if not state.tools_enabled:
+        click.secho(
+            f"note: tools are off, so {', '.join(sorted(SKILL_TOOL_NAMES))} are not offered to the model",
+            fg="bright_black",
+        )
 
 
 @slash.command("grants")

@@ -21,6 +21,7 @@ from plyngent.prompting import (
 )
 from plyngent.tools.access import AccessDecision
 from plyngent.tools.process.pty_session import PtyManager
+from plyngent.tools.skills import SkillWriteDecision
 from plyngent.tools.workspace import AccessMode, parse_access_mode
 
 if TYPE_CHECKING:
@@ -345,6 +346,54 @@ def prompt_policy_fetch_confirm(
             return raw.strip().lower() in {"y", "yes"}
     except NonInteractiveError, KeyboardInterrupt, EOFError:
         return False
+
+
+def prompt_skill_write_confirm(
+    skill_dir: Path,
+    action: str,
+    detail: str,
+    timeout_seconds: float,
+) -> SkillWriteDecision:
+    """Ask whether to write into *skill_dir* (timed; default deny).
+
+    ``o``/``y`` allows this write; ``s`` allows this skill directory for the rest
+    of the chat; anything else (or a timeout, cancel, or non-interactive stdin)
+    denies. Independent of YOLO: a skill directory is not a path grant, so the
+    human is asked even with ``--yes`` unless ``[skills].allow_write`` is set.
+    """
+    lines = [
+        f"action: {action} skill {skill_dir.name!r}",
+        f"path: {skill_dir}",
+        f"change: {detail}",
+        f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)",
+    ]
+    try:
+        with pause_task_cancel_for_prompt():
+            backend = get_prompt_backend()
+            if not backend.is_interactive():
+                return SkillWriteDecision(allow=False)
+            backend.echo()
+            backend.secho(format_tool_confirm_box(f"skills {action}", "\n".join(lines)), fg="yellow")
+            backend.echo()
+            prompt = (
+                f"[skills] allow {action} in {skill_dir.name!r}? [o]nce/[s]ession/[n]o (timeout {timeout_seconds:g}s): "
+            )
+            with contextlib.suppress(OSError):
+                _ = sys.stderr.write(prompt)
+                _ = sys.stderr.flush()
+            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            if raw is None:
+                with contextlib.suppress(OSError, NonInteractiveError):
+                    backend.secho(f"[skills] timed out after {timeout_seconds:g}s — denied", fg="red", err=True)
+                return SkillWriteDecision(allow=False)
+            token = raw.strip().lower()
+            if token in {"s", "session"}:
+                return SkillWriteDecision(allow=True, session=True)
+            if token in {"o", "once", "y", "yes"}:
+                return SkillWriteDecision(allow=True)
+            return SkillWriteDecision(allow=False)
+    except NonInteractiveError, KeyboardInterrupt, EOFError:
+        return SkillWriteDecision(allow=False)
 
 
 def prompt_directory_access_confirm(
