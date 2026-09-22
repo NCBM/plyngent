@@ -17,7 +17,11 @@ from plyngent.cli.editor import (
     resolve_config_path,
 )
 from plyngent.cli.exit_codes import EXIT_CANCELLED, EXIT_OK, EXIT_TURN_FAILED
-from plyngent.cli.interrupt import install_keyboard_interrupt_sigint
+from plyngent.cli.interrupt import (
+    install_keyboard_interrupt_sigint,
+    install_sigint_router,
+    uninstall_sigint_router,
+)
 from plyngent.cli.limits import install_cli_limit_hooks
 from plyngent.cli.repl import run_repl
 from plyngent.cli.retry import run_user_text_with_retries
@@ -251,6 +255,11 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
     yolo: YoloMode | None = "on" if yes else None
 
     memory = await MemoryStore.open(_database_config(store, quiet=quiet or oneshot))
+    # A SIGINT must never surface as a KeyboardInterrupt raised in the event
+    # loop's own frame (it would tear this run — and the shutdown below — down
+    # half-finished). The router cancels the innermost registered target instead
+    # and stays installed through cleanup.
+    _ = install_sigint_router()
     try:
         from plyngent.cli.provider_recovery import ensure_provider_ready
 
@@ -402,6 +411,7 @@ async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
             from plyngent.tools.process.pty_session import PtyManager
 
             PtyManager.close_all()
+        uninstall_sigint_router()
 
 
 def _configure_logging(level: str) -> None:

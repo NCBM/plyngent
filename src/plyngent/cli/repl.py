@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import click
 
 from plyngent.cli.input_text import read_repl_entry
+from plyngent.cli.interrupt import pause_task_cancel_for_prompt
 from plyngent.cli.readline_setup import setup_readline
 from plyngent.cli.retry import run_user_text_with_retries
 from plyngent.cli.slash import handle_slash
@@ -25,7 +26,7 @@ def _echo_user(text: str) -> None:
 
 def _echo_interrupted() -> None:
     # A further Ctrl+C during this output must stay benign (same rule as
-    # retry._echo_cancel_lines): after a turn the SIGINT handler is removed, so
+    # retry._echo_cancel_lines): on platforms without asyncio signal handlers
     # the next Ctrl+C raises KeyboardInterrupt at an arbitrary bytecode.
     with contextlib.suppress(KeyboardInterrupt):
         click.echo()
@@ -51,16 +52,22 @@ async def run_repl(state: ReplState) -> None:
     click.echo('Type /help for commands. Multiline: """ … """. Empty line is ignored.')
 
     while True:
+        # The prompt read blocks the main thread inside this coroutine, so hand
+        # SIGINT to it: Ctrl+C raises KeyboardInterrupt here (caught below and
+        # inside read_repl_entry) and re-prompts. Everywhere else the session
+        # SIGINT router owns the signal (turn cancel, prompt cancel).
         try:
-            entry = read_repl_entry()
+            with pause_task_cancel_for_prompt():
+                entry = read_repl_entry()
         except EOFError:
             click.echo()
             break
+        except KeyboardInterrupt:
+            # Stray interrupt outside the read (e.g. right after the router was
+            # suspended): re-prompt rather than leave the REPL.
+            _echo_interrupted()
+            continue
 
-        # Between turns the turn-task SIGINT handler is removed (run_cancellable),
-        # so a stray Ctrl+C raises KeyboardInterrupt at whatever bytecode is
-        # executing — echoing user text, expire_yolo_once, gaps between
-        # statements. Swallow it and re-prompt instead of exiting the REPL.
         try:
             if entry is None:
                 continue

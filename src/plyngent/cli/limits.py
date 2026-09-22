@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from plyngent.cli.interrupt import pause_task_cancel_for_prompt
+from plyngent.cli.interrupt import off_loop_prompt, pause_task_cancel_for_prompt
 from plyngent.prompting import (
     ChoiceOption,
     NonInteractiveError,
@@ -521,10 +521,14 @@ async def prompt_workspace_mismatch_async(
 
 
 def install_cli_limit_hooks() -> None:
-    """Register interactive continue hooks and prompt cancel-pause.
+    """Register interactive continue hooks and prompt guards.
 
-    Command denylist policy confirm is set on :class:`~plyngent.tools.context.InstanceState`
-    when the REPL starts (no process-global hook).
+    Off-loop prompts (worker-thread reads) register their own SIGINT target so a
+    Ctrl+C there never cancels the enclosing turn; synchronous prompts read on
+    the main thread and take SIGINT as a KeyboardInterrupt instead. Command
+    denylist policy confirm is set on
+    :class:`~plyngent.tools.context.InstanceState` when the REPL starts (no
+    process-global hook).
     """
-    configure_prompting(pause_factory=pause_task_cancel_for_prompt)
+    configure_prompting(pause_factory=off_loop_prompt)
     PtyManager.set_limit_continue_hook(prompt_continue_limit)

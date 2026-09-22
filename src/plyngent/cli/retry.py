@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import signal
 import time
 from typing import TYPE_CHECKING
 
@@ -10,7 +9,7 @@ import click
 
 from plyngent.agent import AssistantMessageEvent
 from plyngent.cli.display import render_events
-from plyngent.cli.interrupt import allow_task_cancel, set_sigint_reinstall
+from plyngent.cli.interrupt import install_sigint_router, sigint_cancels
 from plyngent.cli.limits import reset_auto_continue_turn
 
 if TYPE_CHECKING:
@@ -47,7 +46,9 @@ async def sleep_cancellable(seconds: float) -> bool:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return True
-            await asyncio.sleep(min(0.5, remaining))
+            sleeper = asyncio.ensure_future(asyncio.sleep(min(0.5, remaining)))
+            with sigint_cancels(sleeper):
+                await sleeper
     except asyncio.CancelledError:
         return False
     except KeyboardInterrupt:
@@ -57,56 +58,32 @@ async def sleep_cancellable(seconds: float) -> bool:
 async def run_cancellable[T](coro: Coroutine[object, object, T]) -> T:
     """Await ``coro`` as a task; Ctrl+C / SIGINT cancels the task.
 
-    Interactive prompts (max-rounds / destructive confirm) temporarily disable
-    task cancel so the user can answer instead of aborting the whole turn.
+    Interactive prompts (max-rounds / destructive confirm) register their own
+    SIGINT target for as long as they wait, so the turn is not cancelled while
+    the human is answering (see :func:`~plyngent.cli.interrupt.off_loop_prompt`).
 
     Raises:
         asyncio.CancelledError: If the task was cancelled (including via SIGINT).
     """
     task: asyncio.Task[T] = asyncio.create_task(coro)
-    loop = asyncio.get_running_loop()
-    installed = False
-    # What to restore once the turn-cancel handler is removed. remove_signal_handler
-    # leaves SIG_DFL, which would terminate the process on a stray Ctrl+C between
-    # turns; restore the handler from before (the CLI installs a
-    # KeyboardInterrupt-raising one so the REPL can catch it).
-    previous_sigint = signal.getsignal(signal.SIGINT)
-
-    def _on_sigint() -> None:
-        # allow_task_cancel() uses a process-level depth counter (not ContextVar)
-        # so this remains correct even if the handler was installed under a
-        # frozen context (asyncio signal handles capture contextvars).
-        if allow_task_cancel() and not task.done():
-            _ = task.cancel()
-
-    def _reinstall() -> None:
-        try:
-            loop.add_signal_handler(signal.SIGINT, _on_sigint)
-        except NotImplementedError, RuntimeError, ValueError:
-            return
-
+    # Keep a loop-level SIGINT handler in place for the rest of the session, so
+    # a Ctrl+C that lands while the loop is parked in its selector cancels this
+    # task instead of being raised in the loop's own frame.
+    _ = install_sigint_router()
     try:
-        loop.add_signal_handler(signal.SIGINT, _on_sigint)
-        installed = True
-        set_sigint_reinstall(_reinstall)
-    except NotImplementedError, RuntimeError, ValueError:
-        installed = False
-
-    try:
-        return await task
-    except KeyboardInterrupt:
-        if not task.done():
-            _ = task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        raise asyncio.CancelledError from None
+        with sigint_cancels(task):
+            try:
+                return await task
+            except KeyboardInterrupt:
+                # Platforms without asyncio signal handlers (Windows proactor)
+                # keep the CLI's KeyboardInterrupt handler, so the interrupt
+                # surfaces here while the task is still awaiting.
+                if not task.done():
+                    _ = task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                raise asyncio.CancelledError from None
     finally:
-        set_sigint_reinstall(None)
-        if installed:
-            with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
-                _ = loop.remove_signal_handler(signal.SIGINT)
-            with contextlib.suppress(ValueError):
-                _ = signal.signal(signal.SIGINT, previous_sigint)
         # Only cancel if still running (e.g. KeyboardInterrupt path above).
         # Do not cancel a finished task — that would mask success.
         if not task.done():
@@ -143,9 +120,10 @@ def _echo_turn_usage(agent: ChatAgent) -> None:
 def _echo_cancel_lines(*lines: str) -> None:
     """Print post-cancel lines, treating a further Ctrl+C as benign.
 
-    After a turn-cancel the asyncio SIGINT handler is removed, so a second
-    Ctrl+C during this output would otherwise raise KeyboardInterrupt and
-    exit the REPL instead of returning to the prompt.
+    The session SIGINT router keeps the loop safe between turns, but platforms
+    without asyncio signal handlers (Windows proactor) deliver a second Ctrl+C
+    here as a KeyboardInterrupt, which must not exit the REPL instead of
+    returning to the prompt.
     """
     try:
         for line in lines:
