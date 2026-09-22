@@ -243,23 +243,36 @@ def echo_row(row: Row, *, detail: Detail) -> None:
     click.echo()
 
 
+def _echo_reasoning(message: AssistantChatMessage) -> None:
+    """Print the model's reasoning trace for *message*, when it has one."""
+    shown = message.reasoning_content
+    if not isinstance(shown, str) or not shown.strip():
+        return
+    click.secho("reasoning:", fg="bright_black")
+    click.echo(shown)
+    click.echo()
+
+
 def _echo_assistant(row: Row, *, reasoning: bool) -> None:
+    """Print an assistant row: the thinking first, then the answer it produced.
+
+    A transcript reads in the order the model produced it, and the live stream
+    prints the reasoning before the answer; printing it after the body made the
+    answer look like it had come before the thinking behind it.
+    """
     from plyngent.cli.display import markdown_render_available, print_markdown
 
     message = row.message
     assert isinstance(message, AssistantChatMessage)
     click.echo(row.prefix())
+    if reasoning:
+        _echo_reasoning(message)
     content = message.content
     if isinstance(content, str) and content.strip():
         if markdown_render_available():
             print_markdown(content, label="")
         else:
             click.echo(content)
-    if reasoning:
-        shown = message.reasoning_content
-        if isinstance(shown, str) and shown.strip():
-            click.secho("reasoning:", fg="bright_black")
-            click.echo(shown)
     names = _tool_call_names(message)
     if names:
         click.secho(f"  tool_calls=[{', '.join(names)}]", fg="yellow")

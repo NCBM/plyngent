@@ -140,6 +140,44 @@ async def test_double_verbose_prints_full_bodies(
     assert "You are plyngent." in out
 
 
+async def test_reasoning_prints_before_the_answer(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A reasoning trace leads the answer it produced, as it does live."""
+    state.agent.messages = [
+        UserChatMessage(content="why is the sky blue?"),
+        AssistantChatMessage(content="Rayleigh scattering.", reasoning_content="Light scatters off air."),
+    ]
+    assert await handle_slash(state, "/history") is True
+    out = capsys.readouterr().out
+    assert "2. assistant:" in out
+    assert "reasoning:\nLight scatters off air." in out
+    assert out.index("reasoning:") < out.index("Rayleigh scattering.")
+    assert out.index("2. assistant:") < out.index("reasoning:")
+
+
+async def test_reasoning_is_absent_without_one(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state.agent.messages = [UserChatMessage(content="hi"), AssistantChatMessage(content="hello")]
+    assert await handle_slash(state, "/history -vv") is True
+    assert "reasoning:" not in capsys.readouterr().out
+
+
+async def test_preview_never_prints_reasoning(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state.agent.messages = [
+        UserChatMessage(content="why?"),
+        AssistantChatMessage(content="Because.", reasoning_content="Because the docs say so."),
+    ]
+    assert await handle_slash(state, "/history --preview") is True
+    assert "Because the docs say so." not in capsys.readouterr().out
+
+
 async def test_verbose_keeps_local_rows_out_of_the_way(
     state: ReplState,
     capsys: pytest.CaptureFixture[str],
