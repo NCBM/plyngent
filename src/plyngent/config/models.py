@@ -43,6 +43,10 @@ re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, 
 since line numbers go stale.
 - `read_file` results start with a 1-based line range `L{begin}-{end}` (`offset` \
 is 0-based); `with_lineno` shows per-line numbers instead.
+- `grep_files` takes a Python `re` regex for `pattern`, not a filename glob \
+(`*.py` / `**/*.py` fail with `invalid regex`), and a literal file/dir `path` \
+(no glob expansion, so `src/**/*.py` fails with `path does not exist`); there is \
+no file-type filter, so narrow with `path` and filter hits yourself.
 - Truncated results (any tool) carry a `truncate_token=...`; use `get_truncated` \
 with it to keep reading (chains through truncations).
 

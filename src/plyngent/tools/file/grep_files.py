@@ -140,8 +140,22 @@ async def grep_files(
 ) -> str:
     """Search file contents under the workspace with a regular expression.
 
-    Returns ``path:line: content`` lines (paths relative to workspace root).
-    Skips VCS/hidden dirs by default and ignores likely-binary files.
+    ``pattern`` is a **Python** ``re`` regex matched per line (``re.MULTILINE``),
+    **not** a filename glob — ``*.py`` / ``**/*.py`` are invalid regexes and fail
+    with ``error: invalid regex``. There is no file-type filter either: narrow with
+    ``path`` (a file or a directory) and filter unrelated hits yourself.
+    ``case_insensitive`` (or an inline ``(?i)``) ignores case.
+
+    ``path`` is a **literal** file or directory (default ``.`` = workspace root);
+    globs are not expanded, so ``src/**/*.py`` fails with ``error: path does not
+    exist`` — pass ``src`` instead.
+
+    Returns ``<path>:<line>: <content>`` lines (workspace-relative, absolute outside
+    the workspace), long lines clipped with ``…``, capped at ``max_matches``
+    (default 100, plus a ``...[truncated at N matches]`` marker). VCS/hidden dirs are
+    skipped unless ``skip_hidden_dirs=False``; files over 1 MB and likely-binary
+    files are ignored. Returns ``(no matches)`` when nothing matched; an invalid
+    ``pattern`` or a missing ``path`` returns an ``error: ...`` line.
     """
     if max_matches < 1:
         return "error: max_matches must be >= 1"
