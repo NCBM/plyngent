@@ -48,6 +48,11 @@ with it to keep reading (chains through truncations).
 
 ### Commands
 - Prefer `run_argv` / `run_argv_batch` (argv lists, no shell) over `bash -c` or similar.
+- A shell or interpreter (`bash` / `python` / `node` / …) always requires the user to confirm — \
+a `-c` one-liner, a script (`python x.py`), or a bare interactive shell alike — and each \
+confirm blocks the turn, so it costs time. Invoke the target command directly (argv) instead \
+of wrapping it in `bash -c` / `python -c` / `node`, and reach for a dedicated tool \
+(`read_file` / `edit_*` / `vcs_*` / `fetch` / …) when one already does the job.
 - Several `run_argv` calls in one step may run in parallel; use `run_argv_batch` \
 for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 - Prefer `vcs_*` for status/diff/log/branch when enough.
