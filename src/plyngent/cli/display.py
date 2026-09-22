@@ -444,11 +444,13 @@ def _wait_prefix(_args_json: str) -> str:
 
 
 def _wait_detail(_args_json: str, result: str) -> str:
-    """``wait`` outcome: slept duration, disturbed, or error."""
+    """``wait`` outcome: slept duration, disturbed, cancelled, or error."""
     if result.startswith("error:"):
         return _pretty_segments((f"({result})", "red"))
     if result.startswith("waited "):
         return _pretty_segments((f"({result.removeprefix('waited ')})", "green"))
+    if result.startswith("cancelled by user"):
+        return _pretty_segments(("(cancelled)", "yellow"))
     return _pretty_segments(("(disturbed)", "yellow"))
 
 

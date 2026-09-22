@@ -553,6 +553,13 @@ async def test_pretty_wait_disturbed(capsys: pytest.CaptureFixture[str]) -> None
     assert "* Wait (disturbed)" in out
 
 
+async def test_pretty_wait_cancelled(capsys: pytest.CaptureFixture[str]) -> None:
+    """Ctrl+C during the wait prompt reads as cancelled, not disturbed."""
+    await render_events(_aiter([_pretty_call("wait", '{"duration": 30}'), _result("cancelled by user")]))
+    out = capsys.readouterr().out
+    assert "* Wait (cancelled)" in out
+
+
 async def test_pretty_wait_error(capsys: pytest.CaptureFixture[str]) -> None:
     content = "error: duration must not be negative"
     await render_events(_aiter([_pretty_call("wait", '{"duration": -1}'), _result(content)]))
