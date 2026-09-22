@@ -61,7 +61,7 @@ def test_yaml_subset_types_lists_and_booleans() -> None:
             "read_only: true",
             "confirm: no",
             "retries: 3",
-            "allowed-tools: [read_file, grep_files]",
+            "allowed-tools: [read_file, regex_files]",
             "tags:",
             "  - alpha",
             "  - beta",
@@ -72,7 +72,7 @@ def test_yaml_subset_types_lists_and_booleans() -> None:
         "read_only": True,
         "confirm": False,
         "retries": 3,
-        "allowed-tools": ["read_file", "grep_files"],
+        "allowed-tools": ["read_file", "regex_files"],
         "tags": ["alpha", "beta"],
     }
 

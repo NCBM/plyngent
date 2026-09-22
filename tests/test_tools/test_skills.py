@@ -198,7 +198,7 @@ async def test_skill_search_single_skill_and_errors(tmp_path: Path) -> None:
 async def test_skill_search_inside_the_workspace_rebases_the_hit(tmp_path: Path) -> None:
     """A project-scope skill root lives inside the workspace: one path, once.
 
-    Grep reports in-workspace files relative to the workspace root and outside
+    The search reports in-workspace files relative to the workspace root and outside
     ones absolutely, so the skill name must never be glued onto a path that
     already carries the root.
     """

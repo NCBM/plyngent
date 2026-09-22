@@ -5,7 +5,7 @@ optional bundled files — scripts, references, templates. Discovery, parsing, a
 path rules live in :mod:`plyngent.skills`; this module is the model-facing shell.
 
 Reading needs no grant: the host registers the roots as static read-only roots,
-so ``read_file`` / ``grep_files`` see them too. Writing goes through the skill
+so ``read_file`` / ``regex_files`` see them too. Writing goes through the skill
 tools' own grant (a per-call confirm, or ``[skills].allow_write``) and is always
 confined to a skill root — that is why these tools never inherit the
 directory-access path of ``request_directory_access``.
@@ -30,9 +30,9 @@ from plyngent.skills import (
     resolve_skill_file,
     validate_skill_name,
 )
-from plyngent.tools.file.grep_files import DEFAULT_MAX_MATCHES
-from plyngent.tools.file.grep_files import grep_files as _grep_files
 from plyngent.tools.file.read import read_file as _read_file
+from plyngent.tools.file.regex_files import DEFAULT_MAX_MATCHES
+from plyngent.tools.file.regex_files import regex_files as _regex_files
 from plyngent.tools.workspace import (
     DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS,
     WorkspaceError,
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 # Keeps a listing readable when a third-party root holds a pile of skills.
 _MAX_LISTED_ISSUES = 8
 _SKILL_WRITE_POLICY_KEY = "skill_write_policy"
-# ``path:line: content`` as ``grep_files`` formats it (the path is non-greedy so
+# ``path:line: content`` as ``regex_files`` formats it (the path is non-greedy so
 # a Windows drive letter or a colon in a file name cannot split it wrongly).
 _HIT_RE = re.compile(r"^(?P<path>.+?):(?P<line>\d+): ?(?P<content>.*)$")
 
@@ -159,9 +159,9 @@ async def skill_read(
 
 
 def _hit_relative(skill: Skill, path: str) -> str:
-    """Rebase one ``grep_files`` hit path onto its skill directory.
+    """Rebase one ``regex_files`` hit path onto its skill directory.
 
-    Grep reports paths relative to the workspace root for files inside it and
+    The search reports paths relative to the workspace root for files inside it and
     absolute paths for files outside, so a skill directory can arrive either way
     (a project-scope skill root lives inside the workspace). Normalizing to an
     absolute path first covers both without guessing from the string alone.
@@ -179,7 +179,7 @@ def _hit_relative(skill: Skill, path: str) -> str:
 
 
 def _skill_hits(skill: Skill, result: str) -> list[str]:
-    """Attribute one skill's grep lines to that skill."""
+    """Attribute one skill's search lines to that skill."""
     hits: list[str] = []
     for line in result.splitlines():
         match = _HIT_RE.match(line)
@@ -229,7 +229,7 @@ async def skill_search(
         remaining = max_matches - len(hits)
         if remaining <= 0:
             break
-        result = await _grep_files.handler(
+        result = await _regex_files.handler(
             pattern,
             str(target.path),
             case_insensitive=case_insensitive,

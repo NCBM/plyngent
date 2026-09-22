@@ -79,7 +79,7 @@ def test_parallel_tool_outputs_interleaved_after_calls() -> None:
                 ),
                 AssistantFunctionToolCall(
                     id="call_02_ABCD",
-                    function=AssistantFunctionTool(name="grep_files", arguments='{"pattern":"todo"}'),
+                    function=AssistantFunctionTool(name="regex_files", arguments='{"pattern":"todo"}'),
                 ),
             ],
         ),

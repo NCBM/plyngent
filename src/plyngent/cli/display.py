@@ -332,14 +332,14 @@ def _glob_detail(_args_json: str, result: str) -> str:
     return _pretty_segments((f"({count} {unit})", None))
 
 
-def _grep_prefix(args_json: str) -> str:
+def _regex_prefix(args_json: str) -> str:
     pattern = _json_str_arg(args_json, "pattern") or "?"
     path = _json_str_arg(args_json, "path") or "."
     return _pretty_prefix(f"* Grep '{pattern}' in '{path}' ")
 
 
-def _grep_detail(_args_json: str, result: str) -> str:
-    """``grep_files`` outcome: matches and file count, or none/error."""
+def _regex_detail(_args_json: str, result: str) -> str:
+    """``regex_files`` outcome: matches and file count, or none/error."""
     if result.startswith("error:"):
         return _pretty_segments((f"({result})", "red"))
     if result == "(no matches)":
@@ -802,7 +802,7 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "todo_clear": _todo_line("todo_clear"),
     "listdir": PrettyLine(prefix=_listdir_prefix, detail=_listdir_detail),
     "glob_paths": PrettyLine(prefix=_glob_prefix, detail=_glob_detail),
-    "grep_files": PrettyLine(prefix=_grep_prefix, detail=_grep_detail),
+    "regex_files": PrettyLine(prefix=_regex_prefix, detail=_regex_detail),
     "get_truncated": PrettyLine(prefix=_resume_prefix, detail=_resume_detail),
     "run_argv": PrettyLine(prefix=_run_argv_prefix, detail=_run_argv_detail),
     "run_argv_batch": PrettyLine(prefix=_run_argv_batch_prefix, detail=_run_argv_batch_detail),

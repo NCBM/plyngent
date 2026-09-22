@@ -61,7 +61,7 @@ def test_read_only_classification() -> None:
         "read_file",
         "get_truncated",
         "glob_paths",
-        "grep_files",
+        "regex_files",
         "listdir",
         "tree",
         "todo_list",
