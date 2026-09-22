@@ -754,6 +754,43 @@ def _skill_search_detail(_args_json: str, result: str) -> str:
     return _pretty_segments((f"({len(matches)} {match_unit} in {len(skills)} {skill_unit})", None))
 
 
+def _skill_create_prefix(args_json: str) -> str:
+    name = _json_str_arg(args_json, "name") or "?"
+    return _pretty_prefix(f"* Skill Create '{name}' ")
+
+
+def _skill_create_detail(_args_json: str, result: str) -> str:
+    """``skill_create`` outcome: created (with any notes), or the failure."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    detail = _pretty_segments(("(created)", "green"))
+    notes = result.partition("\nnotes: ")[2]
+    if notes:
+        detail += _pretty_segments((f" — {notes}", "yellow"))
+    return detail
+
+
+def _skill_edit_prefix(args_json: str) -> str:
+    name = _json_str_arg(args_json, "name") or "?"
+    file = _json_str_arg(args_json, "file") or ""
+    subject = f"'{name}'" if file in {"", _SKILL_MAIN_FILE} else f"'{name}' {file}"
+    return _pretty_prefix(f"* Skill Edit {subject} ")
+
+
+def _skill_edit_detail(_args_json: str, result: str) -> str:
+    """``skill_edit`` outcome: the change made, or the failure."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    first = result.splitlines()[0] if result else ""
+    match = re.search(r"\((.+)\)$", first)
+    text = match.group(1) if match is not None else "updated"
+    detail = _pretty_segments((f"({text})", "green"))
+    notes = result.partition("\nnotes: ")[2]
+    if notes:
+        detail += _pretty_segments((f" — {notes}", "yellow"))
+    return detail
+
+
 # Pretty tools: ``prefix`` prints as the call starts, ``detail`` when it lands.
 _PRETTY_LINES: dict[str, PrettyLine] = {
     "read_file": PrettyLine(prefix=_read_file_prefix, detail=_read_file_detail),
@@ -781,6 +818,8 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "skill_list": PrettyLine(prefix=_skill_list_prefix, detail=_skill_list_detail),
     "skill_read": PrettyLine(prefix=_skill_read_prefix, detail=_skill_read_detail),
     "skill_search": PrettyLine(prefix=_skill_search_prefix, detail=_skill_search_detail),
+    "skill_create": PrettyLine(prefix=_skill_create_prefix, detail=_skill_create_detail),
+    "skill_edit": PrettyLine(prefix=_skill_edit_prefix, detail=_skill_edit_detail),
     "open_pty": PrettyLine(prefix=_open_pty_prefix, detail=_open_pty_detail),
     "read_pty": _pty_session_line("Read", _read_pty_detail),
     "write_pty": _pty_session_line("Write", _pty_write_detail),

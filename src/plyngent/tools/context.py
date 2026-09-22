@@ -86,6 +86,9 @@ class SessionState:
     # Directory-access grants for this session (resolved path → mode). Config /
     # process-scoped grants live on WorkspacePolicy; see plyngent.tools.access.
     access_grants: dict[Path, AccessMode] = field(default_factory=dict)
+    # Skill directories the human allowed this chat to write (resolved paths);
+    # the standing grant lives in [skills].allow_write (tools/skills.py).
+    skill_write_roots: set[Path] = field(default_factory=set)
 
     def has_grant(self, tool_name: str) -> bool:
         return bool(self.grants.get(tool_name))

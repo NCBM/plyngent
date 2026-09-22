@@ -868,6 +868,41 @@ async def test_pretty_skill_tools(capsys: pytest.CaptureFixture[str]) -> None:
     assert "* Skill Search 'nope' (no matches)" in out
 
 
+async def test_pretty_skill_create_and_edit(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_create", '{"name": "acme", "description": "d", "body": "b"}'),
+                _result("created skill 'acme' at /skills/acme\nnotes: SKILL.md has no frontmatter description"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill Create 'acme' (created) — SKILL.md has no frontmatter description" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_edit", '{"name": "acme"}'),
+                _result("updated skill 'acme' (SKILL.md: replaced 1 of 1 occurrence(s))"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill Edit 'acme' (SKILL.md: replaced 1 of 1 occurrence(s))" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_edit", '{"name": "acme", "file": "scripts/run.sh"}'),
+                _result("error: skill write to /skills/acme denied (declined or timed out after 30s)"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill Edit 'acme' scripts/run.sh (error: skill write to /skills/acme denied" in out
+
+
 async def test_pretty_prefix_shown_while_call_runs(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
