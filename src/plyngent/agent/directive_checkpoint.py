@@ -22,7 +22,7 @@ use `run_argv_batch` for ordered pipelines.
 - `edit_replace`: fix match / `max_replaces`; `edit_lineno` edits only lines read via \
 `read_file(with_lineno=true)`, and line numbers reset after any file write.
 - `read_file` results start with `L{begin}-{end}` (1-based lines; offset is 0-based).
-- `grep_files`: `pattern` is a Python `re` regex (not a glob, so `*.py` fails) and \
+- `regex_files`: `pattern` is a Python `re` regex (not a glob, so `*.py` fails) and \
 `path` is a literal file/dir (no glob expansion).
 - Truncated results carry a `truncate_token=...`; continue with `get_truncated`.
 - Prefer `fetch` for HTTP(S); private/LAN hosts need human policy allow (not YOLO).

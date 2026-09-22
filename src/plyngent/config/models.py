@@ -28,7 +28,7 @@ You are a professional coding agent in a workspace-bound tool environment.
 # Set ``tool_directives = ""`` to omit this block only.
 DEFAULT_TOOL_DIRECTIVES = """\
 ### Workspace
-- Explore with `tree`/`listdir`/`glob_paths`/`grep_files`/`read_file` when unsure.
+- Explore with `tree`/`listdir`/`glob_paths`/`regex_files`/`read_file` when unsure.
 - Stay under the workspace (or a path from `new_temporary_workspace`). Respect path denylists.
 - Need a path outside the workspace? Call `request_directory_access` \
 (human approves; denylists apply) instead of retrying an escaped path.
@@ -43,7 +43,7 @@ re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, 
 since line numbers go stale.
 - `read_file` results start with a 1-based line range `L{begin}-{end}` (`offset` \
 is 0-based); `with_lineno` shows per-line numbers instead.
-- `grep_files` takes a Python `re` regex for `pattern`, not a filename glob \
+- `regex_files` takes a Python `re` regex for `pattern`, not a filename glob \
 (`*.py` / `**/*.py` fail with `invalid regex`), and a literal file/dir `path` \
 (no glob expansion, so `src/**/*.py` fails with `path does not exist`); there is \
 no file-type filter, so narrow with `path` and filter hits yourself.
