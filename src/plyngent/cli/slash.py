@@ -1440,8 +1440,9 @@ def history_cmd(
     ``/history N`` — turn N (numbered from the first turn of this session)
     ``/history last [N]`` — the last N turns (default 1)
     ``/history --message N`` — one message (display number, not a DB row)
-    ``-v`` adds every intermediate row (tool calls/results, notices); ``-vv``
-    prints full bodies for all of them; ``--preview`` collapses to one line each.
+    The turn's ends are printed in full; ``-v`` adds every intermediate row (tool
+    calls/results, notices) as a one-liner, ``-vv`` prints those in full too, and
+    ``--preview`` collapses every row (ends included) to one line.
     """
     from plyngent.cli import transcript as transcript_mod
 

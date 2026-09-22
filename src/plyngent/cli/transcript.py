@@ -39,8 +39,9 @@ PREVIEW_CHARS = 200
 # ``-v`` expands a turn's rows; ``-vv`` also prints their full bodies.
 MAX_VERBOSE = 2
 
-# Detail policy: ``mixed`` = a turn's final assistant answer in full, everything
-# else on one line; ``full``/``preview`` force the extremes.
+# Detail policy: ``mixed`` = a turn's two ends (the user message and the final
+# answer) in full, the rounds between them on one line; ``full``/``preview``
+# force the extremes (``--preview`` also collapses the ends).
 type Detail = Literal["mixed", "full", "preview"]
 # ``/history N`` addresses a turn by number; ``last`` counts from the end.
 type TurnTarget = int | Literal["last"]
@@ -281,9 +282,16 @@ def echo_turn(turn: Turn, *, verbose: bool, detail: Detail) -> None:
 
 
 def _row_detail(row: Row, *, turn: Turn, detail: Detail) -> Detail:
-    """Effective detail for *row*: mixed prints the turn's answer in full."""
+    """Effective detail for *row*.
+
+    Under ``mixed`` the two ends of a turn — the human's message and the model's
+    answer — are the rows a reader actually wants, so they are never collapsed;
+    the rounds between them stay one-liners.
+    """
     if detail != "mixed":
         return detail
+    if row is turn.user:
+        return "full"
     return "full" if row is turn.last and isinstance(row.message, AssistantChatMessage) else "preview"
 
 

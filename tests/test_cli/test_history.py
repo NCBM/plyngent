@@ -96,8 +96,8 @@ async def test_default_shows_the_last_turns_two_ends(
     out = capsys.readouterr().out
     assert "turns=2  messages=11  showing=last 1 turn(s)  mode=mixed" in out
     assert "turn 2 (msgs 8-11, rounds=1)" in out
-    assert "8. user: now run the tests" in out
-    # The answer is printed in full; the round's tool rows are not.
+    # Both ends are printed in full, not as one-line previews.
+    assert "8. user:\nnow run the tests" in out
     assert "11. assistant:" in out
     assert "Tests pass: **12 passed** in 3.2s." in out
     assert "tool(c3)" not in out
@@ -112,13 +112,16 @@ async def test_verbose_expands_every_row_of_the_turn(
     assert await handle_slash(state, "/history -v 1") is True
     out = capsys.readouterr().out
     assert "turn 1 (msgs 1-7, rounds=2)" in out
+    # The ends stay full (the human's own words, the model's answer) …
+    assert "1. user:\nread src/a.py and fix the typo" in out
+    assert "7. assistant:" in out
+    assert "- line 12 changed" in out
+    # … while the rounds in between are one-liners.
     assert "2. assistant: tool_calls=[read_file]" in out
     assert "3. tool(c1): L1-30 (+26 lines)" in out
     assert "4. developer: [DIRECTIVE CHECKPOINT band=1" in out
     assert "6. tool(c2): replaced 1 occurrence" in out
-    # The turn's final answer stays full even though the row detail is mixed.
-    assert "7. assistant:" in out
-    assert "- line 12 changed" in out
+    assert "print('bye')" not in out
 
 
 async def test_double_verbose_prints_full_bodies(
@@ -146,7 +149,21 @@ async def test_verbose_keeps_local_rows_out_of_the_way(
     out = capsys.readouterr().out
     assert "local. system:" not in out
     # Numbering is over conversation rows only, so the user row is #1.
-    assert "1. user: read src/a.py and fix the typo" in out
+    assert "1. user:\nread src/a.py and fix the typo" in out
+
+
+async def test_long_user_message_is_not_collapsed(
+    state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: both ends of a turn print in full, however long they are."""
+    body = "please review this: " + "x" * 400
+    state.agent.messages = [UserChatMessage(content=body), AssistantChatMessage(content="ok")]
+    assert await handle_slash(state, "/history") is True
+    out = capsys.readouterr().out
+    assert body in out
+    assert "1. user:\n" in out
+    assert "…" not in out.split("2. assistant:")[0]
 
 
 async def test_preview_collapses_every_row(
