@@ -13,7 +13,9 @@ directory-access path of ``request_directory_access``.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ToolTag, tool
@@ -31,17 +33,23 @@ from plyngent.skills import (
 from plyngent.tools.file.grep_files import DEFAULT_MAX_MATCHES
 from plyngent.tools.file.grep_files import grep_files as _grep_files
 from plyngent.tools.file.read import read_file as _read_file
-from plyngent.tools.workspace import DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
+from plyngent.tools.workspace import (
+    DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS,
+    WorkspaceError,
+    get_workspace_root,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from plyngent.tools.context import InstanceState, SessionState
 
 # Keeps a listing readable when a third-party root holds a pile of skills.
 _MAX_LISTED_ISSUES = 8
 _SKILL_WRITE_POLICY_KEY = "skill_write_policy"
+# ``path:line: content`` as ``grep_files`` formats it (the path is non-greedy so
+# a Windows drive letter or a colon in a file name cannot split it wrongly).
+_HIT_RE = re.compile(r"^(?P<path>.+?):(?P<line>\d+): ?(?P<content>.*)$")
 
 
 def get_skill_store() -> SkillStore | None:
@@ -150,20 +158,35 @@ async def skill_read(
     )
 
 
-def _skill_hits(skill: Skill, result: str) -> list[str]:
-    """Attribute one skill's grep lines to that skill.
+def _hit_relative(skill: Skill, path: str) -> str:
+    """Rebase one ``grep_files`` hit path onto its skill directory.
 
-    Hits outside the workspace root come back as absolute paths, so the file
-    part is rebased on the skill directory before the skill name is prepended.
+    Grep reports paths relative to the workspace root for files inside it and
+    absolute paths for files outside, so a skill directory can arrive either way
+    (a project-scope skill root lives inside the workspace). Normalizing to an
+    absolute path first covers both without guessing from the string alone.
     """
-    base = str(skill.path.resolve())
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        try:
+            candidate = get_workspace_root() / candidate
+        except WorkspaceError:
+            return path
+    try:
+        return str(candidate.resolve().relative_to(skill.path.resolve()))
+    except OSError, ValueError:
+        return path
+
+
+def _skill_hits(skill: Skill, result: str) -> list[str]:
+    """Attribute one skill's grep lines to that skill."""
     hits: list[str] = []
     for line in result.splitlines():
-        if not line or line.startswith("...[truncated"):
+        match = _HIT_RE.match(line)
+        if match is None:
             continue
-        path, sep, rest = line.partition(":")
-        relative = path[len(base) :].lstrip("/\\") if path.startswith(base) else path
-        hits.append(f"{skill.name}/{relative}{sep}{rest}")
+        relative = _hit_relative(skill, match["path"])
+        hits.append(f"{skill.name}/{relative}:{match['line']}: {match['content']}")
     return hits
 
 

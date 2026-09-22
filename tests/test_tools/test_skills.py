@@ -195,6 +195,22 @@ async def test_skill_search_single_skill_and_errors(tmp_path: Path) -> None:
         assert (await skill_search.handler("[")).startswith("error: invalid regex")
 
 
+async def test_skill_search_inside_the_workspace_rebases_the_hit(tmp_path: Path) -> None:
+    """A project-scope skill root lives inside the workspace: one path, once.
+
+    Grep reports in-workspace files relative to the workspace root and outside
+    ones absolutely, so the skill name must never be glued onto a path that
+    already carries the root.
+    """
+    root = tmp_path / "project" / ".claude" / "skills"
+    _ = _write_skill(root, "alpha", body="Use pdftotext here.")
+    with _bound(tmp_path, root):
+        out = await skill_search.handler("pdftotext")
+    assert out.count("alpha/SKILL.md:") == 1
+    assert "project/.claude/skills/alpha" not in out
+    assert "alpha/alpha/SKILL.md" not in out
+
+
 async def test_skill_search_without_skills(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
