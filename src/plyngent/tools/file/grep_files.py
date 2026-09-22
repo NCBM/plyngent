@@ -103,7 +103,9 @@ def _match_lines(
     try:
         rel = str(file_path.resolve().relative_to(root))
     except ValueError:
-        return
+        # Outside the primary root (a grant / temp workspace / skill directory):
+        # keep the absolute path so the hit stays addressable.
+        rel = str(file_path.resolve())
     found = 0
     for line_no, line in enumerate(text.splitlines(), start=1):
         if found >= remaining:

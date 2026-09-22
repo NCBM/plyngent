@@ -34,6 +34,7 @@ _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
 _ASK_SUBJECT_PREVIEW = 60
 _MCP_TOOL_PREFIX = "mcp__"
+_SKILL_MAIN_FILE = "SKILL.md"
 
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
@@ -701,6 +702,58 @@ def _mcp_detail(_args_json: str, result: str) -> str:
     return _pretty_segments(("(done)", "green"))
 
 
+def _skill_list_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* Skills ")
+
+
+def _skill_list_detail(_args_json: str, result: str) -> str:
+    """``skill_list`` outcome: how many skills were found, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    match = re.match(r"skills: (\d+)", result)
+    if match is None:
+        return _pretty_segments(("(none)", "dim"))
+    count = int(match.group(1))
+    unit = "skill" if count == 1 else "skills"
+    return _pretty_segments((f"({count} {unit})", None if count else "dim"))
+
+
+def _skill_read_prefix(args_json: str) -> str:
+    name = _json_str_arg(args_json, "name") or "?"
+    file = _json_str_arg(args_json, "file") or ""
+    subject = f"'{name}'" if file in {"", _SKILL_MAIN_FILE} else f"'{name}' {file}"
+    return _pretty_prefix(f"* Skill {subject} ")
+
+
+def _skill_read_detail(_args_json: str, result: str) -> str:
+    """``skill_read`` outcome: the range read, or the failure kind."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _range_detail(result) or _pretty_segments(("(done)", "green"))
+
+
+def _skill_search_prefix(args_json: str) -> str:
+    pattern = _json_str_arg(args_json, "pattern") or "?"
+    scope = _json_str_arg(args_json, "skill") or ""
+    where = f" in '{scope}'" if scope else ""
+    return _pretty_prefix(f"* Skill Search '{_preview(pattern, _ASK_SUBJECT_PREVIEW)}'{where} ")
+
+
+def _skill_search_detail(_args_json: str, result: str) -> str:
+    """``skill_search`` outcome: matches and skills, none, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if result == "(no matches)":
+        return _pretty_segments(("(no matches)", "dim"))
+    if result == "(no skills to search)":
+        return _pretty_segments(("(no skills)", "dim"))
+    matches = [line for line in result.splitlines() if line and not line.startswith("...[truncated")]
+    skills = {line.split("/", 1)[0] for line in matches}
+    match_unit = "match" if len(matches) == 1 else "matches"
+    skill_unit = "skill" if len(skills) == 1 else "skills"
+    return _pretty_segments((f"({len(matches)} {match_unit} in {len(skills)} {skill_unit})", None))
+
+
 # Pretty tools: ``prefix`` prints as the call starts, ``detail`` when it lands.
 _PRETTY_LINES: dict[str, PrettyLine] = {
     "read_file": PrettyLine(prefix=_read_file_prefix, detail=_read_file_detail),
@@ -725,6 +778,9 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "delete_path": _mutator_line("delete_path"),
     "new_temporary_workspace": PrettyLine(prefix=_temp_dir_prefix, detail=_temp_dir_detail),
     "request_directory_access": PrettyLine(prefix=_access_prefix, detail=_access_detail),
+    "skill_list": PrettyLine(prefix=_skill_list_prefix, detail=_skill_list_detail),
+    "skill_read": PrettyLine(prefix=_skill_read_prefix, detail=_skill_read_detail),
+    "skill_search": PrettyLine(prefix=_skill_search_prefix, detail=_skill_search_detail),
     "open_pty": PrettyLine(prefix=_open_pty_prefix, detail=_open_pty_detail),
     "read_pty": _pty_session_line("Read", _read_pty_detail),
     "write_pty": _pty_session_line("Write", _pty_write_detail),

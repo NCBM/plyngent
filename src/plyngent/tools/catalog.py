@@ -223,6 +223,7 @@ def _ensure_builtin_definitions_registered(catalog: ToolCatalog) -> None:
     from plyngent.tools.file import FILE_TOOLS
     from plyngent.tools.net import NET_TOOLS
     from plyngent.tools.process import PROCESS_TOOLS
+    from plyngent.tools.skills import SKILL_TOOLS
     from plyngent.tools.todo import TODO_TOOLS
     from plyngent.tools.vcs import VCS_TOOLS
 
@@ -233,6 +234,7 @@ def _ensure_builtin_definitions_registered(catalog: ToolCatalog) -> None:
         *VCS_TOOLS,
         *CHAT_TOOLS,
         *TODO_TOOLS,
+        *SKILL_TOOLS,
         *NET_TOOLS,
     ):
         if catalog.get(definition.name) is None:
@@ -254,6 +256,7 @@ def register_builtin_tools(*, force: bool = False) -> ToolCatalog:
         import plyngent.tools.file as _file_tools
         import plyngent.tools.net as _net_tools
         import plyngent.tools.process as _process_tools
+        import plyngent.tools.skills as _skills_tools
         import plyngent.tools.temp_workspace as _temp_workspace_tools
         import plyngent.tools.todo as _todo_tools
         import plyngent.tools.vcs as _vcs_tools
@@ -263,6 +266,7 @@ def register_builtin_tools(*, force: bool = False) -> ToolCatalog:
             _file_tools,
             _net_tools,
             _process_tools,
+            _skills_tools,
             _temp_workspace_tools,
             _todo_tools,
             _vcs_tools,

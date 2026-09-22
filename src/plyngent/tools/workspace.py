@@ -98,6 +98,10 @@ class WorkspacePolicy:
     config_allow: dict[Path, AccessMode] = field(default_factory=dict)
     # Process-scoped YOLO / --yes grants (resolved path → mode); never persisted.
     yolo_allow: dict[Path, AccessMode] = field(default_factory=dict)
+    # Host-contributed read-only roots (skill directories): every path tool may
+    # read them, nothing may write them. Not a grant, so they stay out of
+    # ``/grants``; writes go through the owning tool's own confirm.
+    static_read: list[Path] = field(default_factory=list)
 
 
 def _bound_instance() -> InstanceState | None:
@@ -285,7 +289,7 @@ def _under_any_root(resolved: Path, instance: InstanceState, policy: WorkspacePo
 
 
 def granted_access_mode(resolved: Path) -> AccessMode | None:
-    """Highest config / session / process mode covering *resolved*, if any."""
+    """Highest config / session / process / static-read mode covering *resolved*."""
     policy = active_workspace_policy()
     session = _bound_session()
     buckets: list[Mapping[Path, AccessMode]] = [policy.config_allow, policy.yolo_allow]
@@ -296,7 +300,34 @@ def granted_access_mode(resolved: Path) -> AccessMode | None:
         for root, granted in grants.items():
             if (resolved == root or resolved.is_relative_to(root)) and (best is None or granted > best):
                 best = granted
+    for root in policy.static_read:
+        if (resolved == root or resolved.is_relative_to(root)) and (best is None or best < AccessMode.READ):
+            best = AccessMode.READ
     return best
+
+
+def set_static_read_roots(
+    roots: Sequence[Path | str],
+    *,
+    instance: InstanceState | None = None,
+) -> list[Path]:
+    """Install host-contributed read-only roots (resolved); returns them.
+
+    Replaces any previous list. Roots that are not existing directories are
+    dropped: an absent skill directory holds nothing to read, and a missing
+    entry must never turn into an implicit write permission later.
+    """
+    inst = instance if instance is not None else require_bound_instance()
+    resolved: list[Path] = []
+    for root in roots:
+        try:
+            path = Path(root).expanduser().resolve()
+        except OSError:
+            continue
+        if path.is_dir():
+            resolved.append(path)
+    inst.workspace.static_read[:] = resolved
+    return resolved
 
 
 def _path_grant_covers(resolved: Path, required: AccessMode) -> bool:

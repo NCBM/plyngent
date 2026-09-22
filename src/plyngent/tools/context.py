@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
+    from plyngent.skills import SkillStore
     from plyngent.tools.workspace import AccessMode, WorkspacePolicy
 
 
@@ -40,6 +41,8 @@ class InstanceState:
     # Path/command policy bag for this host (preferred over process globals).
     workspace: WorkspacePolicy = field(default_factory=_default_workspace_policy)
     data: PersistentDataView[Any] = field(default_factory=_default_instance_data)
+    # Discovered skills for this host (None when the feature is off).
+    skills: SkillStore | None = None
     # Ephemeral process maps (PTY etc.) may hang here later.
     extras: dict[str, Any] = field(default_factory=dict)
 

@@ -136,6 +136,26 @@ def validate_skill_name(name: str) -> str | None:
     return None
 
 
+def resolve_skill_file(skill: Skill, relative: str) -> Path | None:
+    """Resolve *relative* inside *skill*; ``None`` when it escapes the directory.
+
+    The default (empty *relative*) is the skill's own ``SKILL.md``. Symlinks are
+    followed by the resolve, so a link pointing outside the skill is rejected
+    instead of becoming a way around the boundary.
+    """
+    token = relative.strip() or SKILL_FILE
+    candidate = Path(token)
+    if candidate.is_absolute():
+        return None
+    try:
+        base = skill.path.resolve()
+        target = (base / candidate).resolve()
+        _ = target.relative_to(base)
+    except OSError, ValueError:
+        return None
+    return target
+
+
 class SkillStore:
     """Skills discovered under *roots*, highest-priority root first."""
 

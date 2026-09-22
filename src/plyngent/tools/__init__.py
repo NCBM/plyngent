@@ -60,6 +60,13 @@ from .process import run_argv as run_argv
 from .process import run_argv_batch as run_argv_batch
 from .process import write_pty as write_pty
 from .process import write_pty_keys as write_pty_keys
+from .skills import SKILL_TOOL_NAMES as SKILL_TOOL_NAMES
+from .skills import SKILL_TOOLS as SKILL_TOOLS
+from .skills import format_skill_table as format_skill_table
+from .skills import get_skill_store as get_skill_store
+from .skills import skill_list as skill_list
+from .skills import skill_read as skill_read
+from .skills import skill_search as skill_search
 from .temp_workspace import cleanup_temporary_workspaces as cleanup_temporary_workspaces
 from .temp_workspace import new_temporary_workspace as new_temporary_workspace
 from .todo import TODO_TOOLS as TODO_TOOLS
@@ -106,5 +113,6 @@ from .workspace import set_command_denylist as set_command_denylist
 from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
+from .workspace import set_static_read_roots as set_static_read_roots
 from .workspace import set_workspace_root as set_workspace_root
 from .workspace import within_workspace_roots as within_workspace_roots

@@ -12,6 +12,7 @@ from plyngent.tools.chat import CHAT_TOOLS
 from plyngent.tools.file import FILE_TOOLS
 from plyngent.tools.net import NET_TOOLS
 from plyngent.tools.process import PROCESS_TOOLS
+from plyngent.tools.skills import SKILL_TOOLS
 from plyngent.tools.todo import TODO_TOOLS
 from plyngent.tools.vcs import VCS_TOOLS
 
@@ -19,7 +20,16 @@ from plyngent.tools.vcs import VCS_TOOLS
 def test_default_tool_names_match_group_lists() -> None:
     register_builtin_tools()
     selected = default_tool_definitions(surface="local")
-    groups = [*ACCESS_TOOLS, *FILE_TOOLS, *PROCESS_TOOLS, *VCS_TOOLS, *CHAT_TOOLS, *TODO_TOOLS, *NET_TOOLS]
+    groups = [
+        *ACCESS_TOOLS,
+        *FILE_TOOLS,
+        *PROCESS_TOOLS,
+        *VCS_TOOLS,
+        *CHAT_TOOLS,
+        *TODO_TOOLS,
+        *SKILL_TOOLS,
+        *NET_TOOLS,
+    ]
     assert sorted(t.name for t in selected) == sorted(t.name for t in groups)
     assert len(selected) == len(groups)
 
@@ -65,6 +75,9 @@ def test_read_only_classification() -> None:
         "vcs_log",
         "vcs_branch",
         "fetch",
+        "skill_list",
+        "skill_read",
+        "skill_search",
     }
 
 

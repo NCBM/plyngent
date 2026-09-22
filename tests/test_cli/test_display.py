@@ -821,6 +821,53 @@ def test_every_builtin_tool_has_a_pretty_line() -> None:
     assert missing == []
 
 
+async def test_pretty_skill_tools(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [_pretty_call("skill_list", "{}"), _result("skills: 3\npdf-processing  [plyngent-user]  /x — Extract PDFs")]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skills (3 skills)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_read", '{"name": "pdf-processing"}'),
+                _result("L1-40\n# PDF processing\n"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill 'pdf-processing' L1-40 (done)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_read", '{"name": "pdf-processing", "file": "scripts/run.sh"}'),
+                _result("L1-3\n#!/bin/sh\n"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill 'pdf-processing' scripts/run.sh L1-3 (done)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("skill_search", '{"pattern": "pdftotext"}'),
+                _result("alpha/SKILL.md:3: Use pdftotext.\nbeta/notes.md:1: pdftotext again"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Skill Search 'pdftotext' (2 matches in 2 skills)" in out
+
+    await render_events(_aiter([_pretty_call("skill_search", '{"pattern": "nope"}'), _result("(no matches)")]))
+    out = capsys.readouterr().out
+    assert "* Skill Search 'nope' (no matches)" in out
+
+
 async def test_pretty_prefix_shown_while_call_runs(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
