@@ -6,6 +6,7 @@ from plyngent.agent import ErrorEvent, ReasoningDeltaEvent, TextDeltaEvent, Tool
 from plyngent.cli.display import (
     _clear_streamed_lines,
     _line_count_for_clear,
+    _pretty_line_for,
     get_markdown_enabled,
     markdown_render_available,
     print_markdown,
@@ -67,7 +68,7 @@ async def test_flush_markdown_on_source_change(
 
     call = AssistantFunctionToolCall(
         id="1",
-        function=AssistantFunctionTool(name="vcs_diff", arguments='{"path": ""}'),
+        function=AssistantFunctionTool(name="acme_ping", arguments='{"host": "example.com"}'),
     )
     await render_events(
         _aiter(
@@ -185,15 +186,16 @@ async def test_pretty_todo_push(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 async def test_non_pretty_tool_keeps_old_style(capsys: pytest.CaptureFixture[str]) -> None:
+    """Tools with no pretty line (plugins, unknown names) keep the ``[tool]`` style."""
     call = ToolCallEvent(
         tool_call=AssistantFunctionToolCall(
             id="3",
-            function=AssistantFunctionTool(name="vcs_diff", arguments='{"path": ""}'),
+            function=AssistantFunctionTool(name="acme_ping", arguments='{"host": "example.com"}'),
         )
     )
-    await render_events(_aiter([call, _result("diff --git a/x b/x")]))
+    await render_events(_aiter([call, _result("pong")]))
     out = capsys.readouterr().out
-    assert "[tool] vcs_diff(" in out
+    assert "[tool] acme_ping(" in out
     assert "[tool ok]" in out
 
 
@@ -567,6 +569,256 @@ async def test_pretty_wait_error(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(_aiter([_pretty_call("wait", '{"duration": -1}'), _result(content)]))
     out = capsys.readouterr().out
     assert "* Wait (error: duration must not be negative)" in out
+
+
+async def test_pretty_pty_open_and_read(capsys: pytest.CaptureFixture[str]) -> None:
+    opened = "session_id=3\nalive=true\nexit_code=\ncmd=ls -la"
+    await render_events(_aiter([_pretty_call("open_pty", '{"command": ["ls", "-la"]}'), _result(opened)]))
+    out = capsys.readouterr().out
+    assert "* PTY Open $ ls -la (session 3)" in out
+
+    read = (
+        "session_id=3\nalive=true\nexit_code=\nmatched=false\ntruncated=false\n"
+        "budget_exhausted=false\n--- data ---\nhello\n"
+    )
+    await render_events(_aiter([_pretty_call("read_pty", '{"session_id": 3}'), _result(read)]))
+    out = capsys.readouterr().out
+    assert "* PTY Read 3 (alive, 1 line)" in out
+
+
+async def test_pretty_pty_read_exited_and_matched(capsys: pytest.CaptureFixture[str]) -> None:
+    """An exited session reports the code; ``until`` reports that it matched."""
+    exited = (
+        "session_id=3\nalive=false\nexit_code=0\nmatched=false\ntruncated=false\n"
+        "budget_exhausted=false\n--- data ---\nbye\n"
+    )
+    await render_events(_aiter([_pretty_call("read_pty", '{"session_id": 3}'), _result(exited)]))
+    out = capsys.readouterr().out
+    assert "* PTY Read 3 (exited 0)" in out
+
+    matched = (
+        "session_id=3\nalive=true\nexit_code=\nmatched=true\ntruncated=false\n"
+        "budget_exhausted=false\n--- data ---\nprompt\n$ \n"
+    )
+    await render_events(_aiter([_pretty_call("read_pty", '{"session_id": 3, "until": "$ "}'), _result(matched)]))
+    out = capsys.readouterr().out
+    assert "* PTY Read 3 (matched, 2 lines)" in out
+
+
+async def test_pretty_pty_read_empty_and_error(capsys: pytest.CaptureFixture[str]) -> None:
+    empty = (
+        "session_id=3\nalive=true\nexit_code=\nmatched=false\ntruncated=false\nbudget_exhausted=false\n--- data ---\n"
+    )
+    await render_events(_aiter([_pretty_call("read_pty", '{"session_id": 3}'), _result(empty)]))
+    out = capsys.readouterr().out
+    assert "* PTY Read 3 (alive, no output)" in out
+
+    await render_events(
+        _aiter([_pretty_call("read_pty", '{"session_id": 9}'), _result("error: unknown PTY session 9")])
+    )
+    out = capsys.readouterr().out
+    assert "* PTY Read 9 (error: unknown PTY session 9)" in out
+
+
+async def test_pretty_pty_write_and_keys(capsys: pytest.CaptureFixture[str]) -> None:
+    status = "session_id=3\nalive=true\nexit_code=\nwrote=5"
+    await render_events(_aiter([_pretty_call("write_pty", '{"session_id": 3, "data": "ls -la"}'), _result(status)]))
+    out = capsys.readouterr().out
+    assert "* PTY Write 3 (5 chars)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("write_pty_keys", '{"session_id": 3, "data": "ctrl+c"}'),
+                _result("session_id=3\nalive=true\nexit_code=\nwrote=1"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* PTY Keys 3 (1 char)" in out
+
+
+async def test_pretty_ask_into_pty_never_shows_the_answer(capsys: pytest.CaptureFixture[str]) -> None:
+    """The result only says the answer was written; the payload stays local."""
+    status = "session_id=3\nalive=true\nexit_code=\nwrote=true\nsecret=true\nsubmit=true\nsource=human"
+    await render_events(
+        _aiter([_pretty_call("ask_into_pty", '{"session_id": 3, "message": "sudo password"}'), _result(status)])
+    )
+    out = capsys.readouterr().out
+    assert "* PTY Ask 3 (answer sent, secret)" in out
+    assert "wrote=true" not in out
+
+
+async def test_pretty_close_pty(capsys: pytest.CaptureFixture[str]) -> None:
+    closed = "session_id=3\nclosed=true\nalive=false\nexit_code=0\nmessage=closed"
+    await render_events(_aiter([_pretty_call("close_pty", '{"session_id": 3}'), _result(closed)]))
+    out = capsys.readouterr().out
+    assert "* PTY Close 3 (closed)" in out
+
+    already = "session_id=3\nclosed=false\nalive=false\nexit_code=0\nmessage=already closed"
+    await render_events(_aiter([_pretty_call("close_pty", '{"session_id": 3}'), _result(already)]))
+    out = capsys.readouterr().out
+    assert "* PTY Close 3 (already closed)" in out
+
+
+async def test_pretty_ask_user_line_and_choice(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("ask_user_line", '{"question": "Which port?"}'), _result("8080")]))
+    out = capsys.readouterr().out
+    assert "* Ask 'Which port?' (answered)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("ask_user_choice", '{"question": "Pick one", "options": ["alpha", "beta"]}'),
+                _result("beta"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Ask Choose 'Pick one' (beta)" in out
+
+
+async def test_pretty_ask_user_form_counts_answers(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("ask_user_form", '{"title": "Setup", "fields": [{"name": "port", "prompt": "Port?"}]}'),
+                _result('{"port": 8080, "host": "localhost"}'),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Ask Form 'Setup' (2 answers)" in out
+
+
+async def test_pretty_ask_user_error(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("ask_user_line", '{"question": "Port?"}'),
+                _result("error: interactive prompts are unavailable (stdin is not a TTY)"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Ask 'Port?' (error: interactive prompts are unavailable (stdin is not a TTY))" in out
+
+
+async def test_pretty_request_directory_access(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("request_directory_access", '{"path": "/data", "mode": "write"}'),
+                _result("access granted: /data (write, session)\nnote: the path denylist still applies"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Access '/data' (write) (granted)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("request_directory_access", '{"path": "/data"}'),
+                _result("already accessible: /data is inside the workspace"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "* Access '/data' (read) (already accessible)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("request_directory_access", '{"path": "/root"}'),
+                _result("error: access to /root denied (declined or timed out after 30s)"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "(error: access to /root denied (declined or timed out after 30s))" in out
+
+
+async def test_pretty_new_temporary_workspace(capsys: pytest.CaptureFixture[str]) -> None:
+    content = "temporary_workspace=/tmp/plyngent-ws-abc\nnote: project workspace unchanged"
+    await render_events(_aiter([_pretty_call("new_temporary_workspace", '{"prefix": "ws"}'), _result(content)]))
+    out = capsys.readouterr().out
+    assert "* Temp Dir (/tmp/plyngent-ws-abc)" in out
+
+
+async def test_pretty_get_truncated(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("get_truncated", '{"token": "abc"}'), _result("L81-160\nmore\n")]))
+    out = capsys.readouterr().out
+    assert "* Resume Truncated L81-160 (done)" in out
+
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("get_truncated", '{"token": "abc"}'),
+                _result("error: truncate token expired (no longer in memory); re-run the tool"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "(error: truncate token expired (no longer in memory); re-run the tool)" in out
+
+
+async def test_pretty_vcs_kind_branch_and_diff(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("vcs_kind", "{}"), _result("git")]))
+    out = capsys.readouterr().out
+    assert "* VCS Kind (git)" in out
+
+    await render_events(_aiter([_pretty_call("vcs_branch", "{}"), _result("main")]))
+    out = capsys.readouterr().out
+    assert "* VCS Branch (main)" in out
+
+    diff = (
+        "diff --git a/x.py b/x.py\nindex 111..222 100644\n--- a/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n"
+    )
+    await render_events(_aiter([_pretty_call("vcs_diff", '{"path": ""}'), _result(diff)]))
+    out = capsys.readouterr().out
+    assert "* VCS Diff (1 file, +2/-1)" in out
+
+    await render_events(_aiter([_pretty_call("vcs_diff", '{"staged": true}'), _result("(no diff)")]))
+    out = capsys.readouterr().out
+    assert "* VCS Diff (staged) (no diff)" in out
+
+
+async def test_pretty_todo_list_pop_and_clear(capsys: pytest.CaptureFixture[str]) -> None:
+    stack = "  [ ] a1: T1\n  [x] a2: T2"
+    await render_events(_aiter([_pretty_call("todo_list", "{}"), _result(stack)]))
+    out = capsys.readouterr().out
+    assert "* Todo List:" in out
+    assert "  [ ] a1: T1" in out
+
+    await render_events(_aiter([_pretty_call("todo_pop", "{}"), _result(f"popped TOP group (a1:T1)\n{stack}")]))
+    out = capsys.readouterr().out
+    assert "* Todo Pop:" in out
+
+    await render_events(_aiter([_pretty_call("todo_clear", "{}"), _result("cleared 3 item(s)")]))
+    out = capsys.readouterr().out
+    assert "* Todo Clear:" in out
+    assert "cleared 3 item(s)" in out
+
+
+async def test_pretty_mcp_tools_use_one_generic_line(capsys: pytest.CaptureFixture[str]) -> None:
+    """Namespaced MCP tools render as ``* MCP <server>:<tool> ``."""
+    await render_events(_aiter([_pretty_call("mcp__docs__search", '{"query": "x"}'), _result("found 1 page")]))
+    out = capsys.readouterr().out
+    assert "* MCP docs:search (done)" in out
+    assert "[tool]" not in out
+
+    await render_events(_aiter([_pretty_call("mcp__docs__search", '{"query": "x"}'), _result("error: server died")]))
+    out = capsys.readouterr().out
+    assert "* MCP docs:search (error: server died)" in out
+
+
+def test_every_builtin_tool_has_a_pretty_line() -> None:
+    """A new builtin tool must ship a renderer, or it silently loses the syntax."""
+    from plyngent.tools.catalog import default_tool_definitions
+
+    missing = [d.name for d in default_tool_definitions() if _pretty_line_for(d.name) is None]
+    assert missing == []
 
 
 async def test_pretty_prefix_shown_while_call_runs(

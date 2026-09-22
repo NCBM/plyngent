@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
+_ASK_SUBJECT_PREVIEW = 60
+_MCP_TOOL_PREFIX = "mcp__"
 
 # Process/session display flags (set from ReplState / slash).
 _verbose_tool_results: ContextVar[bool] = ContextVar("verbose_tool_results", default=False)
@@ -124,6 +126,33 @@ def _json_list_arg(args_json: str, key: str) -> list[str] | None:
     return None
 
 
+def _json_int_arg(args_json: str, key: str) -> int | None:
+    value = _json_arg(args_json, key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
+
+
+def _status_fields(result: str) -> dict[str, str]:
+    """Parse the leading ``key=value`` block of a structured tool result.
+
+    The block ends at the first ``--- <payload> ---`` marker (``run_argv``,
+    ``fetch``, ``read_pty``).
+    """
+    fields: dict[str, str] = {}
+    for line in result.splitlines():
+        if line.startswith("--- "):
+            break
+        if "=" in line:
+            key, _, value = line.partition("=")
+            fields[key] = value
+    return fields
+
+
 def _pretty_prefix(text: str) -> str:
     """Style the leading ``* Verb 'target' `` segment of a pretty tool line."""
     return click.style(text, fg="yellow")
@@ -164,6 +193,14 @@ def _read_file_prefix(args_json: str) -> str:
     return _pretty_prefix(f"* Read '{path}' ")
 
 
+def _range_detail(result: str) -> str | None:
+    """``L{begin}-{end} (done)`` detail of a ranged result, when it carries one."""
+    first = result.splitlines()[0] if result else ""
+    if first.startswith("L") and "-" in first:
+        return _pretty_segments((f"{first} ", "dim"), ("(done)", "green"))
+    return None
+
+
 def _read_file_detail(_args_json: str, result: str) -> str:
     """``read_file`` outcome: range/done, or which failure kind occurred."""
     if result.startswith("error: file not found"):
@@ -172,16 +209,21 @@ def _read_file_detail(_args_json: str, result: str) -> str:
         return _pretty_segments(("(not a file)", "red"))
     if result.startswith("error:"):
         return _pretty_segments(("(error)", "red"))
-    lines = result.splitlines()
-    first = lines[0] if lines else ""
-    if first.startswith("L") and "-" in first:
-        return _pretty_segments((f"{first} ", "dim"), ("(done)", "green"))
-    return _pretty_segments(("(done)", "green"))
+    return _range_detail(result) or _pretty_segments(("(done)", "green"))
+
+
+_TODO_LABELS: dict[str, str] = {
+    "todo_list": "Todo List",
+    "todo_push": "Todo Push",
+    "todo_pop": "Todo Pop",
+    "todo_update": "Todo Update",
+    "todo_clear": "Todo Clear",
+}
 
 
 def _todo_line(name: str) -> PrettyLine:
-    """``todo_push`` / ``todo_update``: header first, rendered stack as the detail."""
-    label = "Todo Push" if name == "todo_push" else "Todo Update"
+    """Todo tools: header first, the rendered stack as the detail."""
+    label = _TODO_LABELS[name]
 
     def prefix(_args_json: str) -> str:
         return click.style(f"* {label}:", fg="yellow")
@@ -318,13 +360,7 @@ def _run_argv_detail(_args_json: str, result: str) -> str:
     """``run_argv`` outcome: exit code, timeout, or error."""
     if result.startswith("error:"):
         return _pretty_segments((f"({result})", "red"))
-    fields: dict[str, str] = {}
-    for line in result.splitlines():
-        if line.startswith("--- "):
-            break
-        if "=" in line:
-            key, _, value = line.partition("=")
-            fields[key] = value
+    fields = _status_fields(result)
     if fields.get("timed_out") == "true":
         return _pretty_segments(("(timed out)", "red"))
     code = fields.get("exit_code", "")
@@ -364,13 +400,7 @@ def _fetch_detail(_args_json: str, result: str) -> str:
     """``fetch`` outcome: HTTP status, or error."""
     if result.startswith("error:"):
         return _pretty_segments((f"({result})", "red"))
-    status = ""
-    for line in result.splitlines():
-        if line.startswith("--- "):
-            break
-        if line.startswith("status="):
-            status = line.partition("=")[2]
-            break
+    status = _status_fields(result).get("status", "")
     return _pretty_segments((f"({status or 'done'})", _http_status_fg(status)))
 
 
@@ -414,6 +444,10 @@ def _mutator_line(name: str) -> PrettyLine:
     )
 
 
+def _vcs_kind_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* VCS Kind ")
+
+
 def _vcs_status_prefix(_args_json: str) -> str:
     return _pretty_prefix("* VCS Status ")
 
@@ -427,6 +461,15 @@ def _vcs_status_detail(_args_json: str, result: str) -> str:
 
 def _vcs_log_prefix(_args_json: str) -> str:
     return _pretty_prefix("* VCS Log ")
+
+
+def _vcs_diff_prefix(args_json: str) -> str:
+    staged = _json_arg(args_json, "staged") is True
+    return _pretty_prefix("* VCS Diff (staged) " if staged else "* VCS Diff ")
+
+
+def _vcs_branch_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* VCS Branch ")
 
 
 def _vcs_log_detail(_args_json: str, result: str) -> str:
@@ -456,14 +499,221 @@ def _wait_detail(_args_json: str, result: str) -> str:
 
 
 # Pretty tools: ``prefix`` prints as the call starts, ``detail`` when it lands.
+# PTY sessions share one prefix shape: ``* PTY <verb> <session> ``.
+def _pty_session_label(args_json: str) -> str:
+    session_id = _json_int_arg(args_json, "session_id")
+    return "?" if session_id is None else str(session_id)
+
+
+def _pty_session_line(verb: str, detail: Callable[[str, str], str]) -> PrettyLine:
+    """``* PTY <verb> <session> `` plus the verb's own outcome."""
+    return PrettyLine(
+        prefix=lambda args_json: _pretty_prefix(f"* PTY {verb} {_pty_session_label(args_json)} "),
+        detail=detail,
+    )
+
+
+def _open_pty_prefix(args_json: str) -> str:
+    argv = _json_list_arg(args_json, "command")
+    cmd = shlex.join(argv) if argv else "?"
+    return _pretty_prefix(f"* PTY Open $ {cmd} ")
+
+
+def _open_pty_detail(_args_json: str, result: str) -> str:
+    """``open_pty`` outcome: the new session id, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    session_id = _status_fields(result).get("session_id", "")
+    return _pretty_segments((f"(session {session_id or '?'})", "green"))
+
+
+def _read_pty_detail(args_json: str, result: str) -> str:
+    """``read_pty`` outcome: exit status, matched wait, payload size, or error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    fields = _status_fields(result)
+    data = result.split("--- data ---", 1)[1].removeprefix("\n") if "--- data ---" in result else ""
+    count = len(data.splitlines())
+    if fields.get("alive") == "false":
+        code = fields.get("exit_code", "")
+        return _pretty_segments((f"(exited {code})" if code else "(exited)", "green"))
+    unit = "line" if count == 1 else "lines"
+    if _json_str_arg(args_json, "until") and fields.get("matched") == "true":
+        return _pretty_segments((f"(matched, {count} {unit})", "green"))
+    if count == 0:
+        return _pretty_segments(("(alive, no output)", "dim"))
+    return _pretty_segments((f"(alive, {count} {unit})", None))
+
+
+def _pty_write_detail(_args_json: str, result: str) -> str:
+    """``write_pty`` / ``write_pty_keys`` / ``ask_into_pty``: size, sent, error.
+
+    The human's answer never appears here — only that it was written.
+    """
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    fields = _status_fields(result)
+    if fields.get("source") == "human":
+        extra = ", secret" if fields.get("secret") == "true" else ""
+        return _pretty_segments((f"(answer sent{extra})", "green"))
+    wrote = fields.get("wrote", "")
+    if wrote:
+        unit = "char" if wrote == "1" else "chars"
+        return _pretty_segments((f"({wrote} {unit})", None))
+    return _pretty_segments(("(done)", "green"))
+
+
+def _close_pty_detail(_args_json: str, result: str) -> str:
+    """``close_pty`` outcome: closed, already closed, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if _status_fields(result).get("closed") == "true":
+        return _pretty_segments(("(closed)", "green"))
+    return _pretty_segments(("(already closed)", "dim"))
+
+
+def _ask_line(verb: str, field: str, detail: Callable[[str, str], str]) -> PrettyLine:
+    """``* Ask <verb> '<subject>' `` plus the verb's own outcome.
+
+    *field* names the argument that carries the human-facing subject: the
+    question for ``ask_user_line`` / ``ask_user_choice``, the title for a form.
+    """
+    label = f"Ask {verb}" if verb else "Ask"
+
+    def prefix(args_json: str) -> str:
+        subject = _json_str_arg(args_json, field) or "?"
+        return _pretty_prefix(f"* {label} '{_preview(subject, _ASK_SUBJECT_PREVIEW)}' ")
+
+    return PrettyLine(prefix=prefix, detail=detail)
+
+
+def _ask_detail(_args_json: str, result: str) -> str:
+    """``ask_user_line`` outcome: an answer came back, or the prompt failed."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _pretty_segments(("(answered)" if result else "(empty)", "green"))
+
+
+def _ask_choice_detail(_args_json: str, result: str) -> str:
+    """``ask_user_choice`` outcome: the chosen label, or the prompt failed."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if not result:
+        return _pretty_segments(("(no selection)", "dim"))
+    return _pretty_segments((f"({_preview(result, _ASK_SUBJECT_PREVIEW)})", "green"))
+
+
+def _ask_form_detail(_args_json: str, result: str) -> str:
+    """``ask_user_form`` outcome: answer count, or the prompt failed."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    try:
+        loaded: object = json.loads(result)
+    except json.JSONDecodeError:
+        return _pretty_segments(("(answered)", "green"))
+    if not isinstance(loaded, dict):
+        return _pretty_segments(("(answered)", "green"))
+    count = len(cast("dict[str, object]", loaded))
+    unit = "answer" if count == 1 else "answers"
+    return _pretty_segments((f"({count} {unit})", "green"))
+
+
+def _access_prefix(args_json: str) -> str:
+    path = _json_str_arg(args_json, "path") or "?"
+    mode = _json_str_arg(args_json, "mode") or "read"
+    return _pretty_prefix(f"* Access '{path}' ({mode}) ")
+
+
+def _access_detail(_args_json: str, result: str) -> str:
+    """``request_directory_access``: granted, already allowed, or denied."""
+    if result.startswith("access granted:"):
+        return _pretty_segments(("(granted)", "green"))
+    if result.startswith("already accessible:"):
+        return _pretty_segments(("(already accessible)", "dim"))
+    if result.startswith("already granted:"):
+        return _pretty_segments(("(already granted)", "dim"))
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _pretty_segments(("(done)", None))
+
+
+def _temp_dir_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* Temp Dir ")
+
+
+def _temp_dir_detail(_args_json: str, result: str) -> str:
+    """``new_temporary_workspace`` outcome: the created path, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    path = _status_fields(result).get("temporary_workspace", "")
+    return _pretty_segments((f"({path})" if path else "(done)", "dim"))
+
+
+def _resume_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* Resume Truncated ")
+
+
+def _resume_detail(_args_json: str, result: str) -> str:
+    """``get_truncated`` outcome: the resumed range, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _range_detail(result) or _pretty_segments(("(done)", "green"))
+
+
+def _vcs_kind_detail(_args_json: str, result: str) -> str:
+    """``vcs_kind`` outcome: the detected kind, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _pretty_segments((f"({result})", None))
+
+
+def _vcs_branch_detail(_args_json: str, result: str) -> str:
+    """``vcs_branch`` outcome: the current branch or head, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _pretty_segments((f"({result})", None))
+
+
+def _vcs_diff_detail(_args_json: str, result: str) -> str:
+    """``vcs_diff`` outcome: changed files and line counts, none, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if result == "(no diff)":
+        return _pretty_segments(("(no diff)", "dim"))
+    files = 0
+    added = 0
+    removed = 0
+    for line in result.splitlines():
+        if line.startswith("diff --git "):
+            files += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    file_unit = "file" if files == 1 else "files"
+    return _pretty_segments((f"({files} {file_unit}, +{added}/-{removed})", None))
+
+
+def _mcp_detail(_args_json: str, result: str) -> str:
+    """MCP tool outcome: done, or the error the server returned."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _pretty_segments(("(done)", "green"))
+
+
+# Pretty tools: ``prefix`` prints as the call starts, ``detail`` when it lands.
 _PRETTY_LINES: dict[str, PrettyLine] = {
     "read_file": PrettyLine(prefix=_read_file_prefix, detail=_read_file_detail),
     "tree": PrettyLine(prefix=_tree_prefix, detail=_tree_detail),
+    "todo_list": _todo_line("todo_list"),
     "todo_push": _todo_line("todo_push"),
+    "todo_pop": _todo_line("todo_pop"),
     "todo_update": _todo_line("todo_update"),
+    "todo_clear": _todo_line("todo_clear"),
     "listdir": PrettyLine(prefix=_listdir_prefix, detail=_listdir_detail),
     "glob_paths": PrettyLine(prefix=_glob_prefix, detail=_glob_detail),
     "grep_files": PrettyLine(prefix=_grep_prefix, detail=_grep_detail),
+    "get_truncated": PrettyLine(prefix=_resume_prefix, detail=_resume_detail),
     "run_argv": PrettyLine(prefix=_run_argv_prefix, detail=_run_argv_detail),
     "run_argv_batch": PrettyLine(prefix=_run_argv_batch_prefix, detail=_run_argv_batch_detail),
     "fetch": PrettyLine(prefix=_fetch_prefix, detail=_fetch_detail),
@@ -473,19 +723,45 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "copy_path": _mutator_line("copy_path"),
     "move_path": _mutator_line("move_path"),
     "delete_path": _mutator_line("delete_path"),
+    "new_temporary_workspace": PrettyLine(prefix=_temp_dir_prefix, detail=_temp_dir_detail),
+    "request_directory_access": PrettyLine(prefix=_access_prefix, detail=_access_detail),
+    "open_pty": PrettyLine(prefix=_open_pty_prefix, detail=_open_pty_detail),
+    "read_pty": _pty_session_line("Read", _read_pty_detail),
+    "write_pty": _pty_session_line("Write", _pty_write_detail),
+    "write_pty_keys": _pty_session_line("Keys", _pty_write_detail),
+    "ask_into_pty": _pty_session_line("Ask", _pty_write_detail),
+    "close_pty": _pty_session_line("Close", _close_pty_detail),
+    "ask_user_line": _ask_line("", "question", _ask_detail),
+    "ask_user_choice": _ask_line("Choose", "question", _ask_choice_detail),
+    "ask_user_form": _ask_line("Form", "title", _ask_form_detail),
+    "vcs_kind": PrettyLine(prefix=_vcs_kind_prefix, detail=_vcs_kind_detail),
     "vcs_status": PrettyLine(prefix=_vcs_status_prefix, detail=_vcs_status_detail),
+    "vcs_diff": PrettyLine(prefix=_vcs_diff_prefix, detail=_vcs_diff_detail),
     "vcs_log": PrettyLine(prefix=_vcs_log_prefix, detail=_vcs_log_detail),
+    "vcs_branch": PrettyLine(prefix=_vcs_branch_prefix, detail=_vcs_branch_detail),
     "wait": PrettyLine(prefix=_wait_prefix, detail=_wait_detail),
 }
 
-_PRETTY_TOOLS = frozenset(_PRETTY_LINES)
 
-
-def _pretty_parts(name: str, args_json: str, result: str) -> tuple[str, str] | None:
-    """Prefix + detail for a known tool call; None keeps the ``[tool]`` style."""
-    line = _PRETTY_LINES.get(name)
-    if line is None:
+def _mcp_line(name: str) -> PrettyLine | None:
+    """Generic renderer for namespaced MCP tools (``mcp__<server>__<tool>``)."""
+    if not name.startswith(_MCP_TOOL_PREFIX):
         return None
+    server, _, tool = name.removeprefix(_MCP_TOOL_PREFIX).partition("__")
+    label = f"{server or '?'}:{tool or '?'}"
+    return PrettyLine(
+        prefix=lambda _args_json: _pretty_prefix(f"* MCP {label} "),
+        detail=_mcp_detail,
+    )
+
+
+def _pretty_line_for(name: str) -> PrettyLine | None:
+    """Resolve the renderer for *name*: a named entry, else the MCP naming rule."""
+    return _PRETTY_LINES.get(name) or _mcp_line(name)
+
+
+def _pretty_parts(line: PrettyLine, args_json: str, result: str) -> tuple[str, str]:
+    """Prefix + detail for a resolved pretty tool call."""
     return line.prefix(args_json), line.detail(args_json, result)
 
 
@@ -664,7 +940,7 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
     printed_assistant = False
     # Tool calls buffer so prettified tools can render once their result lands
     # (the summary line needs the status/range). FIFO matches loop event order.
-    pending_tools: list[tuple[str, str, bool]] = []
+    pending_tools: list[tuple[str, str, PrettyLine | None]] = []
 
     def flush_assistant() -> None:
         nonlocal source, assistant_buf, printed_assistant
@@ -717,23 +993,23 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             if isinstance(call, AssistantFunctionToolCall):
                 name = call.function.name
                 args = call.function.arguments
-                pretty_tool = name in _PRETTY_TOOLS
-                pending_tools.append((name, args, pretty_tool))
-                if pretty_tool:
-                    tool_lines.start_call(_PRETTY_LINES[name].prefix(args))
+                line = _pretty_line_for(name)
+                pending_tools.append((name, args, line))
+                if line is not None:
+                    tool_lines.start_call(line.prefix(args))
                 else:
                     tool_lines.close_line()
                     preview = _preview(args, _TOOL_ARGS_PREVIEW)
                     click.secho(f"\n[tool] {name}({preview})", fg="yellow")
             else:
                 tool_lines.close_line()
-                pending_tools.append(("custom", call.id, False))
+                pending_tools.append(("custom", call.id, None))
                 click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
         elif isinstance(event, ToolResultEvent):
             flush_assistant()
             content = event.message.content
-            name, args, pretty_tool = pending_tools.pop(0) if pending_tools else ("", "", False)
-            parts = _pretty_parts(name, args, content) if pretty_tool else None
+            name, args, line = pending_tools.pop(0) if pending_tools else ("", "", None)
+            parts = _pretty_parts(line, args, content) if line is not None else None
             if parts is not None and not show_full:
                 prefix, detail = parts
                 if not tool_lines.finish_call(detail):
