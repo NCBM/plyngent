@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -495,25 +496,58 @@ def _echo_stream(text: str) -> None:
         _ = sys.stdout.flush()
 
 
-def _clear_streamed_lines(line_count: int) -> None:
-    """Move cursor up and clear the streamed plain-text region (TTY only)."""
+def _clear_streamed_lines(line_count: int, *, resume_above: bool = False) -> None:
+    """Clear exactly *line_count* terminal lines ending at the cursor line.
+
+    The cursor ends at column 0 of the topmost cleared line, so a re-render
+    overwrites the erased block in place instead of appending below it. With
+    ``resume_above`` the cursor steps one line further up: the next
+    ``"\\n"``-prefixed write then reuses the last cleared line — needed by the
+    parallel-batch fallback, which must not touch the line above the prefix.
+
+    ``line_count`` counts *physical* rows; callers fold wrapped lines via
+    :func:`_line_count_for_clear`.
+    """
     if line_count <= 0:
         return
-    # Clear current line, then each previous line of the streamed block.
-    for _ in range(line_count):
+    # Clear the cursor line, then each line above it while moving up.
+    for _ in range(line_count - 1):
         _ = sys.stdout.write("\r\033[2K\033[1A")
     _ = sys.stdout.write("\r\033[2K")
+    if resume_above:
+        _ = sys.stdout.write("\033[1A")
     with contextlib.suppress(OSError):
         _ = sys.stdout.flush()
 
 
+def _terminal_columns() -> int:
+    """Terminal width for wrap-aware row counts (fallback: 80)."""
+    try:
+        columns = shutil.get_terminal_size().columns
+    except OSError, ValueError:
+        return 80
+    return columns if columns > 0 else 80
+
+
+def _physical_line_count(text: str) -> int:
+    """Rows streamed *text* occupies on the terminal, counting wrapping.
+
+    ``_echo_stream`` writes without a trailing newline, so the cursor sits at
+    the end of the last row and owns one row even when the text ends in ``"\\n"``.
+    A row filled to the exact width is counted once: the wrap of the final
+    column is pending, so erasing must not claim the row below it.
+    """
+    columns = _terminal_columns()
+    return sum(max(1, -(-len(line) // columns)) for line in text.split("\n"))
+
+
 def _line_count_for_clear(label: str, body: str) -> int:
-    """Approximate terminal lines used by ``label\\n + body`` for cursor erase."""
+    """Physical terminal rows used by ``label\\n + body`` for cursor erase."""
     if not body and not label:
         return 0
-    # Label is on its own line; body may contain newlines.
+    # Label is on its own line; body may contain newlines and wrap.
     text = f"{label}\n{body}" if label else body
-    return text.count("\n") + 1
+    return _physical_line_count(text)
 
 
 class _PrettyToolStream:
@@ -542,7 +576,9 @@ class _PrettyToolStream:
             return
         if self._open:
             # Parallel batch: the open prefix could never receive its detail.
-            _clear_streamed_lines(1)
+            # Erase only the prefix line — the line above may be streamed
+            # reasoning — and let the fallback's leading newline reuse it.
+            _clear_streamed_lines(1, resume_above=True)
             self._open = False
             self._whole_lines = True
             return
@@ -591,7 +627,8 @@ def _flush_assistant_markdown(body: str, *, pretty: bool) -> None:
         click.echo()
         return
     if pretty:
-        lines = _line_count_for_clear("assistant:", body)
+        # +1: the blank separator ``begin_assistant`` printed above the label.
+        lines = _line_count_for_clear("assistant:", body) + 1
         _clear_streamed_lines(lines)
         print_markdown(body, label="assistant:")
         click.echo()
