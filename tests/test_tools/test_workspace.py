@@ -215,6 +215,68 @@ def test_command_denylist_policy_confirm_timeout_value(workspace: object) -> Non
         clear_policy_allowed_commands()
 
 
+def test_command_denylist_reaches_through_wrappers(workspace: object) -> None:
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(None)
+    clear_policy_allowed_commands()
+    try:
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["env", "FOO=1", "rm", "-rf", "/"])
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["pdm", "run", "rm", "-rf", "/"])
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["timeout", "5", "rm", "-rf", "/"])
+        # The outermost denylisted program is the one named (``sudo`` here).
+        with pytest.raises(WorkspaceError, match="basename 'sudo' is blocked"):
+            check_command_allowed(["sudo", "-u", "root", "rm", "-rf", "/"])
+        # Wrapped programs that are not denylisted stay allowed.
+        check_command_allowed(["pdm", "run", "pytest", "-x"])
+        check_command_allowed(["env", "FOO=1", "echo", "ok"])
+    finally:
+        clear_policy_allowed_commands()
+
+
+def test_command_denylist_matches_lowercased_basename(workspace: object) -> None:
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(None)
+    clear_policy_allowed_commands()
+    try:
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["RM", "-rf", "/"])
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["C:\\Tools\\rm.exe", "-rf", "/"])
+    finally:
+        clear_policy_allowed_commands()
+
+
+def test_command_denylist_prompts_for_the_wrapped_program(workspace: object) -> None:
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    asked: list[str] = []
+
+    def hook(basename: str, argv: object, timeout: float) -> bool:
+        del argv, timeout
+        asked.append(basename)
+        return True
+
+    set_policy_confirm_hook(hook)
+    clear_policy_allowed_commands()
+    try:
+        check_command_allowed(["pdm", "run", "rm", "-rf", "build"])
+        assert asked == ["rm"]
+        # Session grant: the same wrapped program does not re-prompt.
+        check_command_allowed(["pdm", "run", "rm", "-rf", "dist"])
+        assert asked == ["rm"]
+    finally:
+        set_policy_confirm_hook(None)
+        clear_policy_allowed_commands()
+
+
 def test_root_required() -> None:
     from plyngent.tools.context import InstanceState, bind_instance
 

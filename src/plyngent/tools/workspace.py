@@ -5,6 +5,8 @@ from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from plyngent.tools.command_scan import unwrap_command
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
@@ -404,7 +406,12 @@ def argv_shape_error(argv: object) -> str | None:
 
 
 def check_command_allowed(argv: list[str]) -> None:
-    """Raise if argv is empty or the executable basename is denylisted.
+    """Raise if argv is empty or a basename in the command chain is denylisted.
+
+    The chain is the program that really runs plus every wrapper it is reached
+    through (``env FOO=1 rm``, ``pdm run rm``, ``sudo -u x rm``), so a denylisted
+    program cannot hide behind one. Basenames are compared lower-cased, so
+    ``RM`` and ``rm.exe`` count as ``rm``.
 
     Denylisted basenames are not hard-rejected when a policy confirm hook is
     installed: the human is asked (with a timeout; default deny). Session grants
@@ -418,25 +425,24 @@ def check_command_allowed(argv: list[str]) -> None:
         msg = "command argv must not be empty"
         raise WorkspaceError(msg)
     policy = active_workspace_policy()
-    binary = Path(argv[0]).name
-    if binary not in policy.command_denylist:
-        return
-    if binary in policy.policy_allowed_commands:
-        return
-    hook = policy.policy_confirm_hook
-    if hook is not None:
+    scan = unwrap_command(argv)
+    for binary in (*scan.wrappers, scan.base):
+        if binary not in policy.command_denylist or binary in policy.policy_allowed_commands:
+            continue
+        hook = policy.policy_confirm_hook
+        if hook is None:
+            msg = f"command denied by policy (basename {binary!r} is blocked)"
+            raise WorkspaceError(msg)
         timeout = policy.policy_confirm_timeout_seconds
         try:
             allowed = bool(hook(binary, list(argv), timeout))
         except Exception as exc:
             msg = f"command denied by policy (basename {binary!r}; confirm failed: {exc})"
             raise WorkspaceError(msg) from exc
-        if allowed:
-            policy.policy_allowed_commands.add(binary)
-            return
-        msg = (
-            f"command denied by policy (basename {binary!r} is blocked; user declined or timed out after {timeout:g}s)"
-        )
-        raise WorkspaceError(msg)
-    msg = f"command denied by policy (basename {binary!r} is blocked)"
-    raise WorkspaceError(msg)
+        if not allowed:
+            msg = (
+                f"command denied by policy (basename {binary!r} is blocked; "
+                f"user declined or timed out after {timeout:g}s)"
+            )
+            raise WorkspaceError(msg)
+        policy.policy_allowed_commands.add(binary)
