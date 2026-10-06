@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import msgspec
 from msgspec import UNSET
 
 from plyngent.lmproto.openai_compatible.model import (
@@ -37,7 +39,7 @@ from .usage import TokenUsage
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
-    from plyngent.lmproto.openai_compatible.model import AnyChatMessage
+    from plyngent.lmproto.openai_compatible.model import AnyAssistantToolCall, AnyChatMessage
     from plyngent.memory import MemoryStore
 
     from .events import AgentEvent
@@ -204,6 +206,75 @@ def committed_prefix_end(messages: Sequence[AnyChatMessage], user_index: int) ->
         end = j
         i = j
     return end
+
+
+def rollback_tail(messages: Sequence[AnyChatMessage], start: int) -> list[AnyChatMessage]:
+    """Rows to keep from *start* when a failed turn is rolled back.
+
+    The trailing tool batch is committed only once every call has its result
+    (:func:`committed_prefix_end`), so a batch cut short — cancelled before the
+    last result landed, or ids that do not pair up exactly — would be dropped
+    whole and the retry would run calls that already had external effects. Keep
+    the executed ones: their assistant message stays as the carrier for the
+    pairing (API messages must answer every ``tool_calls`` id), without the text
+    of the unfinished turn, and the calls that never reported a result are
+    absent so the retry re-issues them instead of assuming they ran.
+
+    Developer rows (host notices, directive checkpoints) are already durable, so
+    they stay in place; unfinished assistant text and stray rows go.
+    """
+    body = list(messages[start:])
+    kept: list[AnyChatMessage] = []
+    index = 0
+    while index < len(body):
+        message = body[index]
+        if isinstance(message, DeveloperChatMessage):
+            kept.append(message)
+            index += 1
+            continue
+        if isinstance(message, AssistantChatMessage) and message.tool_calls is not UNSET and message.tool_calls:
+            results: list[ToolChatMessage] = []
+            follow = index + 1
+            while follow < len(body):
+                following = body[follow]
+                if not isinstance(following, ToolChatMessage):
+                    break
+                results.append(following)
+                follow += 1
+            kept.extend(_executed_tool_pair(message, message.tool_calls, results))
+            index = follow
+            continue
+        index += 1
+    return kept
+
+
+def _executed_tool_pair(
+    assistant: AssistantChatMessage,
+    calls: Sequence[AnyAssistantToolCall],
+    results: Sequence[ToolChatMessage],
+) -> list[AnyChatMessage]:
+    """Assistant call record plus the results of the calls that produced one.
+
+    Pairs by call id (first result per id), so the history keeps the API's
+    one-result-per-call shape even when a model repeats an id. Text and
+    reasoning go with the rest of the unfinished turn.
+    """
+    by_id: dict[str, ToolChatMessage] = {}
+    for result in results:
+        _ = by_id.setdefault(result.tool_call_id, result)
+    executed: list[AnyAssistantToolCall] = []
+    paired: list[AnyChatMessage] = []
+    seen: set[str] = set()
+    for call in calls:
+        if call.id in seen or call.id not in by_id:
+            continue
+        seen.add(call.id)
+        executed.append(call)
+        paired.append(by_id[call.id])
+    if not executed:
+        return []
+    record = msgspec.structs.replace(assistant, content=UNSET, reasoning_content=UNSET, tool_calls=executed)
+    return [record, *paired]
 
 
 class ChatAgent:
@@ -475,10 +546,20 @@ class ChatAgent:
         msg = "nothing to retry"
         raise RuntimeError(msg)
 
-    def _rollback_uncommitted(self, user_index: int) -> None:
-        """Drop incomplete suffix; keep committed tool rounds after the user."""
+    async def _rollback_uncommitted(self, user_index: int) -> None:
+        """Drop the unfinished suffix; keep committed rounds and executed tools.
+
+        Rows before the checkpoint cursor are already stored, so only the kept
+        suffix is written: a restart has to continue from the same tool results
+        the model is about to see, or the retry re-runs their effects.
+        """
         end = committed_prefix_end(self.messages, user_index)
-        del self.messages[end:]
+        self.messages[end:] = rollback_tail(self.messages, end)
+        if len(self.messages) > self._persist_from:
+            # A store error must not mask the failure being rolled back; the
+            # rows stay in memory, and retry() writes what is still unstored.
+            with contextlib.suppress(Exception):
+                await self._persist_range(self._persist_from, len(self.messages))
 
     def _developer_tail_end(self, start: int) -> int:
         """Extend *start* through trailing developer checkpoint messages."""
@@ -492,7 +573,8 @@ class ChatAgent:
 
         After each completed tool batch, commits assistant+tool messages to the
         DB and keeps them on failure so :meth:`retry` continues without redoing
-        side-effecting tools. Unfinished assistant/stream suffix is rolled back.
+        side-effecting tools. Without such a batch, only the unfinished text is
+        dropped: calls that did report a result survive (:func:`rollback_tail`).
         """
         user_index = self._user_index(user_msg)
         if self.todo_stack is not None:
@@ -550,7 +632,7 @@ class ChatAgent:
             completed = True
         except BaseException:
             if not completed:
-                self._rollback_uncommitted(user_index)
+                await self._rollback_uncommitted(user_index)
             raise
 
         self.last_turn_usage = turn_usage
@@ -687,7 +769,8 @@ class ChatAgent:
         user_msg = self.messages[user_index]
         assert isinstance(user_msg, UserChatMessage)
         self._ensure_system_prompt()
-        # Already-committed messages stay; only new rounds are persisted.
-        self._persist_from = len(self.messages)
+        # Already-committed rows stay; write any the failed rollback could not.
+        if self._persist_from < len(self.messages):
+            await self._persist_range(self._persist_from, len(self.messages))
         async for event in self._run_from_user_message(user_msg):
             yield event

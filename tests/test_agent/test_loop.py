@@ -639,6 +639,77 @@ async def test_chat_agent_failed_turn_keeps_user_in_db() -> None:
     await store.close()
 
 
+async def test_rollback_keeps_executed_tool_result_in_store() -> None:
+    """Rolling back a cut-short batch keeps its executed result, in memory and on disk."""
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+    ran: list[str] = []
+
+    @tool(register=False)
+    def first() -> str:
+        ran.append("first")
+        return "first ran"
+
+    client = ScriptedClient([_response(AssistantChatMessage(content="finished"))])
+    agent = ChatAgent(
+        client,
+        model="m",
+        tools=ToolRegistry([first]),
+        memory=store,
+        session_id=session.sid,
+        stream=False,
+    )
+    user = UserChatMessage(content="do both")
+    await store.append_message(session.sid, user)
+    agent.replace_messages(
+        [
+            user,
+            AssistantChatMessage(
+                content="running both",
+                tool_calls=[
+                    AssistantFunctionToolCall(
+                        id="call_1", function=AssistantFunctionTool(name="first", arguments="{}")
+                    ),
+                    AssistantFunctionToolCall(
+                        id="call_2", function=AssistantFunctionTool(name="other", arguments="{}")
+                    ),
+                ],
+            ),
+            ToolChatMessage(tool_call_id="call_1", content="first ran"),
+        ],
+        persist_from=1,
+    )
+
+    await agent._rollback_uncommitted(0)  # the failure path itself
+
+    kept = [message for message in agent.messages if isinstance(message, ToolChatMessage)]
+    assert [message.content for message in kept] == ["first ran"]
+    assert agent.pending_retry_text == "do both"
+    # What the model continues from is on disk too, or a restart re-runs it.
+    assert agent.persist_from == len(agent.messages)
+
+    stored = await store.list_messages(session.sid)
+    assert [type(message).__name__ for message in stored] == [
+        "UserChatMessage",
+        "AssistantChatMessage",
+        "ToolChatMessage",
+    ]
+    record = stored[1]
+    assert isinstance(record, AssistantChatMessage)
+    assert record.content is UNSET
+    calls = record.tool_calls
+    assert calls is not UNSET
+    assert [call.id for call in calls] == ["call_1"]
+
+    # The retry answers from the stored result instead of running the tool again.
+    events = [event async for event in agent.retry()]
+    assert ran == []
+    assert any(isinstance(event, TextDeltaEvent) and event.content == "finished" for event in events)
+    sent = client.calls[-1].messages
+    assert any(isinstance(message, ToolChatMessage) and message.content == "first ran" for message in sent)
+    await store.close()
+
+
 async def test_chat_agent_retry_after_failure() -> None:
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")
