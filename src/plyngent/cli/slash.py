@@ -115,7 +115,7 @@ HELP_FOOTER = (
     "User messages are saved immediately. On API errors or Ctrl+C, unfinished\n"
     "assistant text is discarded (tool results that already ran stay, so /retry\n"
     "does not re-run them) but the user message stays (so /retry works after\n"
-    "resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
+    "resume, not only via readline history). Auto-retry: 5s/10s/15s/20s, then +10s.\n"
     "\n"
     "Side questions: /btw … answers without changing the main session\n"
     "(--tools=read by default: read-only tools; --tools no/full opt-in; --fresh).\n"
