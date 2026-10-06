@@ -61,7 +61,7 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
     """Fetch the next chunk of a truncated result using its ``truncate_token``.
 
     Pass the token shown at the end of a truncated ``read_file``, ``fetch``,
-    ``run_command``, or earlier ``get_truncated`` result to keep reading without
+    ``run_argv``, or earlier ``get_truncated`` result to keep reading without
     re-requesting the whole source or raising limits. Truncated output carries a
     fresh token, so chunks chain indefinitely. File chunks resume in the same
     view as the original read: numbered reads continue as numbered lines

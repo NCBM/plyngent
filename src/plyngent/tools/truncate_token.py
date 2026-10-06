@@ -1,7 +1,7 @@
 """Truncate-token cursors for resuming truncated tool results.
 
 Every truncation site (the agent loop's generic tool-result cap,
-``run_command`` / ``run_command_batch`` per-stream caps, ``read_file``,
+``run_argv`` / ``run_argv_batch`` per-stream caps, ``read_file``,
 ``fetch``, and request-time compact shrinks) appends the same compact marker
 when output is cut short::
 
@@ -13,7 +13,7 @@ chunk carries a fresh token, so ``get_truncated`` keeps resuming until the
 source is exhausted (then no marker is emitted).
 
 Resumable sources (``file`` / ``http``) are re-read by ``location`` +
-``offset``. Arbitrary tool output (run_command stdout, todo renders, …) has no
+``offset``. Arbitrary tool output (run_argv stdout, todo renders, …) has no
 resumable source, so its remainder lives in a short-lived in-memory store
 (``kind="memory"``) that is forgotten when the agent process exits — the model
 must re-run the tool after that.
