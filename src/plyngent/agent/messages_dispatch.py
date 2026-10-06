@@ -66,11 +66,17 @@ class _ToolBlockState:
 
 
 def _merge_usage(previous: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
-    """Merge message_start input tokens with message_delta output tokens."""
+    """Merge ``message_start`` usage with the later ``message_delta`` usage.
+
+    DeepSeek's compat reports a search turn's real prompt tokens only on the
+    delta (``message_start`` sees the question alone, the delta counts what the
+    search pulled in), so the larger of the two wins; output tokens are the
+    delta's cumulative count either way.
+    """
     if previous is None:
         return new
-    prompt = int(previous.get("prompt_tokens", 0) or new.get("prompt_tokens", 0) or 0)
-    completion = int(new.get("completion_tokens", 0) or previous.get("completion_tokens", 0) or 0)
+    prompt = max(int(previous.get("prompt_tokens", 0) or 0), int(new.get("prompt_tokens", 0) or 0))
+    completion = max(int(previous.get("completion_tokens", 0) or 0), int(new.get("completion_tokens", 0) or 0))
     return {
         "prompt_tokens": prompt,
         "completion_tokens": completion,

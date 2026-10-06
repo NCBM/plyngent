@@ -497,3 +497,38 @@ async def test_dispatch_messages_without_provider_tools_sends_no_server_tool() -
     param = ChatCompletionsParam(model="deepseek-flash", messages=[UserChatMessage(content="hi")])
     _ = await dispatch_messages(cast("Any", client), param, provider_tools=[])
     assert client.calls[0].tools is UNSET
+
+
+async def test_search_turn_reports_the_prompt_the_delta_counts() -> None:
+    """A search turn's real prompt size only shows up on ``message_delta``.
+
+    DeepSeek's compat opens with the question alone (``message_start`` sees 165
+    tokens) and reports what the search then pulled in on the delta (12468);
+    keeping the smaller one leaves the CLI's context gauge — and the
+    auto-compact threshold — that far short of what the model was sent.
+    """
+    events: list[AnthropicStreamEvent] = [
+        AnthropicMessageStart(
+            message=AnthropicMessageResponse(
+                id="msg_s",
+                model="deepseek-flash",
+                content=[],
+                usage=AnthropicUsage(input_tokens=165, output_tokens=0),
+            )
+        ),
+        AnthropicContentBlockStart(index=0, content_block=AnthropicRawContentBlock(type="text", text="")),
+        AnthropicContentBlockDelta(index=0, delta=AnthropicRawContentBlock(type="text_delta", text="done")),
+        AnthropicMessageDelta(
+            delta={"stop_reason": "end_turn"},
+            usage=AnthropicUsage(input_tokens=12468, output_tokens=198),
+        ),
+        AnthropicMessageStop(),
+    ]
+    client = ScriptedMessagesClient(stream_events=[events])
+    param = ChatCompletionsParam(model="deepseek-flash", messages=[UserChatMessage(content="hi")])
+    stream = await dispatch_messages(cast("Any", client), param, stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    usage = next(getattr(chunk, "usage", None) for chunk in chunks if getattr(chunk, "usage", None))
+    assert isinstance(usage, dict)
+    assert usage["prompt_tokens"] == 12468
+    assert usage["completion_tokens"] == 198
