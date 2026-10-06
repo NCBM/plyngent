@@ -96,6 +96,20 @@ max_context_tokens = 200000
 # directive_reminder_tokens = 100000
 # directive_reminder_text = ""
 
+# Thinking strength, resolved as [agent] < provider < model (the most specific
+# layer wins, per field). "" = send nothing and keep the provider's own default.
+#   none | minimal | low | medium | high | xhigh | max
+# ``max`` is DeepSeek's own top level on chat completions and clamps to ``xhigh``
+# everywhere else. The agent maps the value onto each API surface: chat
+# completions send ``reasoning_effort``, Responses send ``reasoning.effort``, and
+# Anthropic — which has no effort level — sends ``thinking`` with the token
+# budget the level maps onto (minimal 1024 … xhigh/max 32768, none = disabled).
+# reasoning_effort = "medium"
+# Explicit Anthropic thinking budget in tokens, overriding that mapping; the
+# request stays valid either way (floor 1024, and ``max_tokens`` grows when the
+# budget would leave no room for the answer).
+# thinking_budget_tokens = 8000
+
 # Optional: custom compact/summarisation prompts (empty = built-in defaults).
 # compact_system_prompt = ""
 # compact_user_prefix = "Summarize the following conversation:\n\n{transcript}"
@@ -120,6 +134,9 @@ access_key_or_token = "sk-replace-me"
 # preset = "openai"
 # access_key_or_token = "sk-replace-me"
 # url = "https://api.openai.com/v1"
+# # Thinking strength for every model of this provider ("" = inherit [agent];
+# # a model entry may override it). Values as in the [agent] section above.
+# reasoning_effort = "medium"
 # # Hosted/provider-side tools (OpenAI runs them; not local ToolRegistry).
 # # Default if omitted: [{ type = "web_search" }]. Use [] to disable.
 # # Examples: web_search, file_search (+ vector_store_ids), code_interpreter, mcp.
@@ -135,6 +152,8 @@ access_key_or_token = "sk-replace-me"
 # # `preset = "openai"` means /responses; `openai-compatible` means /chat/completions;
 # # `anthropic` means native /messages.
 # # "claude-sonnet" = { text = true, preset = "anthropic", url = "https://api.anthropic.com/v1" }
+# # A model entry may also set its own thinking strength, e.g. skip thinking for
+# # a cheap model: "gpt-5.4-nano" = { text = true, reasoning_effort = "none" }
 
 # --- Anthropic (Messages API) ---
 # [providers.anthropic]
@@ -142,10 +161,14 @@ access_key_or_token = "sk-replace-me"
 # access_key_or_token = "sk-ant-replace-me"
 # # url defaults to https://api.anthropic.com/v1 when empty
 # timeout = { connect = 10, read = 600 }
+# # Anthropic has no effort level: an effort becomes a thinking token budget
+# # (see the [agent] section above). Set the budget explicitly to pin it:
+# reasoning_effort = "high"
+# thinking_budget_tokens = 16000
 #
 # [providers.anthropic.models]
 # "claude-sonnet-4-20250514" = { text = true }
-# "claude-opus-4-20250514" = { text = true }
+# "claude-opus-4-20250514" = { text = true, reasoning_effort = "xhigh" }
 
 # --- DeepSeek (OpenAI-compatible / Responses / Anthropic conventions) ---
 # Default models if [providers.*.models] is omitted: deepseek-v4-flash, deepseek-v4-pro.
@@ -164,7 +187,9 @@ access_key_or_token = "sk-replace-me"
 # convention = "responses"
 # # Legacy location (parsed but ignored; prefer the typed field above):
 # # extras = { convention = "openai" }
+# # Thinking strength for this provider; per-model entries below may override it.
+# # reasoning_effort = "high"
 #
 # [providers.deepseek.models]
 # "deepseek-v4-flash" = { text = true, convention = "responses" }
-# "deepseek-v4-pro" = { text = true }
+# "deepseek-v4-pro" = { text = true, reasoning_effort = "max" }

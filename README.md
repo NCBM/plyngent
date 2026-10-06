@@ -154,6 +154,11 @@ max_context_tokens = 200000
 # allow_paths = { "/data/datasets" = "read", "/tmp/build" = "exec" }
 # Auto-raise tool/PTY limits without prompting (same as answering yyy).
 # auto_continue_limits = false
+# Thinking strength: "" (provider default) | none | minimal | low | medium |
+# high | xhigh | max. See "Thinking strength" below; providers and single
+# models may override either value.
+# reasoning_effort = "medium"
+# thinking_budget_tokens = 8000   # Anthropic only; overrides the level's budget
 
 # Optional skills (instruction directories). See doc/skills.md.
 # [skills]
@@ -171,6 +176,20 @@ max_context_tokens = 200000
 ```
 
 Per-provider **`timeout`** is passed to the HTTP session for chat/completions, Responses, and `GET /models`. A single number sets one timeout; `{ connect, read }` splits TCP/TLS setup vs idle wait between response bytes (SSE can run longer than `read` while chunks keep arriving). Tool/process timeouts (`run_argv`, PTY, policy confirm) are separate.
+
+**Thinking strength** (`reasoning_effort`) can be set on `[agent]`, on a provider, or on a single model: the most specific layer wins, per field, so a model may override only the effort or only the budget. `""` sends nothing and lets the provider apply its own default. Each API surface maps the value onto its own wire field — chat completions send `reasoning_effort`, Responses send `reasoning.effort`, and Anthropic has no effort level at all, so it sends `thinking` with the token budget that level maps onto (`minimal` 1024 … `xhigh`/`max` 32768; `none` disables thinking). `max` is DeepSeek's own top level on chat completions and clamps to `xhigh` everywhere else. `thinking_budget_tokens` overrides that mapping; either way the request stays valid: the budget never drops below 1024, and when it would swallow the output limit `max_tokens` grows so the answer still has room. DeepSeek chat keeps `thinking.type = "enabled"` unless the effort is `none`.
+
+```toml
+[providers.deepseek]
+reasoning_effort = "high"          # provider default
+
+[providers.deepseek.models]
+"deepseek-v4-pro" = { text = true, reasoning_effort = "max" }  # per-model wins
+
+[providers.anthropic]
+reasoning_effort = "medium"
+thinking_budget_tokens = 16000     # explicit Anthropic thinking budget
+```
 
 Third-party **plugins**: install a package that declares `project.entry-points."plyngent.tools"` (and later other groups), then allowlist the entry-point name under **`[plugins].enable`**. Details: [doc/plugins.md](doc/plugins.md).
 

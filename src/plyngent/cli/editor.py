@@ -37,6 +37,9 @@ _MINIMAL_CONFIG = """\
 # confirm_destructive = true
 # path_denylist = ["/secrets/", ".ssh/"]
 # max_context_tokens = 200000
+# # Thinking strength: "" (provider default) | none | minimal | low | medium |
+# # high | xhigh | max; providers and models may override it.
+# # reasoning_effort = "medium"
 #
 # # Optional compact prompts (empty = use built-in defaults).
 # # compact_system_prompt = ""
