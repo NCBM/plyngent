@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 
     from plyngent.lmproto.anthropic.client import AnthropicClient
     from plyngent.lmproto.openai.client import OpenAIClient
-    from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
+    from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem, ReasoningEffort
 
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
@@ -418,6 +418,7 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     tools: ToolRegistry | None = None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     temperature: float | None = None,
+    reasoning_effort: str = "",
     on_limit: LimitContinueHook | None = None,
     stream: bool = True,
     max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
@@ -437,6 +438,10 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
     Request payloads may shrink older tool results when over ``max_context_tokens``.
+
+    *reasoning_effort* is the resolved thinking strength (``""`` = send nothing,
+    the provider's own default); each API surface maps it onto its own wire field
+    (see ``config.reasoning``).
 
     *provider_tools* are hosted/provider-side tools (OpenAI Responses only, e.g.
     ``web_search``) merged into the request as opaque dicts; never executed by the
@@ -482,6 +487,9 @@ async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
                 model=model,
                 temperature=temperature if temperature is not None else UNSET,
                 tools=list(tool_items) if tool_items is not None else UNSET,
+                # "max" is DeepSeek-only; config.reasoning already clamped it away
+                # for every other surface, so this cast does not hide a mistake.
+                reasoning_effort=cast("ReasoningEffort", reasoning_effort) if reasoning_effort else UNSET,
             )
 
             pre_len = len(messages)

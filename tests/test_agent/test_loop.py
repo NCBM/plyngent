@@ -211,6 +211,20 @@ async def test_run_chat_loop_text_only() -> None:
     assert len(client.calls) == 1
 
 
+async def test_run_chat_loop_carries_reasoning_effort() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content="hello"))])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False, reasoning_effort="high")]
+    assert client.calls[0].reasoning_effort == "high"
+
+
+async def test_run_chat_loop_omits_unset_reasoning_effort() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content="hello"))])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+    assert client.calls[0].reasoning_effort is UNSET
+
+
 async def test_non_stream_emits_usage() -> None:
     client = ScriptedClient(
         [

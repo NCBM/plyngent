@@ -19,6 +19,7 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicMessagesParam,
     AnthropicResponseText,
     AnthropicTextContent,
+    AnthropicThinkingConfig,
     AnthropicToolChoice,
     AnthropicToolDefinition,
     AnthropicToolResultContent,
@@ -273,16 +274,87 @@ def _max_tokens_from_param(param: ChatCompletionsParam) -> int:
     return 8192
 
 
-def chat_param_to_anthropic_param(param: ChatCompletionsParam) -> AnthropicMessagesParam:
-    """Build :class:`AnthropicMessagesParam` from a chat completions param."""
+# Effort level → Anthropic ``thinking`` budget (an effort has no wire form there).
+# Unknown levels fall back to "medium"; ``none`` is handled separately (disabled).
+_ANTHROPIC_THINKING_BUDGETS: dict[str, int] = {
+    "minimal": 1024,
+    "low": 4096,
+    "medium": 8192,
+    "high": 16384,
+    "xhigh": 32768,
+    "max": 32768,
+}
+# Anthropic rejects ``budget_tokens < 1024`` and ``budget_tokens >= max_tokens``.
+_ANTHROPIC_MIN_THINKING_BUDGET = 1024
+# Headroom left for the answer when a thinking budget has to raise max_tokens.
+_ANTHROPIC_MIN_ANSWER_TOKENS = 1024
+
+
+def _thinking_from_param(
+    param: ChatCompletionsParam,
+    *,
+    thinking_budget_tokens: int,
+) -> AnthropicThinkingConfig | Unset:
+    """Build the ``thinking`` block for *param* (UNSET = send nothing).
+
+    ``reasoning_effort = "none"`` disables thinking; any other level enables it
+    with the explicit *thinking_budget_tokens*, else with the budget that level
+    maps onto.
+    """
+    effort = param.reasoning_effort
+    if effort is UNSET:
+        return UNSET
+    if effort == "none":
+        return AnthropicThinkingConfig(type="disabled")
+    fallback = _ANTHROPIC_THINKING_BUDGETS["medium"]
+    budget = thinking_budget_tokens or _ANTHROPIC_THINKING_BUDGETS.get(str(effort), fallback)
+    return AnthropicThinkingConfig(
+        type="enabled",
+        budget_tokens=max(_ANTHROPIC_MIN_THINKING_BUDGET, int(budget)),
+    )
+
+
+def _thinking_and_max_tokens(
+    param: ChatCompletionsParam,
+    *,
+    thinking_budget_tokens: int,
+) -> tuple[int, AnthropicThinkingConfig | Unset]:
+    """Resolve the ``thinking`` block and the ``max_tokens`` that has to fit it.
+
+    Anthropic rejects ``budget_tokens >= max_tokens``; rather than silently
+    shrink a requested reasoning budget, raise ``max_tokens`` so the answer still
+    has room.
+    """
+    max_tokens = _max_tokens_from_param(param)
+    thinking = _thinking_from_param(param, thinking_budget_tokens=thinking_budget_tokens)
+    if thinking is not UNSET and thinking.budget_tokens is not UNSET:
+        budget = int(thinking.budget_tokens)
+        if budget >= max_tokens:
+            max_tokens = budget + _ANTHROPIC_MIN_ANSWER_TOKENS
+    return max_tokens, thinking
+
+
+def chat_param_to_anthropic_param(
+    param: ChatCompletionsParam,
+    *,
+    thinking_budget_tokens: int = 0,
+) -> AnthropicMessagesParam:
+    """Build :class:`AnthropicMessagesParam` from a chat completions param.
+
+    *thinking_budget_tokens* is the configured explicit ``thinking`` budget
+    (0 = derive it from the param's ``reasoning_effort``).
+    """
     system, messages = chat_messages_to_anthropic(param.messages)
     tools = tool_items_to_anthropic_tools(param.tools if param.tools is not UNSET else None)
+    max_tokens, thinking = _thinking_and_max_tokens(param, thinking_budget_tokens=thinking_budget_tokens)
 
     kwargs: dict[str, Any] = {
         "model": param.model,
-        "max_tokens": _max_tokens_from_param(param),
+        "max_tokens": max_tokens,
         "messages": messages,
     }
+    if thinking is not UNSET:
+        kwargs["thinking"] = thinking
     if system:
         kwargs["system"] = system
     if tools:

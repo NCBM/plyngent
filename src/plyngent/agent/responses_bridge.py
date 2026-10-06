@@ -16,6 +16,7 @@ from plyngent.lmproto.openai.model import (
     ResponseEasyInputMessage,
     ResponseFunctionTool,
     ResponseFunctionToolCallOutput,
+    ResponseReasoningConfig,
     response_function_calls,
     response_output_text,
 )
@@ -336,6 +337,8 @@ def chat_param_to_responses_kwargs(
         kwargs["max_output_tokens"] = param.max_tokens
     if param.parallel_tool_calls is not UNSET:
         kwargs["parallel_tool_calls"] = param.parallel_tool_calls
+    if param.reasoning_effort is not UNSET:
+        kwargs["reasoning"] = ResponseReasoningConfig(effort=param.reasoning_effort)
     if param.tool_choice is not UNSET and isinstance(param.tool_choice, str):
         kwargs["tool_choice"] = param.tool_choice
     return kwargs

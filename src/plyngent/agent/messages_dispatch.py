@@ -44,6 +44,11 @@ if TYPE_CHECKING:
     )
 
 
+def _thinking_budget(client: AnthropicClient) -> int:
+    """Configured explicit ``thinking`` budget on *client* (0 = derive from effort)."""
+    return max(0, int(getattr(client, "thinking_budget_tokens", 0)))
+
+
 class _ToolBlockState:
     """Tracks an in-flight tool_use content block during SSE streaming."""
 
@@ -219,7 +224,7 @@ async def _stream_as_chat_chunks(
     ``message_stop``. Errors raise ``RuntimeError`` so the agent loop can
     surface them as retryable failures.
     """
-    create = chat_param_to_anthropic_param(param)
+    create = chat_param_to_anthropic_param(param, thinking_budget_tokens=_thinking_budget(client))
     stream = await client.messages(create, stream=True)
     state = _StreamState(param.model)
 
@@ -249,7 +254,7 @@ async def dispatch_messages(
     stream: bool = False,
 ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
     """Run one Anthropic Messages turn and return a chat-completions-shaped result."""
-    create = chat_param_to_anthropic_param(param)
+    create = chat_param_to_anthropic_param(param, thinking_budget_tokens=_thinking_budget(client))
     if stream:
         return _stream_as_chat_chunks(client, param)
     response = await client.messages(create, stream=False)

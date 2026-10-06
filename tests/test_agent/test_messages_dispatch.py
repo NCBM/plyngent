@@ -71,6 +71,8 @@ class ScriptedMessagesClient:
 
     kind: str = "messages"
     calls: list[AnthropicMessagesParam]
+    # Mirrors AnthropicClient: explicit thinking budget (0 = derive from effort).
+    thinking_budget_tokens: int
     _non_stream: list[AnthropicMessageResponse]
     _stream_events: list[list[AnthropicStreamEvent]]
 
@@ -81,6 +83,7 @@ class ScriptedMessagesClient:
         stream_events: Sequence[Sequence[AnthropicStreamEvent]] | None = None,
     ) -> None:
         self.calls = []
+        self.thinking_budget_tokens = 0
         self._non_stream = list(non_stream or ())
         self._stream_events = [list(events) for events in (stream_events or ())]
 
@@ -186,6 +189,46 @@ async def test_run_chat_loop_messages_kind_text() -> None:
     assert any(isinstance(e, UsageEvent) and e.usage.prompt_tokens == 10 for e in events)
     assert isinstance(messages[-1], AssistantChatMessage)
     assert messages[-1].content == "done"
+    # No thinking configured → the request carries no thinking block.
+    assert client.calls[0].thinking is UNSET
+
+
+async def test_run_chat_loop_passes_reasoning_effort_and_client_thinking_budget() -> None:
+    client = ScriptedMessagesClient(non_stream=[_message_response(text="done")])
+    client.thinking_budget_tokens = 12000
+    events = [
+        event
+        async for event in run_chat_loop(
+            cast("Any", client),
+            [UserChatMessage(content="go")],
+            model="claude-test",
+            stream=False,
+            reasoning_effort="high",
+        )
+    ]
+    assert any(isinstance(e, TextDeltaEvent) for e in events)
+    thinking = client.calls[0].thinking
+    assert thinking is not UNSET
+    assert thinking.type == "enabled"
+    # The client's explicit budget wins over the level's derived one.
+    assert thinking.budget_tokens == 12000
+
+
+async def test_run_chat_loop_reasoning_effort_none_disables_thinking() -> None:
+    client = ScriptedMessagesClient(non_stream=[_message_response(text="done")])
+    _ = [
+        event
+        async for event in run_chat_loop(
+            cast("Any", client),
+            [UserChatMessage(content="go")],
+            model="claude-test",
+            stream=False,
+            reasoning_effort="none",
+        )
+    ]
+    thinking = client.calls[0].thinking
+    assert thinking is not UNSET
+    assert thinking.type == "disabled"
 
 
 async def test_run_chat_loop_messages_kind_tool_round() -> None:

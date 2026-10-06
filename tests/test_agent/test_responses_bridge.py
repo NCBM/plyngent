@@ -235,6 +235,18 @@ def test_chat_param_to_responses_kwargs() -> None:
     assert kwargs["store"] is False
     assert kwargs["temperature"] == 0.2
     assert len(kwargs["tools"]) == 1
+    # No effort configured → no reasoning block.
+    assert "reasoning" not in kwargs
+
+
+def test_chat_param_to_responses_kwargs_reasoning_effort() -> None:
+    param = ChatCompletionsParam(
+        model="gpt-test",
+        messages=[UserChatMessage(content="hi")],
+        reasoning_effort="xhigh",
+    )
+    kwargs = chat_param_to_responses_kwargs(param)
+    assert kwargs["reasoning"].effort == "xhigh"
 
 
 def test_provider_tools_merged_after_local_functions() -> None:

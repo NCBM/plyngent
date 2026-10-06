@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from msgspec import UNSET
 
 from plyngent.agent.messages_bridge import (
@@ -29,12 +31,16 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionToolCall,
     ChatCompletionsParam,
     DeveloperChatMessage,
+    ReasoningEffort,
     SystemChatMessage,
     ToolChatMessage,
     ToolFunction,
     ToolFunctionItem,
     UserChatMessage,
 )
+
+if TYPE_CHECKING:
+    from plyngent.typedef import Unset
 
 
 def test_tool_items_to_anthropic_tools() -> None:
@@ -198,3 +204,53 @@ def test_chat_param_to_anthropic_param() -> None:
     assert body.tools is not UNSET
     assert len(body.tools) == 1
     assert body.temperature == 0.2
+    # No effort configured → no thinking block, provider default applies.
+    assert body.thinking is UNSET
+
+
+def _effort_param(effort: ReasoningEffort | Unset = UNSET) -> ChatCompletionsParam:
+    return ChatCompletionsParam(
+        model="claude-test",
+        messages=[UserChatMessage(content="hi")],
+        reasoning_effort=effort,
+    )
+
+
+def test_chat_param_to_anthropic_param_thinking_from_effort() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("medium"))
+    assert body.thinking is not UNSET
+    assert body.thinking.type == "enabled"
+    assert body.thinking.budget_tokens == 8192
+    # A budget equal to max_tokens is invalid for Anthropic, so the default
+    # output limit grows to leave room after it.
+    assert body.max_tokens == 8192 + 1024
+
+
+def test_chat_param_to_anthropic_param_thinking_raises_max_tokens() -> None:
+    # Anthropic requires budget_tokens < max_tokens; the answer keeps room after
+    # the reasoning budget instead of the budget being shrunk to fit.
+    body = chat_param_to_anthropic_param(_effort_param("high"))
+    assert body.thinking is not UNSET
+    assert body.thinking.budget_tokens == 16384
+    assert body.max_tokens == 16384 + 1024
+
+
+def test_chat_param_to_anthropic_param_explicit_thinking_budget() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("minimal"), thinking_budget_tokens=20000)
+    assert body.thinking is not UNSET
+    assert body.thinking.budget_tokens == 20000
+    assert body.max_tokens == 20000 + 1024
+
+
+def test_chat_param_to_anthropic_param_thinking_budget_floor() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("minimal"), thinking_budget_tokens=100)
+    assert body.thinking is not UNSET
+    assert body.thinking.budget_tokens == 1024
+    assert body.max_tokens == 8192
+
+
+def test_chat_param_to_anthropic_param_thinking_disabled() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("none"))
+    assert body.thinking is not UNSET
+    assert body.thinking.type == "disabled"
+    assert body.thinking.budget_tokens is UNSET

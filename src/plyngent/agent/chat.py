@@ -287,6 +287,8 @@ class ChatAgent:
     session_id: int | None
     max_rounds: int
     temperature: float | None
+    # Resolved thinking strength ("" = provider default); see config.reasoning.
+    reasoning_effort: str
     on_limit: LimitContinueHook | None
     stream: bool
     system_prompt: str | None
@@ -318,6 +320,7 @@ class ChatAgent:
         session_id: int | None = None,
         max_rounds: int = DEFAULT_MAX_ROUNDS,
         temperature: float | None = None,
+        reasoning_effort: str = "",
         messages: Sequence[AnyChatMessage] | None = None,
         on_limit: LimitContinueHook | None = None,
         stream: bool = True,
@@ -340,6 +343,7 @@ class ChatAgent:
         self.session_id = session_id
         self.max_rounds = max_rounds
         self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
         self.on_limit = on_limit
         self.stream = stream
         self.system_prompt = system_prompt
@@ -597,6 +601,7 @@ class ChatAgent:
                 tools=self.tools,
                 max_rounds=self.max_rounds,
                 temperature=self.temperature,
+                reasoning_effort=self.reasoning_effort,
                 on_limit=self.on_limit,
                 stream=self.stream,
                 max_tool_result_chars=self.max_tool_result_chars,
@@ -740,6 +745,7 @@ class ChatAgent:
             session_id=None,
             max_rounds=rounds,
             temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
             on_limit=self.on_limit,
             stream=self.stream,
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
