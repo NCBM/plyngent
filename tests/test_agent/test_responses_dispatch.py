@@ -9,6 +9,7 @@ from msgspec import UNSET
 
 from plyngent.agent import (
     AssistantMessageEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolRegistry,
@@ -256,6 +257,65 @@ async def test_dispatch_responses_stream_reasoning_no_duplicate() -> None:
         [ResponseStreamEvent(type="response.reasoning_text.delta", delta="streamed only")]
     )
     assert reasoning == "streamed only"
+
+
+async def _loop_reasoning_deltas(
+    events: list[ResponseStreamEvent],
+    messages: list[Any],
+) -> list[str]:
+    """Run one streamed round and collect the reasoning deltas the loop emitted."""
+    import msgspec
+
+    final = _completed_response(text="ok")
+    scripted = [*events, ResponseStreamEvent(type="response.completed", response=msgspec.to_builtins(final))]
+    client = ScriptedResponsesClient(stream_events=[scripted])
+    return [
+        event.content
+        async for event in run_chat_loop(cast("Any", client), messages, model="gpt-test", stream=True)
+        if isinstance(event, ReasoningDeltaEvent)
+    ]
+
+
+async def test_loop_responses_reasoning_done_is_not_printed_twice() -> None:
+    """``response.reasoning_text.done`` repeats what its fragments spelled out.
+
+    Streaming it verbatim printed the chain of thought twice (the fragments, then
+    the whole text); the round still hands the full text back to the API.
+    """
+    fragments = ["We", " need", " answer."]
+    events = [ResponseStreamEvent(type="response.reasoning_text.delta", delta=part) for part in fragments]
+    events.append(ResponseStreamEvent(type="response.reasoning_text.done", text="We need answer."))
+    messages: list[Any] = [UserChatMessage(content="hi")]
+
+    deltas = await _loop_reasoning_deltas(events, messages)
+
+    assert deltas == fragments
+    assert messages[-1].reasoning_content == "We need answer."
+
+
+async def test_loop_responses_reasoning_done_alone_is_shown() -> None:
+    """A round whose fragments never arrived still shows the ``.done`` text once."""
+    events = [ResponseStreamEvent(type="response.reasoning_text.done", text="chain of thought")]
+    messages: list[Any] = [UserChatMessage(content="hi")]
+
+    deltas = await _loop_reasoning_deltas(events, messages)
+
+    assert deltas == ["chain of thought"]
+    assert messages[-1].reasoning_content == "chain of thought"
+
+
+async def test_loop_responses_reasoning_done_extends_fragments() -> None:
+    """A ``.done`` text longer than what streamed shows only its unseen tail."""
+    events = [
+        ResponseStreamEvent(type="response.reasoning_text.delta", delta="We need"),
+        ResponseStreamEvent(type="response.reasoning_text.done", text="We need answer."),
+    ]
+    messages: list[Any] = [UserChatMessage(content="hi")]
+
+    deltas = await _loop_reasoning_deltas(events, messages)
+
+    assert deltas == ["We need", " answer."]
+    assert messages[-1].reasoning_content == "We need answer."
 
 
 def token_usage_present(chunk: object) -> bool:

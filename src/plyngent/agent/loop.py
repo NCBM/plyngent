@@ -260,16 +260,27 @@ async def _non_stream_round(
     )
 
 
-def _append_reasoning_delta(
+def _take_reasoning_delta(
     reasoning_parts: list[str],
     delta: DeltaMessage,
-) -> list[str]:
-    """Accumulate a reasoning delta; a ``full`` (``.done``) event replaces fragments."""
-    if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
-        if delta.reasoning_full is True:
-            return [delta.reasoning_content]
-        return [*reasoning_parts, delta.reasoning_content]
-    return reasoning_parts
+) -> tuple[list[str], list[ReasoningDeltaEvent]]:
+    """Fold a reasoning delta into the chain of thought; say what to stream.
+
+    Fragments append to *reasoning_parts*; a ``full`` delta replaces them, since
+    DeepSeek's ``response.reasoning_text.done`` carries the whole chain of thought
+    its fragments spelled out. The display already printed those fragments, so a
+    full delta streams only a tail they did not cover — emitting it verbatim
+    printed the CoT twice — and is dropped when it does not continue them at all.
+    A round that streamed nothing streams the full text once.
+    """
+    content = delta.reasoning_content
+    if not isinstance(content, str) or not content:
+        return reasoning_parts, []
+    if delta.reasoning_full is not True:
+        return [*reasoning_parts, content], [ReasoningDeltaEvent(content=content)]
+    streamed = "".join(reasoning_parts)
+    fresh = content.removeprefix(streamed) if content.startswith(streamed) else ""
+    return [content], [ReasoningDeltaEvent(content=fresh)] if fresh else []
 
 
 async def _stream_round(
@@ -312,9 +323,12 @@ async def _stream_round(
             finish_reason = fr
             saw_terminal = True
         delta = choice.delta
-        if isinstance(delta.reasoning_content, str) and delta.reasoning_content:
-            reasoning_parts = _append_reasoning_delta(reasoning_parts, delta)
-            yield ReasoningDeltaEvent(content=delta.reasoning_content)
+        # A delta without reasoning folds to nothing, so every chunk can be taken
+        # here; the display sees only what it has not printed yet (see
+        # :func:`_take_reasoning_delta`).
+        reasoning_parts, reasoning_events = _take_reasoning_delta(reasoning_parts, delta)
+        for reasoning_event in reasoning_events:
+            yield reasoning_event
         if isinstance(delta.content, str) and delta.content:
             content_parts.append(delta.content)
             yield TextDeltaEvent(content=delta.content)
