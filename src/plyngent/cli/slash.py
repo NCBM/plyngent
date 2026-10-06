@@ -1512,7 +1512,7 @@ def history_cmd(
 @click.argument("action", required=False, type=TODOS_ACTION)
 @click.argument("rest", required=False, nargs=-1, type=str)
 @click.pass_obj
-def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915 — one branch per /todos action
+def todos_cmd(  # noqa: C901, PLR0911, PLR0915 — one branch per /todos action
     state: ReplState, action: str | None, rest: tuple[str, ...]
 ) -> None:
     """Show or edit the LIFO stack of **task groups**.

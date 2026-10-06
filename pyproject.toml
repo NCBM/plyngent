@@ -136,6 +136,9 @@ ignore = [
   "COM812",  # missing-trailing-comma
   "PLC0415",  # import-outside-top-level
   "TID252",
+  # Same axis as C901 (conditional branches per function) but a looser default,
+  # and C901 flags every function it does — keep the one gate (see AGENTS.md).
+  "PLR0912",  # too-many-branches
   "PLR0913",  # too-many-arguments (common on constructors/composed functions)
 ]
 allowed-confusables = [

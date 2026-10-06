@@ -425,7 +425,7 @@ async def _maybe_inject_directive_checkpoints(
     return new_band
 
 
-async def run_chat_loop(  # noqa: C901, PLR0912 — multi-phase tool loop
+async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     client: AnyLLMClient,
     messages: list[AnyChatMessage],
     *,

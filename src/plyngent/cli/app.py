@@ -218,7 +218,7 @@ async def _run_oneshot(state: ReplState, prompt_text: str) -> int:
     return EXIT_OK if ok else EXIT_TURN_FAILED
 
 
-async def _run_chat(  # noqa: C901, PLR0912, PLR0915 — chat orchestration
+async def _run_chat(  # noqa: C901, PLR0915 — chat orchestration
     *,
     config_path: Path | None,
     provider_name: str | None,
