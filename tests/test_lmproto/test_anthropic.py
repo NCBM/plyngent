@@ -11,6 +11,7 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicMessagesParam,
     AnthropicMessageStop,
     AnthropicResponseText,
+    AnthropicThinkingConfig,
     AnthropicUsage,
     AnthropicUserMessage,
     AnthropicWebSearchToolResultContent,
@@ -112,6 +113,17 @@ def test_messages_param_encodes_server_tool_dicts() -> None:
     )
     data = msgspec.json.decode(msgspec.json.encode(param))
     assert data["tools"] == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+
+
+def test_messages_param_keeps_the_thinking_type_on_the_wire() -> None:
+    """``omit_defaults`` must not drop the block's ``type`` discriminator."""
+    param = AnthropicMessagesParam(
+        model="deepseek-flash",
+        messages=[AnthropicUserMessage(content="hi")],
+        thinking=AnthropicThinkingConfig(type="enabled", budget_tokens=16384),
+    )
+    data = msgspec.json.decode(msgspec.json.encode(param))
+    assert data["thinking"] == {"type": "enabled", "budget_tokens": 16384}
 
 
 async def test_client_messages_create(monkeypatch: pytest.MonkeyPatch) -> None:

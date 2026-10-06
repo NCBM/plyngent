@@ -67,9 +67,13 @@ class AnthropicThinkingConfig(Struct, omit_defaults=True):
     ``budget_tokens`` is the reasoning budget the model may spend before it
     answers; the API requires it to be at least 1024 and smaller than
     ``max_tokens`` (see ``agent.messages_bridge``, which keeps both valid).
+
+    ``type`` carries no default: ``omit_defaults`` would drop a defaulted one,
+    and the server reads the block as malformed without it — DeepSeek answers
+    ``thinking: missing field ``type``.
     """
 
-    type: Literal["enabled", "disabled"] = "enabled"
+    type: Literal["enabled", "disabled"]
     budget_tokens: int | Unset = UNSET
 
 
