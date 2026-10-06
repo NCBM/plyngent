@@ -17,7 +17,7 @@ def _sample_message_body() -> bytes:
     return msgspec.json.encode(
         AnthropicMessageResponse(
             id="msg_1",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             content=[AnthropicResponseText(text="hello world")],
             stop_reason="end_turn",
             usage=AnthropicUsage(input_tokens=9, output_tokens=3),
@@ -52,7 +52,7 @@ async def test_client_messages_create(monkeypatch: pytest.MonkeyPatch) -> None:
         return _Resp()
 
     monkeypatch.setattr(client.session, "post", fake_post)
-    result = await client.messages(AnthropicMessagesParam(model="deepseek-v4-flash", messages=[]))
+    result = await client.messages(AnthropicMessagesParam(model="deepseek-flash", messages=[]))
     assert isinstance(result, AnthropicMessageResponse)
     assert result.content[0].text == "hello world"
     assert result.usage.output_tokens == 3
@@ -78,7 +78,7 @@ async def test_client_messages_stream(monkeypatch: pytest.MonkeyPatch) -> None:
         return _Resp()
 
     monkeypatch.setattr(client.session, "post", fake_post)
-    stream = await client.messages(AnthropicMessagesParam(model="deepseek-v4-flash", messages=[]), stream=True)
+    stream = await client.messages(AnthropicMessagesParam(model="deepseek-flash", messages=[]), stream=True)
     events = [event async for event in stream]
     assert len(events) == 2
 

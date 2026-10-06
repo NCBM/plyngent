@@ -366,7 +366,7 @@ class AnthropicProvider(ProviderConfig, tag="anthropic"):
 def _default_deepseek_models() -> dict[str, ModelConfig]:
     """Current DeepSeek text catalog when TOML omits ``models``."""
     return {
-        "deepseek-v4-flash": ModelConfig(text=True),
+        "deepseek-flash": ModelConfig(text=True),
         "deepseek-v4-pro": ModelConfig(text=True),
     }
 

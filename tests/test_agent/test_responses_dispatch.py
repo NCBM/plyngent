@@ -430,7 +430,7 @@ async def test_dispatch_stream_failed_raises_with_error_detail() -> None:
                 "id": "resp_1",
                 "object": "response",
                 "created_at": 1,
-                "model": "deepseek-v4-flash",
+                "model": "deepseek-flash",
                 "status": "failed",
                 "output": [],
                 "error": {"code": "rate_limit_exceeded", "message": "slow down"},

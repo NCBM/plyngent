@@ -169,12 +169,12 @@ async def test_session_llm_remembered(store: MemoryStore) -> None:
     session = await store.create_session(
         name="llm",
         provider_name="deepseek",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
     )
     row = await store.get_session(session.sid)
     assert row is not None
     assert row.provider_name == "deepseek"
-    assert row.model == "deepseek-v4-flash"
+    assert row.model == "deepseek-flash"
     updated = await store.update_session_llm(session.sid, model="deepseek-v4-pro")
     assert updated.provider_name == "deepseek"
     assert updated.model == "deepseek-v4-pro"

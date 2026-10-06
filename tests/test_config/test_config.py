@@ -46,8 +46,8 @@ def test_read_valid_config() -> None:
     assert isinstance(providers["test3"], AnthropicProvider)
     assert isinstance(providers["foo1"], DeepseekProvider)
     # TOML omitted models → DeepSeek defaults.
-    assert set(providers["foo1"].models) == {"deepseek-v4-flash", "deepseek-v4-pro"}
-    assert providers["foo1"].models["deepseek-v4-flash"].text is True
+    assert set(providers["foo1"].models) == {"deepseek-flash", "deepseek-v4-pro"}
+    assert providers["foo1"].models["deepseek-flash"].text is True
     db = config.database
     assert db["implementation"] == "sqlite"
     assert db["url"] == ":memory:"
@@ -57,7 +57,7 @@ def test_read_valid_config() -> None:
 
 def test_deepseek_default_models_on_construct() -> None:
     provider = DeepseekProvider(access_key_or_token="sk-test")
-    assert set(provider.models) == {"deepseek-v4-flash", "deepseek-v4-pro"}
+    assert set(provider.models) == {"deepseek-flash", "deepseek-v4-pro"}
 
 
 def test_openai_default_models_on_construct() -> None:
@@ -179,7 +179,7 @@ preset = "deepseek"
 access_key_or_token = "sk-test"
 
 [providers.ds.models]
-"deepseek-v4-flash" = { text = true, convention = "responses" }
+"deepseek-flash" = { text = true, convention = "responses" }
 "deepseek-v4-pro" = { text = true }
 """,
         encoding="utf-8",
@@ -187,7 +187,7 @@ access_key_or_token = "sk-test"
     config = plyngent.config.load(path)
     provider = config.providers["ds"]
     assert isinstance(provider, DeepseekProvider)
-    assert provider.models["deepseek-v4-flash"].convention == "responses"
+    assert provider.models["deepseek-flash"].convention == "responses"
     assert provider.models["deepseek-v4-pro"].convention == ""
 
 
@@ -314,7 +314,7 @@ reasoning_effort = "high"
 
 [providers.ds.models]
 "deepseek-v4-pro" = { text = true, reasoning_effort = "max", thinking_budget_tokens = 32000 }
-"deepseek-v4-flash" = { text = true }
+"deepseek-flash" = { text = true }
 """,
         encoding="utf-8",
     )
@@ -327,8 +327,8 @@ reasoning_effort = "high"
     assert provider.thinking_budget_tokens == 0
     assert provider.models["deepseek-v4-pro"].reasoning_effort == "max"
     assert provider.models["deepseek-v4-pro"].thinking_budget_tokens == 32000
-    assert provider.models["deepseek-v4-flash"].reasoning_effort == ""
-    assert provider.models["deepseek-v4-flash"].thinking_budget_tokens == 0
+    assert provider.models["deepseek-flash"].reasoning_effort == ""
+    assert provider.models["deepseek-flash"].thinking_budget_tokens == 0
 
 
 def test_reasoning_effort_defaults_are_unset(tmp_path: Path) -> None:

@@ -60,7 +60,7 @@ def test_deepseek_openai_convention() -> None:
     client = create_client(provider)
     assert isinstance(client, DeepseekOpenAIClient)
     assert provider_to_openai_config(provider).base_url == "https://api.deepseek.com"
-    assert "deepseek-v4-flash" in provider.models
+    assert "deepseek-flash" in provider.models
     assert "deepseek-v4-pro" in provider.models
 
 
@@ -129,13 +129,13 @@ def test_deepseek_model_level_anthropic_convention() -> None:
         access_key_or_token="sk-test",
         models={
             "claude-proxy": ModelConfig(convention="anthropic"),
-            "deepseek-v4-flash": ModelConfig(),
+            "deepseek-flash": ModelConfig(),
         },
     )
     proxy = create_client(provider, model="claude-proxy")
     assert isinstance(proxy, DeepseekAnthropicClient)
     assert proxy.session.base_url == "https://api.deepseek.com/anthropic"
-    flash = create_client(provider, model="deepseek-v4-flash")
+    flash = create_client(provider, model="deepseek-flash")
     assert isinstance(flash, DeepseekOpenAIClient)
 
 
@@ -145,11 +145,11 @@ def test_deepseek_model_level_convention_override() -> None:
     provider = DeepseekProvider(
         access_key_or_token="sk-test",
         models={
-            "deepseek-v4-flash": ModelConfig(convention="responses"),
+            "deepseek-flash": ModelConfig(convention="responses"),
             "deepseek-v4-pro": ModelConfig(),
         },
     )
-    flash = create_client(provider, model="deepseek-v4-flash")
+    flash = create_client(provider, model="deepseek-flash")
     assert isinstance(flash, DeepseekResponsesClient)
     assert flash.kind == "responses"
     pro = create_client(provider, model="deepseek-v4-pro")

@@ -9,7 +9,7 @@ from plyngent.lmproto.openai_compatible.config import OpenAIConfig
 
 def _sample_response_body() -> bytes:
     return (
-        b'{"id":"resp_1","object":"response","created_at":1,"model":"deepseek-v4-flash",'
+        b'{"id":"resp_1","object":"response","created_at":1,"model":"deepseek-flash",'
         b'"status":"completed","output":['
         b'{"id":"msg_1","type":"message","role":"assistant","status":"completed",'
         b'"content":[{"type":"output_text","text":"hello from deepseek","annotations":[]}]}'
@@ -40,7 +40,7 @@ async def test_client_responses_create(monkeypatch: pytest.MonkeyPatch) -> None:
         return _Resp()
 
     monkeypatch.setattr(client.session, "post", fake_post)
-    result = await client.responses(ResponsesCreateParam(model="deepseek-v4-flash", input="hi"))
+    result = await client.responses(ResponsesCreateParam(model="deepseek-flash", input="hi"))
     assert isinstance(result, Response)
     assert response_output_text(result) == "hello from deepseek"
 
@@ -62,7 +62,7 @@ async def test_client_responses_stream_stops_at_terminal(monkeypatch: pytest.Mon
             yield (
                 b'data: {"type":"response.completed","sequence_number":2,'
                 b'"response":{"id":"resp_1","object":"response","created_at":1,'
-                b'"model":"deepseek-v4-flash","status":"completed","output":[]}}'
+                b'"model":"deepseek-flash","status":"completed","output":[]}}'
             )
             # Anything after the terminal event must not be consumed.
             yield b'data: {"type":"response.output_text.delta","delta":"ignored"}'
@@ -77,7 +77,7 @@ async def test_client_responses_stream_stops_at_terminal(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(client.session, "post", fake_post)
     stream = await client.responses(
-        ResponsesCreateParam(model="deepseek-v4-flash", input="hi"),
+        ResponsesCreateParam(model="deepseek-flash", input="hi"),
         stream=True,
     )
     events = [event async for event in stream]

@@ -167,7 +167,7 @@ def _reasoning_response(
     return Response(
         id="resp_r",
         created_at=1,
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         output=output,
         reasoning=top_level,
     )

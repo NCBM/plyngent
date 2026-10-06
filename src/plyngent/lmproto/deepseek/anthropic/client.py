@@ -17,8 +17,8 @@ class DeepseekAnthropicClient(AnthropicClient):
     (see https://api-docs.deepseek.com/guides/anthropic_api). ``x-api-key`` is fully
     supported; ``anthropic-version`` / ``anthropic-beta`` headers are ignored by the
     server but harmless. Model ids map server-side: ``claude-opus*`` → ``deepseek-v4-pro``,
-    ``claude-haiku*`` / ``claude-sonnet*`` → ``deepseek-v4-flash``, unknown names →
-    ``deepseek-v4-flash``; real DeepSeek ids pass through as-is.
+    ``claude-haiku*`` / ``claude-sonnet*`` → ``deepseek-flash``, unknown names →
+    ``deepseek-flash``; real DeepSeek ids pass through as-is.
 
     ``GET /models`` is not documented on the ``/anthropic`` base, so ``models()``
     returns an empty list and model selection stays config-driven.
