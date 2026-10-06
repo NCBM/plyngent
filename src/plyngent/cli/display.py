@@ -182,9 +182,10 @@ class PrettyLine:
     ``prefix`` is written as soon as the call starts — a blocking tool call is
     then visible while it runs — and ``detail`` is appended once its result
     lands, so the two land on one line. Together they equal the single line the
-    whole-line path prints. When something else is printed in between (a
-    parallel call, a confirm/ask prompt) the prefix stays as its own line and
-    the result is printed as a complete line instead.
+    whole-line path prints. A later call of the same round waits its turn (see
+    :class:`_PrettyToolStream`); only when *other* output takes the line — a
+    confirm/ask prompt — does the prefix stay as its own line and the result
+    print as a complete line instead.
     """
 
     prefix: Callable[[str], str]
@@ -941,37 +942,38 @@ class _PrettyToolStream:
 
     Writing the prefix immediately keeps a blocking tool call visible; appending
     the detail later reproduces the single whole-line write byte for byte, so
-    non-interactive output is unchanged. Nothing ever moves the cursor: when
-    something else is printed in between — a second call of the batch (parallel
-    tools) or a confirm/ask prompt — the open prefix is *closed* as its own line
-    and the rest of the batch prints whole lines (``prefix + detail``). A prefix
-    wider than the terminal therefore degrades cleanly instead of leaving a
-    half-erased row behind.
+    non-interactive output is unchanged. Nothing ever moves the cursor: a round
+    that issues several calls holds the prefixes of the later ones until the open
+    row takes its own detail (results arrive in call order), so every call ends
+    up with exactly one finished row. Output that genuinely takes the line — a
+    confirm/ask prompt, streamed text, an error — closes the open prefix as its
+    own line instead and the rest of the batch prints whole lines; a prefix wider
+    than the terminal thus degrades cleanly rather than leaving a half-erased row
+    behind.
     """
 
     _interactive: bool
     _open: bool
     _whole_lines: bool
+    _queued: list[str]
 
     def __init__(self, *, interactive: bool) -> None:
         self._interactive = interactive
         self._open = False
         self._whole_lines = False
+        self._queued = []
 
     def start_call(self, prefix: str) -> None:
         """Show *prefix* for a call that is about to run (cursor left mid-line)."""
         if not (self._interactive and prefix) or self._whole_lines:
             return
         if self._open:
-            # Parallel batch: the open prefix can never receive its detail, so
-            # end it as its own line and print whole lines from here on.
-            self.close_line()
+            # Sibling call of the same round: hold its prefix back instead of
+            # closing the open row, which would leave the earlier call as an
+            # abandoned half-line and repeat its prefix on the whole line.
+            self._queued.append(prefix)
             return
-        click.echo(f"\n{prefix}", nl=False)
-        with contextlib.suppress(OSError):
-            _ = sys.stdout.flush()
-        self._open = True
-        _mark_open_prefix(self)
+        self._show_prefix(prefix)
 
     def finish_call(self, detail: str) -> bool:
         """Append *detail* to the open prefix; False when a whole line is needed."""
@@ -980,10 +982,14 @@ class _PrettyToolStream:
         click.echo(f"{detail}\n", nl=False)
         self._open = False
         _mark_open_prefix(None)
+        if self._queued:
+            # This row is complete, so the next call of the batch can have its own.
+            self._show_prefix(self._queued.pop(0))
         return True
 
     def close_line(self) -> None:
         """End a dangling prefix line before other output takes the next line."""
+        self._queued.clear()
         if not self._open:
             return
         click.echo()
@@ -995,6 +1001,14 @@ class _PrettyToolStream:
         """Reset batch-scoped state once every call of the batch has a result."""
         self.close_line()
         self._whole_lines = False
+
+    def _show_prefix(self, prefix: str) -> None:
+        """Write *prefix* and leave the cursor on it for its own detail."""
+        click.echo(f"\n{prefix}", nl=False)
+        with contextlib.suppress(OSError):
+            _ = sys.stdout.flush()
+        self._open = True
+        _mark_open_prefix(self)
 
 
 # The stream with a prefix line still open (cursor mid-line), or None. A confirm
@@ -1062,7 +1076,8 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
 
     Pretty tool calls print their ``* Verb 'target' `` prefix as soon as the call
     starts, so a blocking tool is visible while it runs; the outcome is appended
-    when the result lands (same bytes as the whole-line fallback).
+    when the result lands (same bytes as the whole-line fallback). A round that
+    issues several calls renders them in call order, one finished row each.
     """
     show_full = get_verbose_tool_results() if verbose is None else verbose
     use_markdown = get_markdown_enabled() if markdown is None else markdown

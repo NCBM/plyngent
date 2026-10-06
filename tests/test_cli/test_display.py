@@ -997,11 +997,11 @@ async def test_pretty_verbose_keeps_full_result_output(
     assert "* Read 'a.txt' " not in out
 
 
-async def test_pretty_parallel_batch_closes_the_open_prefix(
+async def test_pretty_parallel_batch_gives_every_call_its_own_row(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A second call in the batch ends the open prefix; results print whole lines."""
+    """A second call in the batch holds its prefix until the first row is done."""
     monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
     await render_events(
         _aiter(
@@ -1014,16 +1014,35 @@ async def test_pretty_parallel_batch_closes_the_open_prefix(
         )
     )
     out = capsys.readouterr().out
-    # The prefix survives as its own line; whole lines take over from there.
-    assert out == ("\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n")
+    assert out == ("\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n")
     assert "\x1b[" not in out  # the cursor is never moved
+
+
+async def test_pretty_edit_batch_prints_one_row_per_edit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Two edits in one round: one finished row each, no abandoned prefix row."""
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("edit_replace", '{"path": "a.py"}'),
+                _pretty_call("edit_replace", '{"path": "b.py"}'),
+                _result("replaced 1 occurrence in a.py ('x' → 'y')"),
+                _result("replaced 1 occurrence in b.py ('x' → 'y')"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert out == "\n* Edit 'a.py' (done)\n\n* Edit 'b.py' (done)\n\n"
 
 
 async def test_pretty_parallel_batch_keeps_the_line_above_the_prefix(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Ending the open prefix must not touch the line above it.
+    """Rendering a batch must not touch the line above the prefix.
 
     Reasoning streams without a trailing newline, so the prefix line sits right
     below the reasoning text; moving the cursor up used to wipe that reasoning
@@ -1042,9 +1061,7 @@ async def test_pretty_parallel_batch_keeps_the_line_above_the_prefix(
         )
     )
     out = capsys.readouterr().out
-    assert out == (
-        "\nreasoning:\nthink\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n\n"
-    )
+    assert out == ("\nreasoning:\nthink\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n\n")
     assert "\x1b[" not in out
 
 
