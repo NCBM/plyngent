@@ -92,6 +92,31 @@ def test_unwrap_value_free_flags_do_not_swallow_the_program() -> None:
         assert scan.command[0] == base, argv
 
 
+def test_unwrap_collects_command_line_option_values() -> None:
+    """A wrapper option that takes a command line is reported, not just skipped.
+
+    ``env -S "rm -rf /"`` hands over a command the review must see; the value is
+    code, so it must not be treated as an argument (or as the program).
+    """
+    scan = unwrap_command(["env", "-S", "rm -rf /"])
+    assert scan.base == "env"
+    assert [(span.wrapper, span.option, span.text) for span in scan.command_strings] == [("env", "-S", "rm -rf /")]
+    assert scan.command_strings[0].label == "env -S"
+
+    for argv, option, text in (
+        (["env", "--split-string=rm -rf /"], "--split-string", "rm -rf /"),
+        (["env", "-Srm -rf /"], "-S", "rm -rf /"),
+        (["su", "-c", "rm -rf /"], "-c", "rm -rf /"),
+        (["su", "--session-command=rm -rf /"], "--session-command", "rm -rf /"),
+    ):
+        spans = unwrap_command(argv).command_strings
+        assert [(span.option, span.text) for span in spans] == [(option, text)], argv
+
+    # Plain wrapper options stay arguments: no command line to review.
+    assert unwrap_command(["env", "-u", "FOO=1", "rm", "-rf", "/"]).command_strings == ()
+    assert unwrap_command(["env", "FOO=1", "git", "-c", "x=y", "log"]).command_strings == ()
+
+
 def test_unwrap_empty_argv() -> None:
     scan = unwrap_command([])
     assert scan.base == ""

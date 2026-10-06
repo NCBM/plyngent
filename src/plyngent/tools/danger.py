@@ -61,13 +61,18 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
     forms (``env FOO=1 python …``, ``nohup pdm run python …``), and an
     interpreter is confirmed the same way however it runs — a bare shell, a
     script (``python x.py``), or a ``-c`` one-liner, whose code is printed below
-    ``command:`` instead of inline.
+    ``command:`` instead of inline. A wrapper option that takes a command line
+    (``env -S "…"``, ``su -c "…"``) hides code the same way, so it is confirmed
+    too, with the text it carries printed under its own ``<wrapper> <option>:``
+    label.
     """
     scan = unwrap_command(argv)
     interpreter = is_interpreter(scan.base)
     findings = [f"{name} (detached run)" for name in scan.self_review]
     if interpreter:
         findings.append(f"interpreter {scan.base!r}")
+    findings.extend(f"{span.label} runs a command line" for span in scan.command_strings)
+    findings = list(dict.fromkeys(findings))
     if not findings:
         return None
     code = _dash_c_code(scan.command) if interpreter else None
@@ -76,6 +81,8 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
     reason = f"{via}: {' + '.join(findings)} — review before allow\n  argv: {display}"
     if code is not None:
         reason += f"\n  command:\n{_indent_block(code[1])}"
+    for span in scan.command_strings:
+        reason += f"\n  {span.label}:\n{_indent_block(span.text)}"
     return reason
 
 

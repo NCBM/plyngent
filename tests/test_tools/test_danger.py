@@ -144,6 +144,26 @@ def test_value_free_flags_do_not_hide_the_interpreter() -> None:
     assert "print(1)" in reason
 
 
+def test_wrapper_command_line_option_is_reviewed() -> None:
+    """`env -S` / `su -c` carry a command line, so they are confirmed like `-c`."""
+    reason = classify_danger("run_argv", {"argv": ["env", "-S", "rm -rf /"]})
+    assert reason is not None
+    assert "env -S runs a command line" in reason
+    assert "  env -S:\n  rm -rf /" in reason
+
+    # Plain wrapper options are not a review trigger.
+    assert classify_danger("run_argv", {"argv": ["env", "-u", "FOO=1", "git", "status"]}) is None
+    assert classify_danger("run_argv", {"argv": ["env", "FOO=1", "git", "-c", "x=y", "log"]}) is None
+
+
+def test_wrapper_command_line_value_needs_no_interpreter() -> None:
+    """The wrapper's value is reviewed even when no interpreter is resolved."""
+    reason = classify_danger("run_argv", {"argv": ["env", "-S", "python -O script.py"]})
+    assert reason is not None
+    assert "env -S runs a command line" in reason
+    assert "python -O script.py" in reason
+
+
 def test_only_the_interpreter_dash_c_becomes_a_placeholder() -> None:
     reason = classify_danger("run_argv", {"argv": ["ionice", "-c", "2", "python", "-c", "print(1)"]})
     assert reason is not None
