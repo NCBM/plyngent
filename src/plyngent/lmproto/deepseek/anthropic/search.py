@@ -34,10 +34,16 @@ _SEARCH_TOOL: dict[str, Any] = {"type": "web_search_20250305", "name": "web_sear
 
 
 class SearchHit(msgspec.Struct, frozen=True, omit_defaults=True):
-    """One page the search index matched."""
+    """One page a search source matched.
+
+    DeepSeek's index keeps the page bodies server-side, so its hits carry a
+    title and a URL only; a source that ships snippets (Bing's RSS) fills
+    ``snippet`` too.
+    """
 
     title: str = ""
     url: str = ""
+    snippet: str = ""
 
 
 def hits_from_content(content: object) -> list[SearchHit]:

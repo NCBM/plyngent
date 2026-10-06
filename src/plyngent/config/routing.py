@@ -33,6 +33,8 @@ class EffectiveProvider:
     model: str | None
     timeout: float | HttpTimeoutConfig | None
     provider_tools: list[dict[str, object]]
+    # Sources the local ``web_search`` tool tries, in fallback order.
+    search_sources: list[str]
     source: Provider
     # DeepSeek API surface (see DeepSeekConvention): "openai" / "anthropic" /
     # "responses" for deepseek presets; "" (unused) for other presets.
@@ -101,10 +103,12 @@ def local_web_search(effective: EffectiveProvider) -> bool:
     ignore a hosted tool — a live probe answers "I can't browse the web" with
     either ``{"type": "web_search"}`` or the server-tool shape — so a DeepSeek
     provider that talks them searches through
-    :func:`~plyngent.tools.net.search.build_web_search_tool`, which calls the
-    search-capable endpoint behind the scenes.
+    :func:`~plyngent.tools.net.search.build_web_search_tool`, which asks the
+    sources named by ``search_sources`` behind the scenes.
     """
     if effective.preset != "deepseek" or effective.convention == "anthropic":
+        return False
+    if not effective.search_sources:
         return False
     return wants_web_search(effective)
 
@@ -147,13 +151,15 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         else:
             url = default_url_for_preset(preset)
 
-    # Hosted tools belong to the preset that declares them: OpenAI's Responses
-    # surface, and DeepSeek's (whose Anthropic surface runs the search inside the
-    # response while its other surfaces get a local tool — see
+    # Hosted tools and search sources belong to the preset that declares them:
+    # OpenAI's Responses surface, and DeepSeek's (whose Anthropic surface runs the
+    # search inside the response while its other surfaces get a local tool — see
     # :func:`local_web_search`).
     provider_tools: list[dict[str, object]] = []
+    search_sources: list[str] = []
     if parent_preset == preset and isinstance(provider, OpenAIProvider | DeepseekProvider):
         provider_tools = [dict(item) for item in provider.provider_tools]
+        search_sources = [str(item) for item in provider.search_sources]
 
     return EffectiveProvider(
         preset=preset,
@@ -162,6 +168,7 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         model=model,
         timeout=provider.timeout,
         provider_tools=provider_tools,
+        search_sources=search_sources,
         source=provider,
         convention=convention,
     )

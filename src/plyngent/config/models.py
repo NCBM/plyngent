@@ -9,6 +9,8 @@ from msgspec import Struct, field
 # - "anthropic"           → Anthropic Messages API (``POST /messages`` on
 #                           ``https://api.deepseek.com/anthropic``)
 type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
+# Sources the local ``web_search`` tool can use (see ``SearchBackend``).
+type SearchSource = Literal["deepseek", "bing"]
 
 # Static directory pre-allow mode for ``[agent].allow_paths`` (path → mode).
 type AllowPathMode = Literal["read", "write", "exec"]
@@ -321,6 +323,9 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
     # Thinking strength for every model of this provider ("" / 0 = inherit [agent]).
     reasoning_effort: ReasoningEffortConfig = ""
     thinking_budget_tokens: int = 0
+    # Sources the local ``web_search`` tool tries, in fallback order (``[]``
+    # disables the tool; see ``config.routing.local_web_search``).
+    search_sources: list[SearchSource] = field(default_factory=list)
 
 
 def _default_openai_models() -> dict[str, ModelConfig]:
@@ -371,6 +376,15 @@ def _default_deepseek_models() -> dict[str, ModelConfig]:
     }
 
 
+def _default_deepseek_search_sources() -> list[SearchSource]:
+    """Sources for the local ``web_search`` tool, in fallback order.
+
+    DeepSeek's own index first (it is the provider's own search), Bing's RSS as
+    the backstop when a search fails or finds nothing.
+    """
+    return ["deepseek", "bing"]
+
+
 class DeepseekProvider(ProviderConfig, tag="deepseek"):
     """DeepSeek API provider.
 
@@ -383,7 +397,9 @@ class DeepseekProvider(ProviderConfig, tag="deepseek"):
     ``provider_tools`` asks for a search tool like OpenAI's does (``[]``
     disables it). DeepSeek runs a hosted search only on the Anthropic surface, so
     the other conventions get a local ``web_search`` tool instead (see
-    ``config.routing.local_web_search``).
+    ``config.routing.local_web_search``); ``search_sources`` names what that tool
+    searches with, in fallback order — ``["deepseek", "bing"]`` by default,
+    ``[]`` to not offer it.
 
     ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
     key is parsed but ignored (prefer the typed ``convention`` field).
@@ -392,6 +408,7 @@ class DeepseekProvider(ProviderConfig, tag="deepseek"):
     models: dict[str, ModelConfig] = field(default_factory=_default_deepseek_models)
     convention: DeepSeekConvention = ""
     provider_tools: list[dict[str, Any]] = field(default_factory=_default_provider_tools)
+    search_sources: list[SearchSource] = field(default_factory=_default_deepseek_search_sources)
     extras: dict[str, str] = field(default_factory=dict)
 
 

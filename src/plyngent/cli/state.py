@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from plyngent.agent.tools import ToolDefinition
     from plyngent.agent.types import AnyLLMClient
+    from plyngent.tools.net.search import SearchBackend
 from plyngent.cli.models_source import (
     DEFAULT_MODELS_CACHE_TTL,
     client_supports_models,
@@ -416,9 +417,8 @@ class ReplState:
     def _web_search_tool(self) -> ToolDefinition | None:
         """Local ``web_search`` for a provider whose surface cannot host one.
 
-        DeepSeek searches only on its Anthropic-compatible surface, so the other
-        conventions get the tool instead of a hosted definition (see
-        :func:`~plyngent.config.routing.local_web_search`).
+        The sources come from ``provider.search_sources``, in fallback order
+        (see :func:`~plyngent.config.routing.local_web_search`).
         """
         from plyngent.config.routing import (
             deepseek_search_base_url,
@@ -426,18 +426,34 @@ class ReplState:
         )
         from plyngent.lmproto.anthropic.config import AnthropicConfig
         from plyngent.lmproto.deepseek.anthropic.search import DeepseekSearchClient
-        from plyngent.tools.net.search import build_web_search_tool
+        from plyngent.tools.net.bing import BingSearchBackend
+        from plyngent.tools.net.search import (
+            DeepseekSearchBackend,
+            build_web_search_tool,
+        )
 
         provider = self.effective_provider
         if not local_web_search(provider) or not self.model:
             return None
-        client = DeepseekSearchClient(
-            AnthropicConfig(
-                api_key=provider.access_key_or_token,
-                base_url=deepseek_search_base_url(provider),
-            )
-        )
-        return build_web_search_tool(client, model=self.model)
+        backends: list[SearchBackend] = []
+        for source in provider.search_sources:
+            if source == "deepseek":
+                backends.append(
+                    DeepseekSearchBackend(
+                        DeepseekSearchClient(
+                            AnthropicConfig(
+                                api_key=provider.access_key_or_token,
+                                base_url=deepseek_search_base_url(provider),
+                            )
+                        ),
+                        model=self.model,
+                    )
+                )
+            elif source == "bing":
+                backends.append(BingSearchBackend())
+        if not backends:
+            return None
+        return build_web_search_tool(backends)
 
     def _mcp_instructions_text(self) -> str:
         """Compose connected MCP servers' initialize ``instructions`` into one block.

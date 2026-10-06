@@ -21,10 +21,15 @@ def _effective(
     convention: str = "",
     url: str = "",
     tools: list[dict[str, object]] | None = None,
+    sources: list[str] | None = None,
 ) -> EffectiveProvider:
     provider = DeepseekProvider(access_key_or_token="sk-test", convention=convention, url=url)
     effective = resolve_effective_provider(provider, model="deepseek-flash")
-    return effective if tools is None else replace(effective, provider_tools=tools)
+    if tools is not None:
+        effective = replace(effective, provider_tools=tools)
+    if sources is not None:
+        effective = replace(effective, search_sources=sources)
+    return effective
 
 
 def test_a_deepseek_provider_asks_for_a_search_tool_like_openai_does() -> None:
@@ -43,6 +48,14 @@ def test_chat_and_responses_conventions_use_the_local_tool() -> None:
 
 def test_without_provider_tools_there_is_no_search() -> None:
     assert local_web_search(_effective(convention="responses", tools=[])) is False
+
+
+def test_without_search_sources_there_is_no_local_tool() -> None:
+    # ``search_sources = []`` leaves the tool out even though provider_tools ask
+    # for a search (the hosted path on the Anthropic convention is unaffected).
+    assert _effective(convention="responses", sources=[]).search_sources == []
+    assert local_web_search(_effective(convention="responses", sources=[])) is False
+    assert _effective(convention="responses").search_sources == ["deepseek", "bing"]
 
 
 def test_search_base_url_prefers_an_anthropic_endpoint() -> None:
