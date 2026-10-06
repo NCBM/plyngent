@@ -140,6 +140,7 @@ ignore = [
   # and C901 flags every function it does — keep the one gate (see AGENTS.md).
   "PLR0912",  # too-many-branches
   "PLR0913",  # too-many-arguments (common on constructors/composed functions)
+  "PLR0917",  # too-many-positional-arguments (same family as PLR0913 above)
 ]
 allowed-confusables = [
   "，",
