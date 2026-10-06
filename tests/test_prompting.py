@@ -19,11 +19,14 @@ from plyngent.prompting import (
     configure_prompting,
     confirm,
     form,
+    get_prompt_backend,
+    get_prompt_output_hook,
     prompt_cancelled,
     read_line_with_timeout,
     reset_prompting,
     run_cancellable_prompt_async,
     run_prompt_async,
+    set_prompt_output_hook,
     temporary_backend,
 )
 
@@ -257,3 +260,22 @@ def test_non_interactive_confirm_uses_default() -> None:
     with temporary_backend(NonInteractiveBackend()):
         assert confirm("ok?", default=False) is False
         assert confirm("ok?", default=True) is True
+
+
+def test_prompt_output_hook_runs_before_chrome(capsys: pytest.CaptureFixture[str]) -> None:
+    """A registered hook runs before echo/secho write; clearing it removes it.
+
+    The CLI registers one so an open pretty tool line ends before a prompt box.
+    """
+    calls: list[str] = []
+    assert get_prompt_output_hook() is None
+    set_prompt_output_hook(lambda: calls.append("break"))
+    try:
+        backend = get_prompt_backend()
+        backend.echo("box")
+        backend.secho("question", fg="yellow")
+    finally:
+        set_prompt_output_hook(None)
+    assert calls == ["break", "break"]
+    assert get_prompt_output_hook() is None
+    assert "box" in capsys.readouterr().out

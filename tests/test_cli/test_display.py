@@ -7,6 +7,7 @@ from plyngent.cli.display import (
     _clear_streamed_lines,
     _line_count_for_clear,
     _pretty_line_for,
+    close_open_pretty_line,
     get_markdown_enabled,
     markdown_render_available,
     print_markdown,
@@ -999,6 +1000,28 @@ async def test_pretty_parallel_batch_keeps_the_line_above_the_prefix(
     assert out == (
         "\nreasoning:\nthink\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n\n"
     )
+    assert "\x1b[" not in out
+
+
+async def test_pretty_line_closed_by_out_of_band_output(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A prompt/confirm printed while the call runs ends the open prefix line.
+
+    The prompt backend runs :func:`close_open_pretty_line` before writing, so its
+    box starts on a fresh line and the result then prints whole.
+    """
+    monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
+
+    async def _events():
+        yield _pretty_call("read_file", '{"path": "a.txt"}')
+        close_open_pretty_line()  # what a confirm box does mid-call
+        yield _result("L1-4\none\n")
+
+    await render_events(_events())
+    out = capsys.readouterr().out
+    assert out == ("\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n")
     assert "\x1b[" not in out
 
 

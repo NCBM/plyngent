@@ -93,6 +93,30 @@ class PromptBackend(Protocol):
     def secho(self, message: str, *, fg: str | None = None, err: bool = False) -> None: ...
 
 
+# Hook run right before a backend writes prompt chrome (a confirm box, a question
+# label). Hosts install one so an open pretty tool line — see
+# ``plyngent.cli.display`` — is ended before the prompt takes that line over.
+_before_output: Callable[[], None] | None = None
+
+
+def set_prompt_output_hook(hook: Callable[[], None] | None) -> None:
+    """Install the hook run before prompt output (None clears it)."""
+    global _before_output  # noqa: PLW0603
+    _before_output = hook
+
+
+def get_prompt_output_hook() -> Callable[[], None] | None:
+    """The installed prompt-output hook, if any."""
+    return _before_output
+
+
+def _break_output() -> None:
+    """Run the prompt-output hook, if one is installed."""
+    hook = _before_output
+    if hook is not None:
+        hook()
+
+
 def _readline_input(prompt: str, *, completions: Sequence[str] | None = None) -> str:
     """``input()`` with optional Tab completion via readline when available."""
     try:
@@ -255,9 +279,11 @@ class ClickPromptBackend:
             raise NonInteractiveError(msg) from exc
 
     def echo(self, message: str = "", *, err: bool = False) -> None:
+        _break_output()
         click.echo(message, err=err)
 
     def secho(self, message: str, *, fg: str | None = None, err: bool = False) -> None:
+        _break_output()
         click.secho(message, fg=fg, err=err)
 
 
@@ -319,10 +345,11 @@ def get_prompt_backend() -> PromptBackend:
 
 
 def reset_prompting() -> None:
-    """Restore default Click backend, clear the pause hook and cancel flag (tests)."""
-    global _backend, _pause_factory  # noqa: PLW0603
+    """Restore the default backend; clear the pause/output hooks and cancel flag (tests)."""
+    global _backend, _pause_factory, _before_output  # noqa: PLW0603
     _backend = ClickPromptBackend()
     _pause_factory = None
+    _before_output = None
     _prompt_cancel.clear()
 
 

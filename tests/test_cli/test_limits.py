@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from plyngent.cli.display import close_open_pretty_line
 from plyngent.cli.limits import (
     auto_continue_enabled,
     format_tool_confirm_box,
@@ -14,7 +15,7 @@ from plyngent.cli.limits import (
     reset_auto_continue_turn,
     set_auto_continue_default,
 )
-from plyngent.prompting import NonInteractiveBackend, get_prompt_backend, temporary_backend
+from plyngent.prompting import NonInteractiveBackend, get_prompt_backend, get_prompt_output_hook, temporary_backend
 from plyngent.tools.process.pty_session import PtyManager
 from tests.test_prompting import ScriptedBackend
 
@@ -121,6 +122,8 @@ def test_format_tool_confirm_box_multiline() -> None:
 def test_install_cli_limit_hooks() -> None:
     install_cli_limit_hooks()
     assert callable(getattr(PtyManager, "_limit_continue", None))
+    # A prompt raised mid-call must end the open pretty tool line first.
+    assert get_prompt_output_hook() is close_open_pretty_line
     PtyManager.set_limit_continue_hook(None)
     # Backend remains usable after install.
     assert get_prompt_backend().is_interactive() or True

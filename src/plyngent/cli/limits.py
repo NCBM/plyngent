@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from plyngent.cli.display import close_open_pretty_line
 from plyngent.cli.interrupt import off_loop_prompt, pause_task_cancel_for_prompt
 from plyngent.prompting import (
     ChoiceOption,
@@ -18,6 +19,7 @@ from plyngent.prompting import (
     configure_prompting,
     confirm,
     get_prompt_backend,
+    set_prompt_output_hook,
 )
 from plyngent.tools.access import AccessDecision
 from plyngent.tools.process.pty_session import PtyManager
@@ -580,4 +582,5 @@ def install_cli_limit_hooks() -> None:
     process-global hook).
     """
     configure_prompting(pause_factory=off_loop_prompt)
+    set_prompt_output_hook(close_open_pretty_line)
     PtyManager.set_limit_continue_hook(prompt_continue_limit)
