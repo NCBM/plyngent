@@ -12,11 +12,13 @@ re-requesting the whole source or raising limits. Tokens chain: each truncated
 chunk carries a fresh token, so ``get_truncated`` keeps resuming until the
 source is exhausted (then no marker is emitted).
 
-Resumable sources (``file`` / ``http``) are re-read by ``location`` +
-``offset``. Arbitrary tool output (run_argv stdout, todo renders, …) has no
-resumable source, so its remainder lives in a short-lived in-memory store
-(``kind="memory"``) that is forgotten when the agent process exits — the model
-must re-run the tool after that.
+A ``file`` remainder is re-read from disk by ``location`` + ``offset``, so it
+survives for as long as the file does. Everything else — arbitrary tool output
+(run_argv stdout, todo renders, …) and ``fetch`` bodies — has no source worth
+re-running (a re-fetch costs a round trip and re-hits the remote), so its
+remainder lives in a short-lived in-memory store (``kind="memory"``) that is
+forgotten when the agent process exits; the model must re-run the tool after
+that.
 """
 
 from __future__ import annotations
@@ -27,18 +29,18 @@ from typing import Literal
 
 import msgspec
 
-type TruncateKind = Literal["file", "http", "memory"]
+type TruncateKind = Literal["file", "memory"]
 
 
 class TruncateToken(msgspec.Struct, frozen=True):
     """Opaque cursor into a truncated source.
 
-    ``offset``/``limit`` are in characters (http bodies, memory remainders) or
-    lines (files is line-based via ``read_file``); ``get_truncated`` interprets
-    by ``kind``. For ``memory``, ``location`` is a key into the in-memory
-    remainder store and ``offset``/``limit`` index characters of that stored
-    remainder. ``numbered`` marks file tokens from ``read_file(with_lineno)``:
-    the continuation resumes the numbered view instead of raw text.
+    ``offset``/``limit`` are in characters (memory remainders) or lines (files
+    is line-based via ``read_file``); ``get_truncated`` interprets by ``kind``.
+    For ``memory``, ``location`` is a key into the in-memory remainder store and
+    ``offset``/``limit`` index characters of that stored remainder. ``numbered``
+    marks file tokens from ``read_file(with_lineno)``: the continuation resumes
+    the numbered view instead of raw text.
     """
 
     kind: TruncateKind
@@ -134,17 +136,17 @@ def truncate_with_token(
     return text + truncation_marker(max_chars, omitted, token), token
 
 
-def truncate_generic(text: str, max_chars: int) -> str:
-    """Cap arbitrary tool output; embed a memory truncate token (chainable).
+def truncate_to_memory(text: str, max_chars: int) -> tuple[str, TruncateToken | None]:
+    """Cap ``text`` (a whole source) with a memory token over a stored copy.
 
-    The full remainder is kept in the in-memory store so ``get_truncated`` can
-    resume it. Returns ``text`` unchanged (no marker) when it fits within
-    ``max_chars``.
+    Nothing is stored when the text fits, so a caller that only needs the
+    bounded text does not pay for a remainder. Returns ``(bounded_text, token)``
+    where ``token`` is ``None`` when the source is exhausted.
     """
     if max_chars < 1 or len(text) <= max_chars:
-        return text
+        return text, None
     key = store_remainder(text)
-    bounded, _ = truncate_with_token(
+    return truncate_with_token(
         text,
         max_chars,
         kind="memory",
@@ -153,4 +155,14 @@ def truncate_generic(text: str, max_chars: int) -> str:
         limit=max_chars,
         total_len=len(text),
     )
+
+
+def truncate_generic(text: str, max_chars: int) -> str:
+    """Cap arbitrary tool output; embed a memory truncate token (chainable).
+
+    The full remainder is kept in the in-memory store so ``get_truncated`` can
+    resume it. Returns ``text`` unchanged (no marker) when it fits within
+    ``max_chars``.
+    """
+    bounded, _ = truncate_to_memory(text, max_chars)
     return bounded

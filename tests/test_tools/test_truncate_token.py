@@ -26,7 +26,7 @@ def test_decode_garbage_returns_none() -> None:
 def test_decode_rejects_invalid_fields() -> None:
     bad = TruncateToken(kind="file", location="x", offset=-1, limit=10)
     assert decode_truncate_token(encode_truncate_token(bad)) is None
-    bad_limit = TruncateToken(kind="http", location="u", offset=0, limit=0)
+    bad_limit = TruncateToken(kind="file", location="u", offset=0, limit=0)
     assert decode_truncate_token(encode_truncate_token(bad_limit)) is None
 
 
@@ -95,7 +95,7 @@ def test_truncate_with_token_end_reached_no_token() -> None:
     out, token = truncate_with_token(
         text,
         40,
-        kind="http",
+        kind="file",
         location="https://example.com/x",
         offset=0,
         limit=40,
@@ -111,14 +111,14 @@ def test_truncate_with_token_nonzero_start() -> None:
     out, token = truncate_with_token(
         text,
         200,
-        kind="http",
+        kind="file",
         location="https://example.com/x",
         offset=150,
         limit=200,
         total_len=700,
     )
     assert token is not None
-    assert token.kind == "http"
+    assert token.kind == "file"
     content, _, _ = out.partition("\n[Truncated")
     assert token.offset == 150 + len(content)
     assert "[Truncated (200 chars max.; 350 omitted). truncate_token=" in out

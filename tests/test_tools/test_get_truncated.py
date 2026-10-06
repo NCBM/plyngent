@@ -84,18 +84,40 @@ async def test_get_truncated_file_missing(workspace: Path) -> None:
     assert out.startswith("error:")
 
 
-async def test_get_truncated_http_passthrough(monkeypatch) -> None:
-    calls: list[tuple[str, int, int]] = []
+async def test_get_truncated_serves_a_fetch_body_without_refetching(monkeypatch) -> None:
+    """A fetch body's token reads the stored remainder; the request is not repeated."""
+    from plyngent.tools.net.fetch import format_fetch_result
 
-    async def fake_fetch(url: str, *, offset: int, max_chars: int) -> str:
-        calls.append((url, offset, max_chars))
-        return f"body-from-{offset}"
+    fetch_module = importlib.import_module("plyngent.tools.net.fetch")
 
-    monkeypatch.setattr(get_truncated_module.fetch, "handler", fake_fetch)
-    token = encode_truncate_token(TruncateToken(kind="http", location="https://example.com/x", offset=500, limit=400))
+    async def _must_not_refetch(*_args: object, **_kwargs: object) -> str:
+        msg = "resuming a fetch body must not re-run the request"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(fetch_module, "http_fetch", _must_not_refetch)
+    first = format_fetch_result(
+        status=200,
+        final_url="https://example.com/x",
+        content_type="text/plain",
+        body_text="x" * 600,
+        body_bytes=600,
+        truncated=False,
+        redirects=0,
+        method="GET",
+        security="public",
+        warnings=[],
+        body_kind="text",
+        max_chars=200,
+    )
+    token = _extract_token(first)
+    assert token is not None
+    parsed = decode_truncate_token(token)
+    assert parsed is not None
+    assert parsed.kind == "memory"
     out = await call_async(get_truncated, token, max_chars=200)
-    assert out == "body-from-500"
-    assert calls == [("https://example.com/x", 500, 400)]
+    content, _, _ = out.partition("\n[Truncated")
+    assert content == "x" * len(content)
+    assert 0 < len(content) <= 200
 
 
 async def test_get_truncated_memory_chains() -> None:

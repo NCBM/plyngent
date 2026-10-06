@@ -7,7 +7,6 @@ from typing import cast
 from plyngent.agent import ToolTag, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.tools.file.read import line_range_label, read_file, read_raw_text
-from plyngent.tools.net.fetch import fetch
 from plyngent.tools.truncate_token import (
     TruncateToken,
     decode_truncate_token,
@@ -66,14 +65,13 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
     fresh token, so chunks chain indefinitely. File chunks resume in the same
     view as the original read: numbered reads continue as numbered lines
     (editable via ``edit_lineno``), plain reads as raw text with a 1-based
-    ``L{begin}-{end}`` range. Memory chunks (generic tool output) are served
-    from a short-lived in-memory store that is forgotten when the agent exits.
+    ``L{begin}-{end}`` range. Memory chunks (generic tool output, and ``fetch``
+    bodies) are served from a short-lived in-memory store that is forgotten when
+    the agent exits, so resuming a fetch never repeats the request.
     """
     parsed = decode_truncate_token(token)
     if parsed is None:
         return "error: invalid truncate token"
-    if parsed.kind == "http":
-        return await fetch.handler(parsed.location, offset=parsed.offset, max_chars=parsed.limit)
     if parsed.kind == "memory":
         return _memory_chunk(parsed, max_chars)
     text, err = read_raw_text(parsed.location)

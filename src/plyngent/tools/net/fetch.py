@@ -17,7 +17,7 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
-from plyngent.tools.truncate_token import truncate_with_token
+from plyngent.tools.truncate_token import truncate_to_memory
 
 
 def format_fetch_result(
@@ -37,16 +37,10 @@ def format_fetch_result(
     offset: int = 0,
 ) -> str:
     start = max(0, offset)
-    body = body_text[start:]
-    body, token = truncate_with_token(
-        body,
-        max_chars,
-        kind="http",
-        location=final_url,
-        offset=start,
-        limit=max_chars,
-        total_len=len(body_text),
-    )
+    # The body is already in hand, so the remainder is kept in memory rather than
+    # re-requested: resuming a fetch must not cost another round trip (latency)
+    # nor re-hit the remote (rate limits / risk control).
+    body, token = truncate_to_memory(body_text[start:], max_chars)
     char_truncated = token is not None
     warn_line = "; ".join(warnings) if warnings else ""
     parts = [
