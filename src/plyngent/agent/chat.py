@@ -256,8 +256,11 @@ def _executed_tool_pair(
     """Assistant call record plus the results of the calls that produced one.
 
     Pairs by call id (first result per id), so the history keeps the API's
-    one-result-per-call shape even when a model repeats an id. Text and
-    reasoning go with the rest of the unfinished turn.
+    one-result-per-call shape even when a model repeats an id. Text goes with
+    the rest of the unfinished turn; the reasoning stays, because thinking mode
+    refuses a tool call whose reasoning never came back (see
+    ``responses_bridge`` / the DeepSeek chat client, which can only send an
+    empty part once the real chain-of-thought is gone).
     """
     by_id: dict[str, ToolChatMessage] = {}
     for result in results:
@@ -273,7 +276,7 @@ def _executed_tool_pair(
         paired.append(by_id[call.id])
     if not executed:
         return []
-    record = msgspec.structs.replace(assistant, content=UNSET, reasoning_content=UNSET, tool_calls=executed)
+    record = msgspec.structs.replace(assistant, content=UNSET, tool_calls=executed)
     return [record, *paired]
 
 

@@ -28,7 +28,11 @@ def _call(call_id: str, name: str = "some_tool") -> AssistantFunctionToolCall:
 def test_rollback_tail_keeps_the_executed_call_of_a_cut_short_batch() -> None:
     messages: list[AnyChatMessage] = [
         UserChatMessage(content="do both"),
-        AssistantChatMessage(content="first, then the other", tool_calls=[_call("call_a"), _call("call_b")]),
+        AssistantChatMessage(
+            content="first, then the other",
+            reasoning_content="step by step",
+            tool_calls=[_call("call_a"), _call("call_b")],
+        ),
         ToolChatMessage(tool_call_id="call_a", content="a ran"),
     ]
 
@@ -37,9 +41,10 @@ def test_rollback_tail_keeps_the_executed_call_of_a_cut_short_batch() -> None:
     assert len(tail) == 2
     record, result = tail
     assert isinstance(record, AssistantChatMessage)
-    # The assistant row survives only as the carrier of the pairing.
+    # The assistant row survives as the carrier of the pairing, with the
+    # reasoning thinking mode demands on a call.
     assert record.content is UNSET
-    assert record.reasoning_content is UNSET
+    assert record.reasoning_content == "step by step"
     calls = record.tool_calls
     assert calls is not UNSET
     assert [call.id for call in calls] == ["call_a"]
