@@ -852,7 +852,7 @@ def provider_cmd(state: ReplState, name: str | None) -> None:
     help="Merge remote (and recovered) model ids into plyngent.toml for this provider.",
 )
 @click.pass_obj
-def models_cmd(state: ReplState, *, refresh: bool, persist: bool) -> None:  # noqa: C901
+def models_cmd(state: ReplState, *, refresh: bool, persist: bool) -> None:  # noqa: C901 — list / recover / persist
     """List models (remote-first, plus config-only ids). Always tries GET /models."""
     del refresh  # always re-fetch; flag kept for CLI compatibility / docs
     remote: list[str] | None = None
@@ -1512,7 +1512,7 @@ def history_cmd(
 @click.argument("action", required=False, type=TODOS_ACTION)
 @click.argument("rest", required=False, nargs=-1, type=str)
 @click.pass_obj
-def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915
+def todos_cmd(  # noqa: C901, PLR0911, PLR0912, PLR0915 — one branch per /todos action
     state: ReplState, action: str | None, rest: tuple[str, ...]
 ) -> None:
     """Show or edit the LIFO stack of **task groups**.

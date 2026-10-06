@@ -1083,7 +1083,7 @@ def _flush_assistant_markdown(body: str, *, pretty: bool) -> None:
         click.echo()
 
 
-async def render_events(  # noqa: C901, PLR0912, PLR0915
+async def render_events(  # noqa: C901, PLR0912, PLR0915 — one branch per event type
     events: AsyncIterator[AgentEvent],
     *,
     verbose: bool | None = None,

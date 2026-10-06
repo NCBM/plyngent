@@ -107,7 +107,7 @@ class TodoStack:
         return self._data
 
     @classmethod
-    def from_raw(cls, raw: object | None) -> TodoStack:  # noqa: C901, PLR0911
+    def from_raw(cls, raw: object | None) -> TodoStack:  # noqa: C901, PLR0911 — three stored stack shapes
         if raw is None or not isinstance(raw, dict):
             return cls()
         blob = cast("dict[str, object]", raw)
