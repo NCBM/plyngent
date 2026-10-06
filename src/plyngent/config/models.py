@@ -332,8 +332,8 @@ def _default_openai_models() -> dict[str, ModelConfig]:
     }
 
 
-def _default_openai_provider_tools() -> list[dict[str, Any]]:
-    """Hosted tools when TOML omits ``provider_tools``."""
+def _default_provider_tools() -> list[dict[str, Any]]:
+    """Hosted tools when TOML omits ``provider_tools`` (OpenAI and DeepSeek)."""
     return [{"type": "web_search"}]
 
 
@@ -352,7 +352,7 @@ class OpenAIProvider(ProviderConfig, tag="openai"):
     """
 
     models: dict[str, ModelConfig] = field(default_factory=_default_openai_models)
-    provider_tools: list[dict[str, Any]] = field(default_factory=_default_openai_provider_tools)
+    provider_tools: list[dict[str, Any]] = field(default_factory=_default_provider_tools)
 
 
 class OpenAICompatibleProvider(ProviderConfig, tag="openai-compatible"):
@@ -380,12 +380,18 @@ class DeepseekProvider(ProviderConfig, tag="deepseek"):
     - ``"anthropic"`` → Anthropic Messages API (``POST /messages`` on
       ``https://api.deepseek.com/anthropic``)
 
+    ``provider_tools`` asks for a search tool like OpenAI's does (``[]``
+    disables it). DeepSeek runs a hosted search only on the Anthropic surface, so
+    the other conventions get a local ``web_search`` tool instead (see
+    ``config.routing.local_web_search``).
+
     ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
     key is parsed but ignored (prefer the typed ``convention`` field).
     """
 
     models: dict[str, ModelConfig] = field(default_factory=_default_deepseek_models)
     convention: DeepSeekConvention = ""
+    provider_tools: list[dict[str, Any]] = field(default_factory=_default_provider_tools)
     extras: dict[str, str] = field(default_factory=dict)
 
 

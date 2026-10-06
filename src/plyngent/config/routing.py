@@ -147,8 +147,12 @@ def resolve_effective_provider(provider: Provider, *, model: str | None = None) 
         else:
             url = default_url_for_preset(preset)
 
+    # Hosted tools belong to the preset that declares them: OpenAI's Responses
+    # surface, and DeepSeek's (whose Anthropic surface runs the search inside the
+    # response while its other surfaces get a local tool — see
+    # :func:`local_web_search`).
     provider_tools: list[dict[str, object]] = []
-    if preset == "openai" and isinstance(provider, OpenAIProvider) and parent_preset == "openai":
+    if parent_preset == preset and isinstance(provider, OpenAIProvider | DeepseekProvider):
         provider_tools = [dict(item) for item in provider.provider_tools]
 
     return EffectiveProvider(

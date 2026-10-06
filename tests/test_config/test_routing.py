@@ -27,19 +27,18 @@ def _effective(
     return effective if tools is None else replace(effective, provider_tools=tools)
 
 
-def test_a_deepseek_provider_asks_for_no_hosted_tool_by_default() -> None:
-    # OpenAI's preset defaults ``provider_tools`` to web_search; DeepSeek's does
-    # not, so search stays opt-in there (``provider_tools = [{type = "web_search"}]``).
-    assert wants_web_search(_effective()) is False
-    assert wants_web_search(_effective(tools=SEARCH_TOOLS)) is True
+def test_a_deepseek_provider_asks_for_a_search_tool_like_openai_does() -> None:
+    # ``provider_tools`` defaults to web_search for both presets; ``[]`` disables.
+    assert wants_web_search(_effective()) is True
+    assert wants_web_search(_effective(tools=[])) is False
 
 
 def test_chat_and_responses_conventions_use_the_local_tool() -> None:
     # Only the Anthropic surface hosts a search; the others ignore a hosted tool,
-    # so an asked-for web_search becomes plyngent's own tool there.
-    assert local_web_search(_effective(convention="", tools=SEARCH_TOOLS)) is True
-    assert local_web_search(_effective(convention="responses", tools=SEARCH_TOOLS)) is True
-    assert local_web_search(_effective(convention="anthropic", tools=SEARCH_TOOLS)) is False
+    # so the default web_search becomes plyngent's own tool there.
+    assert local_web_search(_effective(convention="")) is True
+    assert local_web_search(_effective(convention="responses")) is True
+    assert local_web_search(_effective(convention="anthropic")) is False
 
 
 def test_without_provider_tools_there_is_no_search() -> None:
