@@ -224,6 +224,8 @@ _TODO_LABELS: dict[str, str] = {
     "todo_clear": "Todo Clear",
 }
 
+_TODO_TOOLS: frozenset[str] = frozenset(_TODO_LABELS)
+
 
 def _todo_line(name: str) -> PrettyLine:
     """Todo tools: header first, the rendered stack as the detail."""
@@ -236,6 +238,18 @@ def _todo_line(name: str) -> PrettyLine:
         return click.style(f"\n{result}", fg="yellow")
 
     return PrettyLine(prefix=prefix, detail=detail)
+
+
+def _echo_todo_batch(labels: list[str], detail: str) -> None:
+    """One line for a batch of todo calls, then the last result (its stack).
+
+    A model that updates its list in one round used to print one header and a
+    full stack render per call; the last result already carries the final stack,
+    so one summary line plus that result says the same thing in fewer rows.
+    """
+    ops = ", ".join(label.removeprefix("Todo ") for label in labels)
+    click.secho(f"\n* Todo x{len(labels)}: {ops}", fg="yellow")
+    click.echo(detail)
 
 
 def _tree_line_stats(fmt: str, line: str) -> tuple[str, int] | None:
@@ -1062,6 +1076,12 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
     # Tool calls buffer so prettified tools can render once their result lands
     # (the summary line needs the status/range). FIFO matches loop event order.
     pending_tools: list[tuple[str, str, PrettyLine | None]] = []
+    # A batch (one round's tool calls) that only touches todos prints one summary
+    # line plus its last result, whose text carries the final stack. Collected as
+    # the labels seen so far and that result's detail, flushed when the batch ends.
+    todo_labels: list[str] = []
+    merged_todo = False
+    merged_detail: str | None = None
 
     def flush_assistant() -> None:
         nonlocal source, assistant_buf, printed_assistant
@@ -1115,14 +1135,25 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
                 name = call.function.name
                 args = call.function.arguments
                 line = _pretty_line_for(name)
+                if not pending_tools:
+                    # First call of a batch: a batch that only touches todos is
+                    # printed as one merged block once its last result lands.
+                    todo_labels.clear()
+                    merged_todo = name in _TODO_TOOLS
                 pending_tools.append((name, args, line))
-                if line is not None:
+                if name in _TODO_TOOLS:
+                    if merged_todo:
+                        todo_labels.append(_TODO_LABELS[name])
+                elif line is not None:
+                    merged_todo = False
                     tool_lines.start_call(line.prefix(args))
                 else:
+                    merged_todo = False
                     tool_lines.close_line()
                     preview = _preview(args, _TOOL_ARGS_PREVIEW)
                     click.secho(f"\n[tool] {name}({preview})", fg="yellow")
             else:
+                merged_todo = False
                 tool_lines.close_line()
                 pending_tools.append(("custom", call.id, None))
                 click.secho(f"\n[tool] custom id={call.id}", fg="yellow")
@@ -1133,7 +1164,14 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
             parts = _pretty_parts(line, args, content) if line is not None else None
             if parts is not None and not show_full:
                 prefix, detail = parts
-                if not tool_lines.finish_call(detail):
+                if name in _TODO_TOOLS:
+                    if merged_todo and len(todo_labels) > 1:
+                        # Merged batch: the batch end prints the last result.
+                        merged_detail = detail
+                    else:
+                        tool_lines.close_line()
+                        click.echo(f"\n{prefix}{detail}")
+                elif not tool_lines.finish_call(detail):
                     click.echo(f"\n{prefix}{detail}")
             elif show_full:
                 tool_lines.close_line()
@@ -1143,6 +1181,9 @@ async def render_events(  # noqa: C901, PLR0912, PLR0915
                 preview = _preview_result(content, _TOOL_RESULT_PREVIEW)
                 click.secho(f"[tool ok] {preview}", fg="magenta")
             if not pending_tools:
+                if merged_detail is not None:
+                    _echo_todo_batch(todo_labels, merged_detail)
+                    merged_detail = None
                 tool_lines.end_batch()
         elif isinstance(event, ErrorEvent):
             flush_assistant()
