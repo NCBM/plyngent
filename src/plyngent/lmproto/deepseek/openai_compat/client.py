@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import msgspec
 
@@ -30,6 +30,32 @@ def _inject_thinking(data: bytes, param: ChatCompletionsParam) -> bytes:
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 
+def _inject_missing_reasoning_content(data: bytes) -> bytes:
+    """Give every assistant message a ``reasoning_content`` field.
+
+    Thinking mode rejects an assistant round whose message carries no reasoning
+    ("the ``reasoning_content`` … must be passed back to the API") — for a tool
+    call and for a plain answer alike. History can hold such a round: a
+    rolled-back turn keeps the calls that ran as a bare pairing carrier without
+    it (see ``rollback_tail``), a synthetic ``todo_list`` nag is forged the same
+    way, and a compacted session starts with a seed summary carrying none. The
+    field only has to be there, so an empty string satisfies the check (unlike
+    the Responses API, whose ``reasoning`` item needs non-empty text — see
+    ``agent.responses_bridge``).
+    """
+    body = cast("dict[str, object]", json.loads(data))
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for message in cast("list[object]", messages):
+            if not isinstance(message, dict):
+                continue
+            item = cast("dict[str, object]", message)
+            if item.get("role") != "assistant" or "reasoning_content" in item:
+                continue
+            item["reasoning_content"] = ""
+    return json.dumps(body, separators=(",", ":")).encode("utf-8")
+
+
 class DeepseekOpenAIClient(BaseOpenAIClient):
     kind: str = "chat_completions"
 
@@ -51,6 +77,7 @@ class DeepseekOpenAIClient(BaseOpenAIClient):
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         param = coerce_chat_completions_param_any(msgspec.structs.replace(param, stream=stream))
         data = _inject_thinking(self.encoder.encode(param), param)
+        data = _inject_missing_reasoning_content(data)
         if stream:
             resp = await self.session.post(
                 "/chat/completions",
