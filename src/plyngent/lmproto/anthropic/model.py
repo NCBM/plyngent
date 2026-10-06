@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from msgspec import UNSET, Struct, field
 
-if TYPE_CHECKING:
-    from plyngent.typedef import Unset
+from plyngent.typedef import Unset  # noqa: TC001
 
 
 class AnthropicTextContent(Struct, tag_field="type", tag="text"):
@@ -79,7 +78,9 @@ class AnthropicMessagesParam(Struct, omit_defaults=True):
     max_tokens: int = 8192
     messages: list[AnthropicMessage] = field(default_factory=list)
     system: str | list[AnthropicTextContent] | Unset = UNSET
-    tools: list[AnthropicToolDefinition] | Unset = UNSET
+    # ``dict`` entries are opaque hosted/server tools (e.g. DeepSeek's
+    # ``{"type": "web_search_20250305", "name": "web_search"}``).
+    tools: list[AnthropicToolDefinition | dict[str, Any]] | Unset = UNSET
     tool_choice: AnthropicToolChoice | Unset = UNSET
     metadata: AnthropicMetadata | Unset = UNSET
     stop_sequences: list[str] | Unset = UNSET
@@ -107,7 +108,46 @@ class AnthropicResponseToolUse(Struct, tag_field="type", tag="tool_use"):
     input: dict[str, Any]
 
 
-type AnthropicResponseContent = AnthropicResponseText | AnthropicResponseToolUse
+class AnthropicThinkingContent(Struct, omit_defaults=True, tag_field="type", tag="thinking"):
+    """Extended-thinking block; ``signature`` is opaque and not verified back."""
+
+    thinking: str = ""
+    signature: str | Unset = UNSET
+
+
+class AnthropicServerToolUseContent(Struct, omit_defaults=True, tag_field="type", tag="server_tool_use"):
+    """A tool the *server* runs — a web search the model asked its backend for.
+
+    Not a call for the local registry: the matching
+    :class:`AnthropicWebSearchToolResultContent` arrives in the same response
+    (see the ``messages_dispatch`` / ``messages_bridge`` bullets in AGENTS.md).
+    """
+
+    id: str = ""
+    name: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
+
+
+class AnthropicWebSearchToolResultContent(Struct, omit_defaults=True, tag_field="type", tag="web_search_tool_result"):
+    """What the server's search returned for one ``server_tool_use`` call.
+
+    ``content`` stays loose: it holds ``web_search_result`` entries (title, url
+    and an ``encrypted_content`` the API demands back unchanged — DeepSeek
+    answers a trimmed result with 422) or a single
+    ``web_search_tool_result_error`` such as ``max_uses_exceeded``.
+    """
+
+    tool_use_id: str = ""
+    content: list[dict[str, Any]] = field(default_factory=list)
+
+
+type AnthropicResponseContent = (
+    AnthropicResponseText
+    | AnthropicResponseToolUse
+    | AnthropicThinkingContent
+    | AnthropicServerToolUseContent
+    | AnthropicWebSearchToolResultContent
+)
 
 
 class AnthropicMessageResponse(Struct, omit_defaults=True):

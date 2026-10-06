@@ -221,6 +221,7 @@ async def _dispatch_chat_completions(
         return await dispatch_messages(
             cast("AnthropicClient", client),
             param,
+            provider_tools=provider_tools,
             stream=stream,
         )
     msg = f"client kind {kind!r} is not supported by the agent loop"

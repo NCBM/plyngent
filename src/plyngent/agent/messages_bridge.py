@@ -18,6 +18,7 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicMessageResponse,
     AnthropicMessagesParam,
     AnthropicResponseText,
+    AnthropicResponseToolUse,
     AnthropicTextContent,
     AnthropicThinkingConfig,
     AnthropicToolChoice,
@@ -69,11 +70,11 @@ def _encode_tool_arguments(obj: dict[str, Any]) -> str:
 
 def tool_items_to_anthropic_tools(
     tools: Sequence[AnyToolItem] | None,
-) -> list[AnthropicToolDefinition]:
+) -> list[AnthropicToolDefinition | dict[str, Any]]:
     """Map chat ``ToolFunctionItem`` list to Anthropic tool definitions."""
     if not tools:
         return []
-    result: list[AnthropicToolDefinition] = []
+    result: list[AnthropicToolDefinition | dict[str, Any]] = []
     for item in tools:
         if not isinstance(item, ToolFunctionItem):
             continue
@@ -85,6 +86,35 @@ def tool_items_to_anthropic_tools(
                 input_schema=fn.parameters if fn.parameters is not UNSET else UNSET,
             )
         )
+    return result
+
+
+# The surface-neutral hosted-tool intent (``provider_tools`` default) as the
+# Anthropic server tool it means; DeepSeek's compat and Claude both define the
+# search tool this way, and both ignore an OpenAI-shaped ``web_search`` entry.
+_ANTHROPIC_WEB_SEARCH_TOOL: dict[str, Any] = {"type": "web_search_20250305", "name": "web_search"}
+
+
+def provider_tools_to_anthropic_tools(
+    provider_tools: Sequence[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Map hosted-tool dicts to Anthropic server tools (``[]`` when none).
+
+    Entries arrive in the OpenAI Responses shape the config defaults to, where a
+    bare ``web_search`` states the intent only; the Anthropic surface wants its
+    own definition, so that entry becomes
+    ``{"type": "web_search_20250305", "name": "web_search"}`` — the server tool
+    Claude declares and DeepSeek's compat reads — keeping any other key (a
+    ``max_uses`` cap, say). Anything else passes through as it is.
+    """
+    result: list[dict[str, Any]] = []
+    for item in provider_tools or ():
+        entry = dict(item)
+        if entry.get("type") == "web_search":
+            extra = {key: value for key, value in entry.items() if key not in {"type", "name"}}
+            entry = {**_ANTHROPIC_WEB_SEARCH_TOOL, **extra}
+        if entry.get("type"):
+            result.append(entry)
     return result
 
 
@@ -190,7 +220,12 @@ def chat_messages_to_anthropic(  # noqa: C901 — multi-role conversion
 
 
 def anthropic_response_to_assistant(response: AnthropicMessageResponse) -> AssistantChatMessage:
-    """Map a completed Anthropic message to agent ``AssistantChatMessage``."""
+    """Map a completed Anthropic message to agent ``AssistantChatMessage``.
+
+    Server-side blocks (``server_tool_use`` / ``web_search_tool_result``) and
+    ``thinking`` are not part of the chat-shaped message: a search the model ran
+    through its backend already shows up in the text it answered with.
+    """
     text_parts: list[str] = []
     tool_calls: list[AnyAssistantToolCall] = []
     for block in response.content:
@@ -198,7 +233,8 @@ def anthropic_response_to_assistant(response: AnthropicMessageResponse) -> Assis
             if block.text:
                 text_parts.append(block.text)
             continue
-        # AnthropicResponseToolUse (remaining content arm)
+        if not isinstance(block, AnthropicResponseToolUse):
+            continue
         tool_calls.append(
             AssistantFunctionToolCall(
                 id=block.id,
@@ -338,14 +374,20 @@ def chat_param_to_anthropic_param(
     param: ChatCompletionsParam,
     *,
     thinking_budget_tokens: int = 0,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AnthropicMessagesParam:
     """Build :class:`AnthropicMessagesParam` from a chat completions param.
 
     *thinking_budget_tokens* is the configured explicit ``thinking`` budget
-    (0 = derive it from the param's ``reasoning_effort``).
+    (0 = derive it from the param's ``reasoning_effort``); *provider_tools* are
+    hosted tools (web_search, …) as opaque dicts, merged after local function
+    tools and never executed by the registry.
     """
     system, messages = chat_messages_to_anthropic(param.messages)
-    tools = tool_items_to_anthropic_tools(param.tools if param.tools is not UNSET else None)
+    tools: list[AnthropicToolDefinition | dict[str, Any]] = list(
+        tool_items_to_anthropic_tools(param.tools if param.tools is not UNSET else None)
+    )
+    tools.extend(provider_tools_to_anthropic_tools(provider_tools))
     max_tokens, thinking = _thinking_and_max_tokens(param, thinking_budget_tokens=thinking_budget_tokens)
 
     kwargs: dict[str, Any] = {

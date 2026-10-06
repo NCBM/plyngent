@@ -20,6 +20,7 @@ from plyngent.agent.messages_dispatch import dispatch_messages
 from plyngent.lmproto.anthropic.model import (
     AnthropicContentBlockDelta,
     AnthropicContentBlockStart,
+    AnthropicContentBlockStop,
     AnthropicMessageDelta,
     AnthropicMessageResponse,
     AnthropicMessagesParam,
@@ -393,3 +394,106 @@ async def test_dispatch_stream_tool_calls_without_stop_yields_no_finish() -> Non
     chunks = [chunk async for chunk in cast("Any", stream)]
     # tool-call start delta only; no fabricated finish_reason=tool_calls
     assert not any(c.choices and c.choices[0].finish_reason not in (None, UNSET) for c in chunks)
+
+
+def _search_stream_events() -> list[AnthropicStreamEvent]:
+    """The stream a DeepSeek search turn sends: thinking, search, results, text."""
+    return [
+        AnthropicMessageStart(
+            message=AnthropicMessageResponse(
+                id="msg_s",
+                model="deepseek-flash",
+                content=[],
+                usage=AnthropicUsage(input_tokens=164, output_tokens=0),
+            )
+        ),
+        AnthropicContentBlockStart(index=0, content_block=AnthropicRawContentBlock(type="thinking", text="")),
+        AnthropicContentBlockDelta(
+            index=0,
+            delta=AnthropicRawContentBlock(type="thinking_delta", text="Search."),
+        ),
+        AnthropicContentBlockStop(index=0),
+        AnthropicContentBlockStart(
+            index=1,
+            content_block=AnthropicRawContentBlock(type="server_tool_use", id="call_00_1", name="web_search", input={}),
+        ),
+        AnthropicContentBlockDelta(
+            index=1,
+            delta=AnthropicRawContentBlock(type="input_json_delta", partial_json='{"query":'),
+        ),
+        AnthropicContentBlockDelta(
+            index=1,
+            delta=AnthropicRawContentBlock(type="input_json_delta", partial_json='"DeepSeek-V4"}'),
+        ),
+        AnthropicContentBlockStop(index=1),
+        AnthropicContentBlockStart(
+            index=2,
+            content_block=AnthropicRawContentBlock(
+                type="web_search_tool_result",
+                id="call_00_1",
+                input={"content": [{"type": "web_search_result", "url": "https://api-docs.deepseek.com"}]},
+            ),
+        ),
+        AnthropicContentBlockStop(index=2),
+        AnthropicContentBlockStart(index=3, content_block=AnthropicRawContentBlock(type="text", text="")),
+        AnthropicContentBlockDelta(
+            index=3,
+            delta=AnthropicRawContentBlock(type="text_delta", text="DeepSeek-V4 is out."),
+        ),
+        AnthropicContentBlockStop(index=3),
+        AnthropicMessageDelta(
+            delta={"stop_reason": "end_turn"},
+            usage=AnthropicUsage(input_tokens=0, output_tokens=12),
+        ),
+        AnthropicMessageStop(),
+    ]
+
+
+async def test_search_turn_streams_its_text_without_a_local_tool_call() -> None:
+    """A server tool's arguments must not become a call for the registry.
+
+    DeepSeek streams a ``server_tool_use`` block whose ``input_json_delta``
+    fragments carry the search query. Reading those as a local call's arguments
+    asks the registry for a tool the *server* already ran — and would have the
+    agent execute ``web_search`` (or a nameless tool) itself.
+    """
+    client = ScriptedMessagesClient(stream_events=[_search_stream_events()])
+
+    @tool(register=False)
+    def echo(text: str) -> str:
+        return text
+
+    events = [
+        event
+        async for event in run_chat_loop(
+            cast("Any", client),
+            [UserChatMessage(content="what is DeepSeek-V4?")],
+            model="deepseek-flash",
+            tools=ToolRegistry([echo]),
+            stream=True,
+        )
+    ]
+    assert not any(isinstance(event, ToolCallEvent) for event in events)
+    assert not any(isinstance(event, ToolResultEvent) for event in events)
+    assert any(isinstance(event, TextDeltaEvent) and event.content == "DeepSeek-V4 is out." for event in events)
+    # One round: the search answered inside the response, so nothing was sent back.
+    assert len(client.calls) == 1
+
+
+async def test_dispatch_messages_sends_provider_tools_as_server_tools() -> None:
+    """Hosted tools reach the Anthropic request in that surface's own shape."""
+    client = ScriptedMessagesClient(non_stream=[_message_response(text="ok")])
+    param = ChatCompletionsParam(model="deepseek-flash", messages=[UserChatMessage(content="hi")])
+    _ = await dispatch_messages(
+        cast("Any", client),
+        param,
+        provider_tools=[{"type": "web_search", "max_uses": 3}],
+    )
+    assert client.calls[0].tools == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+
+
+async def test_dispatch_messages_without_provider_tools_sends_no_server_tool() -> None:
+    client = ScriptedMessagesClient(non_stream=[_message_response(text="ok")])
+    param = ChatCompletionsParam(model="deepseek-flash", messages=[UserChatMessage(content="hi")])
+    _ = await dispatch_messages(cast("Any", client), param, provider_tools=[])
+    assert client.calls[0].tools is UNSET

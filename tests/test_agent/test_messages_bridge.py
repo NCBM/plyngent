@@ -13,6 +13,7 @@ from plyngent.agent.messages_bridge import (
     anthropic_usage_to_dict,
     chat_messages_to_anthropic,
     chat_param_to_anthropic_param,
+    provider_tools_to_anthropic_tools,
     tool_items_to_anthropic_tools,
 )
 from plyngent.lmproto.anthropic.model import (
@@ -20,10 +21,14 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicMessageResponse,
     AnthropicResponseText,
     AnthropicResponseToolUse,
+    AnthropicServerToolUseContent,
+    AnthropicThinkingContent,
+    AnthropicToolDefinition,
     AnthropicToolResultContent,
     AnthropicToolUseContent,
     AnthropicUsage,
     AnthropicUserMessage,
+    AnthropicWebSearchToolResultContent,
 )
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -149,6 +154,69 @@ def test_anthropic_response_to_assistant_with_tools() -> None:
     assert call.id == "tu_1"
     assert call.function.name == "add"
     assert '"a":1' in call.function.arguments or '"a": 1' in call.function.arguments
+
+
+def test_anthropic_response_to_assistant_ignores_server_tool_blocks() -> None:
+    """A server-side search is not a call for the registry, nor part of the message."""
+    response = AnthropicMessageResponse(
+        id="msg_search",
+        model="deepseek-flash",
+        stop_reason="end_turn",
+        content=[
+            AnthropicThinkingContent(thinking="Let me search.", signature="sig-1"),
+            AnthropicServerToolUseContent(id="call_00_1", name="web_search", input={"query": "DeepSeek-V4"}),
+            AnthropicWebSearchToolResultContent(
+                tool_use_id="call_00_1",
+                content=[{"type": "web_search_result", "url": "https://api-docs.deepseek.com"}],
+            ),
+            AnthropicResponseText(text="DeepSeek-V4 is out."),
+        ],
+        usage=AnthropicUsage(input_tokens=16592, output_tokens=1419),
+    )
+    assistant = anthropic_response_to_assistant(response)
+    assert assistant.content == "DeepSeek-V4 is out."
+    assert assistant.tool_calls is UNSET
+
+
+def test_provider_tools_to_anthropic_tools_maps_the_search_intent() -> None:
+    """The config default (``{"type": "web_search"}``) becomes the server tool."""
+    assert provider_tools_to_anthropic_tools(None) == []
+    assert provider_tools_to_anthropic_tools([]) == []
+    assert provider_tools_to_anthropic_tools([{"type": "web_search"}]) == [
+        {"type": "web_search_20250305", "name": "web_search"}
+    ]
+    # A cap (or any other key) survives the mapping.
+    assert provider_tools_to_anthropic_tools([{"type": "web_search", "max_uses": 3}]) == [
+        {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+    ]
+    # An entry that already names the surface's tool passes through.
+    assert provider_tools_to_anthropic_tools([{"type": "web_search_20260209", "name": "web_search"}]) == [
+        {"type": "web_search_20260209", "name": "web_search"}
+    ]
+    # Entries without a type are dropped (nothing to declare on the wire).
+    assert provider_tools_to_anthropic_tools([{"name": "web_search"}]) == []
+
+
+def test_chat_param_to_anthropic_param_merges_provider_tools_after_local_ones() -> None:
+    param = ChatCompletionsParam(
+        model="deepseek-flash",
+        messages=[UserChatMessage(content="hi")],
+        tools=[
+            ToolFunctionItem(
+                function=ToolFunction(
+                    name="read_file",
+                    description="Read a file.",
+                    parameters={"type": "object", "properties": {}},
+                )
+            )
+        ],
+    )
+    built = chat_param_to_anthropic_param(param, provider_tools=[{"type": "web_search"}])
+    tools = built.tools
+    assert tools is not UNSET
+    assert isinstance(tools[0], AnthropicToolDefinition)
+    assert tools[0].name == "read_file"
+    assert tools[1] == {"type": "web_search_20250305", "name": "web_search"}
 
 
 def test_anthropic_response_to_chat_completion_usage() -> None:

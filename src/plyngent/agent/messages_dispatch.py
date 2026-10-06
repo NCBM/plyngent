@@ -33,7 +33,7 @@ from plyngent.lmproto.anthropic.model import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from plyngent.lmproto.anthropic.client import AnthropicClient
     from plyngent.lmproto.anthropic.model import AnthropicStreamEvent
@@ -92,6 +92,7 @@ class _StreamState:
 
     model: str
     tool_blocks: dict[int, _ToolBlockState]
+    block_types: dict[int, str]
     next_tool_index: int
     stop_reason: str | None
     last_usage: dict[str, Any] | None
@@ -101,6 +102,7 @@ class _StreamState:
     def __init__(self, model: str) -> None:
         self.model = model
         self.tool_blocks = {}
+        self.block_types = {}
         self.next_tool_index = 0
         self.stop_reason = None
         self.last_usage = None
@@ -126,11 +128,19 @@ class _StreamState:
         return self.start_tool(block_index=block_index, call_id=f"toolu_{block_index}", name="")
 
 
-def _handle_tool_use_start(
+def _handle_block_start(
     event: AnthropicContentBlockStart,
     state: _StreamState,
 ) -> list[ChatCompletionChunk]:
+    """Record the block's type; only ``tool_use`` becomes a local tool call.
+
+    ``server_tool_use`` (a search the model's backend runs), its
+    ``web_search_tool_result``, and ``thinking`` stream here too — recording
+    their type keeps the argument fragments that follow from being mistaken for
+    a local call's arguments (see ``_chunks_for_content_delta``).
+    """
     block = event.content_block
+    state.block_types[event.index] = block.type
     if block.type != "tool_use":
         return []
     call_id = block.id or f"toolu_{event.index}"
@@ -170,7 +180,7 @@ def _chunks_for_event(event: AnthropicStreamEvent, state: _StreamState) -> list[
         return []
 
     if isinstance(event, AnthropicContentBlockStart):
-        return _handle_tool_use_start(event, state)
+        return _handle_block_start(event, state)
 
     if isinstance(event, AnthropicContentBlockDelta):
         return _chunks_for_content_delta(event, state)
@@ -199,6 +209,13 @@ def _chunks_for_content_delta(
     if not is_json_delta:
         return []
 
+    known_type = state.block_types.get(event.index)
+    if known_type is not None and known_type != "tool_use":
+        # A server tool's own arguments (DeepSeek streams the search query as
+        # ``input_json_delta`` on a ``server_tool_use`` block): nothing local
+        # asked for it, and its result arrived in this same response.
+        return []
+
     tool_state = state.ensure_tool(event.index)
     fragment = delta.partial_json if isinstance(delta.partial_json, str) else ""
     if not fragment:
@@ -215,6 +232,8 @@ def _chunks_for_content_delta(
 async def _stream_as_chat_chunks(
     client: AnthropicClient,
     param: ChatCompletionsParam,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[ChatCompletionChunk]:
     """Yield chat-completions chunks from an Anthropic Messages SSE stream.
 
@@ -224,7 +243,11 @@ async def _stream_as_chat_chunks(
     ``message_stop``. Errors raise ``RuntimeError`` so the agent loop can
     surface them as retryable failures.
     """
-    create = chat_param_to_anthropic_param(param, thinking_budget_tokens=_thinking_budget(client))
+    create = chat_param_to_anthropic_param(
+        param,
+        thinking_budget_tokens=_thinking_budget(client),
+        provider_tools=provider_tools,
+    )
     stream = await client.messages(create, stream=True)
     state = _StreamState(param.model)
 
@@ -251,12 +274,22 @@ async def dispatch_messages(
     client: AnthropicClient,
     param: ChatCompletionsParam,
     *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
     stream: bool = False,
 ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
-    """Run one Anthropic Messages turn and return a chat-completions-shaped result."""
-    create = chat_param_to_anthropic_param(param, thinking_budget_tokens=_thinking_budget(client))
+    """Run one Anthropic Messages turn and return a chat-completions-shaped result.
+
+    *provider_tools* are hosted tools (web_search, …) as opaque dicts; the
+    surface's own server-tool definition is built from them and the results
+    arrive inside the same response, so nothing is executed locally.
+    """
+    create = chat_param_to_anthropic_param(
+        param,
+        thinking_budget_tokens=_thinking_budget(client),
+        provider_tools=provider_tools,
+    )
     if stream:
-        return _stream_as_chat_chunks(client, param)
+        return _stream_as_chat_chunks(client, param, provider_tools=provider_tools)
     response = await client.messages(create, stream=False)
     return anthropic_response_to_chat_completion(response)
 
