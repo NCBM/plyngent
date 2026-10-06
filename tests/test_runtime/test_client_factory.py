@@ -167,6 +167,29 @@ def test_anthropic_client_created() -> None:
     assert client.session.timeout == 30
 
 
+def test_anthropic_client_thinking_budget_from_config() -> None:
+    from plyngent.config.reasoning import ReasoningConfig
+    from plyngent.lmproto.anthropic import AnthropicClient
+
+    provider = AnthropicProvider(
+        access_key_or_token="sk-test",
+        thinking_budget_tokens=8000,
+        models={"claude-test": ModelConfig(thinking_budget_tokens=16000)},
+    )
+    default_client = create_client(provider, model="claude-test")
+    assert isinstance(default_client, AnthropicClient)
+    assert default_client.thinking_budget_tokens == 16000
+
+    # An explicit (resolved) reasoning spec wins over the provider/model layers.
+    client = create_client(
+        provider,
+        model="claude-test",
+        reasoning=ReasoningConfig(effort="high", thinking_budget_tokens=4000),
+    )
+    assert isinstance(client, AnthropicClient)
+    assert client.thinking_budget_tokens == 4000
+
+
 def test_model_level_preset_url_overrides_parent() -> None:
     provider = OpenAICompatibleProvider(
         access_key_or_token="sk-test",

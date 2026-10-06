@@ -21,7 +21,7 @@ from plyngent.cli.models_source import (
     fetch_remote_model_ids,
     model_choices_for_provider,
 )
-from plyngent.config import EffectiveProvider, resolve_effective_provider
+from plyngent.config import EffectiveProvider, ReasoningConfig, resolve_effective_provider, resolve_reasoning
 from plyngent.memory.database.store import normalize_workspace
 from plyngent.runtime import create_client
 from plyngent.tools import InstanceState, SessionState
@@ -101,7 +101,7 @@ class ReplState:
     _remote_models_error: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.client = create_client(self.provider, model=self.model)
+        self.client = create_client(self.provider, model=self.model, reasoning=self.reasoning)
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
@@ -447,6 +447,7 @@ class ReplState:
             memory=self.memory,
             session_id=self.session_id,
             max_rounds=self.max_rounds,
+            reasoning_effort=self.reasoning.effort,
             on_limit=on_limit,
             stream=self.stream_enabled,
             system_prompt=system_prompt,
@@ -472,7 +473,7 @@ class ReplState:
         # Preserve live stream toggle if agent already exists.
         if hasattr(self, "agent"):
             self.stream_enabled = self.agent.stream
-        self.client = create_client(self.provider, model=self.model)
+        self.client = create_client(self.provider, model=self.model, reasoning=self.reasoning)
         self.agent = self._make_agent()
         # Restore history without re-marking already-stored messages as dirty.
         self.agent.replace_messages(messages, persist_from=persist_from)
@@ -492,6 +493,14 @@ class ReplState:
     def effective_provider(self) -> EffectiveProvider:
         """Selected provider after model-level preset/url overrides."""
         return resolve_effective_provider(self.provider, model=self.model)
+
+    @property
+    def reasoning(self) -> ReasoningConfig:
+        """Merged thinking settings for the selected provider + model.
+
+        ``[agent]`` < provider < model; see :mod:`plyngent.config.reasoning`.
+        """
+        return resolve_reasoning(self.config.agent_config, self.provider, self.model)
 
     def invalidate_remote_models(self) -> None:
         """Drop cached remote model catalog (provider/client change)."""

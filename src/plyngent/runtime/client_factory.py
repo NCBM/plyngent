@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from plyngent.config.reasoning import ReasoningConfig, resolve_reasoning
 from plyngent.config.routing import EffectiveProvider, resolve_effective_provider
 from plyngent.lmproto.anthropic import AnthropicClient
 from plyngent.lmproto.anthropic.config import AnthropicConfig as AnthropicConfigCls
@@ -103,7 +104,7 @@ def provider_to_openai_config(
     )
 
 
-def _anthropic_client(effective: EffectiveProvider) -> AnthropicClient:
+def _anthropic_client(effective: EffectiveProvider, reasoning: ReasoningConfig) -> AnthropicClient:
     """Build an Anthropic Messages client (real or DeepSeek convention) for *effective*."""
     try:
         http_timeout = normalize_http_timeout(effective.timeout)
@@ -115,6 +116,7 @@ def _anthropic_client(effective: EffectiveProvider) -> AnthropicClient:
                 api_key=effective.access_key_or_token,
                 base_url=effective.url or DEFAULT_DEEPSEEK_BASE_URL,
                 timeout=http_timeout,
+                thinking_budget_tokens=reasoning.thinking_budget_tokens,
             )
         )
     return AnthropicClient(
@@ -122,11 +124,17 @@ def _anthropic_client(effective: EffectiveProvider) -> AnthropicClient:
             api_key=effective.access_key_or_token,
             base_url=effective.url or DEFAULT_ANTHROPIC_BASE_URL,
             timeout=http_timeout,
+            thinking_budget_tokens=reasoning.thinking_budget_tokens,
         )
     )
 
 
-def create_client(provider: Provider, *, model: str | None = None) -> ProtocolClient:
+def create_client(
+    provider: Provider,
+    *,
+    model: str | None = None,
+    reasoning: ReasoningConfig | None = None,
+) -> ProtocolClient:
     """Build a protocol client for *provider*, applying model-level routing.
 
     ``preset`` always decides API conventions: ``openai`` → /responses,
@@ -134,8 +142,15 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
     Exception: a ``deepseek`` preset picks the Responses or Anthropic surface
     when its effective ``convention`` is ``"responses"`` / ``"anthropic"``,
     else chat completions.
+
+    *reasoning* is the merged thinking config for this provider + model (see
+    :func:`plyngent.config.reasoning.resolve_reasoning`); callers without an
+    ``[agent]`` layer may omit it and get the provider/model layers only. It only
+    reaches surfaces that cannot read the setting off the request param —
+    Anthropic needs a token budget, while chat/Responses carry an effort level.
     """
     effective = resolve_effective_provider(provider, model=model)
+    spec = reasoning if reasoning is not None else resolve_reasoning(None, provider, model)
     if effective.preset == "openai":
         return OpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "openai-compatible":
@@ -144,9 +159,9 @@ def create_client(provider: Provider, *, model: str | None = None) -> ProtocolCl
         if effective.convention == "responses":
             return DeepseekResponsesClient(provider_to_openai_config(effective))
         if effective.convention == "anthropic":
-            return _anthropic_client(effective)
+            return _anthropic_client(effective, spec)
         return DeepseekOpenAIClient(provider_to_openai_config(effective))
     if effective.preset == "anthropic":
-        return _anthropic_client(effective)
+        return _anthropic_client(effective, spec)
     msg = f"provider preset {effective.preset!r} is not supported"
     raise ProviderNotSupportedError(msg)
