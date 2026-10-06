@@ -62,6 +62,18 @@ class AnthropicMetadata(Struct, omit_defaults=True):
     user_id: str | Unset = UNSET
 
 
+class AnthropicThinkingConfig(Struct, omit_defaults=True):
+    """``thinking`` request block (extended thinking).
+
+    ``budget_tokens`` is the reasoning budget the model may spend before it
+    answers; the API requires it to be at least 1024 and smaller than
+    ``max_tokens`` (see ``agent.messages_bridge``, which keeps both valid).
+    """
+
+    type: Literal["enabled", "disabled"] = "enabled"
+    budget_tokens: int | Unset = UNSET
+
+
 class AnthropicMessagesParam(Struct, omit_defaults=True):
     model: str
     max_tokens: int = 8192
@@ -75,6 +87,7 @@ class AnthropicMessagesParam(Struct, omit_defaults=True):
     temperature: float | Unset = UNSET
     top_p: float | Unset = UNSET
     top_k: int | Unset = UNSET
+    thinking: AnthropicThinkingConfig | Unset = UNSET
 
 
 class AnthropicUsage(Struct, omit_defaults=True):

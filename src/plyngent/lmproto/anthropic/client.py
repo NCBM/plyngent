@@ -34,6 +34,8 @@ class AnthropicClient:
     decoder: msgspec.json.Decoder[AnthropicMessageResponse]
     stream_decoder: msgspec.json.Decoder[AnthropicStreamEvent]
     models_decoder: msgspec.json.Decoder[AnthropicModelsResponse]
+    # Explicit ``thinking`` budget for this client (0 = derive from the effort).
+    thinking_budget_tokens: int = 0
     _api_key: str
     _api_version: str
 
@@ -43,6 +45,7 @@ class AnthropicClient:
         self.decoder = msgspec.json.Decoder(AnthropicMessageResponse)
         self.stream_decoder = msgspec.json.Decoder(AnthropicStreamEvent)
         self.models_decoder = msgspec.json.Decoder(AnthropicModelsResponse)
+        self.thinking_budget_tokens = max(0, config.thinking_budget_tokens)
         self._api_key = config.api_key
         self._api_version = config.anthropic_version
 

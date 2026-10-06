@@ -16,16 +16,17 @@ if TYPE_CHECKING:
     from .model import ChatCompletionsParam
 
 
-def _inject_thinking(data: bytes) -> bytes:
-    """Inject ``thinking: {type: "enabled"}`` into the encoded request body.
+def _inject_thinking(data: bytes, param: ChatCompletionsParam) -> bytes:
+    """Inject the ``thinking`` flag into the encoded request body.
 
     DeepSeek's reasoning model requires the ``thinking`` parameter to be
-    explicitly set (default is ``enabled``). The agent loop constructs the
-    base ``ChatCompletionsParam`` which lacks this field, so we add it
-    after msgspec encoding.
+    explicitly set (default is ``enabled``); ``reasoning_effort = "none"`` is the
+    way to ask for it off. The agent loop constructs the base
+    ``ChatCompletionsParam`` which lacks this field, so we add it after msgspec
+    encoding.
     """
     body = json.loads(data)
-    body["thinking"] = {"type": "enabled"}
+    body["thinking"] = {"type": "disabled" if param.reasoning_effort == "none" else "enabled"}
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 
@@ -49,7 +50,7 @@ class DeepseekOpenAIClient(BaseOpenAIClient):
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         param = coerce_chat_completions_param_any(msgspec.structs.replace(param, stream=stream))
-        data = _inject_thinking(self.encoder.encode(param))
+        data = _inject_thinking(self.encoder.encode(param), param)
         if stream:
             resp = await self.session.post(
                 "/chat/completions",
