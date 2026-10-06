@@ -52,7 +52,7 @@ lmproto/deepseek/anthropic/     ← DeepSeek Anthropic client (extends Anthropic
 - **`openai/client.py`** — platform `OpenAIClient` (`kind="responses"`): chat completions + `responses` / `get_response` / `delete_response`.
 - **`anthropic/model.py`** — Anthropic Messages request/response + SSE event models.
 - **`anthropic/client.py`** — `AnthropicClient` (`kind="messages"`): `POST /messages` + `GET /models`.
-- **DeepSeek** — `DeepseekOpenAIClient` (`kind="chat_completions"`); models add `reasoning_content`, `prefix`, `ThinkingOptions`, and it injects the `thinking` flag (`enabled`, or `disabled` for `reasoning_effort = "none"`) after encoding. Config default model ids: `deepseek-v4-flash`, `deepseek-v4-pro`. `DeepseekResponsesClient` (`kind="responses"`) extends the OpenAI Responses client for `convention = "responses"` (SSE stops at terminal events — DeepSeek sends no `[DONE]`). `DeepseekAnthropicClient` (`kind="messages"`) extends `AnthropicClient` for `convention = "anthropic"` (base `https://api.deepseek.com/anthropic`; `models()` returns `[]`).
+- **DeepSeek** — `DeepseekOpenAIClient` (`kind="chat_completions"`); models add `reasoning_content`, `prefix`, `ThinkingOptions`, and it injects the `thinking` flag (`enabled`, or `disabled` for `reasoning_effort = "none"`) after encoding. Config default model ids: `deepseek-flash`, `deepseek-v4-pro`. `DeepseekResponsesClient` (`kind="responses"`) extends the OpenAI Responses client for `convention = "responses"` (SSE stops at terminal events — DeepSeek sends no `[DONE]`). `DeepseekAnthropicClient` (`kind="messages"`) extends `AnthropicClient` for `convention = "anthropic"` (base `https://api.deepseek.com/anthropic`; `models()` returns `[]`).
 
 ### Config (`config/`)
 

@@ -171,7 +171,7 @@ access_key_or_token = "sk-replace-me"
 # "claude-opus-4-20250514" = { text = true, reasoning_effort = "xhigh" }
 
 # --- DeepSeek (OpenAI-compatible / Responses / Anthropic conventions) ---
-# Default models if [providers.*.models] is omitted: deepseek-v4-flash, deepseek-v4-pro.
+# Default models if [providers.*.models] is omitted: deepseek-flash, deepseek-v4-pro.
 # [providers.deepseek]
 # preset = "deepseek"
 # access_key_or_token = "sk-replace-me"
@@ -180,10 +180,10 @@ access_key_or_token = "sk-replace-me"
 # # Convention selects the API surface:
 # #   "" / "openai"   → OpenAI-compatible chat completions (default)
 # #   "responses"     → OpenAI Responses API (POST /responses; today only
-# #                     deepseek-v4-flash supports it)
+# #                     deepseek-flash supports it)
 # #   "anthropic"     → Anthropic Messages API (POST /messages on
 # #                     https://api.deepseek.com/anthropic; claude-* model ids
-# #                     map server-side to deepseek-v4-*)
+# #                     map server-side to deepseek-v4-pro / deepseek-flash)
 # convention = "responses"
 # # Legacy location (parsed but ignored; prefer the typed field above):
 # # extras = { convention = "openai" }
@@ -191,5 +191,5 @@ access_key_or_token = "sk-replace-me"
 # # reasoning_effort = "high"
 #
 # [providers.deepseek.models]
-# "deepseek-v4-flash" = { text = true, convention = "responses" }
+# "deepseek-flash" = { text = true, convention = "responses" }
 # "deepseek-v4-pro" = { text = true, reasoning_effort = "max" }
