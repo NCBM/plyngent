@@ -951,11 +951,11 @@ async def test_pretty_verbose_keeps_full_result_output(
     assert "* Read 'a.txt' " not in out
 
 
-async def test_pretty_parallel_batch_erases_open_prefix(
+async def test_pretty_parallel_batch_closes_the_open_prefix(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A second call in the batch erases the open prefix; results print whole."""
+    """A second call in the batch ends the open prefix; results print whole lines."""
     monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
     await render_events(
         _aiter(
@@ -968,20 +968,20 @@ async def test_pretty_parallel_batch_erases_open_prefix(
         )
     )
     out = capsys.readouterr().out
-    assert "\x1b[2K\x1b[1A" in out  # the in-flight prefix was erased
-    assert "* Read 'a.txt' L1-4 (done)\n" in out
-    assert "* Read 'b.txt' L1-9 (done)\n" in out
+    # The prefix survives as its own line; whole lines take over from there.
+    assert out == ("\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n")
+    assert "\x1b[" not in out  # the cursor is never moved
 
 
 async def test_pretty_parallel_batch_keeps_the_line_above_the_prefix(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Regression: erasing the open prefix must not eat the line above it.
+    """Ending the open prefix must not touch the line above it.
 
     Reasoning streams without a trailing newline, so the prefix line sits right
-    below the reasoning text; the erase used to clear one row too many and wiped
-    that reasoning line out of the screen.
+    below the reasoning text; moving the cursor up used to wipe that reasoning
+    line out of the screen.
     """
     monkeypatch.setattr("plyngent.cli.display.interactive_terminal", lambda: True)
     await render_events(
@@ -997,25 +997,15 @@ async def test_pretty_parallel_batch_keeps_the_line_above_the_prefix(
     )
     out = capsys.readouterr().out
     assert out == (
-        "\nreasoning:\nthink"
-        "\n* Read 'a.txt' "
-        "\r\x1b[2K\x1b[1A"
-        "\n* Read 'a.txt' L1-4 (done)\n"
-        "\n* Read 'b.txt' L1-9 (done)\n"
-        "\n\n"
+        "\nreasoning:\nthink\n* Read 'a.txt' \n\n* Read 'a.txt' L1-4 (done)\n\n* Read 'b.txt' L1-9 (done)\n\n\n"
     )
+    assert "\x1b[" not in out
 
 
 def test_clear_streamed_lines_clears_exactly_the_given_rows(capsys: pytest.CaptureFixture[str]) -> None:
     """Two rows means two clears; the cursor lands on the topmost cleared row."""
     _clear_streamed_lines(2)
     assert capsys.readouterr().out == "\r\x1b[2K\x1b[1A\r\x1b[2K"
-
-
-def test_clear_streamed_lines_resume_above_steps_back_one_row(capsys: pytest.CaptureFixture[str]) -> None:
-    """``resume_above`` clears the cursor row only, then steps above it."""
-    _clear_streamed_lines(1, resume_above=True)
-    assert capsys.readouterr().out == "\r\x1b[2K\x1b[1A"
 
 
 def test_clear_streamed_lines_ignores_non_positive_counts(capsys: pytest.CaptureFixture[str]) -> None:

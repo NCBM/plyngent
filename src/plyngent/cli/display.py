@@ -181,7 +181,10 @@ class PrettyLine:
 
     ``prefix`` is written as soon as the call starts — a blocking tool call is
     then visible while it runs — and ``detail`` is appended once its result
-    lands. Together they equal the single line the whole-line path prints.
+    lands, so the two land on one line. Together they equal the single line the
+    whole-line path prints. When something else is printed in between (a
+    parallel call, a confirm/ask prompt) the prefix stays as its own line and
+    the result is printed as a complete line instead.
     """
 
     prefix: Callable[[str], str]
@@ -867,14 +870,14 @@ def _echo_stream(text: str) -> None:
         _ = sys.stdout.flush()
 
 
-def _clear_streamed_lines(line_count: int, *, resume_above: bool = False) -> None:
+def _clear_streamed_lines(line_count: int) -> None:
     """Clear exactly *line_count* terminal lines ending at the cursor line.
 
     The cursor ends at column 0 of the topmost cleared line, so a re-render
-    overwrites the erased block in place instead of appending below it. With
-    ``resume_above`` the cursor steps one line further up: the next
-    ``"\\n"``-prefixed write then reuses the last cleared line — needed by the
-    parallel-batch fallback, which must not touch the line above the prefix.
+    overwrites the erased block in place instead of appending below it. Only the
+    assistant markdown re-render uses this: pretty tool lines never move the
+    cursor, because an interrupted prefix is *closed* as its own line instead
+    (see :class:`_PrettyToolStream`).
 
     ``line_count`` counts *physical* rows; callers fold wrapped lines via
     :func:`_line_count_for_clear`.
@@ -885,8 +888,6 @@ def _clear_streamed_lines(line_count: int, *, resume_above: bool = False) -> Non
     for _ in range(line_count - 1):
         _ = sys.stdout.write("\r\033[2K\033[1A")
     _ = sys.stdout.write("\r\033[2K")
-    if resume_above:
-        _ = sys.stdout.write("\033[1A")
     with contextlib.suppress(OSError):
         _ = sys.stdout.flush()
 
@@ -926,10 +927,12 @@ class _PrettyToolStream:
 
     Writing the prefix immediately keeps a blocking tool call visible; appending
     the detail later reproduces the single whole-line write byte for byte, so
-    non-interactive output is unchanged. The calls of one batch are yielded
-    before their results, so a second call while a prefix is open (parallel
-    tools) cannot append its detail in order: that prefix is erased and the
-    batch falls back to whole lines.
+    non-interactive output is unchanged. Nothing ever moves the cursor: when
+    something else is printed in between — a second call of the batch (parallel
+    tools) or a confirm/ask prompt — the open prefix is *closed* as its own line
+    and the rest of the batch prints whole lines (``prefix + detail``). A prefix
+    wider than the terminal therefore degrades cleanly instead of leaving a
+    half-erased row behind.
     """
 
     _interactive: bool
@@ -946,17 +949,15 @@ class _PrettyToolStream:
         if not (self._interactive and prefix) or self._whole_lines:
             return
         if self._open:
-            # Parallel batch: the open prefix could never receive its detail.
-            # Erase only the prefix line — the line above may be streamed
-            # reasoning — and let the fallback's leading newline reuse it.
-            _clear_streamed_lines(1, resume_above=True)
-            self._open = False
-            self._whole_lines = True
+            # Parallel batch: the open prefix can never receive its detail, so
+            # end it as its own line and print whole lines from here on.
+            self.close_line()
             return
         click.echo(f"\n{prefix}", nl=False)
         with contextlib.suppress(OSError):
             _ = sys.stdout.flush()
         self._open = True
+        _mark_open_prefix(self)
 
     def finish_call(self, detail: str) -> bool:
         """Append *detail* to the open prefix; False when a whole line is needed."""
@@ -964,6 +965,7 @@ class _PrettyToolStream:
             return False
         click.echo(f"{detail}\n", nl=False)
         self._open = False
+        _mark_open_prefix(None)
         return True
 
     def close_line(self) -> None:
@@ -973,11 +975,35 @@ class _PrettyToolStream:
         click.echo()
         self._open = False
         self._whole_lines = True
+        _mark_open_prefix(None)
 
     def end_batch(self) -> None:
         """Reset batch-scoped state once every call of the batch has a result."""
         self.close_line()
         self._whole_lines = False
+
+
+# The stream with a prefix line still open (cursor mid-line), or None. A confirm
+# box or ``ask_user_*`` prompt is printed from a worker thread while the tool
+# runs, so it needs a way to end that line before writing its own.
+_open_prefix_stream: _PrettyToolStream | None = None
+
+
+def _mark_open_prefix(stream: _PrettyToolStream | None) -> None:
+    global _open_prefix_stream  # noqa: PLW0603
+    _open_prefix_stream = stream
+
+
+def close_open_pretty_line() -> None:
+    """End an open pretty prefix line so other output starts on its own line.
+
+    Wired into the prompt backend (:func:`plyngent.prompting.set_prompt_output_hook`):
+    without it a confirm/ask prompt raised while a tool runs is written onto the
+    still-open prefix line, and the result would later be appended to that mess.
+    """
+    stream = _open_prefix_stream
+    if stream is not None:
+        stream.close_line()
 
 
 def print_markdown(text: str, *, label: str = "assistant:") -> None:
