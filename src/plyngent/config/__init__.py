@@ -21,10 +21,13 @@ from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
 from .models import PluginsConfig as PluginsConfig
 from .models import ProviderConfig as ProviderConfig
+from .models import ReasoningEffortConfig as ReasoningEffortConfig
 from .models import SkillDiscoverySource as SkillDiscoverySource
 from .models import SkillsConfig as SkillsConfig
 from .models import compose_agent_system_content as compose_agent_system_content
 from .path import get_default_path as _get_default_path
+from .reasoning import ReasoningConfig as ReasoningConfig
+from .reasoning import resolve_reasoning as resolve_reasoning
 from .routing import EffectiveProvider as EffectiveProvider
 from .routing import ProviderPreset as ProviderPreset
 from .routing import default_url_for_preset as default_url_for_preset

@@ -13,6 +13,14 @@ type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
 # Static directory pre-allow mode for ``[agent].allow_paths`` (path → mode).
 type AllowPathMode = Literal["read", "write", "exec"]
 
+# Thinking strength, normalized across API surfaces (``reasoning_effort`` on
+# ``[agent]``, a provider, or a single model; the most specific one wins).
+# "" = send nothing and let the provider pick its own default.
+# Mapped per surface by ``config.reasoning``: chat completions / Responses send
+# ``reasoning_effort`` / ``reasoning.effort`` (``max`` is DeepSeek-only and
+# clamps to ``xhigh`` elsewhere), Anthropic maps it onto ``thinking``.
+type ReasoningEffortConfig = Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 # Built-in skill discovery sources (``[skills].discover``): our own user config
 # directory, and the skill directories other harnesses install into.
 type SkillDiscoverySource = Literal["plyngent", "claude"]
@@ -150,6 +158,14 @@ class AgentConfig(Struct, omit_defaults=True):
     compact_user_prefix: str = ""
     compact_seed_text: str = ""
 
+    # Thinking strength for every request (a provider or single model may
+    # override either value; the most specific one wins).
+    # reasoning_effort: "" | none | minimal | low | medium | high | xhigh | max.
+    # thinking_budget_tokens: explicit Anthropic ``thinking`` budget (0 = derive
+    # it from ``reasoning_effort``). See config/reasoning.py.
+    reasoning_effort: ReasoningEffortConfig = ""
+    thinking_budget_tokens: int = 0
+
 
 class PluginsConfig(Struct, omit_defaults=True):
     """Third-party plugins (not tool-specific config).
@@ -268,6 +284,9 @@ class ModelConfig(Struct, omit_defaults=True):
     url: str = ""
     # DeepSeek API surface override ("" = inherit provider convention).
     convention: DeepSeekConvention = ""
+    # Thinking strength for this model only ("" / 0 = inherit the provider).
+    reasoning_effort: ReasoningEffortConfig = ""
+    thinking_budget_tokens: int = 0
 
 
 class HttpTimeoutConfig(Struct, omit_defaults=True):
@@ -299,6 +318,9 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
     models: dict[str, ModelConfig] = field(default_factory=dict)
     # float = single timeout for the session; table = connect/read split; omit = defaults.
     timeout: float | HttpTimeoutConfig | None = None
+    # Thinking strength for every model of this provider ("" / 0 = inherit [agent]).
+    reasoning_effort: ReasoningEffortConfig = ""
+    thinking_budget_tokens: int = 0
 
 
 def _default_openai_models() -> dict[str, ModelConfig]:

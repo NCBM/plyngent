@@ -299,6 +299,70 @@ def test_read_bad_config() -> None:
     assert isinstance(config.bad_providers, Mapping)
 
 
+def test_reasoning_effort_from_toml(tmp_path: Path) -> None:
+    path = tmp_path / "reasoning.toml"
+    _ = path.write_text(
+        """
+[agent]
+reasoning_effort = "low"
+thinking_budget_tokens = 4000
+
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+reasoning_effort = "high"
+
+[providers.ds.models]
+"deepseek-v4-pro" = { text = true, reasoning_effort = "max", thinking_budget_tokens = 32000 }
+"deepseek-v4-flash" = { text = true }
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    agent_cfg = config.agent_config
+    assert agent_cfg.reasoning_effort == "low"
+    assert agent_cfg.thinking_budget_tokens == 4000
+    provider = config.providers["ds"]
+    assert provider.reasoning_effort == "high"
+    assert provider.thinking_budget_tokens == 0
+    assert provider.models["deepseek-v4-pro"].reasoning_effort == "max"
+    assert provider.models["deepseek-v4-pro"].thinking_budget_tokens == 32000
+    assert provider.models["deepseek-v4-flash"].reasoning_effort == ""
+    assert provider.models["deepseek-v4-flash"].thinking_budget_tokens == 0
+
+
+def test_reasoning_effort_defaults_are_unset(tmp_path: Path) -> None:
+    path = tmp_path / "reasoning-default.toml"
+    _ = path.write_text(
+        """
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert config.agent_config.reasoning_effort == ""
+    assert config.agent_config.thinking_budget_tokens == 0
+    assert config.providers["ds"].reasoning_effort == ""
+
+
+def test_reasoning_effort_invalid_is_bad_provider(tmp_path: Path) -> None:
+    path = tmp_path / "reasoning-bad.toml"
+    _ = path.write_text(
+        """
+[providers.ds]
+preset = "deepseek"
+access_key_or_token = "sk-test"
+reasoning_effort = "highest"
+""",
+        encoding="utf-8",
+    )
+    config = plyngent.config.load(path)
+    assert "ds" not in config.providers
+    assert "ds" in config.bad_providers
+
+
 def test_provider_with_empty_models_is_recoverable(tmp_path: Path) -> None:
     path = tmp_path / "empty-models.toml"
     _ = path.write_text(

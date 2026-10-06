@@ -29,6 +29,8 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert store.agent_config.allow_paths == {}
     assert store.agent_config.auto_continue_limits is False
     assert store.agent_config.max_context_tokens == 200_000
+    assert store.agent_config.reasoning_effort == ""
+    assert store.agent_config.thinking_budget_tokens == 0
     assert store.plugins_config.enable == []
     assert store.plugins_config.disable == []
     assert store.networking_config.ssrf_assume_public_cidrs == []
