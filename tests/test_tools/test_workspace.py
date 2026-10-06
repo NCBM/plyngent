@@ -277,6 +277,62 @@ def test_command_denylist_prompts_for_the_wrapped_program(workspace: object) -> 
         clear_policy_allowed_commands()
 
 
+def test_match_command_denylist_entries() -> None:
+    from plyngent.tools import match_command_denylist
+
+    denylist = frozenset({"rm", "systemctl reboot poweroff", "loginctl kill-session"})
+    hits = match_command_denylist(["sudo", "rm", "-rf", "/"], denylist)
+    assert [(hit.program, hit.keyword) for hit in hits] == [("rm", None)]
+    assert [hit.program for hit in match_command_denylist(["env", "FOO=1", "rm", "x"], denylist)] == ["rm"]
+    hits = match_command_denylist(["sudo", "sudo", "rm", "x"], frozenset({"sudo", "rm"}))
+    assert [hit.program for hit in hits] == ["sudo", "rm"]
+    # Subcommand entries match the program's own arguments, targets included.
+    hits = match_command_denylist(["systemctl", "reboot"], denylist)
+    assert [(hit.program, hit.keyword, hit.entry) for hit in hits] == [
+        ("systemctl", "reboot", "systemctl reboot poweroff")
+    ]
+    assert match_command_denylist(["systemctl", "start", "poweroff.target"], denylist)[0].keyword == "poweroff"
+    assert match_command_denylist(["pdm", "run", "loginctl", "kill-session"], denylist)[0].program == "loginctl"
+    # Read-only and unrelated calls stay clean.
+    assert match_command_denylist(["systemctl", "status", "sshd"], denylist) == []
+    assert match_command_denylist(["loginctl", "list-sessions"], denylist) == []
+
+
+def test_command_denylist_power_subcommands(workspace: object) -> None:
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(None)
+    clear_policy_allowed_commands()
+    try:
+        with pytest.raises(WorkspaceError, match="basename 'systemctl' is blocked: 'reboot'"):
+            check_command_allowed(["systemctl", "reboot"])
+        with pytest.raises(WorkspaceError, match="basename 'systemctl' is blocked: 'reboot'"):
+            check_command_allowed(["systemctl", "start", "reboot.target"])
+        with pytest.raises(WorkspaceError, match="basename 'systemctl' is blocked: 'poweroff'"):
+            check_command_allowed(["systemctl", "--user", "poweroff"])
+        with pytest.raises(WorkspaceError, match="basename 'systemctl' is blocked: 'emergency'"):
+            check_command_allowed(["timeout", "3", "systemctl", "emergency"])
+        with pytest.raises(WorkspaceError, match="basename 'loginctl' is blocked: 'kill-session'"):
+            check_command_allowed(["loginctl", "kill-session", "3"])
+        with pytest.raises(WorkspaceError, match="basename 'pm-suspend' is blocked"):
+            check_command_allowed(["pm-suspend"])
+        with pytest.raises(WorkspaceError, match="basename 'run0' is blocked"):
+            check_command_allowed(["run0", "id"])
+        with pytest.raises(WorkspaceError, match="basename 'systemd-run' is blocked"):
+            check_command_allowed(["systemd-run", "--user", "echo", "hi"])
+        # The outermost denylisted program is reported first.
+        with pytest.raises(WorkspaceError, match="basename 'sudo' is blocked"):
+            check_command_allowed(["sudo", "systemctl", "reboot"])
+        # Read-only systemd calls stay allowed.
+        check_command_allowed(["systemctl", "status", "sshd"])
+        check_command_allowed(["systemctl", "list-units", "--type=service"])
+        check_command_allowed(["systemctl", "show", "-p", "CanReboot"])
+        check_command_allowed(["loginctl", "list-sessions"])
+    finally:
+        clear_policy_allowed_commands()
+
+
 def test_root_required() -> None:
     from plyngent.tools.context import InstanceState, bind_instance
 

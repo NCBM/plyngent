@@ -5,7 +5,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from plyngent.tools.command_scan import unwrap_command
+from plyngent.tools.command_scan import basename, unwrap_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -18,6 +18,10 @@ DEFAULT_COMMAND_DENYLIST: frozenset[str] = frozenset(
         "su",
         "doas",
         "pkexec",
+        # Privileged systemd entry points: run0 is sudo's replacement,
+        # systemd-run executes a command as a transient system unit.
+        "run0",
+        "systemd-run",
         "rm",
         "rmdir",
         "mkfs",
@@ -33,6 +37,18 @@ DEFAULT_COMMAND_DENYLIST: frozenset[str] = frozenset(
         "chown",
         "mount",
         "umount",
+        "init",
+        "telinit",
+        "kexec",
+        "pm-suspend",
+        "pm-hibernate",
+        "s2disk",
+        "s2ram",
+        # Machine power state: only these systemctl/loginctl words are blocked,
+        # so read-only calls (``systemctl status``) stay allowed.
+        "systemctl reboot poweroff halt suspend hibernate hybrid-sleep "
+        "suspend-then-hibernate soft-reboot kexec isolate rescue emergency default",
+        "loginctl terminate-session terminate-user kill-session kill-user reboot poweroff soft-reboot",
     }
 )
 
@@ -405,17 +421,88 @@ def argv_shape_error(argv: object) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class DenylistHit:
+    """A command denylist entry that a command matches.
+
+    ``program`` names the program to prompt for (and grant by); ``keyword`` is
+    the argument word that made a subcommand entry dangerous, or ``None`` for an
+    entry that blocks the whole program.
+    """
+
+    entry: str
+    program: str
+    keyword: str | None = None
+
+
+def match_command_denylist(argv: Sequence[str], denylist: frozenset[str]) -> list[DenylistHit]:
+    """Return the denylist entries *argv* matches, outermost program first.
+
+    An entry is a program basename, optionally followed by the argument words
+    that make it dangerous (``systemctl reboot poweroff …``). A whole-program
+    entry matches any program of the wrapper chain; a subcommand entry matches
+    only the program that runs, whose arguments are searched for one of its
+    words — so ``systemctl reboot`` and ``systemctl start reboot.target`` are
+    blocked while ``systemctl status`` is not.
+    """
+    scan = unwrap_command(argv)
+    words = _argument_words(scan.command)
+    hits: list[DenylistHit] = []
+    seen: set[str] = set()
+    for name in (*scan.wrappers, scan.base):
+        hit = _denylist_hit(name, base=scan.base, words=words, denylist=denylist)
+        if hit is not None and hit.program not in seen:
+            seen.add(hit.program)
+            hits.append(hit)
+    return hits
+
+
+def _denylist_hit(
+    name: str,
+    *,
+    base: str,
+    words: frozenset[str],
+    denylist: frozenset[str],
+) -> DenylistHit | None:
+    """First denylist entry matching program *name*, if any."""
+    for entry in sorted(denylist):
+        parts = entry.split()
+        if not parts or basename(parts[0]) != name:
+            continue
+        if len(parts) == 1:
+            return DenylistHit(entry=entry, program=name)
+        if name != base:
+            # Argument words describe the program that runs, not a wrapper.
+            continue
+        keyword = next((word for word in parts[1:] if word.lower() in words), None)
+        if keyword is not None:
+            return DenylistHit(entry=entry, program=name, keyword=keyword.lower())
+    return None
+
+
+def _argument_words(command: Sequence[str]) -> frozenset[str]:
+    """Lower-cased argument words of *command*, plus ``*.target`` stems."""
+    words: set[str] = set()
+    for part in command[1:]:
+        token = part.lower()
+        words.add(token)
+        if token.endswith(".target"):
+            words.add(token.removesuffix(".target"))
+    return frozenset(words)
+
+
 def check_command_allowed(argv: list[str]) -> None:
-    """Raise if argv is empty or a basename in the command chain is denylisted.
+    """Raise if argv is empty or any program in the command chain is denylisted.
 
     The chain is the program that really runs plus every wrapper it is reached
     through (``env FOO=1 rm``, ``pdm run rm``, ``sudo -u x rm``), so a denylisted
     program cannot hide behind one. Basenames are compared lower-cased, so
-    ``RM`` and ``rm.exe`` count as ``rm``.
+    ``RM`` and ``rm.exe`` count as ``rm``; entries that list dangerous arguments
+    (``systemctl reboot …``) match those words in the program's own arguments.
 
-    Denylisted basenames are not hard-rejected when a policy confirm hook is
+    Denylisted programs are not hard-rejected when a policy confirm hook is
     installed: the human is asked (with a timeout; default deny). Session grants
-    skip re-prompting for the same basename. Independent of YOLO soft-confirm.
+    skip re-prompting for the same program. Independent of YOLO soft-confirm.
     """
     shape_error = argv_shape_error(argv)
     if shape_error is not None:
@@ -425,13 +512,14 @@ def check_command_allowed(argv: list[str]) -> None:
         msg = "command argv must not be empty"
         raise WorkspaceError(msg)
     policy = active_workspace_policy()
-    scan = unwrap_command(argv)
-    for binary in (*scan.wrappers, scan.base):
-        if binary not in policy.command_denylist or binary in policy.policy_allowed_commands:
+    for hit in match_command_denylist(argv, policy.command_denylist):
+        binary = hit.program
+        if binary in policy.policy_allowed_commands:
             continue
+        why = f": {hit.keyword!r}" if hit.keyword else ""
         hook = policy.policy_confirm_hook
         if hook is None:
-            msg = f"command denied by policy (basename {binary!r} is blocked)"
+            msg = f"command denied by policy (basename {binary!r} is blocked{why})"
             raise WorkspaceError(msg)
         timeout = policy.policy_confirm_timeout_seconds
         try:
@@ -441,7 +529,7 @@ def check_command_allowed(argv: list[str]) -> None:
             raise WorkspaceError(msg) from exc
         if not allowed:
             msg = (
-                f"command denied by policy (basename {binary!r} is blocked; "
+                f"command denied by policy (basename {binary!r} is blocked{why}; "
                 f"user declined or timed out after {timeout:g}s)"
             )
             raise WorkspaceError(msg)
