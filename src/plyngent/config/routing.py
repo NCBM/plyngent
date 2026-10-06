@@ -86,6 +86,37 @@ def model_config_for(provider: Provider, model: str | None) -> ModelConfig | Non
     return provider.models.get(model)
 
 
+def wants_web_search(effective: EffectiveProvider) -> bool:
+    """True when *effective*'s ``provider_tools`` ask for a search tool."""
+    return any(
+        isinstance(tool.get("type"), str) and tool.get("type") == "web_search" for tool in effective.provider_tools
+    )
+
+
+def local_web_search(effective: EffectiveProvider) -> bool:
+    """True when this provider searches through plyngent's own ``web_search`` tool.
+
+    DeepSeek runs a hosted search only on its Anthropic-compatible surface
+    (``convention = "anthropic"``): the Responses and chat-completions surfaces
+    ignore a hosted tool — a live probe answers "I can't browse the web" with
+    either ``{"type": "web_search"}`` or the server-tool shape — so a DeepSeek
+    provider that talks them searches through
+    :func:`~plyngent.tools.net.search.build_web_search_tool`, which calls the
+    search-capable endpoint behind the scenes.
+    """
+    if effective.preset != "deepseek" or effective.convention == "anthropic":
+        return False
+    return wants_web_search(effective)
+
+
+def deepseek_search_base_url(effective: EffectiveProvider) -> str:
+    """The endpoint a DeepSeek search turn runs on (its Anthropic-compatible base)."""
+    url = effective.url.rstrip("/")
+    if url.endswith("/anthropic"):
+        return url
+    return DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+
+
 def resolve_effective_provider(provider: Provider, *, model: str | None = None) -> EffectiveProvider:
     """Apply model-level preset/url overrides to *provider*.
 

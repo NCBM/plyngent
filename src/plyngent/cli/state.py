@@ -13,6 +13,7 @@ from plyngent.agent.todo_stack import TodoStack
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from plyngent.agent.tools import ToolDefinition
     from plyngent.agent.types import AnyLLMClient
 from plyngent.cli.models_source import (
     DEFAULT_MODELS_CACHE_TTL,
@@ -398,7 +399,7 @@ class ReplState:
         tools = catalog.select(surface="local", exclude_names=excluded)
         yolo = self.effective_yolo() != "off"
         # Always attach soft-confirm path so non-YOLO tools still prompt under YOLO mode.
-        return ToolRegistry(
+        registry = ToolRegistry(
             tools,
             danger=classify_danger,
             on_confirm=prompt_confirm_tool_async,
@@ -407,6 +408,36 @@ class ReplState:
             instance_state=self.instance_state,
             session_state=self.session_state,
         )
+        search_tool = self._web_search_tool()
+        if search_tool is not None:
+            registry.register(search_tool)
+        return registry
+
+    def _web_search_tool(self) -> ToolDefinition | None:
+        """Local ``web_search`` for a provider whose surface cannot host one.
+
+        DeepSeek searches only on its Anthropic-compatible surface, so the other
+        conventions get the tool instead of a hosted definition (see
+        :func:`~plyngent.config.routing.local_web_search`).
+        """
+        from plyngent.config.routing import (
+            deepseek_search_base_url,
+            local_web_search,
+        )
+        from plyngent.lmproto.anthropic.config import AnthropicConfig
+        from plyngent.lmproto.deepseek.anthropic.search import DeepseekSearchClient
+        from plyngent.tools.net.search import build_web_search_tool
+
+        provider = self.effective_provider
+        if not local_web_search(provider) or not self.model:
+            return None
+        client = DeepseekSearchClient(
+            AnthropicConfig(
+                api_key=provider.access_key_or_token,
+                base_url=deepseek_search_base_url(provider),
+            )
+        )
+        return build_web_search_tool(client, model=self.model)
 
     def _mcp_instructions_text(self) -> str:
         """Compose connected MCP servers' initialize ``instructions`` into one block.
