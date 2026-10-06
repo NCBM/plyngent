@@ -59,7 +59,7 @@ async def read_response_body(resp: object) -> bytes | str | None:
     return None
 
 
-def sse_data_payload(line: bytes) -> bytes | None | Literal[False]:
+def sse_data_payload(line: bytes) -> bytes | Literal[False] | None:
     """Parse one SSE line.
 
     Returns:

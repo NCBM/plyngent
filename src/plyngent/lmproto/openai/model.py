@@ -232,24 +232,24 @@ class Response(Struct, omit_defaults=True):
     output: list[dict[str, Any]]
     object: Literal["response"] = "response"
     status: ResponseStatus | Unset = UNSET
-    error: ResponseError | None | Unset = UNSET
-    incomplete_details: ResponseIncompleteDetails | None | Unset = UNSET
-    instructions: str | list[dict[str, Any]] | None | Unset = UNSET
-    metadata: dict[str, str] | None | Unset = UNSET
+    error: ResponseError | Unset | None = UNSET
+    incomplete_details: ResponseIncompleteDetails | Unset | None = UNSET
+    instructions: str | list[dict[str, Any]] | Unset | None = UNSET
+    metadata: dict[str, str] | Unset | None = UNSET
     parallel_tool_calls: bool | Unset = UNSET
-    temperature: float | None | Unset = UNSET
-    top_p: float | None | Unset = UNSET
+    temperature: float | Unset | None = UNSET
+    top_p: float | Unset | None = UNSET
     tools: list[dict[str, Any]] | Unset = UNSET
     tool_choice: str | dict[str, Any] | Unset = UNSET
     # Prefer loose dict — nested usage details vary by model/API version.
-    usage: dict[str, Any] | None | Unset = UNSET
-    previous_response_id: str | None | Unset = UNSET
-    service_tier: ServiceTier | None | Unset = UNSET
-    truncation: TruncationMode | None | Unset = UNSET
+    usage: dict[str, Any] | Unset | None = UNSET
+    previous_response_id: str | Unset | None = UNSET
+    service_tier: ServiceTier | Unset | None = UNSET
+    truncation: TruncationMode | Unset | None = UNSET
     text: dict[str, Any] | Unset = UNSET
-    reasoning: dict[str, Any] | None | Unset = UNSET
+    reasoning: dict[str, Any] | Unset | None = UNSET
     store: bool | Unset = UNSET
-    user: str | None | Unset = UNSET
+    user: str | Unset | None = UNSET
 
 
 class ResponseDeleted(Struct):

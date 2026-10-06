@@ -67,7 +67,7 @@ type AnyAssistantToolCall = AssistantFunctionToolCall | AssistantCustomToolCall
 
 class AssistantChatMessage(Struct, tag_field="role", tag="assistant"):
     # APIs often return content=null when tool_calls are present.
-    content: str | None | Unset = UNSET
+    content: str | Unset | None = UNSET
     name: str | Unset = UNSET
     audio: IDObject | Unset = UNSET
     refusal: str | Unset = UNSET
@@ -237,8 +237,8 @@ class StreamToolCallDelta(Struct):
 class DeltaMessage(Struct):
     role: RoleAssistant | Unset = UNSET
     # Providers often send content=null / reasoning_content=null on partial chunks.
-    content: str | None | Unset = UNSET
-    reasoning_content: str | None | Unset = UNSET
+    content: str | Unset | None = UNSET
+    reasoning_content: str | Unset | None = UNSET
     # True when reasoning_content is the FULL chain-of-thought (e.g. DeepSeek's
     # ``response.reasoning_text.done``), replacing any streamed fragments.
     reasoning_full: bool | Unset = UNSET
@@ -249,8 +249,8 @@ class ChunkChoice(Struct):
     index: int
     delta: DeltaMessage
     # APIs often send logprobs=null on stream choices.
-    logprobs: dict[str, Any] | None | Unset = UNSET
-    finish_reason: FinishReason | None | Unset = UNSET
+    logprobs: dict[str, Any] | Unset | None = UNSET
+    finish_reason: FinishReason | Unset | None = UNSET
 
 
 class ChatCompletionChunk(Struct):
@@ -260,7 +260,7 @@ class ChatCompletionChunk(Struct):
     model: str
     choices: list[ChunkChoice]
     # Final usage chunk may omit or null usage depending on provider.
-    usage: dict[str, Any] | None | Unset = UNSET
+    usage: dict[str, Any] | Unset | None = UNSET
 
 
 class ModelObject(Struct):
