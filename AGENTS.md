@@ -134,6 +134,12 @@ Click app + readline REPL. Entry: `plyngent` / `python -m plyngent`.
 
 Basedpyright `recommended`. Ruff includes `ANN` (private return types `ANN202` ignored). Prefer PEP 695 aliases except where msgspec requires plain assignment (`Unset`).
 
+### Function complexity (`C901`)
+
+Ruff's `C901` stays at its default **10** (no `mccabe` section in `pyproject.toml`): one decision point per `if` / `elif` / `for` / `while` / `except` handler, one per `match` case past the first, plus one per nested `def`. Boolean operators, ternaries, comprehensions, `with`, and `assert` are free — so a wide flat guard is fine and a case-per-branch dispatcher is not. That is the intent: the few functions over it here keep a `# noqa: C901` with the reason after the codes (`— one branch per event type`), because the count is what those functions are. `PLR0912` is ignored (same branches, looser default, and `C901` already flags every function it would); `PLR0911` / `PLR0915` stay — returns and statements are different axes.
+
+A nested function is counted **twice**: its decision points are added to the enclosing function *and* reported on the nested function itself (`def outer` with one helper `if` and one own `if` scores 3; the helper scores 2 on its own). A function that only scores high because of its closures is asking for those to be hoisted to module level, not for a wider limit.
+
 ## Roadmap notes (single-user → platform)
 
 - **Phase D (context quality)**: soft char budget, request compact, `/compact`, richer errors/cancel, workspace sessions. Context size is **char estimate** plus optional API usage when reported.
