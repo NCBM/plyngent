@@ -289,7 +289,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |
 
-User messages are saved immediately. On API error or Ctrl+C, partial assistant/tool output is discarded but the user message stays so `/retry` works after resume. Interactive auto-retry waits 5s, 10s, 15s, 20s, then +10s each step (10 attempts); an attempt that gets a full model round back **resets that budget**, so a connection that recovers and drops again starts over from 5s.
+User messages are saved immediately. On API error or Ctrl+C, unfinished assistant text is discarded — tool calls that already produced a result stay, so `/retry` does not run them again — but the user message stays so `/retry` works after resume. Interactive auto-retry waits 5s, 10s, 15s, 20s, then +10s each step (10 attempts); an attempt that gets a full model round back **resets that budget**, so a connection that recovers and drops again starts over from 5s.
 
 Ctrl+C cancels the in-flight turn, and during the auto-retry countdown it cancels the retry. Model-initiated prompts run off the event loop: a `wait` prompt is cancelled by Ctrl+C (the tool reports `cancelled by user` and the turn continues), while `ask_user_*` and confirm prompts ignore it with a one-line hint — answer them to continue. Ctrl+C never exits the REPL (use Ctrl+D or `/quit`), and MCP servers run in their own process group, so it never kills them either.
 

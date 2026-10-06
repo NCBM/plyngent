@@ -112,9 +112,10 @@ HISTORY_ROW_NUMBER = HistoryRowNumberType()
 
 
 HELP_FOOTER = (
-    "User messages are saved immediately. On API errors or Ctrl+C, partial\n"
-    "assistant/tool output is discarded but the user message stays (so /retry\n"
-    "works after resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
+    "User messages are saved immediately. On API errors or Ctrl+C, unfinished\n"
+    "assistant text is discarded (tool results that already ran stay, so /retry\n"
+    "does not re-run them) but the user message stays (so /retry works after\n"
+    "resume, not only via readline history). Auto-retry: 10s/20s/30s.\n"
     "\n"
     "Side questions: /btw … answers without changing the main session\n"
     "(--tools=read by default: read-only tools; --tools no/full opt-in; --fresh).\n"
