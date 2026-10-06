@@ -41,6 +41,15 @@ if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage, AnyToolItem
     from plyngent.typedef import Unset
 
+# A round that kept no chain-of-thought still goes back with a ``reasoning``
+# item, holding a blank line: thinking mode pairs every round of the turn being
+# continued with its reasoning and rejects both a missing item and an empty
+# ``reasoning_text`` — "The ``reasoning_text`` in the thinking mode must be
+# passed back to the API" — while any non-empty text is accepted. A blank part
+# says nothing the round did not say; a line of prose here would put the
+# bridge's words in the model's own mouth.
+_BLANK_REASONING = " "
+
 
 def tool_items_to_response_tools(
     tools: Sequence[AnyToolItem] | None,
@@ -64,11 +73,44 @@ def tool_items_to_response_tools(
     return result
 
 
+def _reasoning_item(text: str) -> dict[str, Any]:
+    """A ``reasoning`` input item holding *text* as its chain-of-thought."""
+    return {"type": "reasoning", "content": [{"type": "reasoning_text", "text": text}]}
+
+
 def _assistant_to_input_items(
     message: AssistantChatMessage,
 ) -> list[dict[str, Any] | ResponseEasyInputMessage]:
+    """Map one assistant message to Responses ``input`` items.
+
+    A round's items come back in the order the model produced them: the
+    reasoning, then the text, then the calls. The ``reasoning`` item always
+    holds text — the API merges it into the assistant message its round forms,
+    and the turn being continued must return every round's chain-of-thought
+    ("必须完整回传 ``reasoning_content`` … 即使该轮模型未实际进行工具调用") — and
+    a round that kept none sends a blank line, because an empty
+    ``reasoning_text`` and a missing item are both answered with a 400.
+
+    History holds rounds with no chain-of-thought at all — a ``rollback_tail``
+    carrier, a forged ``todo_list`` call, the seed a compacted session starts
+    with, rounds recorded before the reasoning was read back.
+
+    The part is ``reasoning_text``, the only content part the API documents for
+    ``reasoning`` items (``summary`` and ``encrypted_content`` are unsupported).
+    """
     items: list[dict[str, Any] | ResponseEasyInputMessage] = []
-    if message.tool_calls is not UNSET and message.tool_calls:
+    raw_reasoning = message.reasoning_content
+    reasoning = raw_reasoning if isinstance(raw_reasoning, str) else ""
+    tool_calls = message.tool_calls
+    calls = (
+        [call for call in tool_calls if isinstance(call, AssistantFunctionToolCall)] if tool_calls is not UNSET else []
+    )
+    content = message.content
+    text = content if isinstance(content, str) and content else None
+    if calls or text is not None or reasoning:
+        items.append(_reasoning_item(reasoning or _BLANK_REASONING))
+        if text is not None:
+            items.append(ResponseEasyInputMessage(role="assistant", content=text))
         items.extend(
             {
                 "type": "function_call",
@@ -76,11 +118,8 @@ def _assistant_to_input_items(
                 "name": call.function.name,
                 "arguments": call.function.arguments,
             }
-            for call in message.tool_calls
-            if isinstance(call, AssistantFunctionToolCall)
+            for call in calls
         )
-    if isinstance(message.content, str) and message.content:
-        items.append(ResponseEasyInputMessage(role="assistant", content=message.content))
     return items
 
 
@@ -96,17 +135,20 @@ def _item_call_id(
     return None
 
 
-def _interleave_tool_outputs(
+def _group_tool_outputs(
     items: list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput],
 ) -> list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput]:
-    """Place each ``function_call_output`` immediately after its ``function_call``.
+    """Place a round's ``function_call_output`` items after all of its calls.
 
-    OpenAI matches outputs to calls by ``call_id`` anywhere in ``input``, but
-    DeepSeek's Responses implementation expects each ``function_call`` to be
-    directly followed by its ``function_call_output`` — a parallel batch sent
-    as ``call, call, output, output`` is rejected with "No tool output found
-    for tool call …". Interleaving is a no-op for single-call rounds and stays
-    valid for OpenAI (outputs still follow their calls).
+    The API reads a round as the assistant message its ``reasoning`` and
+    ``function_call`` items merge into, so a round's calls must stay contiguous:
+    sent as ``call, output, call, output``, the second call becomes a round of
+    its own without reasoning and the request is answered with "The
+    ``reasoning_text`` in the thinking mode must be passed back to the API".
+    Grouping also keeps each output next to its own call when another item (a
+    developer notice) was recorded between them — an output that trails an
+    unrelated assistant message is rejected with "No tool output found for tool
+    call …".
     """
     outputs_by_call: dict[str, list[ResponseFunctionToolCallOutput]] = {}
     for item in items:
@@ -114,16 +156,22 @@ def _interleave_tool_outputs(
             outputs_by_call.setdefault(item.call_id, []).append(item)
 
     out: list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput] = []
+    pending: list[str] = []
     for item in items:
         if isinstance(item, ResponseFunctionToolCallOutput):
-            continue  # re-added right after their call below
-        out.append(item)
+            continue  # re-added after the round's last call below
         call_id = _item_call_id(item)
-        if call_id is not None and call_id in outputs_by_call:
-            out.extend(outputs_by_call.pop(call_id))
+        if call_id is None:
+            out.extend(output for pending_id in pending for output in outputs_by_call.pop(pending_id, []))
+            pending.clear()
+        out.append(item)
+        if call_id is not None:
+            pending.append(call_id)
+    for pending_id in pending:
+        out.extend(outputs_by_call.pop(pending_id, []))
     # Defensive: outputs whose call was not seen keep stream order at the end.
-    for pending in outputs_by_call.values():
-        out.extend(pending)
+    for pending_outputs in outputs_by_call.values():
+        out.extend(pending_outputs)
     return out
 
 
@@ -156,7 +204,7 @@ def chat_messages_to_responses_input(
             )
 
     instructions = "\n\n".join(instructions_parts) if instructions_parts else None
-    return instructions, _interleave_tool_outputs(items)
+    return instructions, _group_tool_outputs(items)
 
 
 def response_to_assistant_message(response: Response) -> AssistantChatMessage:
@@ -189,7 +237,7 @@ def _reasoning_text_blocks(raw: object) -> list[str]:
         if not isinstance(block_obj, dict):
             continue
         block_map = cast("dict[str, object]", block_obj)
-        if block_map.get("type") in {"summary_text", "output_text", "reasoning_content"}:
+        if block_map.get("type") in {"summary_text", "output_text", "reasoning_text", "reasoning_content"}:
             text = block_map.get("text")
             if isinstance(text, str) and text:
                 parts.append(text)
@@ -197,12 +245,14 @@ def _reasoning_text_blocks(raw: object) -> list[str]:
 
 
 def reasoning_summary_text(response: Response) -> str:
-    """Concatenate reasoning text from the response.
+    """Concatenate the chain-of-thought text of a completed response.
 
-    OpenAI puts ``reasoning`` items in ``output`` with a ``summary`` block list.
-    DeepSeek (Responses convention) additionally returns the full chain-of-thought
-    in the top-level ``response.reasoning`` (``content``/``summary`` block lists);
-    prefer it when present so the two sources are not duplicated.
+    A reasoning item carries it in ``content`` — ``reasoning_text`` parts, with
+    ``summary`` left empty (DeepSeek's documented shape; OpenAI streams a
+    summary instead). DeepSeek (Responses convention) may also return the full
+    chain-of-thought in the top-level ``response.reasoning`` (``content`` /
+    ``summary`` block lists); prefer it when present so the two sources are not
+    duplicated.
     """
     reasoning = response.reasoning
     if isinstance(reasoning, dict):
@@ -213,7 +263,7 @@ def reasoning_summary_text(response: Response) -> str:
     for raw in response.output:
         if raw.get("type") != "reasoning":
             continue
-        parts.extend(_reasoning_text_blocks(raw.get("summary")))
+        parts.extend(_reasoning_text_blocks(raw.get("content")) + _reasoning_text_blocks(raw.get("summary")))
     return "".join(parts)
 
 
