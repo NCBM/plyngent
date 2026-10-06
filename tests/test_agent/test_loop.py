@@ -710,6 +710,50 @@ async def test_rollback_keeps_executed_tool_result_in_store() -> None:
     await store.close()
 
 
+async def test_cancelled_batch_records_every_computed_result() -> None:
+    """Leaving mid-batch keeps the results that were already computed."""
+    ran: list[str] = []
+
+    @tool(register=False)
+    def first() -> str:
+        ran.append("first")
+        return "first ran"
+
+    @tool(register=False)
+    def second() -> str:
+        ran.append("second")
+        return "second ran"
+
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(
+                    content="running both",
+                    tool_calls=[
+                        AssistantFunctionToolCall(
+                            id="call_1", function=AssistantFunctionTool(name="first", arguments="{}")
+                        ),
+                        AssistantFunctionToolCall(
+                            id="call_2", function=AssistantFunctionTool(name="second", arguments="{}")
+                        ),
+                    ],
+                )
+            )
+        ]
+    )
+    agent = ChatAgent(client, model="m", tools=ToolRegistry([first, second]), stream=False)
+
+    stream = agent.run("do both")
+    async for event in stream:
+        if isinstance(event, ToolResultEvent):
+            break
+    await stream.aclose()
+
+    results = [message for message in agent.messages if isinstance(message, ToolChatMessage)]
+    assert [message.content for message in results] == ["first ran", "second ran"]
+    assert sorted(ran) == ["first", "second"]
+
+
 async def test_chat_agent_retry_after_failure() -> None:
     store = await MemoryStore.open(DatabaseConfig())
     session = await store.create_session(name="t")

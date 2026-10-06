@@ -124,10 +124,14 @@ async def _execute_tool_calls(
     else:
         results = [await _run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
 
+    # Record every result before yielding any: a caller that goes away mid-batch
+    # (cancel, display error) must not lose work that already ran, or the retry
+    # runs that tool a second time.
+    for tool_msg, _err in results:
+        messages.append(tool_msg)
     for tool_msg, err in results:
         if err is not None:
             yield err
-        messages.append(tool_msg)
         yield ToolResultEvent(message=tool_msg)
 
 
