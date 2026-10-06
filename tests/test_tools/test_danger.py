@@ -96,6 +96,65 @@ def test_classify_shell_and_dash_c() -> None:
     assert r5 is not None and "-c" in r5
 
 
+def test_dash_c_means_code_only_for_interpreters() -> None:
+    # ``-c`` is a plain flag elsewhere: no code to review, no confirm.
+    assert classify_danger("run_argv", {"argv": ["grep", "-c", "needle", "f.txt"]}) is None
+    assert classify_danger("run_argv", {"argv": ["od", "-c", "f.bin"]}) is None
+    assert classify_danger("run_argv", {"argv": ["sort", "-c", "f.txt"]}) is None
+
+
+def test_interpreter_review_does_not_split_on_dash_c() -> None:
+    script = classify_danger("run_argv", {"argv": ["python", "script.py"]})
+    one_liner = classify_danger("run_argv", {"argv": ["python", "-c", "print(1)"]})
+    bare_shell = classify_danger("open_pty", {"command": ["bash"]})
+    assert script is not None and "interpreter 'python'" in script
+    assert one_liner is not None and "interpreter 'python'" in one_liner
+    assert bare_shell is not None and "interpreter 'bash'" in bare_shell
+    # Only the ``-c`` form has code to print below the argv line.
+    assert "command:" not in script
+    assert "command:" in one_liner
+    assert "print(1)" in one_liner
+
+
+def test_versioned_interpreter_is_still_reviewed() -> None:
+    reason = classify_danger("run_argv", {"argv": ["python3.12", "-c", "import os"]})
+    assert reason is not None and "interpreter 'python3.12'" in reason
+    assert "import os" in reason
+
+
+def test_wrappers_reach_the_interpreter() -> None:
+    for argv in (
+        ["env", "FOO=1", "python", "-c", "print(1)"],
+        ["sudo", "-u", "root", "python", "-c", "print(1)"],
+        ["timeout", "5", "bash", "-c", "rm -rf /"],
+        ["pdm", "run", "python", "-c", "print(1)"],
+        ["uv", "run", "--with", "rich", "python", "-c", "print(1)"],
+    ):
+        reason = classify_danger("run_argv", {"argv": argv})
+        assert reason is not None, argv
+        assert "interpreter 'python'" in reason or "interpreter 'bash'" in reason
+        assert "$(command)" in reason
+
+
+def test_only_the_interpreter_dash_c_becomes_a_placeholder() -> None:
+    reason = classify_danger("run_argv", {"argv": ["ionice", "-c", "2", "python", "-c", "print(1)"]})
+    assert reason is not None
+    argv_line = next(line for line in reason.splitlines() if line.startswith("  argv:"))
+    assert "ionice -c 2" in argv_line
+    assert argv_line.count("$(command)") == 1
+    assert "print(1)" in reason
+
+
+def test_detached_runner_is_always_reviewed() -> None:
+    assert classify_danger("run_argv", {"argv": ["sleep", "5"]}) is None
+    reason = classify_danger("run_argv", {"argv": ["nohup", "sleep", "5"]})
+    assert reason is not None and "nohup (detached run)" in reason
+    nested = classify_danger("run_argv", {"argv": ["nohup", "python", "-c", "print(1)"]})
+    assert nested is not None
+    assert "nohup (detached run)" in nested and "interpreter 'python'" in nested
+    assert "print(1)" in nested
+
+
 async def test_confirm_deny_with_comment() -> None:
     from plyngent.agent.tools import ToolRegistry, tool
     from plyngent.tools.danger import classify_danger as danger
@@ -124,7 +183,7 @@ def test_shell_confirm_formats_command_placeholder() -> None:
     assert reason is not None
     assert "$(command)" in reason
     assert "line1" in reason and "line2" in reason and "line3" in reason
-    argv_line = next(ln for ln in reason.splitlines() if "argv:" in ln)
+    argv_line = next(ln for ln in reason.splitlines() if ln.startswith("  argv:"))
     assert "line1" not in argv_line
     lines = reason.splitlines()
     idx = lines.index("  command:")

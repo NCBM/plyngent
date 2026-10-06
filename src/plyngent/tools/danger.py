@@ -4,59 +4,11 @@ import json
 import shlex
 from typing import TYPE_CHECKING, cast
 
+from plyngent.tools.command_scan import is_interpreter, unwrap_command
 from plyngent.tools.workspace import AccessMode, WorkspaceError, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-
-_SHELL_BASENAMES: frozenset[str] = frozenset(
-    {
-        "bash",
-        "sh",
-        "zsh",
-        "fish",
-        "dash",
-        "ksh",
-        "csh",
-        "tcsh",
-        "powershell",
-        "pwsh",
-        "cmd",
-        "cmd.exe",
-        "python",
-        "python3",
-        "python2",
-        "ipython",
-        "ipython3",
-        "node",
-        "nodejs",
-        "deno",
-        "bun",
-        "ruby",
-        "perl",
-        "php",
-        "lua",
-        "r",
-        "julia",
-        "irb",
-        "pry",
-        "ghci",
-        "scala",
-        "jshell",
-        "sqlite3",
-        "psql",
-        "mysql",
-        "mongo",
-        "redis-cli",
-    }
-)
-
-
-def _basename(argv0: str) -> str:
-    name = argv0.replace("\\", "/").rsplit("/", 1)[-1]
-    name = name.removesuffix(".exe")
-    return name.lower()
 
 
 def _as_argv(args: Mapping[str, object], *, key: str = "command") -> list[str] | None:
@@ -71,67 +23,60 @@ def _as_argv(args: Mapping[str, object], *, key: str = "command") -> list[str] |
     return out
 
 
-def _find_dash_c_code(argv: Sequence[str]) -> str | None:
-    """Return the argument after ``-c`` / ``-c…`` if present (python/bash/node style)."""
-    for index, part in enumerate(argv[1:], start=1):
+def _dash_c_code(command: Sequence[str]) -> tuple[int, str] | None:
+    """Index and text of the ``-c`` code in an interpreter argv, if present.
+
+    Only interpreters hand ``-c`` a block of code; for anything else it is a
+    plain flag (``grep -c``, ``od -c``) with nothing to review.
+    """
+    for index, part in enumerate(command[1:], start=1):
         if part == "-c":
-            return argv[index + 1] if index + 1 < len(argv) else ""
+            return index, command[index + 1] if index + 1 < len(command) else ""
         # Combined short forms are uncommon; only exact -c is supported.
     return None
 
 
 def _indent_block(text: str, *, prefix: str = "  ") -> str:
-    """Indent every line of *text* (for multi-line -c bodies in confirm prompts)."""
+    """Indent every line of *text* (for multi-line -c code in confirm prompts)."""
     if not text:
         return prefix
     return "\n".join(prefix + line if line else prefix.rstrip() for line in text.splitlines())
 
 
-def _format_argv_for_confirm(argv: Sequence[str], *, code: str | None) -> str:
-    """One-line argv summary; replace -c payload with ``$(command)`` when present."""
-    if code is None:
-        return shlex.join(list(argv))
-    parts: list[str] = []
-    skip_next = False
-    for part in argv:
-        if skip_next:
-            skip_next = False
-            continue
-        if part == "-c":
-            parts.append("-c")
-            parts.append("$(command)")
-            skip_next = True
-            continue
-        parts.append(part)
+def _format_argv_for_confirm(argv: Sequence[str], *, code_index: int | None) -> str:
+    """One-line argv summary; the ``-c`` code token becomes ``$(command)``."""
+    parts = list(argv)
+    if code_index is not None and code_index + 1 < len(parts):
+        parts[code_index + 1] = "$(command)"
     return shlex.join(parts)
 
 
-def _shell_or_dash_c_reason(argv: Sequence[str], *, via: str) -> str | None:
-    """Confirm interactive shells and ``*-c`` one-liners so the user can inspect argv.
+def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
+    """Confirm a command that runs code or detaches, whatever wraps it.
 
     Multi-line reason (shown inside the CLI confirm box). ``via`` is a short
     label such as ``run_argv`` or ``open_pty``.
 
-    For ``-c`` scripts, argv shows ``$(command)`` instead of inlining the body;
-    the full script is printed below untruncated, with every line indented.
+    The program is resolved past environment wrappers and ``<launcher> run``
+    forms (``env FOO=1 python …``, ``nohup pdm run python …``), and an
+    interpreter is confirmed the same way however it runs — a bare shell, a
+    script (``python x.py``), or a ``-c`` one-liner, whose code is printed below
+    ``command:`` instead of inline.
     """
-    if not argv:
+    scan = unwrap_command(argv)
+    interpreter = is_interpreter(scan.base)
+    findings = [f"{name} (detached run)" for name in scan.self_review]
+    if interpreter:
+        findings.append(f"interpreter {scan.base!r}")
+    if not findings:
         return None
-    base = _basename(argv[0])
-    code = _find_dash_c_code(argv)
-    display = _format_argv_for_confirm(argv, code=code)
-
+    code = _dash_c_code(scan.command) if interpreter else None
+    code_index = scan.offset + code[0] if code is not None else None
+    display = _format_argv_for_confirm(argv, code_index=code_index)
+    reason = f"{via}: {' + '.join(findings)} — review before allow\n  argv: {display}"
     if code is not None:
-        body = _indent_block(code, prefix="  ")
-        return f"{via}: {base} -c (review code before allow)\n  argv: {display}\n  command:\n{body}"
-
-    if base in _SHELL_BASENAMES and len(argv) == 1:
-        return f"{via}: interactive {base!r} (review before allow)\n  argv: {display}"
-
-    if base in _SHELL_BASENAMES and "-c" not in argv[1:]:
-        return f"{via}: shell/runtime {base!r} without -c (review before allow)\n  argv: {display}"
-
-    return None
+        reason += f"\n  command:\n{_indent_block(code[1])}"
+    return reason
 
 
 def _write_file_reason(args: Mapping[str, object]) -> str | None:
@@ -185,7 +130,7 @@ def _run_argv_reason(args: Mapping[str, object]) -> str | None:
     argv = _as_argv(args, key="argv")
     if argv is None:
         return None
-    return _shell_or_dash_c_reason(argv, via="run_argv")
+    return _command_reason(argv, via="run_argv")
 
 
 def _batch_step_argv(item: object) -> list[str] | None:
@@ -204,7 +149,7 @@ def _batch_step_argv(item: object) -> list[str] | None:
 
 
 def _run_argv_batch_reason(args: Mapping[str, object]) -> str | None:
-    """One confirm for the whole batch if any step is shell/REPL/-c."""
+    """One confirm for the whole batch if any step runs code or detaches."""
     raw = args.get("steps")
     if isinstance(raw, str):
         try:
@@ -218,7 +163,7 @@ def _run_argv_batch_reason(args: Mapping[str, object]) -> str | None:
         reason
         for index, item in enumerate(cast("list[object]", raw))
         if (argv := _batch_step_argv(item)) is not None
-        and (reason := _shell_or_dash_c_reason(argv, via=f"run_argv_batch[{index}]")) is not None
+        and (reason := _command_reason(argv, via=f"run_argv_batch[{index}]")) is not None
     ]
     if not risky:
         return None
@@ -230,7 +175,7 @@ def _open_pty_reason(args: Mapping[str, object]) -> str | None:
     argv = _as_argv(args)
     if argv is None:
         return None
-    return _shell_or_dash_c_reason(argv, via="open_pty")
+    return _command_reason(argv, via="open_pty")
 
 
 def _fetch_reason(args: Mapping[str, object]) -> str | None:
@@ -250,8 +195,9 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
     """Return a short reason if ``name``/``args`` need user confirm, else ``None``.
 
     Hard denylists (paths/commands) still raise independently. This only covers
-    soft confirms for mutating tools and risky shell/REPL launches
-    (interactive shells and ``python -c`` / ``bash -c`` one-liners).
+    soft confirms for mutating tools and risky command launches — interpreters
+    (however invoked) and detached runners such as ``nohup``, resolved past
+    environment wrappers and ``<launcher> run``.
     Private/loopback fetch targets use a separate policy grant (not YOLO).
     """
     if name == "delete_path":
