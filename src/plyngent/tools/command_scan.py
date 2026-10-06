@@ -107,17 +107,20 @@ _DURATION = re.compile(r"[0-9]+(?:\.[0-9]+)?[smhd]?")
 
 # Options that consume the next token, so ``sudo -u root python`` still finds
 # ``python``; jammed forms (``-n10``, ``--with=pkg``) need no entry, and unknown
-# options are skipped bare.
+# options are skipped bare. List value-taking options only: an entry for a flag
+# eats the program behind it, which hid ``rm`` from ``exec -c rm -rf /`` and
+# judged ``exec -c git -c … init`` as ``init``. An option with an *optional*
+# value (``xargs -e``, ``watch -d``) needs no entry either — its bare form runs
+# the program, and the jammed form carries the value in the same token.
 _VALUE_OPTS: dict[str, frozenset[str]] = {
-    "command": frozenset({"-p", "-v", "-V"}),
     "doas": frozenset({"-u", "--user"}),
     "env": frozenset({"-C", "-S", "-u", "--chdir", "--split-string", "--unset"}),
-    "exec": frozenset({"-a", "-c", "-l"}),
+    "exec": frozenset({"-a"}),
     "ionice": frozenset({"-c", "-n", "-p", "-P", "-u"}),
     "nice": frozenset({"-n", "--adjustment"}),
-    "pkexec": frozenset({"--disable-internal-agent", "--user"}),
+    "pkexec": frozenset({"--user"}),
     "stdbuf": frozenset({"-e", "-i", "-o"}),
-    "su": frozenset({"-c", "-g", "-G", "-p", "-s", "-u", "-w", "--command", "--group", "--session-command", "--shell"}),
+    "su": frozenset({"-c", "-g", "-G", "-s", "-u", "-w", "--command", "--group", "--session-command", "--shell"}),
     "sudo": frozenset(
         {
             "-C",
@@ -145,7 +148,7 @@ _VALUE_OPTS: dict[str, frozenset[str]] = {
     "time": frozenset({"-f", "-o", "--format", "--output"}),
     "timeout": frozenset({"-k", "-s", "--kill-after", "--signal"}),
     "watch": frozenset({"-n"}),
-    "xargs": frozenset({"-a", "-d", "-E", "-e", "-I", "-L", "-n", "-P", "-s"}),
+    "xargs": frozenset({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"}),
 }
 
 # Launcher options that consume a value (``uv run --with rich python``).

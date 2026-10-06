@@ -65,6 +65,33 @@ def test_unwrap_stops_when_no_program_follows() -> None:
         assert scan.base == argv[0], argv
 
 
+def test_unwrap_value_free_flags_do_not_swallow_the_program() -> None:
+    """Only options that consume the next token may be listed as value-taking.
+
+    ``exec -c`` (empty environment) and ``exec -l`` (login), ``command
+    -p|-v|-V``, ``pkexec --disable-internal-agent`` and ``su -p`` are flags: a
+    table entry for them ate the program behind them, so ``exec -c rm -rf /``
+    hid ``rm`` from the denylist while ``exec -c git -c … init`` resolved to
+    ``init``.
+    """
+    cases = [
+        (["exec", "-c", "rm", "-rf", "/"], "rm"),
+        (["exec", "-c", "git", "-c", "init.defaultBranch=main", "init"], "git"),
+        (["exec", "-l", "python", "script.py"], "python"),
+        (["command", "-v", "rm"], "rm"),
+        (["command", "-p", "rm", "-rf", "/"], "rm"),
+        (["pkexec", "--disable-internal-agent", "rm", "-rf", "/"], "rm"),
+        (["su", "-p", "python", "script.py"], "python"),
+        # Options that do take a value still consume it.
+        (["exec", "-a", "name", "rm", "-rf", "/"], "rm"),
+        (["xargs", "-e", "rm", "-rf", "/"], "rm"),
+    ]
+    for argv, base in cases:
+        scan = unwrap_command(argv)
+        assert scan.base == base, argv
+        assert scan.command[0] == base, argv
+
+
 def test_unwrap_empty_argv() -> None:
     scan = unwrap_command([])
     assert scan.base == ""

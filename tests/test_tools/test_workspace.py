@@ -215,6 +215,30 @@ def test_command_denylist_policy_confirm_timeout_value(workspace: object) -> Non
         clear_policy_allowed_commands()
 
 
+def test_command_denylist_sees_the_program_behind_value_free_flags(workspace: object) -> None:
+    """`exec -c` / `command -p` take no value, so the program stays visible."""
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(None)
+    clear_policy_allowed_commands()
+    set_command_denylist(None)
+    try:
+        for argv in (
+            ["exec", "-c", "rm", "-rf", "/"],
+            ["command", "-p", "rm", "-rf", "/"],
+            ["command", "-v", "rm"],
+        ):
+            with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+                check_command_allowed(list(argv))
+        # ``init`` here is a git subcommand, not the denylisted program: the
+        # command resolves to ``git`` and stays allowed.
+        check_command_allowed(["exec", "-c", "git", "-c", "init.defaultBranch=main", "init"])
+    finally:
+        clear_policy_allowed_commands()
+        set_command_denylist(None)
+
+
 def test_command_denylist_reaches_through_wrappers(workspace: object) -> None:
     del workspace
     from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook

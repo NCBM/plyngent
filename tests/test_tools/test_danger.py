@@ -136,6 +136,14 @@ def test_wrappers_reach_the_interpreter() -> None:
         assert "$(command)" in reason
 
 
+def test_value_free_flags_do_not_hide_the_interpreter() -> None:
+    """``exec -c`` takes no value, so the interpreter behind it is still reviewed."""
+    reason = classify_danger("run_argv", {"argv": ["exec", "-c", "python", "-c", "print(1)"]})
+    assert reason is not None
+    assert "interpreter 'python'" in reason
+    assert "print(1)" in reason
+
+
 def test_only_the_interpreter_dash_c_becomes_a_placeholder() -> None:
     reason = classify_danger("run_argv", {"argv": ["ionice", "-c", "2", "python", "-c", "print(1)"]})
     assert reason is not None
