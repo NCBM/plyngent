@@ -509,6 +509,42 @@ async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
     assert "* Fetch GET https://example.com (error: fetch failed: boom)" in out
 
 
+async def test_pretty_web_search(capsys: pytest.CaptureFixture[str]) -> None:
+    result = (
+        "- CPython free-threading — https://example.com/ft\n"
+        "  PEP 703 landed in 3.13\n"
+        "- Another page — https://example.com/other\n"
+    )
+    call = _pretty_call("web_search", '{"query": "python 3.14 free-threading"}')
+    await render_events(_aiter([call, _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Web Search 'python 3.14 free-threading' (2 hits)" in out
+    assert "[tool]" not in out
+    assert "[tool ok]" not in out
+
+
+async def test_pretty_web_search_truncates_the_query(capsys: pytest.CaptureFixture[str]) -> None:
+    query = "a" * 80
+    await render_events(
+        _aiter([_pretty_call("web_search", f'{{"query": "{query}"}}'), _result("- One — https://example.com\n")])
+    )
+    out = capsys.readouterr().out
+    assert f"* Web Search '{'a' * 60}…' (1 hit)" in out
+
+
+async def test_pretty_web_search_no_results(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "error: the search found nothing (DeepseekSearchBackend: no results; BingSearchBackend: no results)"
+    await render_events(_aiter([_pretty_call("web_search", '{"query": "zzz"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Web Search 'zzz' (no results)" in out
+
+
+async def test_pretty_web_search_failing_source(capsys: pytest.CaptureFixture[str]) -> None:
+    await render_events(_aiter([_pretty_call("web_search", '{"query": "x"}'), _result("error: search HTTP 401")]))
+    out = capsys.readouterr().out
+    assert "* Web Search 'x' (error: search HTTP 401)" in out
+
+
 async def test_pretty_mutators(capsys: pytest.CaptureFixture[str]) -> None:
     cases = [
         ("write_file", '{"path": "src/x.py"}', "wrote 120 characters to src/x.py", "* Write 'src/x.py' (120 chars)"),
@@ -862,8 +898,13 @@ async def test_pretty_mcp_tools_use_one_generic_line(capsys: pytest.CaptureFixtu
 def test_every_builtin_tool_has_a_pretty_line() -> None:
     """A new builtin tool must ship a renderer, or it silently loses the syntax."""
     from plyngent.tools.catalog import default_tool_definitions
+    from plyngent.tools.net.search import WEB_SEARCH_TOOL_NAME
 
-    missing = [d.name for d in default_tool_definitions() if _pretty_line_for(d.name) is None]
+    names = [d.name for d in default_tool_definitions()]
+    # The CLI host composes ``web_search`` over the builtins, so a catalog walk
+    # on its own would let a renderer-less tool ship.
+    names.append(WEB_SEARCH_TOOL_NAME)
+    missing = [name for name in names if _pretty_line_for(name) is None]
     assert missing == []
 
 

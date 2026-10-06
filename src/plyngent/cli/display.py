@@ -423,6 +423,27 @@ def _fetch_detail(_args_json: str, result: str) -> str:
     return _pretty_segments((f"({status or 'done'})", _http_status_fg(status)))
 
 
+# ``web_search`` reports "every source found nothing (or failed)" as an error, so
+# the renderer splits that emptiness off the failures that are real errors.
+_WEB_SEARCH_EMPTY = "error: the search found nothing"
+
+
+def _web_search_prefix(args_json: str) -> str:
+    query = _json_str_arg(args_json, "query") or "?"
+    return _pretty_prefix(f"* Web Search '{_preview(query, _ASK_SUBJECT_PREVIEW)}' ")
+
+
+def _web_search_detail(_args_json: str, result: str) -> str:
+    """``web_search`` outcome: hit count, nothing found, or a failing source."""
+    if result.startswith(_WEB_SEARCH_EMPTY):
+        return _pretty_segments(("(no results)", "dim"))
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    hits = sum(1 for line in result.splitlines() if line.startswith("- "))
+    unit = "hit" if hits == 1 else "hits"
+    return _pretty_segments((f"({hits} {unit})", None))
+
+
 _MUTATOR_VERBS: dict[str, str] = {
     "edit_replace": "Edit",
     "edit_lineno": "Edit",
@@ -825,6 +846,7 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "run_argv": PrettyLine(prefix=_run_argv_prefix, detail=_run_argv_detail),
     "run_argv_batch": PrettyLine(prefix=_run_argv_batch_prefix, detail=_run_argv_batch_detail),
     "fetch": PrettyLine(prefix=_fetch_prefix, detail=_fetch_detail),
+    "web_search": PrettyLine(prefix=_web_search_prefix, detail=_web_search_detail),
     "edit_replace": _mutator_line("edit_replace"),
     "edit_lineno": _mutator_line("edit_lineno"),
     "write_file": _mutator_line("write_file"),
