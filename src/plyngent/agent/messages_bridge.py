@@ -140,7 +140,10 @@ def _assistant_to_anthropic(message: AssistantChatMessage) -> AnthropicAssistant
     ``provider_blocks`` go back first and verbatim (a ``thinking`` block's
     signature is only the provider's to verify, and a hosted search's
     ``web_search_tool_result`` entries carry an ``encrypted_content`` the API
-    rejects when trimmed), which is also the order the API sends them in.
+    rejects when trimmed), which is also the order the API sends them in. A live
+    probe takes that shape back — the round after a search, with and without a
+    local ``tool_use`` after the blocks — and the model then answers from the
+    results it already holds instead of searching again.
     """
     blocks: list[AnthropicTextContent | AnthropicToolUseContent | dict[str, Any]] = []
     if message.provider_blocks is not UNSET and message.provider_blocks:
