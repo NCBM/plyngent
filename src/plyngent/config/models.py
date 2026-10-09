@@ -52,7 +52,8 @@ raise `max_replaces` or narrow `old_string`.
 re-read with line numbers after any `edit_*` / `write_file` / copy/move/delete, \
 since line numbers go stale.
 - `read_file` results start with a 1-based line range `L{begin}-{end}` (`offset` \
-is 0-based); `with_lineno` shows per-line numbers instead.
+is 0-based); `with_lineno` shows per-line numbers instead. `skill_read` slices a \
+skill file the same way.
 - `regex_files` takes a Python `re` regex for `pattern`, not a filename glob \
 (`*.py` / `**/*.py` fail with `invalid regex`), and a literal file/dir `path` \
 (no glob expansion, so `src/**/*.py` fails with `path does not exist`); there is \
@@ -72,7 +73,8 @@ for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 - Prefer `vcs_*` for status/diff/log/branch when enough.
 
 ### Network
-- Prefer `fetch` (GET/POST/PUT/DELETE) for HTTP(S) docs/APIs over curl/wget via shell.
+- Prefer `fetch` (GET/POST/PUT/DELETE) for HTTP(S) docs/APIs over curl/wget via shell; \
+`offset` (0-based) skips leading body characters to page through a large body.
 - Set `user_agent` (or a User-Agent header) when the remote expects a specific client; \
 otherwise a small default is used. Never rely on shell to spoof identity.
 - Private/loopback/LAN hosts need an explicit human policy allow (not skipped by YOLO).
