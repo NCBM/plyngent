@@ -9,7 +9,7 @@ for every printed row (``-vv``).
 Numbering is a **display ordinal** over the conversation rows (1-based, in the
 order the session holds them): it is what ``/history`` prints and what
 ``/history --message N`` addresses. Database row numbers are deliberately never
-shown or used — they are an implementation detail that shifts with ``/clear``.
+shown or used — they are an implementation detail of the store.
 Local-only rows (the injected system prompt) have no number.
 """
 

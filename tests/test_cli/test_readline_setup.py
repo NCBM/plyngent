@@ -149,7 +149,7 @@ def test_completer_help_commands(tmp_path: object, monkeypatch: object) -> None:
         found.append(item)
         index += 1
     assert "compact" in found
-    assert "clear" in found
+    assert "config" in found
 
 
 def test_completer_stream_on_off(tmp_path: object, monkeypatch: object) -> None:

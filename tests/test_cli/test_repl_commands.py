@@ -87,11 +87,8 @@ async def state(tmp_path: Path) -> AsyncIterator[ReplState]:
     await memory.close()
 
 
-async def test_help_and_clear(state: ReplState) -> None:
+async def test_help(state: ReplState) -> None:
     assert await handle_slash(state, "/help") is True
-    state.agent.messages.append(AssistantChatMessage(content="x"))
-    assert await handle_slash(state, "/clear") is True
-    assert state.agent.messages == []
 
 
 async def test_auto_continue_limits_installs_on_limit(tmp_path: Path) -> None:

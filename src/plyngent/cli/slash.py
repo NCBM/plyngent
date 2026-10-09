@@ -478,14 +478,6 @@ slash.add_command(quit_cmd, name="exit")
 slash.add_command(quit_cmd, name="q")
 
 
-@slash.command("clear")
-@click.pass_obj
-def clear_cmd(state: ReplState) -> None:
-    """Clear in-memory conversation (keeps session id)."""
-    state.agent.messages.clear()
-    click.echo("conversation cleared (in-memory only; DB history kept)")
-
-
 @slash.command("edit")
 @click.pass_obj
 def edit_cmd(state: ReplState) -> None:
