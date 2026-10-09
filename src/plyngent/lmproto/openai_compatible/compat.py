@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
+from msgspec import UNSET
 
-from .model import DeveloperChatMessage, SystemChatMessage
+from .model import AssistantChatMessage, DeveloperChatMessage, SystemChatMessage
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,9 +38,31 @@ def coerce_developer_messages_to_system(messages: Sequence[AnyChatMessage]) -> l
     return out if changed else list(messages)
 
 
+def coerce_chat_messages(messages: Sequence[AnyChatMessage]) -> list[AnyChatMessage]:
+    """Return *messages* as a chat-completions wire can take them.
+
+    Both normalizations are for broad provider compatibility: a ``developer``
+    role becomes ``system`` (see :func:`coerce_developer_messages_to_system`),
+    and ``AssistantChatMessage.provider_blocks`` is dropped — those blocks
+    belong to the surface that produced them (Anthropic ``thinking`` and
+    server-tool blocks; see ``agent.messages_bridge``) and no other provider
+    knows the key.
+    """
+    coerced = coerce_developer_messages_to_system(messages)
+    changed = False
+    out: list[AnyChatMessage] = []
+    for message in coerced:
+        if isinstance(message, AssistantChatMessage) and message.provider_blocks is not UNSET:
+            out.append(msgspec.structs.replace(message, provider_blocks=UNSET))
+            changed = True
+        else:
+            out.append(message)
+    return out if changed else coerced
+
+
 def coerce_chat_completions_param(param: ChatCompletionsParam) -> ChatCompletionsParam:
     """Normalize a chat-completions request for broad provider compatibility."""
-    messages = coerce_developer_messages_to_system(param.messages)
+    messages = coerce_chat_messages(param.messages)
     if messages == param.messages:
         return param
     return msgspec.structs.replace(param, messages=messages)
@@ -56,7 +79,7 @@ def coerce_chat_completions_param_any(param: Any) -> Any:
     if not isinstance(messages_obj, list):
         return param
     messages = cast("list[AnyChatMessage]", messages_obj)
-    coerced = coerce_developer_messages_to_system(messages)
+    coerced = coerce_chat_messages(messages)
     if coerced == messages:
         return param
     return msgspec.structs.replace(param, messages=coerced)

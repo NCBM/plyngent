@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import msgspec
+from msgspec import UNSET
 
 from plyngent.lmproto.deepseek.openai_compat.model import ChatCompletionsParam as DeepseekChatCompletionsParam
 from plyngent.lmproto.openai_compatible.compat import (
     coerce_chat_completions_param,
     coerce_chat_completions_param_any,
+    coerce_chat_messages,
     coerce_developer_messages_to_system,
     developer_to_system_message,
 )
@@ -88,3 +90,32 @@ def test_generic_coercion_handles_deepseek_runtime_param() -> None:
     coerced = coerce_chat_completions_param_any(base)
     raw = msgspec.json.decode(msgspec.json.encode(coerced))
     assert raw["messages"][0]["role"] == "system"
+
+
+def test_coerce_chat_messages_drops_provider_blocks() -> None:
+    """Another surface's opaque blocks are not a chat-completions key."""
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="hi"),
+        AssistantChatMessage(
+            content="done",
+            reasoning_content="hmm",
+            provider_blocks=[{"type": "thinking", "thinking": "hmm", "signature": "sig-1"}],
+        ),
+    ]
+    coerced = coerce_chat_messages(messages)
+    assistant = coerced[1]
+    assert isinstance(assistant, AssistantChatMessage)
+    assert assistant.provider_blocks is UNSET
+    # The reasoning slot is the provider-neutral one and stays.
+    assert assistant.reasoning_content == "hmm"
+    raw = msgspec.json.decode(msgspec.json.encode(ChatCompletionsParam(model="m", messages=coerced)))
+    assert "provider_blocks" not in raw["messages"][1]
+    # The history the copy came from keeps them for the surface that made them.
+    original = messages[1]
+    assert isinstance(original, AssistantChatMessage)
+    assert original.provider_blocks is not UNSET
+
+
+def test_coerce_chat_messages_leaves_plain_history_alone() -> None:
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi"), AssistantChatMessage(content="done")]
+    assert coerce_chat_messages(messages) == messages
