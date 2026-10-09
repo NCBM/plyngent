@@ -80,6 +80,10 @@ async def fetch(
     """HTTP request (GET/POST/PUT/DELETE); return status, metadata, and truncated body.
 
     Use for public docs/APIs or (after human policy allow) local/LAN servers.
+    ``offset`` skips that many leading characters of the body (0-based), for
+    paging through a body larger than ``max_chars``; a body truncated by
+    ``max_chars`` keeps its remainder in memory instead, resumable via its
+    ``truncate_token`` without another request.
     ``user_agent`` sets User-Agent when provided and takes precedence over a
     User-Agent entry in ``headers``. A headers-only User-Agent is kept as-is.
     When both omit UA, a small default is used.
