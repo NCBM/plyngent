@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Single-user CLI is usable: protocol clients, config, async memory, agent tool loop, workspace tools, skill discovery, and REPL/one-shot chat. Multi-tenant `router/` / web remain Phase H.
+Plyngent is an LLM chat and agent toolkit (Python 3.14+, PDM-managed). Single-user CLI is usable: protocol clients, config, async memory, agent tool loop, workspace tools, skill discovery, and REPL/one-shot chat. Multi-tenant web (`web/`) remains Phase H.
 
 ## Commands
 
@@ -171,7 +171,7 @@ A nested function is counted **twice**: its decision points are added to the enc
   | G5 (done) | Master FD non-inheritable; `read_pty`/`close_pty` via `to_thread`; chat exit `close_all`; fork stays on loop/main thread. |
   | Phase H | Optional PTY helper process (JSON/Unix socket), or subprocess+PTY with asyncio reaping; sandboxed tools, multi-session isolation. |
 
-- **Phase H**: multi-tenant platform (`router/`, auth, sandboxed tools, web). Optional **out-of-process PTY host** if isolation is required.
+- **Phase H**: multi-tenant platform (auth, sandboxed tools, `web/`). Optional **out-of-process PTY host** if isolation is required.
 
 ## Commit messages
 

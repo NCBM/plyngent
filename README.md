@@ -361,7 +361,7 @@ See [doc/architecture.md](doc/architecture.md) and [AGENTS.md](AGENTS.md) for de
 - **`memory/`** — async SQLAlchemy sessions/messages  
 - **`tools/`** — workspace tools  
 - **`cli/`** — Click entry + slash registry (`awaitlet` bridges sync Click to async work)  
-- Multi-tenant / web (`router/`, real `web/`) are **not** in scope for the single-user CLI (Phase H).
+- Multi-tenant web (`web/`) is **not** in scope for the single-user CLI (Phase H).
 
 ## License
 

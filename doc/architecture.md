@@ -19,7 +19,6 @@
     - utils: Common utilities for code architecture.
         - components: Utilities for class composition.
     - memory: Storage controlling for sessions and messages.
-    - router: Multi-source capability routing (Phase H; not implemented).
     - config: Plyngent configuration center (TOML), including ``[plugins]`` and
       ``[networking]`` (e.g. fetch SSRF Fake-IP CIDR exemptions). Model entries
       may override provider ``preset`` / ``url`` for mixed API routing.
