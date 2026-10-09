@@ -343,31 +343,6 @@ class ReplState:
         self.instance_state.skills = self.skills
         _ = set_static_read_roots([root.path for root in roots], instance=self.instance_state)
 
-    def _skills_text(self) -> str:
-        """Fold the discovered skills into the system prompt (like MCP instructions).
-
-        Only names, sources, and descriptions: the bodies stay on disk so a turn
-        pays for the skill it actually reads. Notes and shadowed copies are left
-        to ``skill_list``, which the model can call when something looks off.
-        """
-        cfg = self.config.skills_config
-        if self.skills is None or not self.tools_enabled or not cfg.inject_catalog:
-            return ""
-        skills = self.skills.skills
-        if not skills:
-            return ""
-        limit = max(0, cfg.max_catalog_skills)
-        shown = skills[:limit]
-        lines = [
-            "### Skills",
-            "Available skills (read a skill's SKILL.md with `skill_read` before following it):",
-        ]
-        lines.extend(f"- {skill.name} ({skill.root.label}): {skill.description}" for skill in shown)
-        if len(skills) > len(shown):
-            lines.append(f"- … and {len(skills) - len(shown)} more; use `skill_search` or `skill_list`")
-        lines.append("Search all skills with `skill_search`; create or update one with `skill_create` / `skill_edit`.")
-        return "\n".join(lines)
-
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
@@ -471,7 +446,6 @@ class ReplState:
         system_prompt = compose_agent_system_content(
             agent_cfg.system_prompt,
             agent_cfg.tool_directives,
-            self._skills_text(),
             mcp_text,
         )
         on_limit = prompt_continue_limit_async if (self.interactive_limits or auto_continue_enabled()) else None
@@ -815,6 +789,7 @@ class ReplState:
         self.session_state = self._session_data_for_todo()
         self.agent = self._make_agent()
         self._bind_todo_tools()
+        await self._notice_skill_tools()
 
     async def rename_current_session(self, name: str) -> SessionRow:
         if self.session_id is None:
@@ -879,6 +854,7 @@ class ReplState:
         await self.agent.load_history()
         await self.load_todo_stack()
         await self.load_access_grants()
+        await self._notice_skill_tools()
         if restarted:
             await self._notice_restart(last_active=row.updated_at)
 
@@ -902,11 +878,32 @@ class ReplState:
         await self.agent.load_history()
         await self.load_todo_stack()
         await self.load_access_grants()
+        await self._notice_skill_tools()
         if restarted:
             # Before touch_session: the stamp should be the previous run's activity.
             await self._notice_restart(last_active=latest.updated_at)
         _ = await self.memory.touch_session(latest.sid)
         return "resume"
+
+    async def _notice_skill_tools(self) -> None:
+        """Teach the skill tools once per session — never what skills exist.
+
+        Instructions only: the listing stays behind ``skill_list`` /
+        ``skill_search``, and the store reads the filesystem live, so a skill that
+        appears later in the session is found the same way. A session created
+        before this host pushed the note gets it on resume instead of a second copy.
+        """
+        from plyngent.agent import has_notice, skill_tools_notice
+        from plyngent.cli.display import echo_notice
+
+        if self.skills is None or not self.tools_enabled:
+            return
+        notice = skill_tools_notice()
+        if has_notice(self.agent.messages, notice.kind):
+            return
+        _ = await self.agent.push_notice(notice)
+        if not self.quiet:
+            echo_notice(notice, err=True)
 
     async def _notice_restart(self, *, last_active: datetime | None) -> None:
         """Tell the model — and the user — that this session outlived a restart."""

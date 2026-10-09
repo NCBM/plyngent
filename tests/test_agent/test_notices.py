@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 
-from plyngent.agent import ChatAgent, Notice, aside_notice, format_moment, resume_notice
+from plyngent.agent import ChatAgent, Notice, aside_notice, format_moment, has_notice, resume_notice, skill_tools_notice
 from plyngent.agent.chat import incomplete_turn_user_text
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
@@ -55,6 +55,31 @@ def test_aside_notice_matches_tool_scope() -> None:
     assert "Full tools are available" in aside_notice(tools_mode="full").body
     # Unknown mode degrades to the read-only wording rather than an empty notice.
     assert aside_notice(tools_mode="weird").body == read.body
+
+
+def test_skill_tools_notice_points_at_the_tools_without_listing() -> None:
+    notice = skill_tools_notice()
+    assert notice.kind == "skills"
+    # Instructions only — what exists is asked for, never injected.
+    assert "not listed here" in notice.body
+    assert "`skill_list`" in notice.body
+    assert "`skill_search`" in notice.body
+    assert "`skill_read NAME [file]`" in notice.body
+    assert "data, not code" in notice.body
+    assert "skill_list" in notice.summary
+
+
+def test_has_notice_finds_a_persisted_row_by_kind() -> None:
+    messages = [
+        SystemChatMessage(content="sys"),
+        skill_tools_notice().to_message(),
+        resume_notice(last_active=None).to_message(),
+    ]
+    assert has_notice(messages, "skills") is True
+    assert has_notice(messages, "resume") is True
+    assert has_notice(messages, "aside") is False
+    # A plain developer row (a directive checkpoint) is not a notice.
+    assert has_notice([DeveloperChatMessage(content="checkpoint")], "skills") is False
 
 
 async def test_push_notice_appends_and_persists() -> None:

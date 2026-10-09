@@ -253,17 +253,15 @@ class SkillsConfig(Struct, omit_defaults=True):
        ``include_project_roots``)
 
     A skill found in several roots shadows the lower-priority copies: they stay
-    listed, never hidden. ``enabled = false`` registers no skill tools at all and
-    injects no catalog. Writing needs an explicit grant (a confirm per call, or
-    ``allow_write`` for a standing one); reads need none.
+    listed, never hidden. ``enabled = false`` registers no skill tools at all.
+    Writing needs an explicit grant (a confirm per call, or ``allow_write`` for a
+    standing one); reads need none.
     """
 
     enabled: bool = True
     paths: list[str] = field(default_factory=list)
     discover: list[SkillDiscoverySource] = field(default_factory=lambda: ["plyngent", "claude"])
     include_project_roots: bool = True
-    inject_catalog: bool = True
-    max_catalog_skills: int = 50
     allow_write: bool = False
 
 

@@ -23,7 +23,9 @@ from .loop import run_chat_loop as run_chat_loop
 from .notices import Notice as Notice
 from .notices import aside_notice as aside_notice
 from .notices import format_moment as format_moment
+from .notices import has_notice as has_notice
 from .notices import resume_notice as resume_notice
+from .notices import skill_tools_notice as skill_tools_notice
 from .tools import DangerClassifier as DangerClassifier
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolDefinition as ToolDefinition

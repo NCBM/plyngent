@@ -11,6 +11,7 @@ from plyngent.cli.slash import handle_slash
 from plyngent.cli.state import ReplState
 from plyngent.config.models import DatabaseConfig, OpenAIProvider
 from plyngent.config.store import ConfigStore
+from plyngent.lmproto.openai_compatible.model import DeveloperChatMessage
 from plyngent.memory import MemoryStore
 from plyngent.prompting import NonInteractiveBackend, temporary_backend
 from plyngent.skills import SKILL_FILE
@@ -29,6 +30,15 @@ def _write_skill(root: Path, name: str, *, description: str = "A test skill", bo
         encoding="utf-8",
     )
     return directory
+
+
+def _skill_notice_rows(state: ReplState) -> list[str]:
+    """Body of every ``skills`` host notice in the session transcript."""
+    return [
+        message.content
+        for message in state.agent.messages
+        if isinstance(message, DeveloperChatMessage) and message.content.startswith("[plyngent notice: skills]")
+    ]
 
 
 def _config_doc(tmp_path: Path, *, paths: list[Path] | None = None, extra: str = "") -> tomlkit.TOMLDocument:
@@ -230,61 +240,44 @@ async def test_skill_tools_are_absent_when_disabled(tmp_path: Path) -> None:
         await state.memory.close()
 
 
-async def test_skills_catalog_is_folded_into_the_system_prompt(tmp_path: Path) -> None:
+async def test_skill_tools_note_teaches_the_tools_without_listing_skills(tmp_path: Path) -> None:
     root = tmp_path / "ours"
     root.mkdir()
     _ = _write_skill(root, "acme-deploy", description="Deploy the acme stack")
     state = await _state(tmp_path, skills_dir=root, tools_enabled=True)
     try:
         prompt = state.agent.system_prompt or ""
-        assert "### Skills" in prompt
-        assert "- acme-deploy (config-user): Deploy the acme stack" in prompt
-        assert "`skill_read`" in prompt
-        # The body stays on disk: only the catalog goes into the prompt.
+        # Nothing about the skill set is injected: not the names, not the bodies.
+        assert "acme-deploy" not in prompt
+        assert "Deploy the acme stack" not in prompt
         assert "Body." not in prompt
+
+        notes = _skill_notice_rows(state)
+        assert len(notes) == 1
+        assert "`skill_list`" in notes[0]
+        assert "`skill_search`" in notes[0]
+
+        # The note belongs to the session, not the event: a second push is a no-op.
+        await state._notice_skill_tools()
+        assert len(_skill_notice_rows(state)) == 1
     finally:
         await state.memory.close()
 
 
-async def test_skills_catalog_respects_the_cap(tmp_path: Path) -> None:
-    root = tmp_path / "ours"
-    root.mkdir()
-    for name in ("alpha", "beta", "gamma"):
-        _ = _write_skill(root, name)
-    state = await _state(tmp_path, skills_dir=root, tools_enabled=True, extra="max_catalog_skills = 1")
-    try:
-        prompt = state.agent.system_prompt or ""
-        assert "alpha" in prompt
-        assert "beta" not in prompt
-        assert "… and 2 more" in prompt
-    finally:
-        await state.memory.close()
-
-
-async def test_skills_catalog_can_be_switched_off(tmp_path: Path) -> None:
+async def test_skill_tools_note_needs_the_feature_and_tools(tmp_path: Path) -> None:
     root = tmp_path / "ours"
     root.mkdir()
     _ = _write_skill(root, "acme")
-    state = await _state(tmp_path, skills_dir=root, tools_enabled=True, extra="inject_catalog = false")
+    disabled = await _state(tmp_path, skills_dir=root, tools_enabled=True, extra="enabled = false")
     try:
-        assert "### Skills" not in (state.agent.system_prompt or "")
-        # The tools are still offered; only the prompt block is gone.
-        assert state.agent.tools is not None
-        assert state.agent.tools.get("skill_list") is not None
+        assert _skill_notice_rows(disabled) == []
     finally:
-        await state.memory.close()
-
-
-async def test_skills_catalog_needs_tools(tmp_path: Path) -> None:
-    root = tmp_path / "ours"
-    root.mkdir()
-    _ = _write_skill(root, "acme")
-    state = await _state(tmp_path, skills_dir=root, tools_enabled=False)
+        await disabled.memory.close()
+    no_tools = await _state(tmp_path, skills_dir=root, tools_enabled=False)
     try:
-        assert state.agent.tools is None
-        assert "### Skills" not in (state.agent.system_prompt or "")
+        assert _skill_notice_rows(no_tools) == []
     finally:
-        await state.memory.close()
+        await no_tools.memory.close()
 
 
 async def test_slash_skills_notes_when_tools_are_off(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

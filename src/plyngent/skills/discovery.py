@@ -39,7 +39,7 @@ class SkillRoot:
     ``origin`` names where the root came from (``config`` for an explicit path,
     ``plyngent`` for our own user directory, ``claude`` for another harness);
     ``scope`` is ``user`` or ``project``. Together they label a skill's
-    provenance in listings and in the injected catalog.
+    provenance in listings.
     """
 
     path: Path

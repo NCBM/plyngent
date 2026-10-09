@@ -31,8 +31,8 @@
 # Discovery roots in priority order: explicit `paths`, our own user config
 # directory (<config dir>/skills), other harnesses' skill directories
 # (~/.claude/skills; plus <workspace>/.claude/skills when include_project_roots).
-# The catalog (name + description) is folded into the system prompt when tools
-# are on; the model reads bodies with skill_read and searches with skill_search.
+# A session-start notice describes the tools; what exists is found with
+# skill_list, bodies are read with skill_read, contents searched with skill_search.
 # Reading needs no grant (the roots are read-only roots); creating or editing a
 # skill asks once/session, or stands with allow_write = true. See doc/skills.md.
 # [skills]
@@ -40,8 +40,6 @@
 # paths = ["~/team-skills", "/srv/skills"]
 # discover = ["plyngent", "claude"]
 # include_project_roots = true
-# inject_catalog = true
-# max_catalog_skills = 50
 # allow_write = false
 
 # MCP (Model Context Protocol) servers exposed as agent tools.

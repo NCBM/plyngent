@@ -49,12 +49,10 @@ lists the ones with no directory.
 
 ```toml
 [skills]
-enabled = true            # false = no skill tools and no prompt catalog
+enabled = true            # false = no skill tools
 paths = ["~/team-skills"] # explicit roots; `~` expands to your home
 discover = ["plyngent", "claude"]
 include_project_roots = true
-inject_catalog = true     # fold the catalog into the system prompt
-max_catalog_skills = 50
 allow_write = false       # true = standing grant for skill writes
 ```
 
@@ -70,13 +68,15 @@ a note: the skill stays listable instead of vanishing.
 | Field | Meaning |
 |-------|---------|
 | `name` | Skill name; must be lowercase letters, digits, and single hyphens (max 64). A name that cannot be used falls back to the directory name, with a note. |
-| `description` | One line shown in the catalog and in `skill_list`. Missing → the first non-heading paragraph of the body. |
+| `description` | One line shown by `skill_list` (and `/skills` for the human). Missing → the first non-heading paragraph of the body. |
 | `version`, `license`, `allowed-tools`, … | Kept and shown by `skill_list`; `allowed-tools` is **recorded, not enforced** today. |
 
 ## What the agent sees
 
-- **Catalog** (system prompt, `inject_catalog`): names, sources, descriptions —
-  never the bodies, so a turn only pays for the skill it actually reads.
+- **Notice** (a host notice, `agent/notices.py`): when skills are enabled and
+  tools are on, the session gets one `skills` notice describing the tools; it
+  lists nothing, so what *exists* is asked for and a turn only pays for the
+  skill it actually reads.
 - `skill_list` — what exists, where it came from, shadowed copies, and the notes
   from repaired frontmatter.
 - `skill_read NAME [file]` — the `SKILL.md` body (ranges, line numbers, and a

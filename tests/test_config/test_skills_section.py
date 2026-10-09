@@ -16,8 +16,6 @@ def test_skills_section_defaults(tmp_path: Path) -> None:
     assert store.skills_config.paths == []
     assert store.skills_config.discover == ["plyngent", "claude"]
     assert store.skills_config.include_project_roots is True
-    assert store.skills_config.inject_catalog is True
-    assert store.skills_config.max_catalog_skills == 50
     assert store.skills_config.allow_write is False
 
 
@@ -30,8 +28,6 @@ enabled = false
 paths = ["~/team-skills", "/srv/skills"]
 discover = ["plyngent"]
 include_project_roots = false
-inject_catalog = false
-max_catalog_skills = 5
 allow_write = true
 """,
         encoding="utf-8",
@@ -41,8 +37,6 @@ allow_write = true
     assert cfg.paths == ["~/team-skills", "/srv/skills"]
     assert cfg.discover == ["plyngent"]
     assert cfg.include_project_roots is False
-    assert cfg.inject_catalog is False
-    assert cfg.max_catalog_skills == 5
     assert cfg.allow_write is True
 
 
