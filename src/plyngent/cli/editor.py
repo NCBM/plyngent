@@ -112,11 +112,17 @@ def _run_blocking_editor(editor_cmd: str, path: Path) -> None:
         raise click.ClickException(msg)
 
 
-def _open_with_system_default(path: Path) -> None:
+def _open_failure(reason: str, hint: str) -> str:
+    """Compose an open failure message, appending the caller's fallback hint."""
+    return f"{reason}; {hint}" if hint else reason
+
+
+def _open_with_system_default(path: Path, *, hint: str = "") -> None:
     """Open *path* with the OS file association (non-blocking).
 
     Linux: ``xdg-open``; macOS: ``open``; Windows: ``os.startfile``.
-    Does not wait for the application to exit.
+    Does not wait for the application to exit. *hint* names the caller's own
+    fallback (an editor, a printed path) and is appended to failures.
     """
     resolved = str(path.resolve())
     if sys.platform == "win32":
@@ -141,19 +147,22 @@ def _open_with_system_default(path: Path) -> None:
             stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError as exc:
-        cmd = argv[0]
-        msg = (
-            f"{cmd} not found and neither VISUAL nor EDITOR is set; "
-            "set VISUAL or EDITOR to a blocking editor (e.g. nano, vim, codium --wait)"
-        )
-        raise click.ClickException(msg) from exc
+        raise click.ClickException(_open_failure(f"{argv[0]} not found", hint)) from exc
     except OSError as exc:
-        msg = f"failed to open with system default: {exc}"
-        raise click.ClickException(msg) from exc
+        raise click.ClickException(_open_failure(f"failed to open with system default: {exc}", hint)) from exc
 
     if completed.returncode != 0:
-        msg = f"system open failed (exit {completed.returncode}); set VISUAL or EDITOR to a blocking editor"
-        raise click.ClickException(msg)
+        raise click.ClickException(_open_failure(f"system open failed (exit {completed.returncode})", hint))
+
+
+def open_directory(path: Path) -> None:
+    """Reveal *path* (a directory) in the OS file manager (non-blocking).
+
+    A folder is not an editor target, so ``$VISUAL`` / ``$EDITOR`` are never
+    consulted: the platform opener decides. The caller prints *path* too, which
+    is the way in when the host has no opener at all.
+    """
+    _open_with_system_default(path, hint="open the printed path manually")
 
 
 def open_in_editor(
@@ -189,7 +198,10 @@ def open_in_editor(
         msg = "neither VISUAL nor EDITOR is set"
         raise click.ClickException(msg)
 
-    _open_with_system_default(path)
+    _open_with_system_default(
+        path,
+        hint="set VISUAL or EDITOR to a blocking editor (e.g. nano, vim, codium --wait)",
+    )
     return "system"
 
 

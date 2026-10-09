@@ -303,7 +303,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
 | `/todos` | Todo/task stack: list, push, pop, done, clear |
-| `/skills [list\|search\|read\|reload]` | List discovered skills, regex-search them, print a `SKILL.md` (or one bundled file), or rescan the roots |
+| `/skills [list\|search\|open\|reload]` | List discovered skills, regex-search them, open one's directory in the system file manager, or rescan the roots |
 | `/grants` | Directory-access grants: list, or `revoke <index\|all>` |
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
 | `/quit` | Leave the REPL |

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from plyngent.agent import ToolRegistry
     from plyngent.cli.state import ReplState, YoloMode
+    from plyngent.skills import SkillStore
 
 _COMPACT_PREVIEW = 400
 _ON_OFF_CHOICES = ("on", "off")
@@ -1244,21 +1245,41 @@ def mcp_slash_cmd(state: ReplState, action: str | None) -> None:
     _print_mcp_status(state)
 
 
+def _open_skill_directory(store: SkillStore, name: str) -> None:
+    """Reveal a skill's directory in the host file manager (``/skills open``).
+
+    Reading a skill is a file-manager job, not a render of the model-facing
+    ``skill_read`` output; the printed path is the fallback on a headless host.
+    """
+    from plyngent.cli.editor import open_directory
+
+    skill = store.find(name)
+    if skill is None:
+        click.echo(f"error: unknown skill {name!r}; /skills lists the discovered ones")
+        return
+    try:
+        open_directory(skill.path)
+    except click.ClickException as exc:
+        click.echo(f"error: {exc}")
+        click.echo(f"skill directory: {skill.path}")
+        return
+    click.echo(f"opened {skill.path}")
+
+
 @slash.command("skills")
-@click.argument("action", required=False, type=click.Choice(["list", "search", "read", "reload"]))
+@click.argument("action", required=False, type=click.Choice(["list", "search", "open", "reload"]))
 @click.argument("target", required=False)
-@click.option("--file", "file", default="", help="File inside the skill (with ``read``).")
 @click.pass_obj
-def skills_slash_cmd(state: ReplState, action: str | None, target: str | None, file: str) -> None:
-    """List skills, search or read them, or rescan the roots.
+def skills_slash_cmd(state: ReplState, action: str | None, target: str | None) -> None:
+    """List skills, search them, open one's directory, or rescan the roots.
 
     ``/skills`` or ``/skills list`` — discovered skills with their source root.
     ``/skills search PATTERN`` — regex over every skill's contents.
-    ``/skills read NAME [--file F]`` — print a skill's SKILL.md (or one file).
+    ``/skills open NAME`` — reveal the skill's directory in the file manager.
     ``/skills reload`` — rescan the roots after an external edit.
     """
     from plyngent.tools.context import bind_tool_context
-    from plyngent.tools.skills import SKILL_TOOL_NAMES, format_skill_table, skill_read, skill_search
+    from plyngent.tools.skills import SKILL_TOOL_NAMES, format_skill_table, skill_search
 
     if state.skills is None:
         click.echo("skills: disabled (set [skills].enabled = true)")
@@ -1269,6 +1290,12 @@ def skills_slash_cmd(state: ReplState, action: str | None, target: str | None, f
         _slash_rebuild_tools_if_on(state)
         click.echo(f"skills reloaded: {len(state.skills.skills)} visible; tools rebuilt")
         return
+    if act == "open":
+        if not target:
+            msg = "/skills open requires a skill name"
+            raise click.UsageError(msg)
+        _open_skill_directory(state.skills, target)
+        return
     # The tool handlers read the bound instance (the registry binds it for a
     # model call; a slash command has to do it itself).
     with bind_tool_context(instance=state.instance_state, session=state.session_state):
@@ -1277,12 +1304,6 @@ def skills_slash_cmd(state: ReplState, action: str | None, target: str | None, f
                 msg = "/skills search requires a pattern"
                 raise click.UsageError(msg)
             click.echo(_await(skill_search.handler(target)))
-            return
-        if act == "read":
-            if not target:
-                msg = "/skills read requires a skill name"
-                raise click.UsageError(msg)
-            click.echo(_await(skill_read.handler(target, file or "SKILL.md")))
             return
     click.echo(format_skill_table(state.skills))
     if not state.tools_enabled:

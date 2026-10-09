@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -9,6 +10,7 @@ from plyngent.cli.app import main
 from plyngent.cli.editor import (
     ensure_config_file,
     get_editor,
+    open_directory,
     open_in_editor,
     prompt_edit_config,
     resolve_config_path,
@@ -70,7 +72,8 @@ def test_open_in_editor_system_fallback(
     path = tmp_path / "x.toml"
     opened: list[str] = []
 
-    def fake_system(p: Path) -> None:
+    def fake_system(p: Path, *, hint: str = "") -> None:
+        assert hint
         opened.append(str(p))
 
     monkeypatch.setattr("plyngent.cli.editor._open_with_system_default", fake_system)
@@ -78,6 +81,43 @@ def test_open_in_editor_system_fallback(
     assert outcome == "system"
     assert opened == [str(path)]
     assert path.is_file()
+
+
+def test_open_directory_uses_the_system_opener_even_with_an_editor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[Path] = []
+
+    def fake_system(p: Path, *, hint: str = "") -> None:
+        assert hint
+        opened.append(p)
+
+    # A folder is not an editor target: $EDITOR must not be consulted.
+    monkeypatch.setenv("EDITOR", "codium --wait")
+    monkeypatch.setattr("plyngent.cli.editor._open_with_system_default", fake_system)
+    directory = tmp_path / "acme-deploy"
+    directory.mkdir()
+
+    open_directory(directory)
+
+    assert opened == [directory]
+
+
+def test_open_directory_names_the_printed_path_when_the_opener_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        msg = "xdg-open"
+        raise FileNotFoundError(msg)
+
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("plyngent.cli.editor.subprocess.run", missing)
+
+    with pytest.raises(click.ClickException, match=r"xdg-open not found; open the printed path"):
+        open_directory(tmp_path)
 
 
 def test_open_in_editor_no_fallback_requires_editor(
@@ -227,7 +267,7 @@ def test_config_edit_system_fallback_message(
     monkeypatch.delenv("VISUAL", raising=False)
     monkeypatch.setattr(
         "plyngent.cli.editor._open_with_system_default",
-        lambda p: None,
+        lambda p, **kwargs: None,
     )
     runner = CliRunner()
     result = runner.invoke(main, ["config", "edit", "--config", str(path)])

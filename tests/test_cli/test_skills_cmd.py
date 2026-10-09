@@ -99,7 +99,7 @@ async def test_skills_are_discovered_from_a_configured_root(tmp_path: Path) -> N
         await state.memory.close()
 
 
-async def test_slash_skills_lists_search_and_reads(
+async def test_slash_skills_lists_and_searches(
     skills_state: ReplState,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -112,11 +112,53 @@ async def test_slash_skills_lists_search_and_reads(
     assert await handle_slash(skills_state, "/skills search pdftotext") is True
     assert "acme-deploy/SKILL.md:" in capsys.readouterr().out
 
-    assert await handle_slash(skills_state, "/skills read acme-deploy") is True
-    assert "description: Deploy the acme stack" in capsys.readouterr().out
 
-    assert await handle_slash(skills_state, "/skills read acme-deploy --file SKILL.md") is True
-    assert "acme-deploy" in capsys.readouterr().out
+async def test_slash_skills_open_reveals_the_skill_directory(
+    skills_state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[Path] = []
+    monkeypatch.setattr("plyngent.cli.editor._open_with_system_default", lambda path, **kw: opened.append(path))
+
+    assert await handle_slash(skills_state, "/skills open acme-deploy") is True
+
+    assert skills_state.skills is not None
+    skill = skills_state.skills.find("acme-deploy")
+    assert skill is not None
+    assert opened == [skill.path]
+    assert f"opened {skill.path}" in capsys.readouterr().out
+
+
+async def test_slash_skills_open_falls_back_to_the_printed_path(
+    skills_state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import click
+
+    def no_opener(path: Path, **kwargs: object) -> None:
+        del path, kwargs
+        msg = "xdg-open not found"
+        raise click.ClickException(msg)
+
+    monkeypatch.setattr("plyngent.cli.editor._open_with_system_default", no_opener)
+    assert await handle_slash(skills_state, "/skills open acme-deploy") is True
+
+    assert skills_state.skills is not None
+    skill = skills_state.skills.find("acme-deploy")
+    assert skill is not None
+    out = capsys.readouterr().out
+    assert "error: xdg-open not found" in out
+    assert f"skill directory: {skill.path}" in out
+
+
+async def test_slash_skills_open_reports_an_unknown_skill(
+    skills_state: ReplState,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert await handle_slash(skills_state, "/skills open nope") is True
+    assert "unknown skill 'nope'" in capsys.readouterr().out
 
 
 async def test_slash_skills_reload_picks_up_a_new_skill(
@@ -150,7 +192,7 @@ async def test_slash_skills_reports_a_disabled_feature(tmp_path: Path, capsys: p
 
 
 async def test_slash_skills_requires_a_target(skills_state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
-    for command in ("/skills search", "/skills read"):
+    for command in ("/skills search", "/skills open"):
         assert await handle_slash(skills_state, command) is True
         assert "requires" in capsys.readouterr().err
 
