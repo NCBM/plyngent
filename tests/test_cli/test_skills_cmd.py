@@ -161,7 +161,7 @@ async def test_slash_skills_open_reports_an_unknown_skill(
     assert "unknown skill 'nope'" in capsys.readouterr().out
 
 
-async def test_slash_skills_reload_picks_up_a_new_skill(
+async def test_slash_skills_sees_a_skill_added_while_chatting(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -172,8 +172,7 @@ async def test_slash_skills_reload_picks_up_a_new_skill(
         assert await handle_slash(state, "/skills") is True
         assert "skills: 0" in capsys.readouterr().out
         _ = _write_skill(root, "added-later")
-        assert await handle_slash(state, "/skills reload") is True
-        assert "skills reloaded: 1 visible" in capsys.readouterr().out
+        # No reload: the next listing reads the filesystem.
         assert await handle_slash(state, "/skills") is True
         assert "added-later" in capsys.readouterr().out
     finally:

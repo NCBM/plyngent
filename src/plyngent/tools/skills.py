@@ -465,7 +465,6 @@ async def skill_create(
             _write_file(path, content)
     except OSError as exc:
         return f"error: failed to create skill {token!r}: {exc}"
-    store.reload()
     return f"created skill {token!r} at {target}{_skill_notes(target / SKILL_FILE)}"
 
 
@@ -571,7 +570,6 @@ async def skill_edit(
         _write_file(target, updated)
     except OSError as exc:
         return f"error: failed to write {relative} of skill {skill.name!r}: {exc}"
-    store.reload()
     notes = _skill_notes(target) if target.name == SKILL_FILE else ""
     return f"updated skill {skill.name!r} ({detail}){notes}"
 

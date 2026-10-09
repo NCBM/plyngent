@@ -343,11 +343,6 @@ class ReplState:
         self.instance_state.skills = self.skills
         _ = set_static_read_roots([root.path for root in roots], instance=self.instance_state)
 
-    def reload_skills(self) -> None:
-        """Rescan the roots (after an external edit or a config change)."""
-        if self.skills is not None:
-            self.skills.reload()
-
     def _skills_text(self) -> str:
         """Fold the discovered skills into the system prompt (like MCP instructions).
 

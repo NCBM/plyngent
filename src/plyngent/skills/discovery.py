@@ -3,9 +3,8 @@
 A skill is a directory holding a ``SKILL.md``. Roots are ordered by priority
 (explicit ``[skills].paths`` first, then the built-in sources), so the first
 skill with a given name wins and the copies it shadows stay visible for
-reporting rather than disappearing. Parsed metadata is cached against the
-directory list and its ``SKILL.md`` timestamps, which makes a listing cheap
-while still noticing an edit made outside the chat.
+reporting rather than disappearing. Nothing is cached: every lookup reads the
+filesystem, so an edit or a new skill made outside the chat is simply there.
 """
 
 from __future__ import annotations
@@ -119,11 +118,10 @@ def _expand(token: str, *, home: Path | None) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
-    """One candidate skill directory plus the timestamp that invalidates the cache."""
+    """One candidate skill directory under its root."""
 
     root: SkillRoot
     directory: Path
-    mtime_ns: int
 
 
 def validate_skill_name(name: str) -> str | None:
@@ -166,14 +164,16 @@ def resolve_skill_file(skill: Skill, relative: str) -> Path | None:
 
 
 class SkillStore:
-    """Skills discovered under *roots*, highest-priority root first."""
+    """Skills discovered under *roots*, highest-priority root first.
+
+    Each access re-reads the filesystem: the roots are a fixed list, the skills
+    under them are not.
+    """
 
     _roots: tuple[SkillRoot, ...]
-    _cache: tuple[tuple[tuple[str, int], ...], list[Skill]] | None
 
     def __init__(self, roots: Sequence[SkillRoot]) -> None:
         self._roots = tuple(roots)
-        self._cache = None
 
     @property
     def roots(self) -> tuple[SkillRoot, ...]:
@@ -182,20 +182,20 @@ class SkillStore:
     @property
     def all_skills(self) -> list[Skill]:
         """Every discovered skill, shadowed copies included (priority order)."""
-        return list(self._load())
+        return list(self._discover())
 
     @property
     def skills(self) -> list[Skill]:
         """Visible skills by name, sorted for display (shadows removed)."""
         by_name: dict[str, Skill] = {}
-        for skill in self._load():
+        for skill in self._discover():
             _ = by_name.setdefault(skill.name, skill)
         return [by_name[name] for name in sorted(by_name)]
 
     def shadowed(self) -> dict[str, list[Skill]]:
         """Skill names found in more than one root → the losing copies in order."""
         found: dict[str, list[Skill]] = {}
-        for skill in self._load():
+        for skill in self._discover():
             found.setdefault(skill.name, []).append(skill)
         return {name: skills for name, skills in sorted(found.items()) if len(skills) > 1}
 
@@ -204,7 +204,7 @@ class SkillStore:
         token = name.strip()
         wanted = token.casefold()
         fallback: Skill | None = None
-        for skill in self._load():
+        for skill in self._discover():
             if skill.name == token:
                 return skill
             if fallback is None and skill.name.casefold() == wanted:
@@ -218,25 +218,12 @@ class SkillStore:
                 return root
         return self._roots[0] if self._roots else None
 
-    def reload(self) -> None:
-        """Drop the cache so the next access rescans the filesystem."""
-        self._cache = None
-
-    def _load(self) -> list[Skill]:
-        entries = self._scan()
-        signature = tuple((str(entry.directory), entry.mtime_ns) for entry in entries)
-        if self._cache is not None and self._cache[0] == signature:
-            return self._cache[1]
-        skills = [skill for entry in entries if (skill := _read_skill(entry)) is not None]
-        self._cache = (signature, skills)
-        return skills
+    def _discover(self) -> list[Skill]:
+        """Read every candidate ``SKILL.md`` now — nothing is cached."""
+        return [skill for entry in self._scan() if (skill := _read_skill(entry)) is not None]
 
     def _scan(self) -> list[_Entry]:
-        return [
-            _Entry(root=root, directory=directory, mtime_ns=_skill_mtime(directory))
-            for root in self._roots
-            for directory in _skill_dirs(root.path)
-        ]
+        return [_Entry(root=root, directory=directory) for root in self._roots for directory in _skill_dirs(root.path)]
 
 
 def _skill_dirs(root: Path) -> list[Path]:
@@ -250,13 +237,6 @@ def _skill_dirs(root: Path) -> list[Path]:
         return []
     found.extend(child for child in children if (child / SKILL_FILE).is_file())
     return found
-
-
-def _skill_mtime(directory: Path) -> int:
-    try:
-        return (directory / SKILL_FILE).stat().st_mtime_ns
-    except OSError:
-        return -1
 
 
 def _read_skill(entry: _Entry) -> Skill | None:

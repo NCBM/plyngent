@@ -144,21 +144,21 @@ def test_broken_frontmatter_still_yields_a_listable_skill(tmp_path: Path) -> Non
     assert any("frontmatter not parsed" in issue for issue in skill.issues)
 
 
-def test_cache_picks_up_an_edit_and_reload_forces_a_rescan(tmp_path: Path) -> None:
+def test_every_lookup_reads_the_filesystem(tmp_path: Path) -> None:
+    """No cache: an edit or a skill added outside the chat is simply there."""
     root = tmp_path / "skills"
-    directory = _write_skill(root, "cached", description="Before")
+    directory = _write_skill(root, "live", description="Before")
     store = SkillStore(build_roots(SkillsConfig(discover=["plyngent"]), workspace=tmp_path, user_config_dir=tmp_path))
     assert store.skills[0].description == "Before"
 
     _ = (directory / SKILL_FILE).write_text(
-        "---\nname: cached\ndescription: After\n---\n\nBody.\n",
+        "---\nname: live\ndescription: After\n---\n\nBody.\n",
         encoding="utf-8",
     )
     assert store.skills[0].description == "After"
 
     _ = _write_skill(root, "added")
-    store.reload()
-    assert [s.name for s in store.skills] == ["added", "cached"]
+    assert [s.name for s in store.skills] == ["added", "live"]
 
 
 def test_default_write_root_prefers_our_own_directory(tmp_path: Path) -> None:

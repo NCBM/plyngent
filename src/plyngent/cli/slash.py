@@ -1267,16 +1267,15 @@ def _open_skill_directory(store: SkillStore, name: str) -> None:
 
 
 @slash.command("skills")
-@click.argument("action", required=False, type=click.Choice(["list", "search", "open", "reload"]))
+@click.argument("action", required=False, type=click.Choice(["list", "search", "open"]))
 @click.argument("target", required=False)
 @click.pass_obj
 def skills_slash_cmd(state: ReplState, action: str | None, target: str | None) -> None:
-    """List skills, search them, open one's directory, or rescan the roots.
+    """List skills, search them, or open one's directory.
 
     ``/skills`` or ``/skills list`` — discovered skills with their source root.
     ``/skills search PATTERN`` — regex over every skill's contents.
     ``/skills open NAME`` — reveal the skill's directory in the file manager.
-    ``/skills reload`` — rescan the roots after an external edit.
     """
     from plyngent.tools.context import bind_tool_context
     from plyngent.tools.skills import SKILL_TOOL_NAMES, format_skill_table, skill_search
@@ -1285,11 +1284,6 @@ def skills_slash_cmd(state: ReplState, action: str | None, target: str | None) -
         click.echo("skills: disabled (set [skills].enabled = true)")
         return
     act = (action or "list").lower()
-    if act == "reload":
-        state.reload_skills()
-        _slash_rebuild_tools_if_on(state)
-        click.echo(f"skills reloaded: {len(state.skills.skills)} visible; tools rebuilt")
-        return
     if act == "open":
         if not target:
             msg = "/skills open requires a skill name"
