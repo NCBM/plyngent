@@ -136,10 +136,15 @@ async def _execute_tool_calls(
 
 
 def _assistant_has_payload(assistant: AssistantChatMessage) -> bool:
-    """True if the model produced text, reasoning, or tool calls."""
+    """True if the model produced text, reasoning, provider blocks, or tool calls."""
     if assistant.tool_calls is not UNSET and assistant.tool_calls:
         return True
     if isinstance(assistant.content, str) and assistant.content.strip():
+        return True
+    # A round that only searched (a hosted ``web_search``) kept the search
+    # blocks as provider blocks: the model did produce something, even with no
+    # text of its own yet.
+    if assistant.provider_blocks is not UNSET and assistant.provider_blocks:
         return True
     reasoning = assistant.reasoning_content
     return bool(isinstance(reasoning, str) and reasoning.strip())
@@ -283,6 +288,23 @@ def _take_reasoning_delta(
     return [content], [ReasoningDeltaEvent(content=fresh)] if fresh else []
 
 
+def _accumulate_deltas(
+    delta: DeltaMessage,
+    *,
+    tool_deltas: list[StreamToolCallDelta],
+    provider_blocks: list[dict[str, Any]],
+) -> None:
+    """Collect the carriers a round keeps from one chunk's delta.
+
+    Tool calls merge after the stream; provider-opaque blocks (a hosted search's
+    blocks, a thinking block) were rebuilt by the bridge and ride along as-is.
+    """
+    if delta.tool_calls is not UNSET and delta.tool_calls:
+        tool_deltas.extend(delta.tool_calls)
+    if delta.provider_blocks is not UNSET and delta.provider_blocks:
+        provider_blocks.extend(delta.provider_blocks)
+
+
 async def _stream_round(
     client: AnyLLMClient,
     param: ChatCompletionsParam,
@@ -306,6 +328,7 @@ async def _stream_round(
     )
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
+    provider_blocks: list[dict[str, Any]] = []
     tool_deltas: list[StreamToolCallDelta] = []
     last_api_usage: object = UNSET
     finish_reason: str | None = None
@@ -332,8 +355,7 @@ async def _stream_round(
         if isinstance(delta.content, str) and delta.content:
             content_parts.append(delta.content)
             yield TextDeltaEvent(content=delta.content)
-        if delta.tool_calls is not UNSET and delta.tool_calls:
-            tool_deltas.extend(delta.tool_calls)
+        _accumulate_deltas(delta, tool_deltas=tool_deltas, provider_blocks=provider_blocks)
 
     full_content = "".join(content_parts)
     full_reasoning = "".join(reasoning_parts)
@@ -347,6 +369,7 @@ async def _stream_round(
         content=full_content or None,
         tool_calls=tool_calls,
         reasoning_content=full_reasoning or UNSET,
+        provider_blocks=provider_blocks or UNSET,
     )
     # Usage-only final chunks leave choices empty; a non-empty usage after
     # content still is not a finish_reason. Prefer explicit finish_reason.

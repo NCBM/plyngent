@@ -8,7 +8,8 @@ enter it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final
+import json
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from plyngent.agent.messages_bridge import (
     anthropic_response_to_chat_completion,
@@ -18,6 +19,8 @@ from plyngent.agent.messages_bridge import (
 )
 from plyngent.agent.stream_chunks import (
     finish_reason_chunk,
+    provider_blocks_chunk,
+    reasoning_delta_chunk,
     text_delta_chunk,
     tool_call_delta_chunk,
     usage_chunk,
@@ -25,6 +28,7 @@ from plyngent.agent.stream_chunks import (
 from plyngent.lmproto.anthropic.model import (
     AnthropicContentBlockDelta,
     AnthropicContentBlockStart,
+    AnthropicContentBlockStop,
     AnthropicErrorEvent,
     AnthropicMessageDelta,
     AnthropicMessageStart,
@@ -65,6 +69,92 @@ class _ToolBlockState:
         self.tool_index = tool_index
 
 
+# Block types the chat-shaped round carries itself: text becomes the message's
+# content and ``tool_use`` a local tool call. Every other type is the surface's
+# own (``thinking``, ``server_tool_use``, ``web_search_tool_result``) and is
+# rebuilt so the round can hand it back.
+_LOCAL_BLOCK_TYPES: Final = frozenset({"text", "tool_use"})
+
+# The two fields a *delta* owns; a block's own JSON skips them.
+_DELTA_ONLY_FIELDS: Final = frozenset({"text", "partial_json"})
+
+
+def _raw_block_json(block: AnthropicRawContentBlock) -> dict[str, Any]:
+    """The block's own JSON: every field the stream set, under its own name.
+
+    Field-driven, so a field added to the block model comes along without a
+    second list to keep in sync.
+    """
+    out: dict[str, Any] = {"type": block.type}
+    for name in block.__struct_fields__:
+        if name in _DELTA_ONLY_FIELDS:
+            continue
+        value: object = getattr(block, name)
+        if value is not None:
+            out[name] = value
+    return out
+
+
+def _parse_input_fragments(fragments: list[str]) -> dict[str, Any]:
+    """The ``input`` a ``server_tool_use`` streamed as ``partial_json`` chunks."""
+    try:
+        parsed = json.loads("".join(fragments))
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(parsed, dict):
+        return cast("dict[str, Any]", parsed)
+    return {}
+
+
+class _ProviderBlockState:
+    """A surface-owned block rebuilt from its start payload and fragments.
+
+    Nothing local asked for it, but it goes back on the wire with the round (see
+    ``AssistantChatMessage.provider_blocks``): a ``thinking`` block's text and
+    its opaque ``signature``, and the search query a ``server_tool_use`` streams
+    as ``partial_json``.
+    """
+
+    __slots__: Final = ("json_fragments", "parts", "raw", "signature")
+    raw: dict[str, Any]
+    parts: list[str]
+    json_fragments: list[str]
+    signature: str
+
+    def __init__(self, raw: dict[str, Any]) -> None:
+        self.raw = raw
+        self.parts = []
+        self.json_fragments = []
+        self.signature = ""
+
+    def add(self, delta: AnthropicRawContentBlock) -> str | None:
+        """Fold one fragment in; return the thinking text it carried, if any."""
+        if isinstance(delta.partial_json, str) and delta.partial_json:
+            self.json_fragments.append(delta.partial_json)
+            return None
+        if isinstance(delta.signature, str) and delta.signature:
+            self.signature = delta.signature
+            return None
+        # Anthropic streams a thinking fragment as ``thinking``; DeepSeek's
+        # compat also spells the same fragment ``text``.
+        fragment = delta.thinking if isinstance(delta.thinking, str) else delta.text
+        if not isinstance(fragment, str) or not fragment:
+            return None
+        self.parts.append(fragment)
+        return fragment
+
+    def finish(self) -> dict[str, Any]:
+        """The block to hand back, fragments folded into its start payload."""
+        block = dict(self.raw)
+        if self.parts:
+            block["thinking"] = f"{block.get('thinking', '')}{''.join(self.parts)}"
+        if self.json_fragments:
+            block["input"] = _parse_input_fragments(self.json_fragments)
+        if self.signature:
+            block["signature"] = self.signature
+        return block
+
+
 def _merge_usage(previous: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
     """Merge ``message_start`` usage with the later ``message_delta`` usage.
 
@@ -99,6 +189,7 @@ class _StreamState:
     model: str
     tool_blocks: dict[int, _ToolBlockState]
     block_types: dict[int, str]
+    provider_blocks: dict[int, _ProviderBlockState]
     next_tool_index: int
     stop_reason: str | None
     last_usage: dict[str, Any] | None
@@ -109,6 +200,7 @@ class _StreamState:
         self.model = model
         self.tool_blocks = {}
         self.block_types = {}
+        self.provider_blocks = {}
         self.next_tool_index = 0
         self.stop_reason = None
         self.last_usage = None
@@ -140,13 +232,17 @@ def _handle_block_start(
 ) -> list[ChatCompletionChunk]:
     """Record the block's type; only ``tool_use`` becomes a local tool call.
 
-    ``server_tool_use`` (a search the model's backend runs), its
-    ``web_search_tool_result``, and ``thinking`` stream here too — recording
-    their type keeps the argument fragments that follow from being mistaken for
-    a local call's arguments (see ``_chunks_for_content_delta``).
+    A surface-owned block (``server_tool_use``, its ``web_search_tool_result``,
+    ``thinking``) is rebuilt from here on so the round can hand it back (see
+    ``AssistantChatMessage.provider_blocks``); recording its type also keeps the
+    fragments that follow from being mistaken for a local call's arguments (see
+    ``_chunks_for_content_delta``).
     """
     block = event.content_block
     state.block_types[event.index] = block.type
+    if block.type not in _LOCAL_BLOCK_TYPES:
+        state.provider_blocks[event.index] = _ProviderBlockState(_raw_block_json(block))
+        return []
     if block.type != "tool_use":
         return []
     call_id = block.id or f"toolu_{event.index}"
@@ -172,6 +268,17 @@ def _handle_message_delta(event: AnthropicMessageDelta, state: _StreamState) -> 
         state.last_usage = _merge_usage(state.last_usage, usage)
 
 
+def _chunks_for_block_stop(
+    event: AnthropicContentBlockStop,
+    state: _StreamState,
+) -> list[ChatCompletionChunk]:
+    """Emit a surface-owned block once its fragments are folded in."""
+    provider = state.provider_blocks.pop(event.index, None)
+    if provider is None:
+        return []
+    return [provider_blocks_chunk(model=state.model, blocks=[provider.finish()])]
+
+
 def _chunks_for_event(event: AnthropicStreamEvent, state: _StreamState) -> list[ChatCompletionChunk]:
     """Convert one Anthropic stream event into zero or more chat chunks."""
     if isinstance(event, AnthropicErrorEvent):
@@ -188,6 +295,9 @@ def _chunks_for_event(event: AnthropicStreamEvent, state: _StreamState) -> list[
     if isinstance(event, AnthropicContentBlockStart):
         return _handle_block_start(event, state)
 
+    if isinstance(event, AnthropicContentBlockStop):
+        return _chunks_for_block_stop(event, state)
+
     if isinstance(event, AnthropicContentBlockDelta):
         return _chunks_for_content_delta(event, state)
 
@@ -201,11 +311,31 @@ def _chunks_for_event(event: AnthropicStreamEvent, state: _StreamState) -> list[
     return []
 
 
+def _chunks_for_provider_delta(
+    delta: AnthropicRawContentBlock,
+    provider: _ProviderBlockState,
+    *,
+    model: str,
+) -> list[ChatCompletionChunk]:
+    """One fragment of a surface-owned block: its reasoning text, or nothing."""
+    fragment = provider.add(delta)
+    if fragment is None:
+        return []
+    return [reasoning_delta_chunk(model=model, content=fragment)]
+
+
 def _chunks_for_content_delta(
     event: AnthropicContentBlockDelta,
     state: _StreamState,
 ) -> list[ChatCompletionChunk]:
     delta: AnthropicRawContentBlock = event.delta
+    provider = state.provider_blocks.get(event.index)
+    if provider is not None:
+        # A surface-owned block's fragments never become local output here: the
+        # thinking text streams as reasoning, while the search query and the
+        # signature only go back with the round.
+        return _chunks_for_provider_delta(delta, provider, model=state.model)
+
     if delta.type in {"text_delta", "text"} and isinstance(delta.text, str) and delta.text:
         return [text_delta_chunk(model=state.model, content=delta.text)]
 

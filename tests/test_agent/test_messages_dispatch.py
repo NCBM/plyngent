@@ -8,6 +8,7 @@ from msgspec import UNSET
 
 from plyngent.agent import (
     AssistantMessageEvent,
+    ReasoningDeltaEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolRegistry,
@@ -396,9 +397,9 @@ async def test_dispatch_stream_tool_calls_without_stop_yields_no_finish() -> Non
     assert not any(c.choices and c.choices[0].finish_reason not in (None, UNSET) for c in chunks)
 
 
-def _search_stream_events() -> list[AnthropicStreamEvent]:
+def _search_stream_events(*, text: bool = True) -> list[AnthropicStreamEvent]:
     """The stream a DeepSeek search turn sends: thinking, search, results, text."""
-    return [
+    events: list[AnthropicStreamEvent] = [
         AnthropicMessageStart(
             message=AnthropicMessageResponse(
                 id="msg_s",
@@ -407,11 +408,16 @@ def _search_stream_events() -> list[AnthropicStreamEvent]:
                 usage=AnthropicUsage(input_tokens=164, output_tokens=0),
             )
         ),
-        AnthropicContentBlockStart(index=0, content_block=AnthropicRawContentBlock(type="thinking", text="")),
+        AnthropicContentBlockStart(
+            index=0,
+            content_block=AnthropicRawContentBlock(type="thinking", thinking=""),
+        ),
+        AnthropicContentBlockDelta(index=0, delta=AnthropicRawContentBlock(type="thinking_delta", thinking="Search ")),
         AnthropicContentBlockDelta(
             index=0,
-            delta=AnthropicRawContentBlock(type="thinking_delta", text="Search."),
+            delta=AnthropicRawContentBlock(type="thinking_delta", thinking="the docs."),
         ),
+        AnthropicContentBlockDelta(index=0, delta=AnthropicRawContentBlock(type="signature_delta", signature="sig-1")),
         AnthropicContentBlockStop(index=0),
         AnthropicContentBlockStart(
             index=1,
@@ -430,23 +436,39 @@ def _search_stream_events() -> list[AnthropicStreamEvent]:
             index=2,
             content_block=AnthropicRawContentBlock(
                 type="web_search_tool_result",
-                id="call_00_1",
-                input={"content": [{"type": "web_search_result", "url": "https://api-docs.deepseek.com"}]},
+                tool_use_id="call_00_1",
+                content=[
+                    {
+                        "type": "web_search_result",
+                        "url": "https://api-docs.deepseek.com",
+                        "encrypted_content": "sd918tZXSvVp",
+                    }
+                ],
             ),
         ),
         AnthropicContentBlockStop(index=2),
-        AnthropicContentBlockStart(index=3, content_block=AnthropicRawContentBlock(type="text", text="")),
-        AnthropicContentBlockDelta(
-            index=3,
-            delta=AnthropicRawContentBlock(type="text_delta", text="DeepSeek-V4 is out."),
-        ),
-        AnthropicContentBlockStop(index=3),
-        AnthropicMessageDelta(
-            delta={"stop_reason": "end_turn"},
-            usage=AnthropicUsage(input_tokens=0, output_tokens=12),
-        ),
-        AnthropicMessageStop(),
     ]
+    if text:
+        events.extend(
+            [
+                AnthropicContentBlockStart(index=3, content_block=AnthropicRawContentBlock(type="text", text="")),
+                AnthropicContentBlockDelta(
+                    index=3,
+                    delta=AnthropicRawContentBlock(type="text_delta", text="DeepSeek-V4 is out."),
+                ),
+                AnthropicContentBlockStop(index=3),
+            ]
+        )
+    events.extend(
+        [
+            AnthropicMessageDelta(
+                delta={"stop_reason": "end_turn"},
+                usage=AnthropicUsage(input_tokens=0, output_tokens=12),
+            ),
+            AnthropicMessageStop(),
+        ]
+    )
+    return events
 
 
 async def test_search_turn_streams_its_text_without_a_local_tool_call() -> None:
@@ -476,8 +498,56 @@ async def test_search_turn_streams_its_text_without_a_local_tool_call() -> None:
     assert not any(isinstance(event, ToolCallEvent) for event in events)
     assert not any(isinstance(event, ToolResultEvent) for event in events)
     assert any(isinstance(event, TextDeltaEvent) and event.content == "DeepSeek-V4 is out." for event in events)
+    # The chain of thought streams as reasoning, fragment by fragment.
+    assert [event.content for event in events if isinstance(event, ReasoningDeltaEvent)] == ["Search ", "the docs."]
+    # ...and the round keeps the search blocks, rebuilt, for the next request.
+    assistant = next(event.message for event in events if isinstance(event, AssistantMessageEvent))
+    assert assistant.reasoning_content == "Search the docs."
+    assert assistant.provider_blocks == [
+        {"type": "thinking", "thinking": "Search the docs.", "signature": "sig-1"},
+        {
+            "type": "server_tool_use",
+            "id": "call_00_1",
+            "name": "web_search",
+            "input": {"query": "DeepSeek-V4"},
+        },
+        {
+            "type": "web_search_tool_result",
+            "tool_use_id": "call_00_1",
+            "content": [
+                {
+                    "type": "web_search_result",
+                    "url": "https://api-docs.deepseek.com",
+                    "encrypted_content": "sd918tZXSvVp",
+                }
+            ],
+        },
+    ]
     # One round: the search answered inside the response, so nothing was sent back.
     assert len(client.calls) == 1
+
+
+async def test_search_only_round_is_not_an_empty_completion() -> None:
+    """A search turn with no text yet still produced payload.
+
+    A budget-capped or ``max_uses_exceeded`` search can end the turn on its
+    blocks alone; calling that an empty completion failed a round the model had
+    actually used.
+    """
+    client = ScriptedMessagesClient(stream_events=[_search_stream_events(text=False)])
+    events = [
+        event
+        async for event in run_chat_loop(
+            cast("Any", client),
+            [UserChatMessage(content="what is DeepSeek-V4?")],
+            model="deepseek-flash",
+            stream=True,
+        )
+    ]
+    assistant = next(event.message for event in events if isinstance(event, AssistantMessageEvent))
+    assert assistant.content is None
+    assert assistant.provider_blocks is not UNSET
+    assert len(assistant.provider_blocks) == 3
 
 
 async def test_dispatch_messages_sends_provider_tools_as_server_tools() -> None:
