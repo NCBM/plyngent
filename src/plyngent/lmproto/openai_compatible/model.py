@@ -74,6 +74,12 @@ class AssistantChatMessage(Struct, tag_field="role", tag="assistant"):
     tool_calls: list[AnyAssistantToolCall] | Unset = UNSET
     # OpenAI-compat / DeepSeek thinking streams (omitted when unset).
     reasoning_content: str | Unset = UNSET
+    # Provider-opaque assistant blocks kept as raw JSON and echoed back verbatim
+    # by the surface that produced them (Anthropic: a ``thinking`` block, whose
+    # ``signature`` only the provider can verify, and the ``server_tool_use`` +
+    # ``web_search_tool_result`` pair a hosted search answers inside the turn).
+    # Surfaces that do not know them send the message without the field.
+    provider_blocks: list[dict[str, Any]] | Unset = UNSET
 
 
 class ToolChatMessage(ChatMessage, tag_field="role", tag="tool"):
@@ -243,6 +249,10 @@ class DeltaMessage(Struct):
     # ``response.reasoning_text.done``), replacing any streamed fragments.
     reasoning_full: bool | Unset = UNSET
     tool_calls: list[StreamToolCallDelta] | Unset = UNSET
+    # Provider-opaque blocks a bridge rebuilt mid-stream (see
+    # ``AssistantChatMessage.provider_blocks``): the loop copies them onto the
+    # round's assistant message.
+    provider_blocks: list[dict[str, Any]] | Unset = UNSET
 
 
 class ChunkChoice(Struct):

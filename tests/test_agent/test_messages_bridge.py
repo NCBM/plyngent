@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import msgspec
 from msgspec import UNSET
 
 from plyngent.agent.messages_bridge import (
@@ -156,15 +157,20 @@ def test_anthropic_response_to_assistant_with_tools() -> None:
     assert '"a":1' in call.function.arguments or '"a": 1' in call.function.arguments
 
 
-def test_anthropic_response_to_assistant_ignores_server_tool_blocks() -> None:
-    """A server-side search is not a call for the registry, nor part of the message."""
+def test_anthropic_response_to_assistant_keeps_thinking_and_search_blocks() -> None:
+    """A server-side search is not a registry call, but it is the round's evidence."""
     response = AnthropicMessageResponse(
         id="msg_search",
         model="deepseek-flash",
         stop_reason="end_turn",
         content=[
             AnthropicThinkingContent(thinking="Let me search.", signature="sig-1"),
-            AnthropicServerToolUseContent(id="call_00_1", name="web_search", input={"query": "DeepSeek-V4"}),
+            AnthropicServerToolUseContent(
+                id="call_00_1",
+                name="web_search",
+                input={"query": "DeepSeek-V4"},
+                caller={"type": "direct"},
+            ),
             AnthropicWebSearchToolResultContent(
                 tool_use_id="call_00_1",
                 content=[{"type": "web_search_result", "url": "https://api-docs.deepseek.com"}],
@@ -176,6 +182,65 @@ def test_anthropic_response_to_assistant_ignores_server_tool_blocks() -> None:
     assistant = anthropic_response_to_assistant(response)
     assert assistant.content == "DeepSeek-V4 is out."
     assert assistant.tool_calls is UNSET
+    # The chain of thought is the round's reasoning text; the signature it must
+    # go back with only exists on the block.
+    assert assistant.reasoning_content == "Let me search."
+    assert assistant.provider_blocks == [
+        {"type": "thinking", "thinking": "Let me search.", "signature": "sig-1"},
+        {
+            "type": "server_tool_use",
+            "id": "call_00_1",
+            "name": "web_search",
+            "input": {"query": "DeepSeek-V4"},
+            "caller": {"type": "direct"},
+        },
+        {
+            "type": "web_search_tool_result",
+            "tool_use_id": "call_00_1",
+            "content": [{"type": "web_search_result", "url": "https://api-docs.deepseek.com"}],
+        },
+    ]
+
+
+def test_chat_param_to_anthropic_param_hands_provider_blocks_back() -> None:
+    """The next request carries the round's thinking and search blocks first."""
+    assistant = AssistantChatMessage(
+        content="DeepSeek-V4 is out.",
+        reasoning_content="Let me search.",
+        provider_blocks=[
+            {"type": "thinking", "thinking": "Let me search.", "signature": "sig-1"},
+            {
+                "type": "web_search_tool_result",
+                "tool_use_id": "call_00_1",
+                "content": [{"type": "web_search_result", "encrypted_content": "sd918tZXSvVp"}],
+            },
+        ],
+        tool_calls=[
+            AssistantFunctionToolCall(
+                id="tu_1",
+                function=AssistantFunctionTool(name="read_file", arguments='{"path": "a.py"}'),
+            )
+        ],
+    )
+    param = ChatCompletionsParam(model="deepseek-flash", messages=[assistant])
+    built = chat_param_to_anthropic_param(param)
+    # The wire shape: DeepSeek answers a trimmed ``encrypted_content`` with 422.
+    data = msgspec.json.decode(msgspec.json.encode(built))
+    assert data["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me search.", "signature": "sig-1"},
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "call_00_1",
+                    "content": [{"type": "web_search_result", "encrypted_content": "sd918tZXSvVp"}],
+                },
+                {"type": "text", "text": "DeepSeek-V4 is out."},
+                {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {"path": "a.py"}},
+            ],
+        }
+    ]
 
 
 def test_provider_tools_to_anthropic_tools_maps_the_search_intent() -> None:

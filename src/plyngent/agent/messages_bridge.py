@@ -18,15 +18,17 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicMessageResponse,
     AnthropicMessagesParam,
     AnthropicResponseText,
-    AnthropicResponseToolUse,
+    AnthropicServerToolUseContent,
     AnthropicTextContent,
     AnthropicThinkingConfig,
+    AnthropicThinkingContent,
     AnthropicToolChoice,
     AnthropicToolDefinition,
     AnthropicToolResultContent,
     AnthropicToolUseContent,
     AnthropicUsage,
     AnthropicUserMessage,
+    AnthropicWebSearchToolResultContent,
 )
 from plyngent.lmproto.openai_compatible.model import (
     AnyAssistantToolCall,
@@ -133,7 +135,16 @@ def _tool_choice_from_chat(param: ChatCompletionsParam) -> AnthropicToolChoice |
 
 
 def _assistant_to_anthropic(message: AssistantChatMessage) -> AnthropicAssistantMessage | None:
-    blocks: list[AnthropicTextContent | AnthropicToolUseContent] = []
+    """The assistant turn for the wire: opaque blocks, then text, then calls.
+
+    ``provider_blocks`` go back first and verbatim (a ``thinking`` block's
+    signature is only the provider's to verify, and a hosted search's
+    ``web_search_tool_result`` entries carry an ``encrypted_content`` the API
+    rejects when trimmed), which is also the order the API sends them in.
+    """
+    blocks: list[AnthropicTextContent | AnthropicToolUseContent | dict[str, Any]] = []
+    if message.provider_blocks is not UNSET and message.provider_blocks:
+        blocks.extend(message.provider_blocks)
     if isinstance(message.content, str) and message.content:
         blocks.append(AnthropicTextContent(text=message.content))
     if message.tool_calls is not UNSET and message.tool_calls:
@@ -219,22 +230,59 @@ def chat_messages_to_anthropic(  # noqa: C901 — multi-role conversion
     return system, out
 
 
+def _thinking_block_json(block: AnthropicThinkingContent) -> dict[str, Any]:
+    """A ``thinking`` block as JSON: its text, plus the signature when sent."""
+    out: dict[str, Any] = {"type": "thinking", "thinking": block.thinking}
+    if isinstance(block.signature, str):
+        out["signature"] = block.signature
+    return out
+
+
+def _server_block_json(
+    block: AnthropicServerToolUseContent | AnthropicWebSearchToolResultContent,
+) -> dict[str, Any]:
+    """A hosted search's block as JSON: the query it ran, or the raw entries.
+
+    Rebuilt from the parsed block: an ``encrypted_content`` (and any other key
+    inside the loose ``content`` entries) survives byte for byte, while a key
+    the block model does not name cannot come back.
+    """
+    if isinstance(block, AnthropicServerToolUseContent):
+        out: dict[str, Any] = {"type": "server_tool_use", "id": block.id, "name": block.name, "input": block.input}
+        if block.caller is not UNSET:
+            out["caller"] = block.caller
+        return out
+    return {"type": "web_search_tool_result", "tool_use_id": block.tool_use_id, "content": block.content}
+
+
 def anthropic_response_to_assistant(response: AnthropicMessageResponse) -> AssistantChatMessage:
     """Map a completed Anthropic message to agent ``AssistantChatMessage``.
 
-    Server-side blocks (``server_tool_use`` / ``web_search_tool_result``) and
-    ``thinking`` are not part of the chat-shaped message: a search the model ran
-    through its backend already shows up in the text it answered with.
+    ``thinking`` lands in ``reasoning_content`` (the chat-shaped slot every
+    surface's chain-of-thought goes into) and, signature included, in
+    ``provider_blocks`` — the API wants the block back to continue a turn it
+    reasoned through. A hosted search's ``server_tool_use`` +
+    ``web_search_tool_result`` pair is not a call for the local registry, but it
+    is the model's own evidence: both go into ``provider_blocks`` verbatim, so
+    the next request hands them back and the model does not search again.
     """
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
+    provider_blocks: list[dict[str, Any]] = []
     tool_calls: list[AnyAssistantToolCall] = []
     for block in response.content:
         if isinstance(block, AnthropicResponseText):
             if block.text:
                 text_parts.append(block.text)
             continue
-        if not isinstance(block, AnthropicResponseToolUse):
+        if isinstance(block, AnthropicThinkingContent):
+            thinking_parts.append(block.thinking)
+            provider_blocks.append(_thinking_block_json(block))
             continue
+        if isinstance(block, (AnthropicServerToolUseContent, AnthropicWebSearchToolResultContent)):
+            provider_blocks.append(_server_block_json(block))
+            continue
+        # The union's remaining member is the local tool call.
         tool_calls.append(
             AssistantFunctionToolCall(
                 id=block.id,
@@ -248,6 +296,8 @@ def anthropic_response_to_assistant(response: AnthropicMessageResponse) -> Assis
     return AssistantChatMessage(
         content=text or None,
         tool_calls=tool_calls or UNSET,
+        reasoning_content="".join(thinking_parts) or UNSET,
+        provider_blocks=provider_blocks or UNSET,
     )
 
 

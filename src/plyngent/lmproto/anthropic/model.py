@@ -39,7 +39,11 @@ class AnthropicUserMessage(Struct, tag_field="role", tag="user"):
 
 
 class AnthropicAssistantMessage(Struct, tag_field="role", tag="assistant"):
-    content: str | list[AnthropicTextContent | AnthropicToolUseContent]
+    # ``dict`` entries are provider-opaque blocks echoed back verbatim: a
+    # ``thinking`` block (its ``signature`` cannot be rebuilt from the text) and
+    # the ``server_tool_use`` + ``web_search_tool_result`` pair a hosted search
+    # answers inside the turn.
+    content: str | list[AnthropicTextContent | AnthropicToolUseContent | dict[str, Any]]
 
 
 type AnthropicMessage = AnthropicUserMessage | AnthropicAssistantMessage
@@ -125,11 +129,13 @@ class AnthropicServerToolUseContent(Struct, omit_defaults=True, tag_field="type"
     Not a call for the local registry: the matching
     :class:`AnthropicWebSearchToolResultContent` arrives in the same response
     (see the ``messages_dispatch`` / ``messages_bridge`` bullets in AGENTS.md).
+    ``caller`` is the surface's own metadata and goes back with the block.
     """
 
     id: str = ""
     name: str = ""
     input: dict[str, Any] = field(default_factory=dict)
+    caller: dict[str, Any] | Unset = UNSET
 
 
 class AnthropicWebSearchToolResultContent(Struct, omit_defaults=True, tag_field="type", tag="web_search_tool_result"):
@@ -166,12 +172,27 @@ class AnthropicMessageResponse(Struct, omit_defaults=True):
 
 
 class AnthropicRawContentBlock(Struct, omit_defaults=True):
+    """One streamed content block: the ``content_block`` / ``delta`` payload.
+
+    The fields cover the response union: ``text`` fragments, ``thinking`` and
+    its opaque ``signature``, a ``server_tool_use``'s ``input`` (streamed as
+    ``partial_json``), and a ``web_search_tool_result``'s ``tool_use_id`` +
+    ``content`` (kept loose — an entry's ``encrypted_content`` goes back
+    unchanged). ``agent.messages_dispatch`` rebuilds the blocks from these to
+    hand them to the next request.
+    """
+
     type: str = ""
     id: str | None = None
     name: str | None = None
     text: str | None = None
     input: dict[str, Any] | None = None
     partial_json: str | None = None
+    thinking: str | None = None
+    signature: str | None = None
+    tool_use_id: str | None = None
+    content: list[dict[str, Any]] | None = None
+    caller: dict[str, Any] | None = None
 
 
 class AnthropicMessageStart(Struct, tag_field="type", tag="message_start"):

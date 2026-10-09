@@ -79,6 +79,32 @@ def reasoning_delta_chunk(
     )
 
 
+def provider_blocks_chunk(
+    *,
+    model: str,
+    blocks: list[dict[str, Any]],
+    created: int = 0,
+) -> ChatCompletionChunk:
+    """Carry provider-opaque blocks a bridge rebuilt mid-stream.
+
+    The loop copies them onto the round's assistant message
+    (``AssistantChatMessage.provider_blocks``), which is what puts them back on
+    the wire for the surface that produced them.
+    """
+    return ChatCompletionChunk(
+        id="bridge-stream",
+        object="chat.completion.chunk",
+        created=created,
+        model=model,
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=DeltaMessage(provider_blocks=blocks),
+            )
+        ],
+    )
+
+
 def tool_call_delta_chunk(
     *,
     model: str,
@@ -127,6 +153,7 @@ def usage_chunk(*, model: str, usage: dict[str, Any], created: int = 0) -> ChatC
 
 __all__ = [
     "finish_reason_chunk",
+    "provider_blocks_chunk",
     "reasoning_delta_chunk",
     "text_delta_chunk",
     "tool_call_delta_chunk",

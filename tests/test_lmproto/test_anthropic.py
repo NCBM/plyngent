@@ -6,11 +6,14 @@ import pytest
 from plyngent.lmproto.anthropic import AnthropicClient
 from plyngent.lmproto.anthropic.config import AnthropicConfig
 from plyngent.lmproto.anthropic.model import (
+    AnthropicAssistantMessage,
     AnthropicContentBlockDelta,
     AnthropicMessageResponse,
     AnthropicMessagesParam,
     AnthropicMessageStop,
+    AnthropicRawContentBlock,
     AnthropicResponseText,
+    AnthropicTextContent,
     AnthropicThinkingConfig,
     AnthropicUsage,
     AnthropicUserMessage,
@@ -124,6 +127,52 @@ def test_messages_param_keeps_the_thinking_type_on_the_wire() -> None:
     )
     data = msgspec.json.decode(msgspec.json.encode(param))
     assert data["thinking"] == {"type": "enabled", "budget_tokens": 16384}
+
+
+def test_stream_block_keeps_the_provider_fields() -> None:
+    """A streamed block carries what a rebuild puts back on the wire."""
+    result = msgspec.json.decode(
+        b'{"type":"web_search_tool_result","tool_use_id":"call_00_1",'
+        b'"content":[{"type":"web_search_result","encrypted_content":"sd9"}]}',
+        type=AnthropicRawContentBlock,
+    )
+    assert result.tool_use_id == "call_00_1"
+    assert result.content == [{"type": "web_search_result", "encrypted_content": "sd9"}]
+    thinking = msgspec.json.decode(
+        b'{"type":"thinking","thinking":"hmm","signature":"sig-1"}',
+        type=AnthropicRawContentBlock,
+    )
+    assert (thinking.thinking, thinking.signature) == ("hmm", "sig-1")
+
+
+def test_assistant_message_encodes_provider_blocks_verbatim() -> None:
+    """An echoed block keeps its own keys — ``encrypted_content`` included."""
+    param = AnthropicMessagesParam(
+        model="deepseek-flash",
+        messages=[
+            AnthropicAssistantMessage(
+                content=[
+                    {"type": "thinking", "thinking": "hmm", "signature": "sig-1"},
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "call_00_1",
+                        "content": [{"type": "web_search_result", "encrypted_content": "sd9"}],
+                    },
+                    AnthropicTextContent(text="done"),
+                ]
+            )
+        ],
+    )
+    data = msgspec.json.decode(msgspec.json.encode(param))
+    assert data["messages"][0]["content"] == [
+        {"type": "thinking", "thinking": "hmm", "signature": "sig-1"},
+        {
+            "type": "web_search_tool_result",
+            "tool_use_id": "call_00_1",
+            "content": [{"type": "web_search_result", "encrypted_content": "sd9"}],
+        },
+        {"type": "text", "text": "done"},
+    ]
 
 
 async def test_client_messages_create(monkeypatch: pytest.MonkeyPatch) -> None:
