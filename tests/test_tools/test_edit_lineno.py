@@ -49,6 +49,24 @@ def test_edit_lineno_error_shows_read_window(workspace: object) -> None:
     assert "not read" in out
     assert "read lines 2-3" in out
     assert "margin" in out
+    # Ready to copy: 1-based line 1 is offset 0, and n=4 clamps the limit.
+    assert "read_file(path='j.txt', offset=0, limit=4, with_lineno=true)" in out
+
+
+def test_edit_lineno_error_suggests_the_read_file_call(workspace: object) -> None:
+    """Both rejections hand back a ready-to-copy call with a 0-based ``offset``."""
+    del workspace
+    _ = call_sync(write_file, "s.txt", "".join(f"line {i}\n" for i in range(1, 21)))
+    _ = reset_lineno_tracker()
+    _ = call_sync(read_file, "s.txt", offset=0, limit=10, with_lineno=True)  # lines 1-10
+    # Line 15 was never shown; the hint reads it back with a margin (line 12 → offset 11).
+    out = call_sync(edit_lineno, "s.txt", 15, 15, "X\n")
+    assert "read_file(path='s.txt', offset=11, limit=7, with_lineno=true)" in out
+    # A stale read gets a fresh call for the same range after an external write.
+    _ = call_sync(write_file, "s.txt", "changed\n")
+    out = call_sync(edit_lineno, "s.txt", 1, 1, "X\n")
+    assert "changed since it was read" in out
+    assert "read_file(path='s.txt', offset=0, limit=1, with_lineno=true)" in out
 
 
 def test_edit_lineno_requires_all_lines_read(workspace: object) -> None:
@@ -84,6 +102,8 @@ def test_edit_lineno_append_requires_last_line_read(workspace: object) -> None:
     _ = call_sync(read_file, "ap.txt", offset=0, limit=2, with_lineno=True)
     out = call_sync(edit_lineno, "ap.txt", 4, 4, "d\n")
     assert "not read" in out and "3" in out
+    # Appending needs the last line, so the suggested window ends at n.
+    assert "read_file(path='ap.txt', offset=0, limit=3, with_lineno=true)" in out
     # Read the last line, then append succeeds.
     _ = call_sync(read_file, "ap.txt", offset=2, limit=1, with_lineno=True)
     out = call_sync(edit_lineno, "ap.txt", 4, 4, "d\n")

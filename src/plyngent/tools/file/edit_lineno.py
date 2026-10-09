@@ -11,6 +11,9 @@ if TYPE_CHECKING:
 # How many unread line numbers to preview in the error message.
 _UNREAD_PREVIEW = 8
 
+# Lines of context a suggested read covers on each side of the edit range.
+_READ_HINT_MARGIN = 3
+
 
 def _detect_newline(lines: list[str]) -> str:
     for sample in lines:
@@ -66,6 +69,19 @@ def _unread_lines_in_range(
     if start_line == n + 1:
         return [] if n == 0 or n in read_lines else [n]
     return sorted(set(range(start_line, end_line + 1)) - read_lines)
+
+
+def _read_hint(path: str, start_line: int, end_line: int, n: int) -> str:
+    """A ready-to-copy ``read_file`` call covering the edit range plus a margin.
+
+    ``read_file`` counts ``offset`` from 0 while ``edit_lineno`` counts lines
+    from 1, so the call is spelled out instead of asking the model to convert.
+    The window is clipped to the file (``_validate_range`` already accepted the
+    edit) and the margin keeps neighbouring lines editable too.
+    """
+    first = max(1, start_line - _READ_HINT_MARGIN)
+    last = max(first, min(n, end_line + _READ_HINT_MARGIN))
+    return f"read_file(path={path!r}, offset={first - 1}, limit={last - first + 1}, with_lineno=true)"
 
 
 def _append_after(target: Path, path: str, text: str, lines: list[str], new_content: str) -> str:
@@ -135,8 +151,9 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
         if read_lines:
             window = f" (this turn read lines {min(read_lines)}-{max(read_lines)})"
         return (
-            f"error: lines {head} not read{window}; call read_file(path, with_lineno=true) "
-            "first — read with a small margin around the lines you plan to edit"
+            f"error: lines {head} not read{window}; re-read with "
+            f"{_read_hint(path, start_line, end_line, len(lines))} "
+            "— offset is 0-based; the window keeps a margin around the edit"
         )
 
     recorded_mtime = lineno_read_mtime(str(target))
@@ -148,7 +165,8 @@ async def edit_lineno(path: str, start_line: int, end_line: int, new_content: st
         if current_mtime is not None and current_mtime != recorded_mtime:
             return (
                 f"error: {path} changed since it was read (line numbers may be stale); "
-                "re-read with read_file(path, with_lineno=true)"
+                f"re-read with {_read_hint(path, start_line, end_line, len(lines))} "
+                "— offset is 0-based"
             )
 
     if start_line == len(lines) + 1:
