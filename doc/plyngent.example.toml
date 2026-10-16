@@ -163,7 +163,8 @@ access_key_or_token = "sk-replace-me"
 # # Anthropic has no effort level: an effort becomes a thinking token budget
 # # (see the [agent] section above). A model that no longer takes one (from
 # # Claude 4.7 on) is retried with adaptive thinking, whose depth is the effort
-# # level itself. Set the budget explicitly to pin it:
+# # level itself, and a model that cannot stop thinking gets no thinking block
+# # at all. Set the budget explicitly to pin it:
 # reasoning_effort = "high"
 # thinking_budget_tokens = 16000
 #
