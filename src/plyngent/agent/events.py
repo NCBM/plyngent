@@ -34,6 +34,19 @@ class MaxRoundsEvent(Struct, tag_field="type", tag="max_rounds"):
     continued: bool = False
 
 
+class TruncatedEvent(Struct, tag_field="type", tag="truncated"):
+    """A round the provider cut off at the output limit (``finish_reason=length``).
+
+    The partial answer stays in history rather than being discarded, and the
+    model is told where it stopped (see ``notices.truncated_turn_notice``);
+    ``continued`` says whether the turn went on with another round or is waiting
+    for ``/retry``.
+    """
+
+    kept_chars: int = 0
+    continued: bool = False
+
+
 class ErrorEvent(Struct, tag_field="type", tag="error"):
     message: str
     retryable: bool = True
@@ -60,6 +73,7 @@ type AgentEvent = (
     | ToolCallEvent
     | ToolResultEvent
     | MaxRoundsEvent
+    | TruncatedEvent
     | ErrorEvent
     | CancelledEvent
     | UsageEvent

@@ -43,8 +43,11 @@ from .events import (
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
+    TruncatedEvent,
     UsageEvent,
 )
+from .finish_reason import chat_finish_reason
+from .notices import truncated_turn_notice
 from .todo_nag import (
     DEFAULT_TODO_NAG_STRATEGY,
     inject_todo_nag_for_stack_with_events,
@@ -68,6 +71,10 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_ROUNDS = 32
+# Rounds cut off at the output limit are kept and the model carries on in another
+# round, this many times per turn; 0 stops after the truncated round (`/retry`
+# continues it from the kept partial answer).
+DEFAULT_MAX_TRUNCATION_CONTINUES = 2
 
 
 async def _call_on_limit(on_limit: LimitContinueHook, reason: str) -> bool:
@@ -150,6 +157,11 @@ def _assistant_has_payload(assistant: AssistantChatMessage) -> bool:
     return bool(isinstance(reasoning, str) and reasoning.strip())
 
 
+def _kept_chars(assistant: AssistantChatMessage) -> int:
+    """How much answer a cut-off round had written (0 if only reasoning/blocks)."""
+    return len(assistant.content) if isinstance(assistant.content, str) else 0
+
+
 def _finish_reason_value(finish: object) -> str | None:
     if finish is UNSET or finish is None:
         return None
@@ -163,20 +175,26 @@ def _validate_assistant_terminal(
     *,
     finish_reason: str | None,
     stream_terminal: bool,
-) -> None:
-    """Raise when the round is not a usable agent stop.
+) -> bool:
+    """Raise when the round is not a usable agent stop; True if it hit the output limit.
 
-    Distinguishes empty generation, truncated/filtered stops, and missing
-    stream terminals (network/client glitch) from a normal stop/tool_calls end.
+    Distinguishes empty generation, filtered stops, and missing stream terminals
+    (network/client glitch) from a normal stop/tool_calls end. A round cut off at
+    the output limit is not an error of its own: what it wrote is usable, so the
+    caller keeps it and tells the model where it stopped. A truncated round that
+    wrote nothing stays a failure — there is nothing to continue from.
     """
     reason = (finish_reason or "").lower() or None
+    canonical = chat_finish_reason(reason, has_tool_calls=False)
 
-    if reason in {"length", "content_filter"}:
-        label = "truncated (max tokens)" if reason == "length" else "content filter"
-        detail = ""
-        if isinstance(assistant.content, str) and assistant.content.strip():
-            detail = f"; partial text kept ({len(assistant.content)} chars)"
-        msg = f"model stopped early: {label}{detail}"
+    if canonical == "length":
+        if _assistant_has_payload(assistant):
+            return True
+        msg = "model stopped early: output limit reached with nothing written"
+        raise RuntimeError(msg)
+
+    if canonical == "content_filter":
+        msg = "model stopped early: content filter"
         raise RuntimeError(msg)
 
     if reason in {"failed", "incomplete", "cancelled"}:
@@ -184,7 +202,7 @@ def _validate_assistant_terminal(
         raise RuntimeError(msg)
 
     if _assistant_has_payload(assistant):
-        return
+        return False
 
     if not stream_terminal and reason is None:
         msg = (
@@ -249,7 +267,7 @@ async def _non_stream_round(
     choice = response.choices[0]
     assistant = choice.message
     finish = _finish_reason_value(choice.finish_reason)
-    _validate_assistant_terminal(
+    truncated = _validate_assistant_terminal(
         assistant,
         finish_reason=finish,
         stream_terminal=True,
@@ -260,6 +278,8 @@ async def _non_stream_round(
     if isinstance(assistant.content, str) and assistant.content:
         yield TextDeltaEvent(content=assistant.content)
     yield AssistantMessageEvent(message=assistant)
+    if truncated:
+        yield TruncatedEvent(kept_chars=_kept_chars(assistant))
     yield UsageEvent(
         usage=resolve_round_usage(response.usage, param.messages, assistant),
     )
@@ -376,12 +396,14 @@ async def _stream_round(
     # If we got payload but no finish_reason, treat as terminal (some providers
     # omit it); if empty and no finish_reason, flag as missing terminal.
     stream_terminal = saw_terminal or _assistant_has_payload(assistant)
-    _validate_assistant_terminal(
+    truncated = _validate_assistant_terminal(
         assistant,
         finish_reason=finish_reason,
         stream_terminal=stream_terminal,
     )
     yield AssistantMessageEvent(message=assistant)
+    if truncated:
+        yield TruncatedEvent(kept_chars=_kept_chars(assistant))
     yield UsageEvent(
         usage=resolve_round_usage(last_api_usage, param.messages, assistant),
     )
@@ -406,6 +428,27 @@ async def _assistant_round(
         if isinstance(event, AssistantMessageEvent):
             messages.append(event.message)
         yield event
+
+
+def _keep_truncated_round(
+    messages: list[AnyChatMessage],
+    truncated: TruncatedEvent,
+    *,
+    continued: bool,
+) -> TruncatedEvent:
+    """Keep a round cut off at the output limit and tell the model where it stopped.
+
+    The answer and its thinking blocks stay in ``messages`` (the provider verifies
+    those blocks, so dropping them would make the round uncontinuable), but the
+    round's tool calls go: a half-written call must not run, its arguments may not
+    even parse, and the model re-issues it after reading the notice. Returns the
+    event to yield, with the continuation outcome filled in.
+    """
+    last = messages[-1]
+    if isinstance(last, AssistantChatMessage) and last.tool_calls is not UNSET and last.tool_calls:
+        messages[-1] = msgspec.structs.replace(last, tool_calls=UNSET)
+    messages.append(truncated_turn_notice().to_message())
+    return msgspec.structs.replace(truncated, continued=continued)
 
 
 def _last_assistant(messages: list[AnyChatMessage], pre_len: int) -> AssistantChatMessage:
@@ -448,13 +491,14 @@ async def _maybe_inject_directive_checkpoints(
     return new_band
 
 
-async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
+async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     client: AnyLLMClient,
     messages: list[AnyChatMessage],
     *,
     model: str,
     tools: ToolRegistry | None = None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
+    max_truncation_continues: int = DEFAULT_MAX_TRUNCATION_CONTINUES,
     temperature: float | None = None,
     reasoning_effort: str = "",
     on_limit: LimitContinueHook | None = None,
@@ -481,6 +525,12 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
     the provider's own default); each API surface maps it onto its own wire field
     (see ``config.reasoning``).
 
+    A round the provider cuts off at the output limit (``finish_reason=length``)
+    is kept instead of failing the turn: its answer and thinking blocks stay in
+    ``messages``, its tool calls are dropped, and a truncation notice tells the
+    model where it stopped. Up to *max_truncation_continues* rounds per turn then
+    carry on from there (0 = stop, leaving the turn for ``/retry``).
+
     *provider_tools* are hosted/provider-side tools (OpenAI Responses only, e.g.
     ``web_search``) merged into the request as opaque dicts; never executed by the
     :class:`ToolRegistry`. Ignored by non-Responses clients.
@@ -500,6 +550,7 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
 
     rounds_used = 0
     allowance = max_rounds
+    truncation_continues = 0
     # Calibrate soft-compact from last model call's prompt_tokens (API preferred).
     prompt_tokens_hint: int | None = None
     sent_estimate_tokens: int | None = None
@@ -532,6 +583,7 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
 
             pre_len = len(messages)
             last_usage_event: UsageEvent | None = None
+            truncated: TruncatedEvent | None = None
             async for event in _assistant_round(
                 client,
                 param,
@@ -544,9 +596,24 @@ async def run_chat_loop(  # noqa: C901 — multi-phase tool loop
                     prompt_tokens_hint = event.usage.prompt_tokens
                     sent_estimate_tokens = sent_est
                     last_usage_event = event
+                if isinstance(event, TruncatedEvent):
+                    # Yielded below, once the continuation decision is known.
+                    truncated = event
+                    continue
                 yield event
 
             assistant = _last_assistant(messages, pre_len)
+            if truncated is not None:
+                # The provider cut the round off at the output limit: keep what it
+                # wrote and tell the model where it stopped (see the helper).
+                continued = truncation_continues < max_truncation_continues
+                if continued:
+                    truncation_continues += 1
+                yield _keep_truncated_round(messages, truncated, continued=continued)
+                if continued:
+                    continue
+                return
+
             tool_calls = assistant.tool_calls
             has_tools = tool_calls is not UNSET and bool(tool_calls) and tools is not None
             if has_tools:

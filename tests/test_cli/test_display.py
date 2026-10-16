@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent.agent import ErrorEvent, ReasoningDeltaEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
+from plyngent.agent import (
+    ErrorEvent,
+    ReasoningDeltaEvent,
+    TextDeltaEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    TruncatedEvent,
+)
 from plyngent.cli.display import (
     _RUN_BATCH_CMD_LIMIT,
     _clear_streamed_lines,
@@ -1257,3 +1264,12 @@ async def test_pretty_prefix_closed_before_error_line(
     assert "* Read 'a.txt' \n" in out
     assert "[error] source=tool boom\n" in out
     assert "* Read 'a.txt' (error)\n" in out
+
+
+async def test_render_truncated_round(capsys: pytest.CaptureFixture[str]) -> None:
+    """A round cut off at the output limit says so, and how the turn goes on."""
+    await render_events(_aiter([TruncatedEvent(kept_chars=42, continued=True)]))
+    assert "[limit] output truncated (42 chars kept); continuing\n" in capsys.readouterr().out
+
+    await render_events(_aiter([TruncatedEvent(kept_chars=42, continued=False)]))
+    assert "[limit] output truncated (42 chars kept); /retry continues from here\n" in capsys.readouterr().out

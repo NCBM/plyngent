@@ -21,6 +21,7 @@ from plyngent.agent import (
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
+    TruncatedEvent,
     UsageEvent,
 )
 from plyngent.lmproto.openai_compatible.model import AssistantFunctionToolCall
@@ -1289,6 +1290,14 @@ async def render_events(  # noqa: C901, PLR0915 — one branch per event type
                 )
             else:
                 click.secho(f"\n[max rounds reached: {event.rounds}]", fg="red")
+        elif isinstance(event, TruncatedEvent):
+            flush_assistant()
+            tool_lines.close_line()
+            tail = "continuing" if event.continued else "/retry continues from here"
+            click.secho(
+                f"\n[limit] output truncated ({event.kept_chars} chars kept); {tail}",
+                fg="yellow",
+            )
         elif isinstance(event, UsageEvent):
             _ = event
         else:

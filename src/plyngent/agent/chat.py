@@ -27,7 +27,8 @@ from .directive_checkpoint import (
     parse_checkpoint_bands,
 )
 from .events import UsageEvent
-from .loop import DEFAULT_MAX_ROUNDS, run_chat_loop
+from .loop import DEFAULT_MAX_ROUNDS, DEFAULT_MAX_TRUNCATION_CONTINUES, run_chat_loop
+from .notices import TRUNCATED_NOTICE_KIND, notice_of_kind
 from .todo_nag import (
     DEFAULT_TODO_NAG_STRATEGY,
     parse_todo_nag_strategy,
@@ -140,8 +141,10 @@ def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
     """User text for an incomplete turn, if history can be retried.
 
     Incomplete when the last non-system message is a user message (failed before
-    any commit), or tool results after a complete tool batch (failed on a later
-    model round — keep tools so retry does not re-execute side effects).
+    any commit), tool results after a complete tool batch (failed on a later
+    model round — keep tools so retry does not re-execute side effects), or a
+    partial answer under a truncation notice (the round hit the output limit; its
+    answer was kept, so retry continues it instead of regenerating).
     Trailing developer messages (host notices, directive checkpoints) belong to
     the turn but never end it, so they are skipped when reading the tail.
     """
@@ -150,14 +153,17 @@ def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
     if messages and isinstance(messages[0], SystemChatMessage):
         start = 1
     body = list(messages[start:])
+    truncated = False
     while body and isinstance(body[-1], DeveloperChatMessage):
+        if notice_of_kind(body[-1], TRUNCATED_NOTICE_KIND):
+            truncated = True
         _ = body.pop()
     if not body:
         return None
     last = body[-1]
     if isinstance(last, UserChatMessage):
         return last.content
-    if isinstance(last, ToolChatMessage):
+    if isinstance(last, ToolChatMessage) or (truncated and isinstance(last, AssistantChatMessage)):
         # Walk back to the user that opened this turn.
         for msg in reversed(body):
             if isinstance(msg, UserChatMessage):
@@ -289,6 +295,8 @@ class ChatAgent:
     memory: MemoryStore | None
     session_id: int | None
     max_rounds: int
+    # Rounds a turn may carry on after hitting the output limit (0 = none).
+    max_truncation_continues: int
     temperature: float | None
     # Resolved thinking strength ("" = provider default); see config.reasoning.
     reasoning_effort: str
@@ -322,6 +330,7 @@ class ChatAgent:
         memory: MemoryStore | None = None,
         session_id: int | None = None,
         max_rounds: int = DEFAULT_MAX_ROUNDS,
+        max_truncation_continues: int = DEFAULT_MAX_TRUNCATION_CONTINUES,
         temperature: float | None = None,
         reasoning_effort: str = "",
         messages: Sequence[AnyChatMessage] | None = None,
@@ -345,6 +354,7 @@ class ChatAgent:
         self.memory = memory
         self.session_id = session_id
         self.max_rounds = max_rounds
+        self.max_truncation_continues = max(0, int(max_truncation_continues))
         self.temperature = temperature
         self.reasoning_effort = reasoning_effort
         self.on_limit = on_limit
@@ -603,6 +613,7 @@ class ChatAgent:
                 model=self.model,
                 tools=self.tools,
                 max_rounds=self.max_rounds,
+                max_truncation_continues=self.max_truncation_continues,
                 temperature=self.temperature,
                 reasoning_effort=self.reasoning_effort,
                 on_limit=self.on_limit,
@@ -747,6 +758,7 @@ class ChatAgent:
             memory=None,
             session_id=None,
             max_rounds=rounds,
+            max_truncation_continues=self.max_truncation_continues,
             temperature=self.temperature,
             reasoning_effort=self.reasoning_effort,
             on_limit=self.on_limit,

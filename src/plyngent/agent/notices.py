@@ -27,6 +27,11 @@ if TYPE_CHECKING:
 # developer messages (durable directive checkpoints share the role).
 NOTICE_MARKER = "[plyngent notice"
 
+# Notice kind for a turn the provider cut off at the output limit. The turn's
+# partial answer is kept, so the agent reads such a turn as unfinished and
+# ``/retry`` continues it (see ``ChatAgent.pending_retry_text``).
+TRUNCATED_NOTICE_KIND = "truncated"
+
 
 @dataclass(frozen=True, slots=True)
 class Notice:
@@ -41,14 +46,18 @@ class Notice:
         return DeveloperChatMessage(content=f"{NOTICE_MARKER}: {self.kind}]\n{self.body.strip()}")
 
 
+def notice_of_kind(message: AnyChatMessage, kind: str) -> bool:
+    """Whether *message* is a notice of *kind*."""
+    return isinstance(message, DeveloperChatMessage) and message.content.startswith(f"{NOTICE_MARKER}: {kind}]")
+
+
 def has_notice(messages: Sequence[AnyChatMessage], kind: str) -> bool:
     """Whether *messages* already carries a notice of *kind*.
 
     Notices are persisted with the transcript, so a host asks this before
     pushing one that belongs to the session rather than to an event.
     """
-    marker = f"{NOTICE_MARKER}: {kind}]"
-    return any(isinstance(message, DeveloperChatMessage) and message.content.startswith(marker) for message in messages)
+    return any(notice_of_kind(message, kind) for message in messages)
 
 
 def format_moment(moment: datetime | None) -> str:
@@ -80,6 +89,27 @@ def resume_notice(*, last_active: datetime | None) -> Notice:
     )
     summary = f"resumed in a new process (previous run's last activity: {stamp})"
     return Notice(kind="resume", body=body, summary=summary)
+
+
+def truncated_turn_notice() -> Notice:
+    """Notice for a round the provider cut off at the output limit.
+
+    The partial answer is kept in the transcript (thinking blocks included, so
+    the provider still verifies them), which is why the model has to be told the
+    round was not finished: it continues from what it already wrote, re-issues
+    the tool call that was dropped, and keeps the remainder short enough to fit.
+    """
+    body = (
+        "Your previous round was cut off at the output limit (max_tokens). The partial answer it wrote "
+        "was kept in the transcript, and any tool call in that round was discarded — re-issue it if you "
+        "still need it. Continue from where the answer stopped instead of writing it again from the "
+        "start, and keep the rest short enough to finish: split the work, or hand off what is left."
+    )
+    return Notice(
+        kind=TRUNCATED_NOTICE_KIND,
+        body=body,
+        summary="output truncated (max_tokens); partial answer kept",
+    )
 
 
 _ASIDE_BODIES: dict[str, str] = {

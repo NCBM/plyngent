@@ -14,10 +14,12 @@ from plyngent.agent import (
     ToolCallEvent,
     ToolRegistry,
     ToolResultEvent,
+    TruncatedEvent,
     UsageEvent,
     run_chat_loop,
     tool,
 )
+from plyngent.agent.notices import TRUNCATED_NOTICE_KIND, notice_of_kind
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
     AnyChatMessage,
@@ -987,18 +989,113 @@ async def test_empty_completion_raises() -> None:
         _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
 
 
-async def test_length_finish_raises() -> None:
+async def test_length_finish_keeps_the_partial_answer_and_continues() -> None:
     client = ScriptedClient(
         [
-            _response(
-                AssistantChatMessage(content="partial"),
-                finish_reason="length",
-            )
+            _response(AssistantChatMessage(content="partial"), finish_reason="length"),
+            _response(AssistantChatMessage(content="rest")),
         ]
     )
     messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
-    with pytest.raises(RuntimeError, match="truncated"):
+    events = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+
+    truncated = [e for e in events if isinstance(e, TruncatedEvent)]
+    assert len(truncated) == 1
+    assert truncated[0].kept_chars == len("partial")
+    assert truncated[0].continued
+    # The partial answer stays in history under a truncation notice, and the
+    # continuation round is sent that history — the model continues its answer
+    # rather than writing it again from the start.
+    assert isinstance(messages[1], AssistantChatMessage)
+    assert messages[1].content == "partial"
+    assert notice_of_kind(messages[2], TRUNCATED_NOTICE_KIND)
+    assert isinstance(messages[3], AssistantChatMessage)
+    assert messages[3].content == "rest"
+    assert any(notice_of_kind(m, TRUNCATED_NOTICE_KIND) for m in client.calls[1].messages)
+
+
+async def test_length_finish_stops_once_the_continuation_budget_is_spent() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content="partial"), finish_reason="length")] * 2)
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [
+        e
+        async for e in run_chat_loop(
+            client,
+            messages,
+            model="m",
+            stream=False,
+            max_truncation_continues=1,
+        )
+    ]
+
+    assert [e.continued for e in events if isinstance(e, TruncatedEvent)] == [True, False]
+    assert len(client.calls) == 2
+    # Nothing raised: the turn ends with the partial answer kept, so `/retry`
+    # continues it instead of regenerating.
+    assert isinstance(messages[-2], AssistantChatMessage)
+    assert messages[-2].content == "partial"
+    assert notice_of_kind(messages[-1], TRUNCATED_NOTICE_KIND)
+
+
+async def test_length_finish_drops_the_rounds_tool_calls() -> None:
+    ran: list[str] = []
+
+    @tool(name="boom", register=False)
+    async def _boom(argument: str) -> str:
+        ran.append(argument)
+        return "ran"
+
+    call = AssistantFunctionToolCall(
+        id="c1",
+        function=AssistantFunctionTool(name="boom", arguments='{"argument": "x"'),
+    )
+    client = ScriptedClient(
+        [
+            _response(
+                AssistantChatMessage(content="partial", tool_calls=[call]),
+                finish_reason="length",
+            ),
+            _response(AssistantChatMessage(content="done")),
+        ]
+    )
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    events = [e async for e in run_chat_loop(client, messages, model="m", tools=ToolRegistry([_boom]), stream=False)]
+
+    # A call cut off mid-write is not replayed: the model re-issues it after
+    # reading the notice.
+    assert ran == []
+    assert not [e for e in events if isinstance(e, (ToolCallEvent, ToolResultEvent))]
+    kept = messages[1]
+    assert isinstance(kept, AssistantChatMessage)
+    assert kept.content == "partial"
+    assert kept.tool_calls is UNSET
+
+
+async def test_length_finish_without_content_still_raises() -> None:
+    client = ScriptedClient([_response(AssistantChatMessage(content=None), finish_reason="length")])
+    messages: list[AnyChatMessage] = [UserChatMessage(content="hi")]
+    with pytest.raises(RuntimeError, match="output limit reached with nothing written"):
         _ = [e async for e in run_chat_loop(client, messages, model="m", stream=False)]
+
+
+async def test_truncated_turn_is_retryable() -> None:
+    store = await MemoryStore.open(DatabaseConfig())
+    session = await store.create_session(name="t")
+    client = ScriptedClient(
+        [
+            _response(AssistantChatMessage(content="partial"), finish_reason="length"),
+            _response(AssistantChatMessage(content="rest")),
+        ]
+    )
+    agent = ChatAgent(client, model="m", memory=store, session_id=session.sid, max_truncation_continues=0, stream=False)
+    _ = [e async for e in agent.run("hi")]
+
+    # Kept, not rolled back: the turn is unfinished, so retry continues it.
+    assert agent.pending_retry_text == "hi"
+    _ = [e async for e in agent.retry()]
+    assert any(notice_of_kind(m, TRUNCATED_NOTICE_KIND) for m in client.calls[1].messages)
+    assert agent.pending_retry_text is None
+    await store.close()
 
 
 async def test_content_filter_finish_raises() -> None:

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
 
-from plyngent.agent import ChatAgent, Notice, aside_notice, format_moment, has_notice, resume_notice, skill_tools_notice
+from plyngent.agent import (
+    ChatAgent,
+    Notice,
+    aside_notice,
+    format_moment,
+    has_notice,
+    resume_notice,
+    skill_tools_notice,
+    truncated_turn_notice,
+)
 from plyngent.agent.chat import incomplete_turn_user_text
 from plyngent.config.models import DatabaseConfig
 from plyngent.lmproto.openai_compatible.model import (
@@ -124,3 +133,26 @@ def test_trailing_developer_message_keeps_incomplete_turn_detectable() -> None:
     # A finished turn (trailing assistant) stays non-retryable past a notice.
     done = [UserChatMessage(content="do it"), AssistantChatMessage(content="ok"), notice]
     assert incomplete_turn_user_text(done) is None
+
+
+def test_truncated_turn_notice_keeps_the_partial_answer_retryable() -> None:
+    """A kept partial answer is unfinished work, so retry continues it."""
+    tail = [
+        UserChatMessage(content="do it"),
+        AssistantChatMessage(content="partial answer"),
+        truncated_turn_notice().to_message(),
+    ]
+    assert incomplete_turn_user_text(tail) == "do it"
+    # The same tail without the truncation notice is a finished turn.
+    assert incomplete_turn_user_text(tail[:2]) is None
+
+
+def test_truncated_turn_notice_tells_the_model_where_it_stopped() -> None:
+    notice = truncated_turn_notice()
+    assert notice.kind == "truncated"
+    assert notice.to_message().content.startswith("[plyngent notice: truncated]")
+    assert "max_tokens" in notice.body
+    # The dropped call and the kept answer are both spelled out.
+    assert "discarded" in notice.body
+    assert "kept in the transcript" in notice.body
+    assert "max_tokens" in notice.summary
