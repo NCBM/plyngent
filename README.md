@@ -325,7 +325,7 @@ Default registry: file ops (including `tree` with a markdown bullet-list default
 
 Safety defaults:
 
-- Paths stay under the workspace unless granted (`request_directory_access` / `[agent].allow_paths`); optional `path_denylist` substrings always apply (`tree` also skips denylisted children by default).
+- Paths stay under the workspace unless granted (`request_directory_access` / `[agent].allow_paths`); the refusal names the `mode` that would cover the call; optional `path_denylist` substrings always apply (`tree` also skips denylisted children by default).
 - Command basename denylist (e.g. dangerous shells/utilities).
 - Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
 - `write_file` refuses to replace an existing file unless `overwrite=true`; the confirm asks about that replacement.
