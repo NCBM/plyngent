@@ -14,6 +14,7 @@ from plyngent.agent.messages_bridge import (
     anthropic_usage_to_dict,
     chat_messages_to_anthropic,
     chat_param_to_anthropic_param,
+    extended_thinking_rejected,
     provider_tools_to_anthropic_tools,
     tool_items_to_anthropic_tools,
 )
@@ -387,3 +388,59 @@ def test_chat_param_to_anthropic_param_thinking_disabled() -> None:
     assert body.thinking is not UNSET
     assert body.thinking.type == "disabled"
     assert body.thinking.budget_tokens is UNSET
+
+
+def test_chat_param_to_anthropic_param_adaptive_thinking_from_effort() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("high"), adaptive_thinking=True)
+    assert body.thinking is not UNSET
+    assert body.thinking.type == "adaptive"
+    assert body.thinking.budget_tokens is UNSET
+    assert body.output_config is not UNSET
+    assert body.output_config.effort == "high"
+    # Adaptive thinking spends no fixed budget, so max_tokens stays as asked.
+    assert body.max_tokens == 8192
+
+
+def test_chat_param_to_anthropic_param_adaptive_effort_levels() -> None:
+    def effort_for(level: ReasoningEffort) -> str:
+        body = chat_param_to_anthropic_param(_effort_param(level), adaptive_thinking=True)
+        assert body.output_config is not UNSET
+        return str(body.output_config.effort)
+
+    assert effort_for("minimal") == "low"  # no such API level; the lowest one
+    assert effort_for("xhigh") == "xhigh"
+
+
+def test_chat_param_to_anthropic_param_adaptive_ignores_a_configured_budget() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("medium"), thinking_budget_tokens=20000, adaptive_thinking=True)
+    assert body.thinking is not UNSET
+    assert body.thinking.type == "adaptive"
+    assert body.thinking.budget_tokens is UNSET
+    assert body.max_tokens == 8192
+
+
+def test_chat_param_to_anthropic_param_adaptive_disabled_carries_no_effort() -> None:
+    body = chat_param_to_anthropic_param(_effort_param("none"), adaptive_thinking=True)
+    assert body.thinking is not UNSET
+    assert body.thinking.type == "disabled"
+    assert body.output_config is UNSET
+
+
+def test_chat_param_to_anthropic_param_adaptive_without_effort_sends_nothing() -> None:
+    body = chat_param_to_anthropic_param(_effort_param(), adaptive_thinking=True)
+    assert body.thinking is UNSET
+    assert body.output_config is UNSET
+
+
+def test_extended_thinking_rejected_matches_the_api_and_gateway_wording() -> None:
+    documented = (
+        'messages HTTP 400: {"error":{"message":"\\"thinking.type.enabled\\" is not supported for this '
+        'model. Use \\"thinking.type.adaptive\\" and \\"output_config.effort\\" to control thinking behavior."}}'
+    )
+    gateway = (
+        'messages HTTP 400: {"error":{"message":"claude-opus-5-5 requires adaptive thinking; omit thinking '
+        'or use thinking.type=adaptive and output_config.effort"}}'
+    )
+    assert extended_thinking_rejected(documented)
+    assert extended_thinking_rejected(gateway)
+    assert not extended_thinking_rejected('messages HTTP 400: {"error":{"message":"max_tokens: required"}}')

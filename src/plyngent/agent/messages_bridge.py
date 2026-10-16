@@ -17,6 +17,7 @@ from plyngent.lmproto.anthropic.model import (
     AnthropicAssistantMessage,
     AnthropicMessageResponse,
     AnthropicMessagesParam,
+    AnthropicOutputConfig,
     AnthropicResponseText,
     AnthropicServerToolUseContent,
     AnthropicTextContent,
@@ -384,7 +385,7 @@ def _thinking_from_param(
     *,
     thinking_budget_tokens: int,
 ) -> AnthropicThinkingConfig | Unset:
-    """Build the ``thinking`` block for *param* (UNSET = send nothing).
+    """Build the extended-thinking block for *param* (UNSET = send nothing).
 
     ``reasoning_effort = "none"`` disables thinking; any other level enables it
     with the explicit *thinking_budget_tokens*, else with the budget that level
@@ -423,11 +424,76 @@ def _thinking_and_max_tokens(
     return max_tokens, thinking
 
 
+# Effort level → Anthropic ``output_config.effort`` on an adaptive-thinking
+# model. ``minimal`` has no API level of its own and lands on the lowest one;
+# unknown levels fall back to "medium" (the budgets above do the same).
+_ANTHROPIC_ADAPTIVE_EFFORTS: dict[str, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
+_ANTHROPIC_FALLBACK_ADAPTIVE_EFFORT = "medium"
+
+
+def _adaptive_thinking_from_param(
+    param: ChatCompletionsParam,
+) -> tuple[AnthropicThinkingConfig | Unset, AnthropicOutputConfig | Unset]:
+    """Build the adaptive-thinking blocks for *param* (UNSET = send nothing).
+
+    The shape for a model that rejects ``thinking.type.enabled``: adaptive
+    thinking, steered by ``output_config.effort`` rather than a token budget.
+    ``reasoning_effort = "none"`` still disables thinking; a configured
+    ``thinking_budget_tokens`` has no adaptive equivalent and is left out.
+    """
+    effort = param.reasoning_effort
+    if effort is UNSET:
+        return UNSET, UNSET
+    if effort == "none":
+        return AnthropicThinkingConfig(type="disabled"), UNSET
+    level = _ANTHROPIC_ADAPTIVE_EFFORTS.get(str(effort), _ANTHROPIC_FALLBACK_ADAPTIVE_EFFORT)
+    return AnthropicThinkingConfig(type="adaptive"), AnthropicOutputConfig(effort=level)
+
+
+def extended_thinking_rejected(message: str) -> bool:
+    """Whether a ``/messages`` failure is the API refusing extended thinking.
+
+    The documented wording is ``"thinking.type.enabled" is not supported for this
+    model. Use "thinking.type.adaptive" and "output_config.effort" …``; gateways
+    paraphrase it (``claude-opus-5-5 requires adaptive thinking; omit thinking or
+    use thinking.type=adaptive …``), so match the one word they all carry —
+    callers only get here after a request that sent extended thinking.
+    """
+    return "adaptive" in message.lower()
+
+
+def _thinking_for_param(
+    param: ChatCompletionsParam,
+    *,
+    thinking_budget_tokens: int,
+    adaptive: bool,
+) -> tuple[int, AnthropicThinkingConfig | Unset, AnthropicOutputConfig | Unset]:
+    """Resolve *param*'s ``max_tokens`` and thinking blocks for one shape.
+
+    Extended thinking needs ``max_tokens`` raised above its budget (see
+    :func:`_thinking_and_max_tokens`); adaptive thinking carries no budget, so
+    the caller's ``max_tokens`` stands.
+    """
+    if adaptive:
+        thinking, output_config = _adaptive_thinking_from_param(param)
+        return _max_tokens_from_param(param), thinking, output_config
+    max_tokens, thinking = _thinking_and_max_tokens(param, thinking_budget_tokens=thinking_budget_tokens)
+    return max_tokens, thinking, UNSET
+
+
 def chat_param_to_anthropic_param(
     param: ChatCompletionsParam,
     *,
     thinking_budget_tokens: int = 0,
     provider_tools: Sequence[dict[str, Any]] | None = None,
+    adaptive_thinking: bool = False,
 ) -> AnthropicMessagesParam:
     """Build :class:`AnthropicMessagesParam` from a chat completions param.
 
@@ -435,13 +501,22 @@ def chat_param_to_anthropic_param(
     (0 = derive it from the param's ``reasoning_effort``); *provider_tools* are
     hosted tools (web_search, …) as opaque dicts, merged after local function
     tools and never executed by the registry.
+
+    *adaptive_thinking* asks for the thinking shape of a model that rejects
+    extended thinking: ``thinking.type = "adaptive"`` with the effort in
+    ``output_config`` instead of a ``budget_tokens`` budget (see
+    :func:`_adaptive_thinking_from_param`).
     """
     system, messages = chat_messages_to_anthropic(param.messages)
     tools: list[AnthropicToolDefinition | dict[str, Any]] = list(
         tool_items_to_anthropic_tools(param.tools if param.tools is not UNSET else None)
     )
     tools.extend(provider_tools_to_anthropic_tools(provider_tools))
-    max_tokens, thinking = _thinking_and_max_tokens(param, thinking_budget_tokens=thinking_budget_tokens)
+    max_tokens, thinking, output_config = _thinking_for_param(
+        param,
+        thinking_budget_tokens=thinking_budget_tokens,
+        adaptive=adaptive_thinking,
+    )
 
     kwargs: dict[str, Any] = {
         "model": param.model,
@@ -450,6 +525,8 @@ def chat_param_to_anthropic_param(
     }
     if thinking is not UNSET:
         kwargs["thinking"] = thinking
+    if output_config is not UNSET:
+        kwargs["output_config"] = output_config
     if system:
         kwargs["system"] = system
     if tools:

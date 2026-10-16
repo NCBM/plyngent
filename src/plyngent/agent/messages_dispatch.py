@@ -11,11 +11,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Final, cast
 
+from msgspec import UNSET
+
 from plyngent.agent.messages_bridge import (
     anthropic_response_to_chat_completion,
     anthropic_stop_to_finish_reason,
     anthropic_usage_to_dict,
     chat_param_to_anthropic_param,
+    extended_thinking_rejected,
 )
 from plyngent.agent.stream_chunks import (
     finish_reason_chunk,
@@ -40,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
     from plyngent.lmproto.anthropic.client import AnthropicClient
-    from plyngent.lmproto.anthropic.model import AnthropicStreamEvent
+    from plyngent.lmproto.anthropic.model import AnthropicMessagesParam, AnthropicStreamEvent
     from plyngent.lmproto.openai_compatible.model import (
         ChatCompletionChunk,
         ChatCompletionResponse,
@@ -51,6 +54,48 @@ if TYPE_CHECKING:
 def _thinking_budget(client: AnthropicClient) -> int:
     """Configured explicit ``thinking`` budget on *client* (0 = derive from effort)."""
     return max(0, int(getattr(client, "thinking_budget_tokens", 0)))
+
+
+def _create_param(
+    client: AnthropicClient,
+    param: ChatCompletionsParam,
+    provider_tools: Sequence[dict[str, Any]] | None,
+    *,
+    adaptive: bool | None = None,
+) -> AnthropicMessagesParam:
+    """Build the ``/messages`` request for *param*.
+
+    *adaptive* picks the thinking shape; ``None`` asks the client whether this
+    session already found *param*'s model rejecting extended thinking.
+    """
+    use_adaptive = client.needs_adaptive_thinking(param.model) if adaptive is None else adaptive
+    return chat_param_to_anthropic_param(
+        param,
+        thinking_budget_tokens=_thinking_budget(client),
+        provider_tools=provider_tools,
+        adaptive_thinking=use_adaptive,
+    )
+
+
+def _retry_with_adaptive_thinking(
+    client: AnthropicClient,
+    param: ChatCompletionsParam,
+    provider_tools: Sequence[dict[str, Any]] | None,
+    error: Exception,
+) -> AnthropicMessagesParam | None:
+    """The request to retry with when the model refused extended thinking.
+
+    ``None`` when the failure is not that refusal, or when the request never sent
+    extended thinking. The model is remembered on the client, so only its first
+    request pays the extra round trip.
+    """
+    if not extended_thinking_rejected(str(error)):
+        return None
+    create = _create_param(client, param, provider_tools)
+    if create.thinking is UNSET or create.thinking.type != "enabled":
+        return None
+    client.note_adaptive_thinking(param.model)
+    return _create_param(client, param, provider_tools, adaptive=True)
 
 
 class _ToolBlockState:
@@ -365,6 +410,33 @@ def _chunks_for_content_delta(
     ]
 
 
+async def _stream_events(
+    client: AnthropicClient,
+    param: ChatCompletionsParam,
+    *,
+    provider_tools: Sequence[dict[str, Any]] | None = None,
+) -> AsyncIterator[AnthropicStreamEvent]:
+    """Open the Messages stream, retrying once with adaptive thinking if refused.
+
+    A refusal arrives before the stream yields anything, so the retry cannot
+    duplicate events the caller has already seen.
+    """
+    create = _create_param(client, param, provider_tools)
+    saw_event = False
+    try:
+        async for event in await client.messages(create, stream=True):
+            saw_event = True
+            yield event
+    except RuntimeError as exc:
+        if saw_event:
+            raise
+        retry = _retry_with_adaptive_thinking(client, param, provider_tools, exc)
+        if retry is None:
+            raise
+        async for event in await client.messages(retry, stream=True):
+            yield event
+
+
 async def _stream_as_chat_chunks(
     client: AnthropicClient,
     param: ChatCompletionsParam,
@@ -379,15 +451,9 @@ async def _stream_as_chat_chunks(
     ``message_stop``. Errors raise ``RuntimeError`` so the agent loop can
     surface them as retryable failures.
     """
-    create = chat_param_to_anthropic_param(
-        param,
-        thinking_budget_tokens=_thinking_budget(client),
-        provider_tools=provider_tools,
-    )
-    stream = await client.messages(create, stream=True)
     state = _StreamState(param.model)
 
-    async for event in stream:
+    async for event in _stream_events(client, param, provider_tools=provider_tools):
         for chunk in _chunks_for_event(event, state):
             yield chunk
         if state.saw_message_stop:
@@ -419,14 +485,16 @@ async def dispatch_messages(
     surface's own server-tool definition is built from them and the results
     arrive inside the same response, so nothing is executed locally.
     """
-    create = chat_param_to_anthropic_param(
-        param,
-        thinking_budget_tokens=_thinking_budget(client),
-        provider_tools=provider_tools,
-    )
     if stream:
         return _stream_as_chat_chunks(client, param, provider_tools=provider_tools)
-    response = await client.messages(create, stream=False)
+    create = _create_param(client, param, provider_tools)
+    try:
+        response = await client.messages(create, stream=False)
+    except RuntimeError as exc:
+        retry = _retry_with_adaptive_thinking(client, param, provider_tools, exc)
+        if retry is None:
+            raise
+        response = await client.messages(retry, stream=False)
     return anthropic_response_to_chat_completion(response)
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
+import pytest
 from msgspec import UNSET
 
 from plyngent.agent import (
@@ -45,6 +46,14 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
 
+# What the API answers a request that sends extended thinking to a model that
+# takes adaptive thinking only (a gateway paraphrase of the documented wording).
+_ADAPTIVE_REQUIRED_400 = (
+    'messages HTTP 400: {"error":{"type":"error","message":"claude-opus-5-5 requires adaptive '
+    'thinking; omit thinking or use thinking.type=adaptive and output_config.effort"}}'
+)
+
+
 def _message_response(
     *,
     text: str = "hello",
@@ -73,21 +82,43 @@ class ScriptedMessagesClient:
 
     kind: str = "messages"
     calls: list[AnthropicMessagesParam]
-    # Mirrors AnthropicClient: explicit thinking budget (0 = derive from effort).
+    # Mirrors AnthropicClient: explicit thinking budget (0 = derive from effort),
+    # and the models the dispatch learned to send adaptive thinking to.
     thinking_budget_tokens: int
+    adaptive_thinking_models: set[str]
     _non_stream: list[AnthropicMessageResponse]
     _stream_events: list[list[AnthropicStreamEvent]]
+    _rejects_extended_thinking: bool
+    _error: str | None
 
     def __init__(
         self,
         *,
         non_stream: Sequence[AnthropicMessageResponse] | None = None,
         stream_events: Sequence[Sequence[AnthropicStreamEvent]] | None = None,
+        rejects_extended_thinking: bool = False,
+        error: str | None = None,
     ) -> None:
         self.calls = []
         self.thinking_budget_tokens = 0
+        self.adaptive_thinking_models = set()
         self._non_stream = list(non_stream or ())
         self._stream_events = [list(events) for events in (stream_events or ())]
+        self._rejects_extended_thinking = rejects_extended_thinking
+        self._error = error
+
+    def needs_adaptive_thinking(self, model: str) -> bool:
+        return model in self.adaptive_thinking_models
+
+    def note_adaptive_thinking(self, model: str) -> None:
+        self.adaptive_thinking_models.add(model)
+
+    def _reject(self, param: AnthropicMessagesParam) -> None:
+        """Raise what the API raises for a request it refuses to run."""
+        if self._error is not None:
+            raise RuntimeError(self._error)
+        if self._rejects_extended_thinking and param.thinking is not UNSET and param.thinking.type == "enabled":
+            raise RuntimeError(_ADAPTIVE_REQUIRED_400)
 
     @overload
     async def messages(
@@ -107,13 +138,16 @@ class ScriptedMessagesClient:
             if not self._stream_events:
                 msg = "no more scripted stream events"
                 raise RuntimeError(msg)
-            events = self._stream_events.pop(0)
 
             async def _gen() -> AsyncIterator[AnthropicStreamEvent]:
-                for event in events:
+                # The real client reads the error body on the first iteration,
+                # so a refused request consumes no scripted events.
+                self._reject(param)
+                for event in self._stream_events.pop(0):
                     yield event
 
             return _gen()
+        self._reject(param)
         if not self._non_stream:
             msg = "no more scripted messages"
             raise RuntimeError(msg)
@@ -602,3 +636,68 @@ async def test_search_turn_reports_the_prompt_the_delta_counts() -> None:
     assert isinstance(usage, dict)
     assert usage["prompt_tokens"] == 12468
     assert usage["completion_tokens"] == 198
+
+
+def _thinking_param(model: str = "claude-opus-5-5", effort: str = "high") -> ChatCompletionsParam:
+    return ChatCompletionsParam(
+        model=model,
+        messages=[UserChatMessage(content="hi")],
+        reasoning_effort=cast("Any", effort),
+    )
+
+
+async def test_dispatch_messages_retries_with_adaptive_thinking() -> None:
+    client = ScriptedMessagesClient(non_stream=[_message_response(text="done")], rejects_extended_thinking=True)
+    result = await dispatch_messages(cast("Any", client), _thinking_param(), stream=False)
+    assert result.choices[0].message.content == "done"
+    assert len(client.calls) == 2
+    refused, retried = client.calls
+    assert refused.thinking is not UNSET
+    assert refused.thinking.type == "enabled"
+    assert retried.thinking is not UNSET
+    assert retried.thinking.type == "adaptive"
+    assert retried.output_config is not UNSET
+    assert retried.output_config.effort == "high"
+
+
+async def test_dispatch_messages_remembers_the_refusing_model() -> None:
+    client = ScriptedMessagesClient(
+        non_stream=[_message_response(text="one"), _message_response(text="two")],
+        rejects_extended_thinking=True,
+    )
+    param = _thinking_param()
+    _ = await dispatch_messages(cast("Any", client), param, stream=False)
+    _ = await dispatch_messages(cast("Any", client), param, stream=False)
+    # Only the model's first request pays the refused attempt.
+    assert [call.thinking.type for call in client.calls] == ["enabled", "adaptive", "adaptive"]
+
+
+async def test_dispatch_messages_stream_retries_with_adaptive_thinking() -> None:
+    events: list[AnthropicStreamEvent] = [
+        AnthropicContentBlockStart(index=0, content_block=AnthropicRawContentBlock(type="text", text="")),
+        AnthropicContentBlockDelta(index=0, delta=AnthropicRawContentBlock(type="text_delta", text="streamed")),
+        AnthropicMessageDelta(delta={"stop_reason": "end_turn"}, usage=AnthropicUsage(output_tokens=3)),
+        AnthropicMessageStop(),
+    ]
+    client = ScriptedMessagesClient(stream_events=[events], rejects_extended_thinking=True)
+    stream = await dispatch_messages(cast("Any", client), _thinking_param(), stream=True)
+    chunks = [chunk async for chunk in cast("Any", stream)]
+    texts = [c.choices[0].delta.content for c in chunks if c.choices and isinstance(c.choices[0].delta.content, str)]
+    assert texts == ["streamed"]
+    assert len(client.calls) == 2
+    assert client.calls[1].thinking.type == "adaptive"
+
+
+async def test_dispatch_messages_does_not_retry_other_failures() -> None:
+    client = ScriptedMessagesClient(error='messages HTTP 400: {"error":{"message":"max_tokens: required"}}')
+    with pytest.raises(RuntimeError, match="max_tokens"):
+        _ = await dispatch_messages(cast("Any", client), _thinking_param(), stream=False)
+    assert len(client.calls) == 1
+
+
+async def test_dispatch_messages_does_not_retry_a_request_without_extended_thinking() -> None:
+    client = ScriptedMessagesClient(error=_ADAPTIVE_REQUIRED_400)
+    param = ChatCompletionsParam(model="claude-opus-5-5", messages=[UserChatMessage(content="hi")])
+    with pytest.raises(RuntimeError, match="adaptive thinking"):
+        _ = await dispatch_messages(cast("Any", client), param, stream=False)
+    assert len(client.calls) == 1

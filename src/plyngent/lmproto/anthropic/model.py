@@ -66,19 +66,32 @@ class AnthropicMetadata(Struct, omit_defaults=True):
 
 
 class AnthropicThinkingConfig(Struct, omit_defaults=True):
-    """``thinking`` request block (extended thinking).
+    """``thinking`` request block (extended or adaptive thinking).
 
-    ``budget_tokens`` is the reasoning budget the model may spend before it
-    answers; the API requires it to be at least 1024 and smaller than
-    ``max_tokens`` (see ``agent.messages_bridge``, which keeps both valid).
+    ``enabled`` is extended thinking: ``budget_tokens`` is the reasoning budget
+    the model may spend before it answers; the API requires it to be at least
+    1024 and smaller than ``max_tokens`` (see ``agent.messages_bridge``, which
+    keeps both valid). Models from Claude 4.7 on reject ``enabled`` and take
+    ``adaptive`` instead, where the depth comes from ``output_config.effort``;
+    ``disabled`` turns thinking off where the model allows it.
 
     ``type`` carries no default: ``omit_defaults`` would drop a defaulted one,
     and the server reads the block as malformed without it — DeepSeek answers
     ``thinking: missing field ``type``.
     """
 
-    type: Literal["enabled", "disabled"]
+    type: Literal["enabled", "disabled", "adaptive"]
     budget_tokens: int | Unset = UNSET
+
+
+class AnthropicOutputConfig(Struct, omit_defaults=True):
+    """``output_config`` request block: how much the model spends on a turn.
+
+    ``effort`` is the adaptive-thinking knob (``low`` … ``max``); it replaces a
+    ``thinking.budget_tokens`` budget on the models that no longer take one.
+    """
+
+    effort: str | Unset = UNSET
 
 
 class AnthropicMessagesParam(Struct, omit_defaults=True):
@@ -97,6 +110,7 @@ class AnthropicMessagesParam(Struct, omit_defaults=True):
     top_p: float | Unset = UNSET
     top_k: int | Unset = UNSET
     thinking: AnthropicThinkingConfig | Unset = UNSET
+    output_config: AnthropicOutputConfig | Unset = UNSET
 
 
 class AnthropicUsage(Struct, omit_defaults=True):
