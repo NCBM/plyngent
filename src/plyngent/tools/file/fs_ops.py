@@ -94,7 +94,7 @@ def _copy_or_move_validated(
         return f"error: {action} failed: {exc}"
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("dst",))
 async def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     """Copy a file or directory under the workspace (``shutil.copy2`` / ``copytree``).
 
@@ -110,7 +110,7 @@ async def copy_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     return _copy_or_move_validated(source, dest, root, src=src, dst=dst, overwrite=overwrite, action="copy")
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("src", "dst"))
 async def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     """Move/rename a file or directory under the workspace (``shutil.move``)."""
     pair = _resolve_pair(src, dst)
@@ -149,7 +149,7 @@ def _delete_target(target: Path, path: str, *, recursive: bool) -> str:
     return f"error: unsupported path type: {path}"
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
 async def delete_path(path: str, *, recursive: bool = False) -> str:
     """Delete a file or directory under the workspace.
 

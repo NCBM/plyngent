@@ -4,7 +4,9 @@ import asyncio
 import inspect
 import types
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
 from enum import Flag, auto
+from pathlib import Path
 from typing import Any, cast, get_args, get_origin, get_type_hints, overload
 
 import msgspec
@@ -46,13 +48,19 @@ class ToolTag(Flag):
 
 
 class ToolDefinition:
-    """A registered tool: schema for the model plus a callable handler."""
+    """A registered tool: schema for the model plus a callable handler.
+
+    ``writes`` names the arguments whose values name files the handler writes.
+    Calls of one batch that name the same file apply one at a time, in call
+    order, so the later one sees what the earlier one wrote.
+    """
 
     name: str
     description: str
     parameters: JSONSchema
     handler: ToolHandler
     tags: ToolTag
+    writes: tuple[str, ...]
 
     def __init__(
         self,
@@ -62,6 +70,7 @@ class ToolDefinition:
         handler: ToolHandler,
         *,
         tags: ToolTag = ToolTag.LOCAL,
+        writes: tuple[str, ...] = (),
     ) -> None:
         if not (tags & (ToolTag.LOCAL | ToolTag.PUBLIC)):
             msg = f"tool {name!r} tags must include LOCAL and/or PUBLIC"
@@ -71,6 +80,7 @@ class ToolDefinition:
         self.parameters = parameters
         self.handler = handler
         self.tags = tags
+        self.writes = writes
 
     def to_tool_item(self) -> ToolFunctionItem:
         return ToolFunctionItem(
@@ -130,6 +140,7 @@ def _build_definition(
     name: str | None,
     description: str | None,
     tags: ToolTag,
+    writes: tuple[str, ...] = (),
 ) -> ToolDefinition:
     tool_name = name or func.__name__
     tool_description = description if description is not None else (inspect.getdoc(func) or "")
@@ -139,6 +150,7 @@ def _build_definition(
         parameters=schema_from_callable(func),
         handler=func,
         tags=tags,
+        writes=writes,
     )
 
 
@@ -162,6 +174,7 @@ def tool[**PS, R](
     name: str | None = None,
     description: str | None = None,
     tags: ToolTag = ToolTag.LOCAL,
+    writes: tuple[str, ...] = (),
     register: bool = True,
 ) -> Callable[[Callable[PS, R]], ToolDefinition]: ...
 
@@ -173,16 +186,19 @@ def tool[**PS, R](
     name: str | None = None,
     description: str | None = None,
     tags: ToolTag = ToolTag.LOCAL,
+    writes: tuple[str, ...] = (),
     register: bool = True,
 ) -> ToolDefinition | Callable[[Callable[PS, R]], ToolDefinition]:
     """Define (and by default catalog-register) a function as an agent tool.
 
     Schema is inferred from type hints; description defaults to the docstring.
-    Default ``tags`` is :attr:`ToolTag.LOCAL`. When ``register`` is true, the
-    definition is added to the process :class:`~plyngent.tools.catalog.ToolCatalog`
-    with the current registration source (builtin unless a plugin context is set).
-    Catalog registration does **not** alone make the tool model-visible — hosts
-    still **select** tools into a :class:`ToolRegistry`.
+    Default ``tags`` is :attr:`ToolTag.LOCAL`. ``writes`` names the arguments
+    that carry the files the handler writes (:attr:`ToolDefinition.writes`).
+    When ``register`` is true, the definition is added to the process
+    :class:`~plyngent.tools.catalog.ToolCatalog` with the current registration
+    source (builtin unless a plugin context is set). Catalog registration does
+    **not** alone make the tool model-visible — hosts still **select** tools
+    into a :class:`ToolRegistry`.
     """
 
     def decorator(fn: Callable[PS, R]) -> ToolDefinition:
@@ -191,6 +207,7 @@ def tool[**PS, R](
             name=name,
             description=description,
             tags=tags,
+            writes=writes,
         )
         if register:
             _register_definition(definition)
@@ -225,6 +242,15 @@ def _missing_required_error(definition: ToolDefinition, args: Mapping[str, objec
     return f"error: `{definition.name}` is missing required argument(s): {', '.join(missing)}{hint}"
 
 
+def _write_path_key(value: str) -> str:
+    """Comparable key for one path argument of a writing tool.
+
+    Relative arguments all mean the same workspace, so the text itself separates
+    two spellings of one file (``a.txt`` / ``./a.txt``) from two files.
+    """
+    return str(Path(value).expanduser())
+
+
 class ToolRegistry:
     """Name → tool definition map with execution helpers."""
 
@@ -232,6 +258,9 @@ class ToolRegistry:
     _danger: DangerClassifier | None
     _on_confirm: ToolConfirmHook | None
     _confirm_lock: asyncio.Lock
+    # One lock per written file, kept for the registry's life (a session's edits
+    # bound the map), so a batch's writes to one file apply one at a time.
+    _write_locks: dict[str, asyncio.Lock]
     _yolo: bool
     _auto_bind_state: bool
     _instance: object | None
@@ -252,6 +281,7 @@ class ToolRegistry:
         self._danger = danger
         self._on_confirm = on_confirm
         self._confirm_lock = asyncio.Lock()
+        self._write_locks = {}
         self._yolo = yolo
         self._auto_bind_state = auto_bind_state
         self._instance = instance_state
@@ -381,6 +411,25 @@ class ToolRegistry:
             return cast("Any", self._session)
         return session
 
+    def _write_locks_for(self, definition: ToolDefinition, args: Mapping[str, object]) -> list[asyncio.Lock]:
+        """Locks for the files this call writes, in a stable order (no deadlock).
+
+        Empty for a tool that declares no :attr:`ToolDefinition.writes`.
+        """
+        keys: set[str] = set()
+        for name in definition.writes:
+            value = args.get(name)
+            if isinstance(value, str) and value.strip():
+                keys.add(_write_path_key(value))
+        locks: list[asyncio.Lock] = []
+        for key in sorted(keys):
+            lock = self._write_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._write_locks[key] = lock
+            locks.append(lock)
+        return locks
+
     def _grant_allows(self, name: str, *, tags: ToolTag) -> bool:
         if not (tags & ToolTag.TRUSTABLE):
             return False
@@ -468,10 +517,15 @@ class ToolRegistry:
             missing = self._check_state_tags(definition)
             if missing is not None:
                 return missing
-            denied = await self._maybe_confirm(name, args, tags=definition.tags)
-            if denied is not None:
-                return denied
-            return await self._invoke(definition, args)
+            # Held before the confirm prompt, so a sibling call writing the same
+            # file waits for this one instead of overtaking its prompt.
+            async with AsyncExitStack() as held:
+                for lock in self._write_locks_for(definition, args):
+                    await held.enter_async_context(lock)
+                denied = await self._maybe_confirm(name, args, tags=definition.tags)
+                if denied is not None:
+                    return denied
+                return await self._invoke(definition, args)
 
         # Bind host-provided state for tools that read contextvars (todo, workspace).
         # Tag enforcement remains gated by ``auto_bind_state``; binding is always useful

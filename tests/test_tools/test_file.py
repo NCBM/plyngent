@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from plyngent.agent import ToolRegistry
+from plyngent.tools.danger import classify_danger
 from plyngent.tools.file import edit_replace, listdir, read_file, write_file
 from tests.test_tools.helpers import call_sync
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 get_truncated_module = importlib.import_module("plyngent.tools.file.get_truncated")
 
@@ -35,6 +42,37 @@ def test_write_file_refuses_existing_file_without_overwrite(workspace: Path) -> 
     assert (workspace / "keep.txt").read_text(encoding="utf-8") == "first"
     assert "wrote" in call_sync(write_file, "keep.txt", "second", overwrite=True)
     assert (workspace / "keep.txt").read_text(encoding="utf-8") == "second"
+
+
+async def test_same_file_writes_in_one_batch_keep_call_order(workspace: Path) -> None:
+    """The second call writes onto the first one's text, not onto the stale text."""
+    target = workspace / "notes.txt"
+    _ = target.write_text("one", encoding="utf-8")
+    confirmed = asyncio.Event()
+
+    async def on_confirm(name: str, args: Mapping[str, object], reason: str) -> bool:
+        del name, args, reason
+        await confirmed.wait()
+        return True
+
+    registry = ToolRegistry([write_file, edit_replace], danger=classify_danger, on_confirm=on_confirm)
+    rewrite = asyncio.create_task(
+        registry.execute("write_file", '{"path": "notes.txt", "content": "two", "overwrite": true}')
+    )
+    await asyncio.sleep(0)  # the rewrite is waiting on its overwrite confirm
+    edit = asyncio.create_task(
+        registry.execute(
+            "edit_replace",
+            '{"path": "notes.txt", "old_string": "two", "new_string": "three"}',
+        )
+    )
+    await asyncio.sleep(0)  # the edit waits for the file instead of editing stale text
+    assert target.read_text(encoding="utf-8") == "one"
+    confirmed.set()
+    rewrite_out, edit_out = await asyncio.gather(rewrite, edit)
+    assert "wrote" in rewrite_out
+    assert "replaced" in edit_out
+    assert target.read_text(encoding="utf-8") == "three"
 
 
 def test_read_file_max_chars_embeds_token(workspace: Path) -> None:

@@ -48,7 +48,7 @@ def _success_message(
     )
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
 async def edit_replace(path: str, old_string: str, new_string: str, max_replaces: int = 1) -> str:
     """Replace occurrences of ``old_string`` with ``new_string`` in a file.
 

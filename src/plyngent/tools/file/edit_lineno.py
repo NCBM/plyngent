@@ -124,7 +124,7 @@ def _replace_range(
     )
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
 async def edit_lineno(path: str, start_line: int, end_line: int, new_content: str) -> str:
     """Replace lines ``start_line``..``end_line`` (1-based, inclusive) in a file.
 
