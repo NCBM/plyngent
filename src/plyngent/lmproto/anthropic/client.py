@@ -36,9 +36,10 @@ class AnthropicClient:
     models_decoder: msgspec.json.Decoder[AnthropicModelsResponse]
     # Explicit ``thinking`` budget for this client (0 = derive from the effort).
     thinking_budget_tokens: int = 0
-    # Models this session found to reject extended thinking; the dispatch retries
-    # their requests with adaptive thinking instead (see ``messages_dispatch``).
-    adaptive_thinking_models: set[str]
+    # Per model id, the ``thinking.type`` values the API refused this session; the
+    # dispatch retries with the shape the model takes instead (see
+    # ``agent.messages_dispatch``).
+    refused_thinking_types: dict[str, set[str]]
     _api_key: str
     _api_version: str
 
@@ -49,17 +50,17 @@ class AnthropicClient:
         self.stream_decoder = msgspec.json.Decoder(AnthropicStreamEvent)
         self.models_decoder = msgspec.json.Decoder(AnthropicModelsResponse)
         self.thinking_budget_tokens = max(0, config.thinking_budget_tokens)
-        self.adaptive_thinking_models = set()
+        self.refused_thinking_types = {}
         self._api_key = config.api_key
         self._api_version = config.anthropic_version
 
-    def needs_adaptive_thinking(self, model: str) -> bool:
-        """Whether *model* already rejected extended thinking in this session."""
-        return model in self.adaptive_thinking_models
+    def refuses_thinking_type(self, model: str, thinking_type: str) -> bool:
+        """Whether the API already refused *thinking_type* for *model* this session."""
+        return thinking_type in self.refused_thinking_types.get(model, ())
 
-    def note_adaptive_thinking(self, model: str) -> None:
-        """Remember that *model* requires adaptive thinking, saving the retry."""
-        self.adaptive_thinking_models.add(model)
+    def note_refused_thinking_type(self, model: str, thinking_type: str) -> None:
+        """Remember that the API refuses *thinking_type* for *model*, saving the retry."""
+        self.refused_thinking_types.setdefault(model, set()).add(thinking_type)
 
     def _headers(self) -> dict[str, str]:
         return {

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Final, cast
 
+import msgspec
 from msgspec import UNSET
 
 from plyngent.agent.messages_bridge import (
@@ -18,7 +19,7 @@ from plyngent.agent.messages_bridge import (
     anthropic_stop_to_finish_reason,
     anthropic_usage_to_dict,
     chat_param_to_anthropic_param,
-    extended_thinking_rejected,
+    thinking_config_refused,
 )
 from plyngent.agent.stream_chunks import (
     finish_reason_chunk,
@@ -56,46 +57,59 @@ def _thinking_budget(client: AnthropicClient) -> int:
     return max(0, int(getattr(client, "thinking_budget_tokens", 0)))
 
 
+# The thinking types a refusal has a fallback for: extended thinking becomes
+# adaptive, and a block disabling thinking is dropped (such a model thinks
+# whatever the request says).
+_RETRYABLE_THINKING_TYPES: Final = frozenset({"enabled", "disabled"})
+
+
 def _create_param(
     client: AnthropicClient,
     param: ChatCompletionsParam,
     provider_tools: Sequence[dict[str, Any]] | None,
-    *,
-    adaptive: bool | None = None,
 ) -> AnthropicMessagesParam:
-    """Build the ``/messages`` request for *param*.
+    """Build the ``/messages`` request for *param*, the way its model now takes it.
 
-    *adaptive* picks the thinking shape; ``None`` asks the client whether this
-    session already found *param*'s model rejecting extended thinking.
+    A model this session found refusing extended thinking gets adaptive thinking;
+    one that refuses being told to stop thinking is sent no block at all (its
+    thinking is always on, so the API answers a block that disables it with a
+    400 — see :func:`_retry_with_thinking_fallback`).
     """
-    use_adaptive = client.needs_adaptive_thinking(param.model) if adaptive is None else adaptive
-    return chat_param_to_anthropic_param(
+    model = param.model
+    create = chat_param_to_anthropic_param(
         param,
         thinking_budget_tokens=_thinking_budget(client),
         provider_tools=provider_tools,
-        adaptive_thinking=use_adaptive,
+        adaptive_thinking=client.refuses_thinking_type(model, "enabled"),
     )
+    if (
+        create.thinking is not UNSET
+        and create.thinking.type == "disabled"
+        and client.refuses_thinking_type(model, "disabled")
+    ):
+        return msgspec.structs.replace(create, thinking=UNSET)
+    return create
 
 
-def _retry_with_adaptive_thinking(
+def _retry_with_thinking_fallback(
     client: AnthropicClient,
     param: ChatCompletionsParam,
     provider_tools: Sequence[dict[str, Any]] | None,
     error: Exception,
 ) -> AnthropicMessagesParam | None:
-    """The request to retry with when the model refused extended thinking.
+    """The request to retry with when the model refused the thinking block.
 
-    ``None`` when the failure is not that refusal, or when the request never sent
-    extended thinking. The model is remembered on the client, so only its first
+    ``None`` when the failure is not that refusal, or when there is nothing left
+    to try. The refusal is remembered on the client, so only the model's first
     request pays the extra round trip.
     """
-    if not extended_thinking_rejected(str(error)):
+    if not thinking_config_refused(str(error)):
         return None
     create = _create_param(client, param, provider_tools)
-    if create.thinking is UNSET or create.thinking.type != "enabled":
+    if create.thinking is UNSET or create.thinking.type not in _RETRYABLE_THINKING_TYPES:
         return None
-    client.note_adaptive_thinking(param.model)
-    return _create_param(client, param, provider_tools, adaptive=True)
+    client.note_refused_thinking_type(param.model, create.thinking.type)
+    return _create_param(client, param, provider_tools)
 
 
 class _ToolBlockState:
@@ -416,7 +430,7 @@ async def _stream_events(
     *,
     provider_tools: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[AnthropicStreamEvent]:
-    """Open the Messages stream, retrying once with adaptive thinking if refused.
+    """Open the Messages stream, retrying once with the shape the model takes.
 
     A refusal arrives before the stream yields anything, so the retry cannot
     duplicate events the caller has already seen.
@@ -430,7 +444,7 @@ async def _stream_events(
     except RuntimeError as exc:
         if saw_event:
             raise
-        retry = _retry_with_adaptive_thinking(client, param, provider_tools, exc)
+        retry = _retry_with_thinking_fallback(client, param, provider_tools, exc)
         if retry is None:
             raise
         async for event in await client.messages(retry, stream=True):
@@ -491,7 +505,7 @@ async def dispatch_messages(
     try:
         response = await client.messages(create, stream=False)
     except RuntimeError as exc:
-        retry = _retry_with_adaptive_thinking(client, param, provider_tools, exc)
+        retry = _retry_with_thinking_fallback(client, param, provider_tools, exc)
         if retry is None:
             raise
         response = await client.messages(retry, stream=False)

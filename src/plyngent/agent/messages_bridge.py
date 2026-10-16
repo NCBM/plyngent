@@ -457,14 +457,15 @@ def _adaptive_thinking_from_param(
     return AnthropicThinkingConfig(type="adaptive"), AnthropicOutputConfig(effort=level)
 
 
-def extended_thinking_rejected(message: str) -> bool:
-    """Whether a ``/messages`` failure is the API refusing extended thinking.
+def thinking_config_refused(message: str) -> bool:
+    """Whether a ``/messages`` failure is the API refusing a request's thinking block.
 
-    The documented wording is ``"thinking.type.enabled" is not supported for this
-    model. Use "thinking.type.adaptive" and "output_config.effort" …``; gateways
-    paraphrase it (``claude-opus-5-5 requires adaptive thinking; omit thinking or
-    use thinking.type=adaptive …``), so match the one word they all carry —
-    callers only get here after a request that sent extended thinking.
+    The documented wordings are ``"thinking.type.enabled" is not supported for
+    this model. Use "thinking.type.adaptive" and "output_config.effort" …`` and
+    the same sentence for ``"thinking.type.disabled"``; gateways paraphrase them
+    (``claude-opus-5-5 requires adaptive thinking; omit thinking or use
+    thinking.type=adaptive …``), so match the one word they all carry — callers
+    only get here after a request that sent a thinking block.
     """
     return "adaptive" in message.lower()
 

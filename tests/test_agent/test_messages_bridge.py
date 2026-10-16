@@ -14,8 +14,8 @@ from plyngent.agent.messages_bridge import (
     anthropic_usage_to_dict,
     chat_messages_to_anthropic,
     chat_param_to_anthropic_param,
-    extended_thinking_rejected,
     provider_tools_to_anthropic_tools,
+    thinking_config_refused,
     tool_items_to_anthropic_tools,
 )
 from plyngent.lmproto.anthropic.model import (
@@ -432,15 +432,20 @@ def test_chat_param_to_anthropic_param_adaptive_without_effort_sends_nothing() -
     assert body.output_config is UNSET
 
 
-def test_extended_thinking_rejected_matches_the_api_and_gateway_wording() -> None:
-    documented = (
+def test_thinking_config_refused_matches_the_api_and_gateway_wording() -> None:
+    documented_enabled = (
         'messages HTTP 400: {"error":{"message":"\\"thinking.type.enabled\\" is not supported for this '
+        'model. Use \\"thinking.type.adaptive\\" and \\"output_config.effort\\" to control thinking behavior."}}'
+    )
+    documented_disabled = (
+        'messages HTTP 400: {"error":{"message":"\\"thinking.type.disabled\\" is not supported for this '
         'model. Use \\"thinking.type.adaptive\\" and \\"output_config.effort\\" to control thinking behavior."}}'
     )
     gateway = (
         'messages HTTP 400: {"error":{"message":"claude-opus-5-5 requires adaptive thinking; omit thinking '
         'or use thinking.type=adaptive and output_config.effort"}}'
     )
-    assert extended_thinking_rejected(documented)
-    assert extended_thinking_rejected(gateway)
-    assert not extended_thinking_rejected('messages HTTP 400: {"error":{"message":"max_tokens: required"}}')
+    assert thinking_config_refused(documented_enabled)
+    assert thinking_config_refused(documented_disabled)
+    assert thinking_config_refused(gateway)
+    assert not thinking_config_refused('messages HTTP 400: {"error":{"message":"max_tokens: required"}}')
