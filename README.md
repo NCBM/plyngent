@@ -300,7 +300,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/model --persist` | Save current model id into `plyngent.toml` catalog |
 | `/models` | List config + remote `GET /models` (always re-fetches) |
 | `/models --persist` | Merge remote catalog into TOML for this provider |
-| `/todos` | Todo/task stack: list, push, pop, done, clear |
+| `/todos` | Todo/task stack: list (items numbered as listed), push, pop, done, clear |
 | `/skills [list\|search\|open]` | List discovered skills, regex-search them, or open one's directory in the system file manager |
 | `/grants` | Directory-access grants: list, or `revoke <index\|all>` |
 | `/config` | Edit `plyngent.toml` ($VISUAL/$EDITOR or system open); reload after blocking editor |
