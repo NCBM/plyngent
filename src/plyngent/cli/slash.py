@@ -420,12 +420,12 @@ def complete_slash_args(
             if flags:
                 return sorted(set(flags))
 
-        # Contextual /todos second token: todo ids after done|cancel|pending|in_progress.
+        # Contextual /todos second token: listing numbers after done|cancel|…
         if name == "todos" and prior:
             action = prior[0].lower()
             if action in {"done", "cancel", "pending", "in_progress"} and len(prior) == 1:
-                ids = [item.id for item in state.todo_stack.all_items()]
-                return [i for i in ids if i.startswith(incomplete)]
+                numbers = [str(n) for n in range(1, len(state.todo_stack.all_items()) + 1)]
+                return [n for n in numbers if n.startswith(incomplete)]
 
         # Positional arguments: complete the next unset argument.
         arg_params = [p for p in cmd.params if isinstance(p, click.Argument)]
@@ -1524,10 +1524,10 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0915 — one branch per /todos action
 ) -> None:
     """Show or edit the LIFO stack of **task groups**.
 
-    ``/todos`` — list (top group first)
+    ``/todos`` — list (top group first; items numbered as shown)
     ``/todos push T1; T2`` — one new group of siblings
     ``/todos pop`` — pop entire top group
-    ``/todos done <id>`` / ``/todos cancel <id>`` — set status
+    ``/todos done <number>`` / ``/todos cancel <number>`` — set status
     ``/todos clear`` — wipe stack
     """
     from plyngent.agent.todo_stack import parse_push_titles
@@ -1552,8 +1552,8 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0915 — one branch per /todos action
             click.echo(f"error: {exc}")
             return
         _await(state.persist_todo_stack())
-        ids = ", ".join(i.id for i in group.items)
-        click.echo(f"pushed group depth={stack.depth} items=[{ids}]")
+        pushed = ", ".join(i.title for i in group.items)
+        click.echo(f"pushed group depth={stack.depth} items=[{pushed}]")
         click.echo(stack.render())
         return
     if act == "pop":
@@ -1562,13 +1562,13 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0915 — one branch per /todos action
             click.echo("todo stack empty")
             return
         _await(state.persist_todo_stack())
-        titles = ", ".join(f"{i.id}:{i.title}" for i in group.items) or "(empty)"
-        click.echo(f"popped TOP group ({titles})")
+        popped = ", ".join(i.title for i in group.items) or "(empty)"
+        click.echo(f"popped TOP group ({popped})")
         click.echo(stack.render())
         return
     if act in {"done", "cancel", "pending", "in_progress"}:
         if not rest:
-            click.echo(f"error: usage: /todos {act} <id>")
+            click.echo(f"error: usage: /todos {act} <number>")
             return
         if act == "done":
             new_status = "done"
@@ -1579,12 +1579,17 @@ def todos_cmd(  # noqa: C901, PLR0911, PLR0915 — one branch per /todos action
         else:
             new_status = "in_progress"
         try:
-            item = stack.update(rest[0], status=new_status)
-        except (KeyError, ValueError) as exc:
+            number = int(rest[0].strip())
+        except ValueError:
+            click.echo(f"error: /todos {act} takes an item number from the list (e.g. /todos {act} 2)")
+            return
+        try:
+            item = stack.update(number, status=new_status)
+        except ValueError as exc:
             click.echo(f"error: {exc}")
             return
         _await(state.persist_todo_stack())
-        click.echo(f"updated {item.id} → {item.status}")
+        click.echo(f"updated {number} → {item.status}")
         click.echo(stack.render())
         return
     if act == "clear":

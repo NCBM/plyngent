@@ -14,7 +14,7 @@ _REVIEW_OPEN_TITLE_LIMIT = 8
 class TodoItem(Struct, omit_defaults=True):
     """One task inside a group (siblings share a group; not stacked individually)."""
 
-    id: str
+    id: str  # stored key only — a listing numbers items by render order, never by id
     title: str
     status: TodoStatus = "pending"
     notes: str = ""
@@ -39,7 +39,8 @@ class TodoStack:
     - **Push** always creates **one new group** containing one or more sibling
       tasks (``push T1, T2`` is one frame, not two stack levels).
     - **Pop** removes the entire **top group**.
-    - Within a group, update tasks by id (done / in_progress / …).
+    - **Update** takes the 1-based number a listing shows (TOP group first); the
+      stored ``id`` never leaves the stack.
 
     Breakdown pattern::
 
@@ -161,13 +162,26 @@ class TodoStack:
         raw = cast("dict[object, object]", out)
         return {str(key): value for key, value in raw.items()}
 
+    def _render_order(self) -> list[tuple[TodoGroup, int, TodoItem]]:
+        """``(group, index, item)`` in listing order — TOP group first.
+
+        A listing numbers these 1-based, so an item's position here *is* the
+        number it is shown (and updated) by.
+        """
+        ordered: list[tuple[TodoGroup, int, TodoItem]] = []
+        for group in reversed(self._data.groups):
+            ordered.extend((group, index, item) for index, item in enumerate(group.items))
+        return ordered
+
     def render(self) -> str:
         if not self._data.groups:
             return "(todo stack empty — no groups)"
         lines: list[str] = [
             f"(LIFO of groups: depth={self.depth}; TOP group = current breakdown level)",
         ]
-        # Top group first for the model.
+        # Top group first for the model; the running number is the item's
+        # position in :meth:`_render_order`, the same list ``update`` resolves.
+        number = 0
         for offset, group in enumerate(reversed(self._data.groups)):
             depth = self.depth - 1 - offset
             tag = " TOP" if offset == 0 else ""
@@ -176,6 +190,7 @@ class TodoStack:
                 lines.append("  (empty group)")
                 continue
             for item in group.items:
+                number += 1
                 mark = {
                     "pending": "[ ]",
                     "in_progress": "[~]",
@@ -183,7 +198,7 @@ class TodoStack:
                     "cancelled": "[-]",
                 }.get(item.status, "[?]")
                 note = f" — {item.notes}" if item.notes else ""
-                lines.append(f"  {mark} {item.id}: {item.title}{note}")
+                lines.append(f"  {mark} {number}. {item.title}{note}")
         return "\n".join(lines)
 
     def turn_reminder_prompt(self) -> str:
@@ -220,7 +235,7 @@ class TodoStack:
             headline,
             action,
             "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
-            "Rules: TOP = current level; push = one sibling group; pop = whole TOP group.",
+            "Rules: TOP = current level; push = one sibling group; pop = whole TOP group; update by listing number.",
             "Stack:",
             self.render(),
         ]
@@ -232,7 +247,7 @@ class TodoStack:
         n_open = len(open_items)
         n_groups = self.depth
         if n_open:
-            open_titles = "; ".join(f"{item.id}:{item.title}" for item in open_items[:_REVIEW_OPEN_TITLE_LIMIT])
+            open_titles = "; ".join(item.title for item in open_items[:_REVIEW_OPEN_TITLE_LIMIT])
             if n_open > _REVIEW_OPEN_TITLE_LIMIT:
                 open_titles += f"; …(+{n_open - _REVIEW_OPEN_TITLE_LIMIT} more)"
             headline = (
@@ -258,7 +273,7 @@ class TodoStack:
             headline,
             action,
             "Tools: todo_list | todo_push(titles=[...]) | todo_update | todo_pop | todo_clear",
-            "Rules: TOP group = current level; push=one sibling group; pop=remove whole TOP group.",
+            "Rules: TOP = current level; push = one sibling group; pop = whole TOP group; update by listing number.",
             "Stack:",
             self.render(),
         ]
@@ -326,36 +341,34 @@ class TodoStack:
             self.mark_touched()
         return n
 
-    def get(self, item_id: str) -> TodoItem | None:
-        for item in self.all_items():
-            if item.id == item_id:
-                return item
-        return None
-
     def update(
         self,
-        item_id: str,
+        number: int,
         *,
         title: str | None = None,
         status: TodoStatus | None = None,
         notes: str | None = None,
     ) -> TodoItem:
-        for group in self._data.groups:
-            for index, item in enumerate(group.items):
-                if item.id != item_id:
-                    continue
-                new_title = title.strip() if title is not None else item.title
-                if not new_title:
-                    msg = "title must not be empty"
-                    raise ValueError(msg)
-                new_status = status if status is not None else item.status
-                new_notes = notes if notes is not None else item.notes
-                updated = TodoItem(id=item.id, title=new_title, status=new_status, notes=new_notes)
-                group.items[index] = updated
-                self.mark_touched()
-                return updated
-        msg = f"unknown todo id {item_id!r}"
-        raise KeyError(msg)
+        """Update the item a listing shows as *number* (1-based, TOP group first).
+
+        Numbers are listing positions, not stored ids: a push/pop shifts them, so
+        they have to come from the latest listing.
+        """
+        ordered = self._render_order()
+        if not 1 <= number <= len(ordered):
+            msg = f"no todo item {number}: the list has {len(ordered)} item(s); pick a number from the latest listing"
+            raise ValueError(msg)
+        group, index, item = ordered[number - 1]
+        new_title = title.strip() if title is not None else item.title
+        if not new_title:
+            msg = "title must not be empty"
+            raise ValueError(msg)
+        new_status = status if status is not None else item.status
+        new_notes = notes if notes is not None else item.notes
+        updated = TodoItem(id=item.id, title=new_title, status=new_status, notes=new_notes)
+        group.items[index] = updated
+        self.mark_touched()
+        return updated
 
 
 def parse_push_titles(raw: str) -> list[str]:

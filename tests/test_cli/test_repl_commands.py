@@ -757,3 +757,26 @@ async def test_btw_read_notice_states_read_only_scope(
     assert "read-only" in notice.body
     assert "not saved" in notice.body
     assert "[notice] aside: read tools" in capsys.readouterr().out
+
+
+async def test_todos_update_takes_a_listing_number(state: ReplState, capsys: pytest.CaptureFixture[str]) -> None:
+    assert await handle_slash(state, "/todos push first; second") is True
+    out = capsys.readouterr().out
+    assert "pushed group depth=1 items=[first, second]" in out
+    assert "  [ ] 1. first" in out
+    assert "  [ ] 2. second" in out
+    assert "t1" not in out
+
+    assert await handle_slash(state, "/todos done 2") is True
+    out = capsys.readouterr().out
+    assert "updated 2 → done" in out
+    assert "  [x] 2. second" in out
+
+    # The stored id is not an address: only listing numbers are.
+    assert await handle_slash(state, "/todos done t1") is True
+    assert "takes an item number from the list" in capsys.readouterr().out
+    assert await handle_slash(state, "/todos done 7") is True
+    assert "no todo item 7" in capsys.readouterr().out
+
+    assert await handle_slash(state, "/todos pop") is True
+    assert "popped TOP group (first, second)" in capsys.readouterr().out

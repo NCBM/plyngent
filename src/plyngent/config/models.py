@@ -97,6 +97,9 @@ otherwise a small default is used. Never rely on shell to spoof identity.
 ### Todos
 - Use the todo stack for multi-step work (LIFO groups: push related items, finish/update, \
 pop the group). Open items mean unfinished work.
+- A listing numbers items in the order it shows them (TOP group first); those numbers are \
+positions, not ids, and shift when the stack changes — `todo_update` takes the number from \
+the latest listing.
 - The stack does **not** auto-clear. When every task is done (all items done/cancelled), \
 call `todo_clear` (or pop finished TOP groups) so no hygiene noise is left behind.
 """

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.chat.shape import number_arg
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,6 +53,10 @@ async def _with_todo_stack(mutator: Callable[[TodoStack], str]) -> str:
 async def todo_list() -> str:
     """Show the LIFO stack of **task groups** (TOP group = current breakdown level).
 
+    Items are numbered in the order they print (1-based, TOP group first). Those
+    numbers are listing positions, not stored ids, so they shift whenever the
+    stack changes — take them from the latest listing.
+
     Non-empty stack with open (pending/in_progress) items = unfinished work.
     All-terminal but non-empty = hygiene only (pop/clear). Push creates one
     group of siblings; pop removes the whole top group.
@@ -82,8 +87,8 @@ async def todo_push(titles: list[str], notes: str = "") -> str:
             group = stack.push_group(parsed, notes=notes)
         except ValueError as exc:
             return f"error: {exc}"
-        ids = ", ".join(i.id for i in group.items)
-        return f"pushed group (depth={stack.depth}) items=[{ids}]\n{stack.render()}"
+        pushed = ", ".join(i.title for i in group.items)
+        return f"pushed group (depth={stack.depth}) items=[{pushed}]\n{stack.render()}"
 
     return await _with_todo_stack(_run)
 
@@ -100,27 +105,36 @@ async def todo_pop() -> str:
         group = stack.pop()
         if group is None:
             return "todo stack empty"
-        titles = ", ".join(f"{i.id}:{i.title}" for i in group.items) or "(empty)"
+        popped_titles = ", ".join(i.title for i in group.items) or "(empty)"
         top = stack.top_group
-        top_s = "(empty)" if top is None else ", ".join(i.id for i in top.items)
-        return f"popped TOP group ({titles}); new top group=[{top_s}]\n{stack.render()}"
+        top_titles = "(empty)" if top is None else ", ".join(i.title for i in top.items)
+        return f"popped TOP group ({popped_titles}); new top group=[{top_titles}]\n{stack.render()}"
 
     return await _with_todo_stack(_run)
 
 
 @tool(name="todo_update", tags=ToolTag.LOCAL | ToolTag.PUBLIC | ToolTag.SESSION_STATE)
 async def todo_update(
-    item_id: str,
+    number: int,
     status: str = "",
     title: str = "",
     notes: str = "",
 ) -> str:
-    """Update a task by id inside any group.
+    """Update a task by the number the listing shows (1-based, TOP group first).
 
-    Open items are unfinished work: mark done/cancelled when the work is truly
-    finished (not just deferred). Pop the TOP group when that breakdown level
-    is complete so the stack does not linger as false open work.
+    Numbers come from the latest listing and shift when the stack changes, so
+    re-list rather than reusing an older number. Open items are unfinished work:
+    mark done/cancelled when the work is truly finished (not just deferred). Pop
+    the TOP group when that breakdown level is complete so the stack does not
+    linger as false open work.
     """
+    item_number, number_error = number_arg("todo_update", "number", number, example="2")
+    if number_error is not None:
+        return f"error: {number_error}"
+    assert item_number is not None  # number_arg returns a value whenever it accepts
+    if not item_number.is_integer():
+        return "error: `todo_update` expects `number` as a whole item number; pass e.g. 2"
+    target = int(item_number)
 
     def _run(stack: TodoStack) -> str:
         status_arg: TodoStatus | None = None
@@ -131,14 +145,14 @@ async def todo_update(
             status_arg = cast("TodoStatus", token)
         try:
             item = stack.update(
-                item_id.strip(),
+                target,
                 title=title if title.strip() else None,
                 status=status_arg,
                 notes=notes if notes != "" else None,
             )
-        except (KeyError, ValueError) as exc:
+        except ValueError as exc:
             return f"error: {exc}"
-        return f"updated {item.id} → {item.status}: {item.title}\n{stack.render()}"
+        return f"updated {target} → {item.status}: {item.title}\n{stack.render()}"
 
     return await _with_todo_stack(_run)
 

@@ -194,9 +194,9 @@ def test_complete_slash_args_from_registry(tmp_path: object) -> None:
 
     state.todo_stack = TodoStack()
     _ = state.todo_stack.push_group(["alpha", "beta"])
-    ids = complete_slash_args(state, "/todos", "t", prior_args=["done"])
-    assert "t1" in ids
-    assert "t2" in ids
+    numbers = complete_slash_args(state, "/todos", "", prior_args=["done"])
+    assert numbers == ["1", "2"]
+    assert complete_slash_args(state, "/todos", "2", prior_args=["done"]) == ["2"]
 
     state.remember_session_ids([3, 12, 40])
     assert complete_slash_args(state, "/resume", "1") == ["12"]

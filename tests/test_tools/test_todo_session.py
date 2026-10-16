@@ -101,6 +101,33 @@ async def test_session_on_todo_change_fires() -> None:
     assert hits == ["session"]
 
 
+async def test_todo_update_uses_listing_numbers() -> None:
+    store = MemoryViewStore({})
+    session = SessionState(session_id="numbers", data=session_data_view(store=store))
+    registry = ToolRegistry(list(TODO_TOOLS), session_state=session)
+
+    out = await registry.execute("todo_push", '{"titles": ["root"]}')
+    assert "pushed group (depth=1) items=[root]" in out
+    out = await registry.execute("todo_push", '{"titles": ["child"]}')
+    assert "pushed group (depth=2) items=[child]" in out
+    # TOP group first; the stored ids stay out of every result.
+    assert "  [ ] 1. child" in out
+    assert "  [ ] 2. root" in out
+    assert "t1" not in out and "t2" not in out
+
+    numbered = await registry.execute("todo_update", '{"number": 2, "status": "done"}')
+    assert "updated 2 → done: root" in numbered
+    assert "  [x] 2. root" in numbered
+
+    stale = await registry.execute("todo_update", '{"number": 9, "status": "done"}')
+    assert stale.startswith("error: no todo item 9")
+    shaped = await registry.execute("todo_update", '{"number": "first"}')
+    assert shaped.startswith("error: `todo_update` expects `number`")
+
+    popped = await registry.execute("todo_pop", "{}")
+    assert "popped TOP group (child); new top group=[root]" in popped
+
+
 async def test_todo_without_session_errors() -> None:
     registry = ToolRegistry(list(TODO_TOOLS))
     out = await registry.execute("todo_list", "{}")

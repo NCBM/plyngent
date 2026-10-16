@@ -174,28 +174,28 @@ async def test_pretty_todo_push(capsys: pytest.CaptureFixture[str]) -> None:
         )
     )
     result = (
-        "pushed group (depth=1) items=[a1]\n"
+        "pushed group (depth=1) items=[T1]\n"
         "(LIFO of groups: depth=1; TOP group = current breakdown level)\n"
         "group d=0 TOP:\n"
-        "  [ ] a1: T1"
+        "  [ ] 1. T1"
     )
     await render_events(_aiter([call, _result(result)]))
     out = capsys.readouterr().out
     assert "* Todo Push:" in out
-    assert "  [ ] a1: T1" in out
+    assert "  [ ] 1. T1" in out
     assert "[tool]" not in out
 
 
 async def test_pretty_todo_batch_merges_to_one_stack(capsys: pytest.CaptureFixture[str]) -> None:
     """A batch of todo calls: one summary line, then the last result's stack."""
-    stack = "(LIFO of groups: depth=1; TOP group = current breakdown level)\ngroup d=0 TOP:\n  [ ] a1: T1"
+    stack = "(LIFO of groups: depth=1; TOP group = current breakdown level)\ngroup d=0 TOP:\n  [ ] 1. T1"
     await render_events(
         _aiter(
             [
                 _pretty_call("todo_push", '{"titles": ["T1"]}'),
-                _pretty_call("todo_update", '{"item_id": "a1", "status": "done"}'),
-                _result(f"pushed group (depth=1) items=[a1]\n{stack}"),
-                _result(f"updated a1 → done: T1\n{stack}"),
+                _pretty_call("todo_update", '{"number": 1, "status": "done"}'),
+                _result(f"pushed group (depth=1) items=[T1]\n{stack}"),
+                _result(f"updated 1 → done: T1\n{stack}"),
             ]
         )
     )
@@ -206,14 +206,14 @@ async def test_pretty_todo_batch_merges_to_one_stack(capsys: pytest.CaptureFixtu
     # Only the last result is printed, so the stack renders once.
     assert out.count("group d=0 TOP:") == 1
     assert "pushed group" not in out
-    assert "updated a1 → done: T1" in out
+    assert "updated 1 → done: T1" in out
 
 
 async def test_pretty_todo_batch_mixed_with_other_tool_stays_per_call(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A batch holding a non-todo call keeps one line (and stack) per todo call."""
-    stack = "group d=0 TOP:\n  [ ] a1: T1"
+    stack = "group d=0 TOP:\n  [ ] 1. T1"
     await render_events(
         _aiter(
             [
@@ -867,13 +867,13 @@ async def test_pretty_vcs_kind_branch_and_diff(capsys: pytest.CaptureFixture[str
 
 
 async def test_pretty_todo_list_pop_and_clear(capsys: pytest.CaptureFixture[str]) -> None:
-    stack = "  [ ] a1: T1\n  [x] a2: T2"
+    stack = "  [ ] 1. T1\n  [x] 2. T2"
     await render_events(_aiter([_pretty_call("todo_list", "{}"), _result(stack)]))
     out = capsys.readouterr().out
     assert "* Todo List:" in out
-    assert "  [ ] a1: T1" in out
+    assert "  [ ] 1. T1" in out
 
-    await render_events(_aiter([_pretty_call("todo_pop", "{}"), _result(f"popped TOP group (a1:T1)\n{stack}")]))
+    await render_events(_aiter([_pretty_call("todo_pop", "{}"), _result(f"popped TOP group (T1)\n{stack}")]))
     out = capsys.readouterr().out
     assert "* Todo Pop:" in out
 

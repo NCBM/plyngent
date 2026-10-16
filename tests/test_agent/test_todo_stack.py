@@ -66,6 +66,29 @@ def test_ids_reuse_after_pop() -> None:
     assert g3.items[0].id == "t3"
 
 
+def test_render_numbers_follow_listing_order() -> None:
+    """Numbers are listing positions (TOP group first), never the stored ids."""
+    stack = TodoStack()
+    root = stack.push_group(["root", "sibling"])  # stored ids t1, t2
+    _ = stack.push_group(["child"])  # stored id t3
+    listing = stack.render()
+    assert "  [ ] 1. child" in listing
+    assert "  [ ] 2. root" in listing
+    assert "  [ ] 3. sibling" in listing
+    assert "t1" not in listing
+    assert "t3" not in listing
+
+    # update(1) is the first item the listing shows — the one stored as t3.
+    updated = stack.update(1, status="done")
+    assert updated.id == "t3"
+    assert updated.title == "child"
+    assert updated.status == "done"
+    assert root.items[0].status == "pending"
+
+    with pytest.raises(ValueError, match="no todo item 4"):
+        stack.update(4, status="done")
+
+
 def test_push_is_group_not_per_task_stack() -> None:
     """Multi-title push is one group; pop removes the whole group."""
     stack = TodoStack()
@@ -94,11 +117,16 @@ def test_dfs_breakdown_with_groups() -> None:
     root = stack.push_group(["T1", "T2"])
     children = stack.push_group(["T1.1", "T1.2"])
     assert stack.depth == 2
-    stack.update(children.items[0].id, status="done")
-    stack.update(children.items[1].id, status="done")
+    # Numbers come from the listing: the pushed children are the TOP group → 1, 2.
+    stack.update(1, status="done")
+    stack.update(2, status="done")
+    assert [i.status for i in children.items] == ["done", "done"]
     _ = stack.pop()
     assert stack.depth == 1
-    stack.update(root.items[0].id, status="done")
+    # Children gone: the root group is the listing again → 1 is T1, 2 is T2.
+    stack.update(1, status="done")
+    assert root.items[0].status == "done"
+    assert root.items[1].status == "pending"
     _ = stack.push_group(["T2.1"])
     assert stack.depth == 2
     assert stack.top_group is not None
@@ -119,14 +147,14 @@ def test_single_title_still_one_group() -> None:
 def test_todo_stack_needs_review() -> None:
     stack = TodoStack()
     assert not stack.needs_review()
-    item = stack.push("work")
+    _ = stack.push("work")
     stack.begin_turn()
     # Non-empty + untouched → nag (open or hygiene).
     assert stack.needs_review()
     # Any todo_* access this turn suppresses end-of-turn nag, even with open items.
     stack.mark_touched()
     assert not stack.needs_review()
-    stack.update(item.id, status="done")
+    stack.update(1, status="done")
     stack.begin_turn()
     # Terminal-only stack: same gate (untouched only).
     assert stack.needs_review()
@@ -212,7 +240,7 @@ def test_inject_todo_nag_strategies() -> None:
 
 def test_todo_prompts_signal_undone_work() -> None:
     stack = TodoStack()
-    item = stack.push("open work")
+    _ = stack.push("open work")
     reminder = stack.turn_reminder_prompt()
     assert "[TODO OPEN WORK]" in reminder
     assert "Stack not empty" in reminder
@@ -223,9 +251,9 @@ def test_todo_prompts_signal_undone_work() -> None:
     assert "[TODO OPEN WORK]" in review
     assert "undone work" in review.lower() or "open item" in review.lower()
     assert "open work" in review
-    assert "t1:open work" in review or "open work" in review
+    assert "1. open work" in review  # the review embeds the numbered listing
 
-    stack.update(item.id, status="done")
+    stack.update(1, status="done")
     terminal_review = stack.review_prompt()
     assert "[TODO HYGIENE]" in terminal_review
     assert "done/cancelled" in terminal_review
