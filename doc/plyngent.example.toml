@@ -105,7 +105,8 @@ max_context_tokens = 200000
 # reasoning_effort = "medium"
 # Explicit Anthropic thinking budget in tokens, overriding that mapping; the
 # request stays valid either way (floor 1024, and ``max_tokens`` grows when the
-# budget would leave no room for the answer).
+# budget would leave no room for the answer). A model that only takes adaptive
+# thinking ignores it (see the anthropic provider below).
 # thinking_budget_tokens = 8000
 
 # Optional: custom compact/summarisation prompts (empty = built-in defaults).
@@ -160,7 +161,9 @@ access_key_or_token = "sk-replace-me"
 # # url defaults to https://api.anthropic.com/v1 when empty
 # timeout = { connect = 10, read = 600 }
 # # Anthropic has no effort level: an effort becomes a thinking token budget
-# # (see the [agent] section above). Set the budget explicitly to pin it:
+# # (see the [agent] section above). A model that no longer takes one (from
+# # Claude 4.7 on) is retried with adaptive thinking, whose depth is the effort
+# # level itself. Set the budget explicitly to pin it:
 # reasoning_effort = "high"
 # thinking_budget_tokens = 16000
 #
