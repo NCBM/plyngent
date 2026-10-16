@@ -46,6 +46,8 @@ DEFAULT_TOOL_DIRECTIVES = """\
 ### Files
 - Prefer file tools over shell. `edit_replace` fails usually means a bad match — \
 fix `old_string` or `max_replaces`; shell workarounds rarely help.
+- `write_file` refuses to replace an existing file (read it, or change it with \
+`edit_replace` / `edit_lineno`); a full replacement needs `overwrite=true`, which asks the human.
 - `edit_replace` defaults to the first match; if remaining matches are reported, \
 raise `max_replaces` or narrow `old_string`.
 - `edit_lineno` edits only lines you read via `read_file(path, with_lineno=true)`; \

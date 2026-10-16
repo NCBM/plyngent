@@ -63,7 +63,7 @@ def test_edit_lineno_error_suggests_the_read_file_call(workspace: object) -> Non
     out = call_sync(edit_lineno, "s.txt", 15, 15, "X\n")
     assert "read_file(path='s.txt', offset=11, limit=7, with_lineno=true)" in out
     # A stale read gets a fresh call for the same range after an external write.
-    _ = call_sync(write_file, "s.txt", "changed\n")
+    _ = call_sync(write_file, "s.txt", "changed\n", overwrite=True)
     out = call_sync(edit_lineno, "s.txt", 1, 1, "X\n")
     assert "changed since it was read" in out
     assert "read_file(path='s.txt', offset=0, limit=1, with_lineno=true)" in out
@@ -149,7 +149,7 @@ def test_edit_lineno_requires_rerun_after_write(workspace: object) -> None:
     del workspace
     _ = call_sync(write_file, "f.txt", "one\ntwo\nthree\n")
     _ = _read_lineno("f.txt")
-    _ = call_sync(write_file, "f.txt", "changed\n")
+    _ = call_sync(write_file, "f.txt", "changed\n", overwrite=True)
     out = call_sync(edit_lineno, "f.txt", 1, 1, "x\n")
     assert "changed" in out and "re-read" in out
 
@@ -182,7 +182,7 @@ def test_edit_lineno_detects_external_change(workspace: object) -> None:
     _ = call_sync(write_file, "i.txt", "one\ntwo\nthree\n")
     _ = _read_lineno("i.txt")
     # Simulate an external/process-tool mutation: rewrite content + new mtime.
-    _ = call_sync(write_file, "i.txt", "one\ntwo\nthree\nCHANGED\n")
+    _ = call_sync(write_file, "i.txt", "one\ntwo\nthree\nCHANGED\n", overwrite=True)
     os.utime(workspace / "i.txt", (time.time() + 1, time.time() + 1))
     out = call_sync(edit_lineno, "i.txt", 1, 1, "x\n")
     assert "changed since it was read" in out

@@ -87,7 +87,13 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
 
 
 def _write_file_reason(args: Mapping[str, object]) -> str | None:
-    """Confirm only when write_file would replace an existing file."""
+    """Confirm only when write_file was asked to replace an existing file.
+
+    An unset/``false`` ``overwrite`` never reaches this prompt: the tool itself
+    refuses an existing file, so there is nothing to ask about.
+    """
+    if not bool(args.get("overwrite", False)):
+        return None
     path = args.get("path")
     if not isinstance(path, str) or not path:
         return None

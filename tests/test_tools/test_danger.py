@@ -24,14 +24,18 @@ def test_classify_write_overwrite_only(tmp_path: Path) -> None:
     instance = InstanceState(workspace_root=tmp_path.resolve())
     with bind_instance(instance):
         _ = set_workspace_root(tmp_path)
-        # New file: no soft-confirm
+        # New file: no soft-confirm, with or without the overwrite flag
         assert classify_danger("write_file", {"path": "new.txt"}) is None
+        assert classify_danger("write_file", {"path": "new.txt", "overwrite": True}) is None
         # Partial edits: never soft-confirm
         assert classify_danger("edit_replace", {"path": "x.txt"}) is None
         assert classify_danger("edit_lineno", {"path": "x.txt", "start_line": 1, "end_line": 2}) is None
-        # Existing file write: confirm total overwrite
+        # Existing file: only an explicit overwrite asks; an unset/false flag is
+        # refused inside the tool, so no prompt may fire for it.
         (tmp_path / "x.txt").write_text("old", encoding="utf-8")
-        reason = classify_danger("write_file", {"path": "x.txt"})
+        assert classify_danger("write_file", {"path": "x.txt"}) is None
+        assert classify_danger("write_file", {"path": "x.txt", "overwrite": False}) is None
+        reason = classify_danger("write_file", {"path": "x.txt", "overwrite": True})
         assert reason is not None and "overwrite" in reason
         (tmp_path / "dst.txt").write_text("d", encoding="utf-8")
         (tmp_path / "src.txt").write_text("s", encoding="utf-8")

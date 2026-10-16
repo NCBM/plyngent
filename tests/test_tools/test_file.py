@@ -28,6 +28,15 @@ def test_write_read_listdir_edit(workspace: object) -> None:
     assert call_sync(read_file, "notes/a.txt") == "L1-1\nhello there"
 
 
+def test_write_file_refuses_existing_file_without_overwrite(workspace: Path) -> None:
+    assert "wrote" in call_sync(write_file, "keep.txt", "first")
+    refused = call_sync(write_file, "keep.txt", "second")
+    assert refused == "error: file exists: keep.txt (set overwrite=true to replace it)"
+    assert (workspace / "keep.txt").read_text(encoding="utf-8") == "first"
+    assert "wrote" in call_sync(write_file, "keep.txt", "second", overwrite=True)
+    assert (workspace / "keep.txt").read_text(encoding="utf-8") == "second"
+
+
 def test_read_file_max_chars_embeds_token(workspace: Path) -> None:
     (workspace / "big.txt").write_text("a" * 1000, encoding="utf-8")
     out = call_sync(read_file, "big.txt", max_chars=200)
