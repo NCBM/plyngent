@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
 _ASK_SUBJECT_PREVIEW = 60
+# ``run_argv_batch`` lists the commands it runs above its ``* Run batch `` row — one
+# line per command, a ``pipe_out`` chain joined into one — elided past this width.
+_RUN_BATCH_CMD_LIMIT = 80
 _MCP_TOOL_PREFIX = "mcp__"
 _SKILL_MAIN_FILE = "SKILL.md"
 
@@ -117,14 +120,18 @@ def _json_str_arg(args_json: str, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _json_list_arg(args_json: str, key: str) -> list[str] | None:
-    value = _json_arg(args_json, key)
+def _str_list(value: object) -> list[str] | None:
+    """*value* as a list of strings, or None when it is not one."""
     if isinstance(value, list):
         raw_items = cast("list[object]", value)
         items = [item for item in raw_items if isinstance(item, str)]
         if len(items) == len(raw_items):
             return items
     return None
+
+
+def _json_list_arg(args_json: str, key: str) -> list[str] | None:
+    return _str_list(_json_arg(args_json, key))
 
 
 def _json_int_arg(args_json: str, key: str) -> int | None:
@@ -387,8 +394,42 @@ def _run_argv_detail(_args_json: str, result: str) -> str:
     return _pretty_segments((f"(exit code {code or 'killed'})", fg))
 
 
-def _run_argv_batch_prefix(_args_json: str) -> str:
-    return _pretty_prefix("* Run batch ")
+def _batch_steps(args_json: str) -> list[dict[str, object]]:
+    """Steps of a batch call: a JSON array, or a JSON string holding one."""
+    value = _json_arg(args_json, "steps")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if not isinstance(value, list):
+        return []
+    raw_steps = cast("list[object]", value)
+    return [cast("dict[str, object]", step) for step in raw_steps if isinstance(step, dict)]
+
+
+def _batch_command_lines(args_json: str) -> list[str]:
+    """One command per line, a ``pipe_out`` chain joined into one line with ``|``."""
+    lines: list[str] = []
+    piped_from_previous = False
+    for step in _batch_steps(args_json):
+        argv = _str_list(step.get("argv"))
+        command = shlex.join(argv) if argv else "?"
+        if piped_from_previous and lines:
+            lines[-1] = f"{lines[-1]} | {command}"
+        else:
+            lines.append(command)
+        # Same flag spellings the tool itself accepts (bool, or "true"/"1"/…).
+        piped_from_previous = str(step.get("pipe_out") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return lines
+
+
+def _run_argv_batch_prefix(args_json: str) -> str:
+    """``* Run batch `` with the commands it runs listed above it."""
+    commands = _batch_command_lines(args_json)
+    body = "\n".join(_pretty_prefix(f"$ {_preview(command, _RUN_BATCH_CMD_LIMIT)}") for command in commands)
+    header = _pretty_prefix("* Run batch ")
+    return f"{body}\n{header}" if body else header
 
 
 def _run_argv_batch_detail(_args_json: str, result: str) -> str:

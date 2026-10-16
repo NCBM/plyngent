@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.agent import ErrorEvent, ReasoningDeltaEvent, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from plyngent.cli.display import (
+    _RUN_BATCH_CMD_LIMIT,
     _clear_streamed_lines,
     _line_count_for_clear,
     _pretty_line_for,
@@ -468,6 +469,67 @@ async def test_pretty_run_argv_batch_complete(capsys: pytest.CaptureFixture[str]
     await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
     out = capsys.readouterr().out
     assert "* Run batch (done)" in out
+
+
+_BATCH_DONE_RESULT = (
+    "steps=2 ran=2 stop_on_error=true stopped_early=false\n"
+    "--- step 1 ---\nexit_code=0\n--- stdout ---\n--- stderr ---\n"
+    "--- step 2 ---\nexit_code=0\n--- stdout ---\n--- stderr ---\n"
+    "--- summary ---\nlast_exit=0\n"
+)
+
+
+async def test_pretty_run_argv_batch_lists_commands(capsys: pytest.CaptureFixture[str]) -> None:
+    """The batch row leads with one ``$ command`` line per step."""
+    args = '{"steps": [{"argv": ["git", "status"]}, {"argv": ["git", "diff", "--stat"]}]}'
+    await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
+    out = capsys.readouterr().out
+    assert "$ git status\n$ git diff --stat\n* Run batch (done)" in out
+
+
+async def test_pretty_run_argv_batch_joins_pipe_chain(capsys: pytest.CaptureFixture[str]) -> None:
+    """``pipe_out`` steps share one line; a step they do not feed keeps its own."""
+    args = (
+        '{"steps": [{"argv": ["grep", "-n", "foo", "a.py"], "pipe_out": true},'
+        ' {"argv": ["wc", "-l"]}, {"argv": ["git", "status"]}]}'
+    )
+    await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
+    out = capsys.readouterr().out
+    assert "$ grep -n foo a.py | wc -l\n$ git status\n* Run batch (done)" in out
+
+
+async def test_pretty_run_argv_batch_elides_a_long_command(capsys: pytest.CaptureFixture[str]) -> None:
+    long_arg = "x" * 200
+    args = f'{{"steps": [{{"argv": ["echo", "{long_arg}"]}}]}}'
+    await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
+    out = capsys.readouterr().out
+    command = f"echo {long_arg}"
+    line = next(text for text in out.splitlines() if text.startswith("$ "))
+    assert line == f"$ {command[:_RUN_BATCH_CMD_LIMIT]}…"
+
+
+async def test_pretty_run_argv_batch_steps_as_json_string(capsys: pytest.CaptureFixture[str]) -> None:
+    """``steps`` may arrive as a JSON string holding the array."""
+    args = '{"steps": "[{\\"argv\\": [\\"git\\", \\"status\\"]}]"}'
+    await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
+    out = capsys.readouterr().out
+    assert "$ git status\n* Run batch (done)" in out
+
+
+async def test_pretty_run_argv_batch_unreadable_steps_hide_commands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    await render_events(
+        _aiter(
+            [
+                _pretty_call("run_argv_batch", '{"steps": "nope"}'),
+                _result("error: steps must be a JSON array: Expecting value"),
+            ]
+        )
+    )
+    out = capsys.readouterr().out
+    assert "$ " not in out
+    assert "* Run batch (error: steps must be a JSON array" in out
 
 
 async def test_pretty_fetch(capsys: pytest.CaptureFixture[str]) -> None:
