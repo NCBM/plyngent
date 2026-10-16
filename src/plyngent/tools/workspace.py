@@ -393,7 +393,7 @@ def resolve_path(path: str | Path, *, required: AccessMode = AccessMode.WRITE) -
     if not _under_any_root(resolved, instance, policy) and not _path_grant_covers(resolved, required):
         msg = (
             f"path escapes workspace root ({root}): {path}; "
-            "call request_directory_access to request access to a directory outside the workspace"
+            f"call request_directory_access with mode={required.name.lower()!r} to request access outside the workspace"
         )
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.

@@ -38,6 +38,14 @@ def test_escape_error_hints_request_tool(workspace: object) -> None:
         _ = resolve_path("../outside")
 
 
+@pytest.mark.parametrize("required", [AccessMode.READ, AccessMode.WRITE, AccessMode.EXEC])
+def test_escape_error_names_the_mode_to_request(workspace: object, required: AccessMode) -> None:
+    """The refusal carries the lowest access mode that would cover the call."""
+    del workspace
+    with pytest.raises(WorkspaceError, match=f"mode='{required.name.lower()}'"):
+        _ = resolve_path("../outside", required=required)
+
+
 def test_access_mode_parse_and_covers() -> None:
     assert parse_access_mode(" Read ") is AccessMode.READ
     assert parse_access_mode("EXEC") is AccessMode.EXEC

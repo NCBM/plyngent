@@ -254,11 +254,11 @@ async def request_directory_access(path: str, reason: str = "", mode: str = "rea
     """Request human approval to use a directory (or exact file) outside the workspace.
 
     Call this instead of retrying a path that failed with ``path escapes
-    workspace root``. ``mode`` is ``read`` (inspect files), ``write`` (also
-    modify files) or ``exec`` (also use it as ``run_argv`` / PTY cwd); the human
-    may approve a different level. Approval lasts for the session (or for this
-    process when ``--yes`` auto-approves). Paths matching the configured
-    denylist can never be granted.
+    workspace root``, passing the ``mode`` that error names. ``mode`` is ``read``
+    (inspect files), ``write`` (also modify files) or ``exec`` (also use it as
+    ``run_argv`` / PTY cwd); the human may approve a different level. Approval
+    lasts for the session (or for this process when ``--yes`` auto-approves).
+    Paths matching the configured denylist can never be granted.
     """
     requested = parse_access_mode(mode)
     if requested is None:
