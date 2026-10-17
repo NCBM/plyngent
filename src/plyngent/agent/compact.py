@@ -30,6 +30,8 @@ _SUMMARY_SYSTEM = (
     "Write a dense, factual summary that preserves: goals, decisions, "
     "file paths touched, commands run, open tasks, and constraints. "
     "Omit chit-chat and redundant tool dumps. Use short bullet sections. "
+    "Tool calls are unavailable in this request: do not call tools or emit "
+    "tool-call syntax; summarize only what the transcript contains. "
     "Do not invent facts not present in the transcript."
 )
 

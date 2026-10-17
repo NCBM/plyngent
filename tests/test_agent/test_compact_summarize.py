@@ -130,6 +130,15 @@ async def test_summarize_messages() -> None:
     assert "world" in user_msg.content
 
 
+async def test_summarize_default_prompt_says_tools_are_unavailable() -> None:
+    client = SummaryClient()
+    _ = await summarize_messages(client, [UserChatMessage(content="hi")], model="m")
+    assert client.last is not None
+    sys_msg = client.last.messages[0]
+    assert isinstance(sys_msg, SystemChatMessage)
+    assert "tool calls are unavailable" in sys_msg.content.lower()
+
+
 async def test_summarize_custom_prompts() -> None:
     client = SummaryClient()
     _ = await summarize_messages(
