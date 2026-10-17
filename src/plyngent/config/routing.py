@@ -98,27 +98,34 @@ def wants_web_search(effective: EffectiveProvider) -> bool:
 def local_web_search(effective: EffectiveProvider) -> bool:
     """True when this provider searches through plyngent's own ``web_search`` tool.
 
-    DeepSeek runs a hosted search only on its Anthropic-compatible surface
-    (``convention = "anthropic"``): the Responses and chat-completions surfaces
-    ignore a hosted tool — a live probe answers "I can't browse the web" with
-    either ``{"type": "web_search"}`` or the server-tool shape — so a DeepSeek
-    provider that talks them searches through
-    :func:`~plyngent.tools.net.search.build_web_search_tool`, which asks the
-    sources named by ``search_sources`` behind the scenes.
+    ``search_sources`` owns the local tool; ``provider_tools`` owns the hosted
+    one. DeepSeek's Anthropic-compatible surface can run the search inside a
+    response, so that combination keeps the hosted tool and the local one stays
+    out of the way; turning hosted tools off (``provider_tools = []``) brings
+    the local tool back there too. Every other surface ignores a hosted search,
+    so the local tool is the only one it can use.
     """
-    if effective.preset != "deepseek" or effective.convention == "anthropic":
+    if effective.preset != "deepseek" or not effective.search_sources:
         return False
-    if not effective.search_sources:
-        return False
-    return wants_web_search(effective)
+    return not (effective.convention == "anthropic" and wants_web_search(effective))
 
 
-def deepseek_search_base_url(effective: EffectiveProvider) -> str:
-    """The endpoint a DeepSeek search turn runs on (its Anthropic-compatible base)."""
-    url = effective.url.rstrip("/")
-    if url.endswith("/anthropic"):
-        return url
-    return DEFAULT_DEEPSEEK_ANTHROPIC_BASE_URL
+def deepseek_api_base_url(effective: EffectiveProvider) -> str:
+    """The platform base URL shared by model and tool APIs.
+
+    The Anthropic convention lives under ``/anthropic`` and OpenAI-compatible
+    configs often carry a ``/v1`` suffix; neither belongs in the base that the
+    Search API client appends ``/v1/tools/search`` to.
+    """
+    url = (effective.url or DEFAULT_DEEPSEEK_BASE_URL).strip().rstrip("/")
+    stripped = True
+    while stripped:
+        stripped = False
+        for suffix in ("/anthropic", "/v1"):
+            if url.endswith(suffix):
+                url = url[: -len(suffix)].rstrip("/")
+                stripped = True
+    return url or DEFAULT_DEEPSEEK_BASE_URL
 
 
 def resolve_effective_provider(provider: Provider, *, model: str | None = None) -> EffectiveProvider:

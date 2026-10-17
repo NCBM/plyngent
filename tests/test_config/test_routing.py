@@ -7,7 +7,7 @@ from dataclasses import replace
 from plyngent.config.models import DeepseekProvider
 from plyngent.config.routing import (
     EffectiveProvider,
-    deepseek_search_base_url,
+    deepseek_api_base_url,
     local_web_search,
     resolve_effective_provider,
     wants_web_search,
@@ -46,8 +46,14 @@ def test_chat_and_responses_conventions_use_the_local_tool() -> None:
     assert local_web_search(_effective(convention="anthropic")) is False
 
 
-def test_without_provider_tools_there_is_no_search() -> None:
-    assert local_web_search(_effective(convention="responses", tools=[])) is False
+def test_provider_tools_only_gate_the_hosted_search() -> None:
+    # ``search_sources`` owns the local tool; ``provider_tools`` owns the hosted
+    # one. Turning hosted tools off must not take local search with it.
+    assert local_web_search(_effective(convention="responses", tools=[])) is True
+    assert local_web_search(_effective(convention="anthropic", tools=[])) is True
+    # With hosted tools on, the Anthropic surface keeps the hosted search and
+    # the local tool stays out of the way.
+    assert local_web_search(_effective(convention="anthropic")) is False
 
 
 def test_without_search_sources_there_is_no_local_tool() -> None:
@@ -58,9 +64,17 @@ def test_without_search_sources_there_is_no_local_tool() -> None:
     assert _effective(convention="responses").search_sources == ["deepseek", "bing"]
 
 
-def test_search_base_url_prefers_an_anthropic_endpoint() -> None:
-    assert deepseek_search_base_url(_effective(convention="responses")) == "https://api.deepseek.com/anthropic"
+def test_api_base_url_drops_the_convention_and_version_paths() -> None:
+    # The Search API appends ``/v1/tools/search`` itself, so neither the
+    # Anthropic convention's ``/anthropic`` nor an OpenAI-compatible ``/v1``
+    # may survive in the base.
+    assert deepseek_api_base_url(_effective(convention="responses")) == "https://api.deepseek.com"
+    assert deepseek_api_base_url(_effective(convention="anthropic")) == "https://api.deepseek.com"
     assert (
-        deepseek_search_base_url(_effective(convention="responses", url="https://gateway.example/anthropic"))
-        == "https://gateway.example/anthropic"
+        deepseek_api_base_url(_effective(convention="anthropic", url="https://gateway.example/api/anthropic"))
+        == "https://gateway.example/api"
+    )
+    assert (
+        deepseek_api_base_url(_effective(convention="responses", url="https://gateway.example/v1"))
+        == "https://gateway.example"
     )

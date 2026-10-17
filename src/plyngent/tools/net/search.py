@@ -1,13 +1,15 @@
 """``web_search``: the model's way to search when its surface cannot host one.
 
-DeepSeek only searches on its Anthropic-compatible surface, so a DeepSeek
-provider that talks the Responses or chat-completions surface gets this local
-tool instead of a hosted one (see ``config.routing.local_web_search``): the
-model calls it like any other tool and the handler asks the configured search
-sources behind the scenes — ``provider.search_sources``, in fallback order, so
-the next source is tried when one fails or finds nothing. A hit is a title, a
-URL and (when the source has one) a snippet: read a page with ``fetch`` before
-relying on its content.
+DeepSeek hosts a search only on its Anthropic-compatible surface, so a DeepSeek
+provider that talks the Responses or chat-completions surface — or one that
+turns hosted tools off — gets this local tool instead (see
+``config.routing.local_web_search``): the model calls it like any other tool and
+the handler asks the configured search sources behind the scenes —
+``provider.search_sources``, in fallback order, so the next source is tried when
+one fails or finds nothing. DeepSeek's own source is the Search API
+(``POST /v1/tools/search``), which answers in one request instead of a model
+round. A hit is a title, a URL and (when the source has one) a snippet: read a
+page with ``fetch`` before relying on its content.
 """
 
 from __future__ import annotations
@@ -20,10 +22,8 @@ from plyngent.agent.tools import ToolDefinition, ToolTag, schema_from_callable
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from plyngent.lmproto.deepseek.anthropic.search import (
-        DeepseekSearchClient,
-        SearchHit,
-    )
+    from plyngent.lmproto.deepseek.search import DeepseekSearchClient
+    from plyngent.lmproto.search import SearchHit
 
 WEB_SEARCH_TOOL_NAME = "web_search"
 DEFAULT_MAX_HITS = 8
@@ -36,17 +36,15 @@ class SearchBackend(Protocol):
 
 
 class DeepseekSearchBackend:
-    """DeepSeek's own index: one server-side search turn per query."""
+    """DeepSeek's own index: one Search API request per query."""
 
     _client: DeepseekSearchClient
-    _model: str
 
-    def __init__(self, client: DeepseekSearchClient, *, model: str) -> None:
+    def __init__(self, client: DeepseekSearchClient) -> None:
         self._client = client
-        self._model = model
 
     async def search(self, query: str) -> Sequence[SearchHit]:
-        return await self._client.search(query, model=self._model)
+        return await self._client.search(query)
 
 
 async def search_in_order(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-from plyngent.lmproto.deepseek.anthropic.search import SearchHit
+from plyngent.lmproto.search import SearchHit
 from plyngent.tools.net.client import http_fetch
 
 SEARCH_URL = "https://www.bing.com/search"

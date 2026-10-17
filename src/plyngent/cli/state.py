@@ -25,7 +25,7 @@ from plyngent.cli.models_source import (
 )
 from plyngent.config import EffectiveProvider, ReasoningConfig, resolve_effective_provider, resolve_reasoning
 from plyngent.memory.database.store import normalize_workspace
-from plyngent.runtime import create_client
+from plyngent.runtime import create_client, normalize_http_timeout
 from plyngent.tools import InstanceState, SessionState
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
@@ -391,11 +391,11 @@ class ReplState:
         (see :func:`~plyngent.config.routing.local_web_search`).
         """
         from plyngent.config.routing import (
-            deepseek_search_base_url,
+            deepseek_api_base_url,
             local_web_search,
         )
-        from plyngent.lmproto.anthropic.config import AnthropicConfig
-        from plyngent.lmproto.deepseek.anthropic.search import DeepseekSearchClient
+        from plyngent.lmproto.deepseek.search import DeepseekSearchClient
+        from plyngent.lmproto.openai_compatible.config import OpenAIConfig
         from plyngent.tools.net.bing import BingSearchBackend
         from plyngent.tools.net.search import (
             DeepseekSearchBackend,
@@ -403,7 +403,7 @@ class ReplState:
         )
 
         provider = self.effective_provider
-        if not local_web_search(provider) or not self.model:
+        if not local_web_search(provider):
             return None
         backends: list[SearchBackend] = []
         for source in provider.search_sources:
@@ -411,12 +411,12 @@ class ReplState:
                 backends.append(
                     DeepseekSearchBackend(
                         DeepseekSearchClient(
-                            AnthropicConfig(
-                                api_key=provider.access_key_or_token,
-                                base_url=deepseek_search_base_url(provider),
+                            OpenAIConfig(
+                                access_key_or_token=provider.access_key_or_token,
+                                base_url=deepseek_api_base_url(provider),
+                                timeout=normalize_http_timeout(provider.timeout),
                             )
-                        ),
-                        model=self.model,
+                        )
                     )
                 )
             elif source == "bing":

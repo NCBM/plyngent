@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from plyngent.agent.tools import ToolTag
-from plyngent.lmproto.deepseek.anthropic.search import SearchHit
+from plyngent.lmproto.search import SearchHit
 from plyngent.tools.net.search import (
     WEB_SEARCH_TOOL_NAME,
     build_web_search_tool,
@@ -93,25 +91,21 @@ async def test_handler_without_sources_says_so() -> None:
     assert "no source configured" in await definition.handler(query="q")
 
 
-def test_deepseek_backend_passes_the_model_through() -> None:
+@pytest.mark.asyncio
+async def test_deepseek_backend_asks_the_search_api() -> None:
     from plyngent.tools.net.search import DeepseekSearchBackend
 
     class _Client:
         def __init__(self) -> None:
-            self.seen: list[tuple[str, str]] = []
+            self.queries: list[str] = []
 
-        async def search(self, query: str, *, model: str, **kwargs: object) -> list[SearchHit]:
-            self.seen.append((query, model))
+        async def search(self, query: str) -> list[SearchHit]:
+            self.queries.append(query)
             return _hits(("T", "https://example.com"))
 
-    client: Any = _Client()
-    backend = DeepseekSearchBackend(client, model="deepseek-flash")
+    client = _Client()
+    backend = DeepseekSearchBackend(client)  # type: ignore[arg-type] — structural stub
 
-    async def run() -> list[SearchHit]:
-        return list(await backend.search("q"))
-
-    import asyncio
-
-    hits = asyncio.run(run())
+    hits = await backend.search("q")
     assert [hit.url for hit in hits] == ["https://example.com"]
-    assert client.seen == [("q", "deepseek-flash")]
+    assert client.queries == ["q"]

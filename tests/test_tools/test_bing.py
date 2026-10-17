@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from plyngent.lmproto.deepseek.anthropic.search import SearchHit
+from plyngent.lmproto.search import SearchHit
 from plyngent.tools.net.bing import parse_bing_rss
 
 DOCUMENT = """<?xml version="1.0" encoding="utf-8" ?>
