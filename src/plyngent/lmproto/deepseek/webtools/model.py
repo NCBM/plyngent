@@ -1,13 +1,15 @@
-"""Wire models for DeepSeek's Search API (``POST /v1/tools/search``)."""
+"""Wire models for DeepSeek's Search and Fetch APIs."""
 
 from __future__ import annotations
 
 import msgspec
 
 SEARCH_PATH = "/v1/tools/search"
+FETCH_PATH = "/v1/tools/fetch"
 DEFAULT_SEARCH_COUNT = 10
 MAX_SEARCH_COUNT = 50
 MAX_QUERY_CHARS = 128
+MAX_FETCH_URL_CHARS = 8192
 
 
 class SearchRequest(msgspec.Struct, omit_defaults=True):
@@ -38,11 +40,28 @@ class SearchResponse(msgspec.Struct):
     results: list[SearchResult]
 
 
+class FetchRequest(msgspec.Struct):
+    """Body of one fetch request: a single absolute http(s) URL."""
+
+    url: str
+
+
+class FetchResponse(msgspec.Struct):
+    """A fetched page: its title and its content rendered as Markdown."""
+
+    title: str = ""
+    content: str = ""
+
+
 __all__ = [
     "DEFAULT_SEARCH_COUNT",
+    "FETCH_PATH",
+    "MAX_FETCH_URL_CHARS",
     "MAX_QUERY_CHARS",
     "MAX_SEARCH_COUNT",
     "SEARCH_PATH",
+    "FetchRequest",
+    "FetchResponse",
     "SearchRequest",
     "SearchResponse",
     "SearchResult",

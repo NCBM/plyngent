@@ -74,7 +74,7 @@ def test_read_only_classification() -> None:
         "vcs_diff",
         "vcs_log",
         "vcs_branch",
-        "fetch",
+        "fetch_local",
         "skill_list",
         "skill_read",
         "skill_search",

@@ -155,7 +155,7 @@ _read_only: ContextVar[bool] = ContextVar("plyngent_read_only_context", default=
 def read_only_context() -> Generator[None]:
     """Mark the current context as read-only for tool execution.
 
-    Tools that may mutate depending on arguments (e.g. ``fetch`` with a
+    Tools that may mutate depending on arguments (e.g. ``fetch_local`` with a
     non-GET method) check :func:`is_read_only_context` and refuse to mutate
     while it is set.
     """

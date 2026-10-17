@@ -341,7 +341,7 @@ async def _run_chat(  # noqa: C901, PLR0915 — chat orchestration
         state.instance_state.workspace.path_denylist = tuple(store.agent_config.path_denylist or ())
         from plyngent.tools.net import set_ssrf_assume_public_cidrs
 
-        # Clash Fake-IP etc.: treat configured CIDRs as public for fetch SSRF.
+        # Clash Fake-IP etc.: treat configured CIDRs as public for fetch_local SSRF.
         _ = set_ssrf_assume_public_cidrs(store.networking_config.ssrf_assume_public_cidrs)
         if interactive:
             from plyngent.cli.limits import prompt_policy_command_confirm, prompt_policy_fetch_confirm

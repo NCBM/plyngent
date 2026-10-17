@@ -1,4 +1,4 @@
-"""Model-facing ``fetch`` tool (HTTP GET/POST/PUT/DELETE)."""
+"""Model-facing ``fetch_local`` tool (HTTP GET/POST/PUT/DELETE from this host)."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def format_fetch_result(
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO | ToolTag.TRUSTABLE | ToolTag.READ_ONLY)
-async def fetch(
+async def fetch_local(
     url: str,
     *,
     method: str = "GET",
@@ -97,7 +97,7 @@ async def fetch(
     try:
         verb = normalize_method(method)
         if is_read_only_context() and verb != "GET":
-            return "error: fetch method must be GET in a read-only context (POST/PUT/DELETE mutate)"
+            return "error: fetch_local method must be GET in a read-only context (POST/PUT/DELETE mutate)"
         parsed = parse_fetch_url(url)
         hdrs = normalize_request_headers(headers, user_agent=user_agent)
         body_bytes: bytes | None = None
@@ -119,7 +119,7 @@ async def fetch(
     except FetchPolicyError as exc:
         return f"error: {exc}"
     except Exception as exc:  # noqa: BLE001 — tool surface returns error text
-        return f"error: fetch failed: {exc}"
+        return f"error: fetch_local failed: {exc}"
 
     return format_fetch_result(
         status=result.status,

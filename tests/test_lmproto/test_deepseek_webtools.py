@@ -1,12 +1,12 @@
-"""DeepSeek's Search API client (``POST /v1/tools/search``)."""
+"""DeepSeek's Search and Fetch APIs (``/v1/tools/search``, ``/v1/tools/fetch``)."""
 
 from __future__ import annotations
 
 import msgspec
 import pytest
 
-from plyngent.lmproto.deepseek.search import (
-    DeepseekSearchClient,
+from plyngent.lmproto.deepseek.webtools import (
+    DeepseekWebToolsClient,
     SearchRequest,
 )
 from plyngent.lmproto.openai_compatible.config import OpenAIConfig
@@ -23,8 +23,8 @@ def _body(*results: dict[str, object]) -> bytes:
     return msgspec.json.encode({"results": list(results)})
 
 
-def _client() -> DeepseekSearchClient:
-    return DeepseekSearchClient(
+def _client() -> DeepseekWebToolsClient:
+    return DeepseekWebToolsClient(
         OpenAIConfig(access_key_or_token="sk-test", base_url="https://api.deepseek.com"),
     )
 
@@ -166,7 +166,7 @@ async def test_the_endpoint_error_detail_is_raised(monkeypatch: pytest.MonkeyPat
 @pytest.mark.asyncio
 async def test_a_retryable_status_is_tried_again(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client()
-    monkeypatch.setattr("plyngent.lmproto.deepseek.search.client.RETRY_DELAYS", (0.0,))
+    monkeypatch.setattr("plyngent.lmproto.deepseek.webtools.client.RETRY_DELAYS", (0.0,))
     statuses = [429, 200]
 
     async def fake_post(path: str, **kwargs: object) -> _Resp:
@@ -181,7 +181,7 @@ async def test_a_retryable_status_is_tried_again(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.asyncio
 async def test_a_balance_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client()
-    monkeypatch.setattr("plyngent.lmproto.deepseek.search.client.RETRY_DELAYS", (0.0,))
+    monkeypatch.setattr("plyngent.lmproto.deepseek.webtools.client.RETRY_DELAYS", (0.0,))
     calls: list[int] = []
 
     async def fake_post(path: str, **kwargs: object) -> _Resp:
@@ -197,3 +197,50 @@ async def test_a_balance_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -
 def test_the_request_model_omits_what_was_not_set() -> None:
     encoded = msgspec.json.encode(SearchRequest(query="q"))
     assert msgspec.json.decode(encoded, type=dict[str, object]) == {"query": "q"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_posts_the_url_and_returns_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    sent: dict[str, object] = {}
+
+    async def fake_post(path: str, **kwargs: object) -> _Resp:
+        sent["path"] = path
+        sent.update(kwargs)
+        return _Resp(200, msgspec.json.encode({"title": "Example article", "content": "# Article\n\nBody."}))
+
+    monkeypatch.setattr(client.session, "post", fake_post)
+    page = await client.fetch("https://example.com/article")
+
+    assert page.title == "Example article"
+    assert page.content == "# Article\n\nBody."
+    assert sent["path"] == "/v1/tools/fetch"
+    assert _decode_request(sent["data"]) == {"url": "https://example.com/article"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_a_url_the_endpoint_would_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    calls: list[object] = []
+
+    async def fake_post(path: str, **kwargs: object) -> _Resp:
+        calls.append(path)
+        return _Resp(200, b"{}")
+
+    monkeypatch.setattr(client.session, "post", fake_post)
+    for url in ("file:///etc/passwd", "https://user:secret@example.com/", "https:///no-host", ""):
+        with pytest.raises(ValueError):
+            _ = await client.fetch(url)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_surfaces_a_security_policy_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+
+    async def fake_post(path: str, **kwargs: object) -> _Resp:
+        return _Resp(403, b'{"error": {"message": "target rejected by security policy"}}')
+
+    monkeypatch.setattr(client.session, "post", fake_post)
+    with pytest.raises(RuntimeError, match="security policy"):
+        _ = await client.fetch("https://example.com/blocked")

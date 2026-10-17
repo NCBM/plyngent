@@ -77,7 +77,7 @@ async def ensure_host_allowed(
     try:
         inst = instance if instance is not None else require_bound_instance()
     except WorkspaceError as exc:
-        msg = f"instance state is not bound for fetch policy: {exc}"
+        msg = f"instance state is not bound for fetch_local policy: {exc}"
         raise FetchPolicyError(msg) from exc
 
     parsed = parse_fetch_url(url)
@@ -85,7 +85,7 @@ async def ensure_host_allowed(
     if assessment.classification is HostClass.PUBLIC:
         return
     if assessment.classification is HostClass.FORBIDDEN:
-        msg = f"fetch blocked forbidden host {parsed.host!r} (addresses: {', '.join(assessment.addresses)})"
+        msg = f"fetch_local blocked forbidden host {parsed.host!r} (addresses: {', '.join(assessment.addresses)})"
         raise FetchPolicyError(msg)
 
     # PRIVATE
@@ -100,18 +100,18 @@ async def ensure_host_allowed(
     hook = get_fetch_policy_confirm_hook(inst)
     if hook is None:
         msg = (
-            f"fetch blocked private/loopback host {parsed.host}:{parsed.port} "
+            f"fetch_local blocked private/loopback host {parsed.host}:{parsed.port} "
             f"({assessment.reason}; no policy confirm hook / non-interactive deny)"
         )
         raise FetchPolicyError(msg)
     try:
         allowed = bool(hook(parsed.host, parsed.port, parsed.url, timeout))
     except Exception as exc:
-        msg = f"fetch blocked private/loopback host {parsed.host}:{parsed.port} (confirm failed: {exc})"
+        msg = f"fetch_local blocked private/loopback host {parsed.host}:{parsed.port} (confirm failed: {exc})"
         raise FetchPolicyError(msg) from exc
     if not allowed:
         msg = (
-            f"fetch blocked private/loopback host {parsed.host}:{parsed.port} "
+            f"fetch_local blocked private/loopback host {parsed.host}:{parsed.port} "
             f"(user declined or timed out after {timeout:g}s; not skipped by YOLO)"
         )
         raise FetchPolicyError(msg)

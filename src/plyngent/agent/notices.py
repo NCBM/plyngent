@@ -115,8 +115,8 @@ def truncated_turn_notice() -> Notice:
 _ASIDE_BODIES: dict[str, str] = {
     "read": (
         "Side question: this exchange is not saved to the session transcript and does not "
-        "change the main conversation. Tools here are read-only (file/VCS reads, ask, fetch "
-        "GET): you cannot edit files or run state-changing commands, so describe a change "
+        "change the main conversation. Tools here are read-only (file/VCS reads, ask, fetch/"
+        "fetch_local GET): you cannot edit files or run state-changing commands, so describe a change "
         "instead of applying it."
     ),
     "no": (

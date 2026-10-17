@@ -1,4 +1,4 @@
-"""URL / host policy for the fetch tool (SSRF, private grants, cleartext)."""
+"""URL / host policy for the fetch_local tool (SSRF, private grants, cleartext)."""
 
 from __future__ import annotations
 

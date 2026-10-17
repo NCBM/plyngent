@@ -311,14 +311,14 @@ def prompt_policy_fetch_confirm(
     url: str,
     timeout_seconds: float,
 ) -> bool:
-    """Ask whether to allow fetch to a private/loopback host (timed).
+    """Ask whether to allow fetch_local to a private/loopback host (timed).
 
     Independent of YOLO: always prompts when interactive. Default is **deny**.
     Timeout, cancel, or non-interactive → False. On approve, the host:port is
     granted for the rest of this process (see net grants).
     """
     reason = (
-        f"fetch targets private/loopback host {host!r} port {port}\n"
+        f"fetch_local targets private/loopback host {host!r} port {port}\n"
         f"url: {url}\n"
         f"Allow this host:port for the rest of this process?\n"
         f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)"
@@ -332,7 +332,7 @@ def prompt_policy_fetch_confirm(
             backend.secho(format_tool_confirm_box("policy", reason), fg="yellow")
             backend.echo()
             grant = f"{host}:{port}"
-            prompt = f"[policy] allow fetch {grant!r}? [y/N] (timeout {timeout_seconds:g}s): "
+            prompt = f"[policy] allow fetch_local {grant!r}? [y/N] (timeout {timeout_seconds:g}s): "
             with contextlib.suppress(OSError):
                 _ = sys.stderr.write(prompt)
                 _ = sys.stderr.flush()

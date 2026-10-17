@@ -2,8 +2,8 @@
 
 Every truncation site (the agent loop's generic tool-result cap,
 ``run_argv`` / ``run_argv_batch`` per-stream caps, ``read_file``,
-``fetch``, and request-time compact shrinks) appends the same compact marker
-when output is cut short::
+``fetch`` / ``fetch_local``, and request-time compact shrinks) appends the same
+compact marker when output is cut short::
 
     [Truncated (32000 chars max.; 500 omitted). truncate_token=...]
 
@@ -14,9 +14,9 @@ source is exhausted (then no marker is emitted).
 
 A ``file`` remainder is re-read from disk by ``location`` + ``offset``, so it
 survives for as long as the file does. Everything else — arbitrary tool output
-(run_argv stdout, todo renders, …) and ``fetch`` bodies — has no source worth
-re-running (a re-fetch costs a round trip and re-hits the remote), so its
-remainder lives in a short-lived in-memory store (``kind="memory"``) that is
+(run_argv stdout, todo renders, …) and ``fetch`` / ``fetch_local`` bodies — have
+no source worth re-running (a re-fetch costs a round trip and re-hits the remote),
+so its remainder lives in a short-lived in-memory store (``kind="memory"``) that is
 forgotten when the agent process exits; the model must re-run the tool after
 that.
 """

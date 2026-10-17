@@ -26,8 +26,8 @@ use `run_argv_batch` for ordered pipelines.
 - `regex_files`: `pattern` is a Python `re` regex (not a glob, so `*.py` fails) and \
 `path` is a literal file/dir (no glob expansion).
 - Truncated results carry a `truncate_token=...`; continue with `get_truncated`.
-- Prefer `fetch` for HTTP(S); `offset` (0-based) skips leading body characters; \
-private/LAN hosts need human policy allow (not YOLO).
+- Prefer `fetch` for public pages (clean Markdown); `fetch_local` for localhost/LAN, \
+non-GET methods, headers, or raw status; `offset` (0-based) skips leading body characters.
 - PTY secrets only via `ask_into_pty`; denylists and confirms still apply.
 - `wait` pauses; pressing Enter disturbs early (optional reason).
 - Todo stack: open items mean unfinished work; the stack does not auto-clear — \

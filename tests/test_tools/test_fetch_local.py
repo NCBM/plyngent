@@ -1,4 +1,4 @@
-"""Tests for tools.net.fetch (policy, UA, methods, private grants)."""
+"""Tests for tools.net.fetch_local (policy, UA, methods, private grants)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from plyngent.tools.context import read_only_context
 from plyngent.tools.danger import classify_danger
-from plyngent.tools.net import fetch, grant_private_host
+from plyngent.tools.net import fetch_local, grant_private_host
 from plyngent.tools.net.policy import (
     DEFAULT_USER_AGENT,
     FetchPolicyError,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """Minimal echo server for fetch tests."""
+    """Minimal echo server for fetch_local tests."""
 
     @override
     def log_message(self, format: str, *args: object) -> None:
@@ -171,10 +171,10 @@ def test_soft_confirm_reason_matrix() -> None:
 
 
 def test_classify_danger_fetch() -> None:
-    assert classify_danger("fetch", {"url": "https://example.com/", "method": "GET"}) is None
-    reason = classify_danger("fetch", {"url": "http://example.com/", "method": "GET"})
+    assert classify_danger("fetch_local", {"url": "https://example.com/", "method": "GET"}) is None
+    reason = classify_danger("fetch_local", {"url": "http://example.com/", "method": "GET"})
     assert reason is not None and "cleartext" in reason
-    reason2 = classify_danger("fetch", {"url": "https://example.com/api", "method": "DELETE"})
+    reason2 = classify_danger("fetch_local", {"url": "https://example.com/api", "method": "DELETE"})
     assert reason2 is not None and "DELETE" in reason2
 
 
@@ -184,36 +184,36 @@ async def test_fetch_get_post_put_delete(workspace: Path, http_server: str) -> N
     # Grant loopback for this process/instance (fixture binds InstanceState).
     grant_private_host("127.0.0.1", int(base.rsplit(":", 1)[1]))
 
-    out = await call_async(fetch, f"{base}/hello")
+    out = await call_async(fetch_local, f"{base}/hello")
     assert "status=200" in out
     assert "GET /hello" in out
     assert "security=cleartext-http" in out
 
-    out_post = await call_async(fetch, f"{base}/echo", method="POST", body="hi")
+    out_post = await call_async(fetch_local, f"{base}/echo", method="POST", body="hi")
     assert "status=201" in out_post
     assert "POST:hi" in out_post
 
-    out_put = await call_async(fetch, f"{base}/echo", method="PUT", body="x")
+    out_put = await call_async(fetch_local, f"{base}/echo", method="PUT", body="x")
     assert "PUT:x" in out_put
 
-    out_del = await call_async(fetch, f"{base}/x", method="DELETE")
+    out_del = await call_async(fetch_local, f"{base}/x", method="DELETE")
     assert "status=204" in out_del
 
 
 async def test_fetch_read_only_context_blocks_non_get(workspace: Path, http_server: str) -> None:
-    """In a read-only context fetch only allows GET; outside it POST works."""
+    """In a read-only context fetch_local only allows GET; outside it POST works."""
     del workspace
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
 
     with read_only_context():
-        out = await call_async(fetch, f"{http_server}/hello")
+        out = await call_async(fetch_local, f"{http_server}/hello")
         assert "status=200" in out  # GET is fine in a read-only context
-        blocked = await call_async(fetch, f"{http_server}/echo", method="POST", body="hi")
+        blocked = await call_async(fetch_local, f"{http_server}/echo", method="POST", body="hi")
         assert blocked.startswith("error:")
         assert "GET" in blocked
 
-    out_post = await call_async(fetch, f"{http_server}/echo", method="POST", body="hi")
+    out_post = await call_async(fetch_local, f"{http_server}/echo", method="POST", body="hi")
     assert "POST:hi" in out_post
 
 
@@ -222,18 +222,18 @@ async def test_fetch_user_agent_passthrough(workspace: Path, http_server: str) -
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
 
-    out = await call_async(fetch, f"{http_server}/ua", user_agent="AgentUA/9")
+    out = await call_async(fetch_local, f"{http_server}/ua", user_agent="AgentUA/9")
     assert "AgentUA/9" in out
 
     out2 = await call_async(
-        fetch,
+        fetch_local,
         f"{http_server}/ua",
         headers={"User-Agent": "HeaderUA/1"},
     )
     assert "HeaderUA/1" in out2
 
     out3 = await call_async(
-        fetch,
+        fetch_local,
         f"{http_server}/ua",
         headers={"User-Agent": "HeaderUA/1"},
         user_agent="ArgUA/2",
@@ -247,11 +247,11 @@ async def test_fetch_truncation_and_binary(workspace: Path, http_server: str) ->
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
 
-    out = await call_async(fetch, f"{http_server}/big", max_bytes=100)
+    out = await call_async(fetch_local, f"{http_server}/big", max_bytes=100)
     assert "truncated=true" in out
     assert "bytes=100" in out
 
-    out_bin = await call_async(fetch, f"{http_server}/bin")
+    out_bin = await call_async(fetch_local, f"{http_server}/bin")
     assert "body_kind=binary" in out_bin
     assert "binary body omitted" in out_bin
 
@@ -261,7 +261,7 @@ async def test_fetch_char_truncation_embeds_token(workspace: Path, http_server: 
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
 
-    out = await call_async(fetch, f"{http_server}/big", max_chars=1000)
+    out = await call_async(fetch_local, f"{http_server}/big", max_chars=1000)
     assert "truncated=true" in out
     body = out.split("--- body ---", 1)[-1]
     assert "truncate_token=" in body
@@ -281,7 +281,7 @@ async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> Non
     grant_private_host("127.0.0.1", port)
 
     # /big body is 5000 chars; offset 4900 leaves 100 chars, no token needed.
-    out = await call_async(fetch, f"{http_server}/big", max_chars=200, offset=4900)
+    out = await call_async(fetch_local, f"{http_server}/big", max_chars=200, offset=4900)
     body = out.split("--- body ---", 1)[-1]
     assert body.strip() == "x" * 100
     assert "truncate_token=" not in out
@@ -290,21 +290,21 @@ async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> Non
 async def test_fetch_private_denied_without_grant(workspace: Path, http_server: str) -> None:
     del workspace
     # No grant, no policy hook → hard deny (even though server is up).
-    out = await call_async(fetch, f"{http_server}/hello")
+    out = await call_async(fetch_local, f"{http_server}/hello")
     assert out.startswith("error:")
     assert "private" in out or "loopback" in out
 
 
 async def test_fetch_forbidden_metadata(workspace: Path) -> None:
     del workspace
-    out = await call_async(fetch, "http://169.254.169.254/latest/meta-data/")
+    out = await call_async(fetch_local, "http://169.254.169.254/latest/meta-data/")
     assert out.startswith("error:")
     assert "forbidden" in out
 
 
 async def test_fetch_bad_scheme(workspace: Path) -> None:
     del workspace
-    out = await call_async(fetch, "file:///etc/passwd")
+    out = await call_async(fetch_local, "file:///etc/passwd")
     assert out.startswith("error:")
     assert "scheme" in out
 
@@ -313,6 +313,6 @@ async def test_fetch_redirect_loop_capped(workspace: Path, http_server: str) -> 
     del workspace
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
-    out = await call_async(fetch, f"{http_server}/redirect-loop", max_redirects=3)
+    out = await call_async(fetch_local, f"{http_server}/redirect-loop", max_redirects=3)
     assert out.startswith("error:")
     assert "redirect" in out.lower()

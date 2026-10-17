@@ -544,7 +544,7 @@ async def test_pretty_fetch(capsys: pytest.CaptureFixture[str]) -> None:
         "status=200\nmethod=GET\nfinal_url=https://example.com\ncontent_type=application/json\n"
         "body_kind=json\nbytes=1229\ntruncated=false\nredirects=0\nsecurity=public\n--- body ---\n{...}\n"
     )
-    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    await render_events(_aiter([_pretty_call("fetch_local", '{"url": "https://example.com"}'), _result(result)]))
     out = capsys.readouterr().out
     assert "* Fetch GET https://example.com (200)" in out
     assert "[tool]" not in out
@@ -555,7 +555,7 @@ async def test_pretty_fetch_error_status(capsys: pytest.CaptureFixture[str]) -> 
         "status=404\nmethod=GET\nfinal_url=https://example.com/nope\ncontent_type=text/html\n"
         "body_kind=html\nbytes=45\ntruncated=false\nredirects=0\nsecurity=public\n--- body ---\nNot found\n"
     )
-    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com/nope"}'), _result(result)]))
+    await render_events(_aiter([_pretty_call("fetch_local", '{"url": "https://example.com/nope"}'), _result(result)]))
     out = capsys.readouterr().out
     assert "* Fetch GET https://example.com/nope (404)" in out
 
@@ -565,17 +565,37 @@ async def test_pretty_fetch_truncated(capsys: pytest.CaptureFixture[str]) -> Non
         "status=200\nmethod=GET\nfinal_url=https://example.com\ncontent_type=text/plain\n"
         "body_kind=text\nbytes=50000\ntruncated=true\nredirects=0\nsecurity=public\n--- body ---\n..."
     )
-    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    await render_events(_aiter([_pretty_call("fetch_local", '{"url": "https://example.com"}'), _result(result)]))
     out = capsys.readouterr().out
     assert "* Fetch GET https://example.com (200)" in out
 
 
 async def test_pretty_fetch_error(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(
-        _aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result("error: fetch failed: boom")])
+        _aiter(
+            [_pretty_call("fetch_local", '{"url": "https://example.com"}'), _result("error: fetch_local failed: boom")]
+        )
     )
     out = capsys.readouterr().out
-    assert "* Fetch GET https://example.com (error: fetch failed: boom)" in out
+    assert "* Fetch GET https://example.com (error: fetch_local failed: boom)" in out
+
+
+async def test_pretty_remote_fetch(capsys: pytest.CaptureFixture[str]) -> None:
+    result = "title=Example article\nurl=https://example.com\nchars=1234\ntruncated=false\n--- content ---\n..."
+    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Fetch https://example.com (1234 chars)" in out
+
+
+async def test_pretty_fetch_reads_a_legacy_local_row(capsys: pytest.CaptureFixture[str]) -> None:
+    # Rows written before the local tool was renamed carry the local status block.
+    result = (
+        "status=200\nmethod=GET\nfinal_url=https://example.com\ncontent_type=text/plain\n"
+        "body_kind=text\nbytes=12\ntruncated=false\nredirects=0\nsecurity=public\n--- body ---\nhi\n"
+    )
+    await render_events(_aiter([_pretty_call("fetch", '{"url": "https://example.com"}'), _result(result)]))
+    out = capsys.readouterr().out
+    assert "* Fetch https://example.com (200)" in out
 
 
 async def test_pretty_web_search(capsys: pytest.CaptureFixture[str]) -> None:

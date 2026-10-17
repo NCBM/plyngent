@@ -452,13 +452,34 @@ def _http_status_fg(status: str) -> str | None:
 
 
 def _fetch_prefix(args_json: str) -> str:
+    """Remote ``fetch``: the URL is the whole call."""
+    url = _json_str_arg(args_json, "url") or "?"
+    return _pretty_prefix(f"* Fetch {url} ")
+
+
+def _fetch_detail(args_json: str, result: str) -> str:
+    """Remote ``fetch`` outcome: fetched size, or an error.
+
+    A row written before the local tool was renamed still carries the local
+    ``status=...`` block; render it with the local formatter.
+    """
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    fields = _status_fields(result)
+    if "status" in fields:
+        return _fetch_local_detail(args_json, result)
+    chars = fields.get("chars", "")
+    return _pretty_segments((f"({chars} chars)" if chars else "(done)", "green"))
+
+
+def _fetch_local_prefix(args_json: str) -> str:
     method = _json_str_arg(args_json, "method") or "GET"
     url = _json_str_arg(args_json, "url") or "?"
     return _pretty_prefix(f"* Fetch {method} {url} ")
 
 
-def _fetch_detail(_args_json: str, result: str) -> str:
-    """``fetch`` outcome: HTTP status, or error."""
+def _fetch_local_detail(_args_json: str, result: str) -> str:
+    """``fetch_local`` outcome: HTTP status, or error."""
     if result.startswith("error:"):
         return _pretty_segments((f"({result})", "red"))
     status = _status_fields(result).get("status", "")
@@ -888,6 +909,7 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "run_argv": PrettyLine(prefix=_run_argv_prefix, detail=_run_argv_detail),
     "run_argv_batch": PrettyLine(prefix=_run_argv_batch_prefix, detail=_run_argv_batch_detail),
     "fetch": PrettyLine(prefix=_fetch_prefix, detail=_fetch_detail),
+    "fetch_local": PrettyLine(prefix=_fetch_local_prefix, detail=_fetch_local_detail),
     "web_search": PrettyLine(prefix=_web_search_prefix, detail=_web_search_detail),
     "edit_replace": _mutator_line("edit_replace"),
     "edit_lineno": _mutator_line("edit_lineno"),

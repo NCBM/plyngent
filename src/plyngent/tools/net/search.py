@@ -9,7 +9,8 @@ the handler asks the configured search sources behind the scenes —
 one fails or finds nothing. DeepSeek's own source is the Search API
 (``POST /v1/tools/search``), which answers in one request instead of a model
 round. A hit is a title, a URL and (when the source has one) a snippet: read a
-page with ``fetch`` before relying on its content.
+page with ``fetch`` (or ``fetch_local`` for local/LAN targets) before relying on
+its content.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from plyngent.agent.tools import ToolDefinition, ToolTag, schema_from_callable
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from plyngent.lmproto.deepseek.search import DeepseekSearchClient
+    from plyngent.lmproto.deepseek.webtools import DeepseekWebToolsClient
     from plyngent.lmproto.search import SearchHit
 
 WEB_SEARCH_TOOL_NAME = "web_search"
@@ -38,9 +39,9 @@ class SearchBackend(Protocol):
 class DeepseekSearchBackend:
     """DeepSeek's own index: one Search API request per query."""
 
-    _client: DeepseekSearchClient
+    _client: DeepseekWebToolsClient
 
-    def __init__(self, client: DeepseekSearchClient) -> None:
+    def __init__(self, client: DeepseekWebToolsClient) -> None:
         self._client = client
 
     async def search(self, query: str) -> Sequence[SearchHit]:
@@ -82,7 +83,8 @@ def build_web_search_tool(
         """Search the web and return the pages that matched.
 
         One entry per hit (``title — url``, plus the snippet when the source has
-        one): read a page with ``fetch`` before relying on its content.
+        one): read a page with ``fetch`` (or ``fetch_local`` for local targets)
+        before relying on its content.
         """
         found, failures = await search_in_order(backends, query)
         if not found:

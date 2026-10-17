@@ -71,18 +71,24 @@ with it to keep reading (chains through truncations).
 a `-c` one-liner, a script (`python x.py`), or a bare interactive shell alike — and each \
 confirm blocks the turn, so it costs time. Invoke the target command directly (argv) instead \
 of wrapping it in `bash -c` / `python -c` / `node`, and reach for a dedicated tool \
-(`read_file` / `edit_*` / `vcs_*` / `fetch` / …) when one already does the job.
+(`read_file` / `edit_*` / `vcs_*` / `fetch` / `fetch_local` / …) when one already does the job.
 - Several `run_argv` calls in one step may run in parallel; use `run_argv_batch` \
 for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 - Prefer `vcs_*` for status/diff/log/branch when enough.
 
 ### Network
-- Prefer `fetch` (GET/POST/PUT/DELETE) for HTTP(S) docs/APIs over curl/wget via shell; \
-`offset` (0-based) skips leading body characters to page through a large body.
-- Set `user_agent` (or a User-Agent header) when the remote expects a specific client; \
-otherwise a small default is used. Never rely on shell to spoof identity.
-- Private/loopback/LAN hosts need an explicit human policy allow (not skipped by YOLO).
-- Prefer provider hosted search (e.g. web_search) for open-ended research; use `fetch` for known URLs.
+- `fetch` reads a public page as clean Markdown through the provider's Fetch API \
+(when available, e.g. DeepSeek); `fetch_local` is the raw HTTP client \
+(GET/POST/PUT/DELETE) from this host for localhost/LAN, APIs, custom headers, and \
+status/redirect inspection.
+- `offset` (0-based) skips leading body characters to page through a large body; \
+truncated bodies resume with `get_truncated` and are not re-requested.
+- Set `user_agent` (or a User-Agent header) on `fetch_local` when the remote expects a \
+specific client; otherwise a small default is used. Never rely on shell to spoof identity.
+- Private/loopback/LAN hosts need an explicit human policy allow (not skipped by YOLO); \
+this applies to `fetch_local`, since `fetch` leaves from the provider's network.
+- Prefer provider hosted search (e.g. web_search) for open-ended research; use `fetch` \
+or `fetch_local` for known URLs.
 - Respect denials, size limits, and HTTPS→HTTP redirect blocks; do not re-fetch the same URL repeatedly.
 
 ### Humans & safety
@@ -232,7 +238,7 @@ class McpConfig(Struct, omit_defaults=True):
 
 
 class NetworkingConfig(Struct, omit_defaults=True):
-    """Host-side network policy for tools such as ``fetch``.
+    """Host-side network policy for tools such as ``fetch_local``.
 
     ``ssrf_assume_public_cidrs``: CIDR strings whose resolved addresses are treated
     as **public for SSRF policy** (skip private-host grants). Use for Clash/meta

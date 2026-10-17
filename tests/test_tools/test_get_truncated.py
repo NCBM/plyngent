@@ -86,9 +86,9 @@ async def test_get_truncated_file_missing(workspace: Path) -> None:
 
 async def test_get_truncated_serves_a_fetch_body_without_refetching(monkeypatch) -> None:
     """A fetch body's token reads the stored remainder; the request is not repeated."""
-    from plyngent.tools.net.fetch import format_fetch_result
+    from plyngent.tools.net.fetch_local import format_fetch_result
 
-    fetch_module = importlib.import_module("plyngent.tools.net.fetch")
+    fetch_module = importlib.import_module("plyngent.tools.net.fetch_local")
 
     async def _must_not_refetch(*_args: object, **_kwargs: object) -> str:
         msg = "resuming a fetch body must not re-run the request"

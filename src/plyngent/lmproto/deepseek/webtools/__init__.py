@@ -1,8 +1,12 @@
-from .client import DeepseekSearchClient as DeepseekSearchClient
+from .client import DeepseekWebToolsClient as DeepseekWebToolsClient
 from .model import DEFAULT_SEARCH_COUNT as DEFAULT_SEARCH_COUNT
+from .model import FETCH_PATH as FETCH_PATH
+from .model import MAX_FETCH_URL_CHARS as MAX_FETCH_URL_CHARS
 from .model import MAX_QUERY_CHARS as MAX_QUERY_CHARS
 from .model import MAX_SEARCH_COUNT as MAX_SEARCH_COUNT
 from .model import SEARCH_PATH as SEARCH_PATH
+from .model import FetchRequest as FetchRequest
+from .model import FetchResponse as FetchResponse
 from .model import SearchRequest as SearchRequest
 from .model import SearchResponse as SearchResponse
 from .model import SearchResult as SearchResult

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 from plyngent.agent import ChatAgent, ToolRegistry
 from plyngent.agent.loop import DEFAULT_MAX_ROUNDS
 from plyngent.agent.todo_stack import TodoStack
+from plyngent.lmproto.deepseek.webtools import DeepseekWebToolsClient
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -382,7 +383,35 @@ class ReplState:
         search_tool = self._web_search_tool()
         if search_tool is not None:
             registry.register(search_tool)
+        fetch_tool = self._remote_fetch_tool()
+        if fetch_tool is not None:
+            registry.register(fetch_tool)
         return registry
+
+    def _deepseek_web_client(self) -> DeepseekWebToolsClient | None:
+        """The Search/Fetch API client for the active provider (None otherwise)."""
+        from plyngent.config.routing import deepseek_api_base_url
+        from plyngent.lmproto.openai_compatible.config import OpenAIConfig
+
+        provider = self.effective_provider
+        if provider.preset != "deepseek":
+            return None
+        return DeepseekWebToolsClient(
+            OpenAIConfig(
+                access_key_or_token=provider.access_key_or_token,
+                base_url=deepseek_api_base_url(provider),
+                timeout=normalize_http_timeout(provider.timeout),
+            )
+        )
+
+    def _remote_fetch_tool(self) -> ToolDefinition | None:
+        """``fetch`` through DeepSeek's Fetch API (DeepSeek providers only)."""
+        from plyngent.tools.net.fetch_remote import build_fetch_tool
+
+        client = self._deepseek_web_client()
+        if client is None:
+            return None
+        return build_fetch_tool(client)
 
     def _web_search_tool(self) -> ToolDefinition | None:
         """Local ``web_search`` for a provider whose surface cannot host one.
@@ -390,12 +419,7 @@ class ReplState:
         The sources come from ``provider.search_sources``, in fallback order
         (see :func:`~plyngent.config.routing.local_web_search`).
         """
-        from plyngent.config.routing import (
-            deepseek_api_base_url,
-            local_web_search,
-        )
-        from plyngent.lmproto.deepseek.search import DeepseekSearchClient
-        from plyngent.lmproto.openai_compatible.config import OpenAIConfig
+        from plyngent.config.routing import local_web_search
         from plyngent.tools.net.bing import BingSearchBackend
         from plyngent.tools.net.search import (
             DeepseekSearchBackend,
@@ -408,17 +432,10 @@ class ReplState:
         backends: list[SearchBackend] = []
         for source in provider.search_sources:
             if source == "deepseek":
-                backends.append(
-                    DeepseekSearchBackend(
-                        DeepseekSearchClient(
-                            OpenAIConfig(
-                                access_key_or_token=provider.access_key_or_token,
-                                base_url=deepseek_api_base_url(provider),
-                                timeout=normalize_http_timeout(provider.timeout),
-                            )
-                        )
-                    )
-                )
+                client = self._deepseek_web_client()
+                if client is None:
+                    continue
+                backends.append(DeepseekSearchBackend(client))
             elif source == "bing":
                 backends.append(BingSearchBackend())
         if not backends:

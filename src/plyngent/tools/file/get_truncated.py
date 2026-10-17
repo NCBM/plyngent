@@ -60,14 +60,15 @@ async def get_truncated(token: str, *, max_chars: int = DEFAULT_TOOL_RESULT_MAX_
     """Fetch the next chunk of a truncated result using its ``truncate_token``.
 
     Pass the token shown at the end of a truncated ``read_file``, ``fetch``,
-    ``run_argv``, or earlier ``get_truncated`` result to keep reading without
-    re-requesting the whole source or raising limits. Truncated output carries a
-    fresh token, so chunks chain indefinitely. File chunks resume in the same
-    view as the original read: numbered reads continue as numbered lines
-    (editable via ``edit_lineno``), plain reads as raw text with a 1-based
-    ``L{begin}-{end}`` range. Memory chunks (generic tool output, and ``fetch``
-    bodies) are served from a short-lived in-memory store that is forgotten when
-    the agent exits, so resuming a fetch never repeats the request.
+    ``fetch_local``, ``run_argv``, or earlier ``get_truncated`` result to keep
+    reading without re-requesting the whole source or raising limits. Truncated
+    output carries a fresh token, so chunks chain indefinitely. File chunks
+    resume in the same view as the original read: numbered reads continue as
+    numbered lines (editable via ``edit_lineno``), plain reads as raw text with
+    a 1-based ``L{begin}-{end}`` range. Memory chunks (generic tool output, and
+    ``fetch``/``fetch_local`` bodies) are served from a short-lived in-memory
+    store that is forgotten when the agent exits, so resuming a fetch never
+    repeats the request.
     """
     parsed = decode_truncate_token(token)
     if parsed is None:

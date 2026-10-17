@@ -192,8 +192,8 @@ def _open_pty_reason(args: Mapping[str, object]) -> str | None:
 
 
 def _fetch_reason(args: Mapping[str, object]) -> str | None:
-    """Soft-confirm cleartext HTTP and mutating fetch methods (not private-host policy)."""
-    from plyngent.tools.net.fetch import fetch_soft_reason
+    """Soft-confirm cleartext HTTP and mutating fetch_local methods (not private-host policy)."""
+    from plyngent.tools.net.fetch_local import fetch_soft_reason
 
     method_obj = args.get("method", "GET")
     url_obj = args.get("url", "")
@@ -211,7 +211,7 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
     soft confirms for mutating tools and risky command launches — interpreters
     (however invoked) and detached runners such as ``nohup``, resolved past
     environment wrappers and ``<launcher> run``.
-    Private/loopback fetch targets use a separate policy grant (not YOLO).
+    Private/loopback fetch_local targets use a separate policy grant (not YOLO).
     """
     if name == "delete_path":
         return _delete_path_reason(args)
@@ -227,6 +227,6 @@ def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noq
         return _run_argv_batch_reason(args)
     if name == "open_pty":
         return _open_pty_reason(args)
-    if name == "fetch":
+    if name == "fetch_local":
         return _fetch_reason(args)
     return None

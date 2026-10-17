@@ -3,7 +3,7 @@
 Bing answers a query with a plain RSS document (``?format=rss``): no key, no
 page scraping, and each ``<item>`` already carries a title, a link and a
 description (the snippet DeepSeek's own index does not hand out). The request
-goes through the fetch client the ``fetch`` tool uses, so the SSRF and
+goes through the fetch client the ``fetch_local`` tool uses, so the SSRF and
 private-host grant policy applies to it as well.
 """
 
