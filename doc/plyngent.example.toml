@@ -194,11 +194,12 @@ access_key_or_token = "sk-replace-me"
 #
 # # Local ``web_search`` sources, in fallback order (``[]`` disables the tool).
 # # "deepseek" is the platform Search API (POST /v1/tools/search; billed per
-# # successful request, 5 QPS); "bing" is Bing's RSS backstop (no key needed).
+# # successful request, 5 QPS). "bing" is a brittle RSS backstop — opt in with
+# # ["deepseek", "bing"] when you want a fallback.
 # # ``provider_tools`` controls only the hosted search, these sources control
 # # plyngent's own tool: on the Anthropic convention ``provider_tools = []``
 # # leaves you the local Search API tool instead of the hosted one.
-# search_sources = ["deepseek", "bing"]
+# search_sources = ["deepseek"]
 #
 # [providers.deepseek.models]
 # "deepseek-flash" = { text = true, convention = "responses" }

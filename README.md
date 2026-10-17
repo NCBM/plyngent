@@ -227,10 +227,10 @@ base, so model selection is config-driven.
 On the Chat Completions and Responses conventions DeepSeek ignores a hosted
 search tool, so plyngent offers its own `web_search` tool instead. It queries
 DeepSeek's Search API (`POST /v1/tools/search`, one request per search, billed
-per successful request, 5 QPS account-wide) and falls back to Bing's RSS when
-that fails or finds nothing. `search_sources` sets the source order (`[]`
-disables the tool); `provider_tools = []` on the Anthropic convention switches
-that surface to the same local tool.
+per successful request, 5 QPS account-wide) and can fall back to Bing's RSS
+(`search_sources = ["deepseek", "bing"]`) when that fails or finds nothing.
+`search_sources` sets the source order (`[]` disables the tool); `provider_tools
+= []` on the Anthropic convention switches that surface to the same local tool.
 
 If `[database]` is omitted (or SQLite `url` is unset/empty), chat uses a durable file under the user data dir (e.g. `~/.local/share/plyngent/chat.db` on Linux). Set `url = ":memory:"` for a true in-memory SQLite (CLI warns; no file; useful for tests).
 
@@ -327,7 +327,7 @@ Ctrl+C cancels the in-flight turn, and during the auto-retry countdown it cancel
 
 ## Tools (when enabled)
 
-Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `request_directory_access` (out-of-workspace access grants), `get_truncated` (resume any truncated result via its `truncate_token=...`), skills (`skill_list` / `skill_read` / `skill_search` / `skill_create` / `skill_edit`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
+Default registry: file ops (including `tree` with a markdown bullet-list default, `flat` paths or classic `decorated` on demand; default noise-dir skips), `run_argv` / `run_argv_batch` / PTY (POSIX openpty; Windows ConPTY via pywinpty), read-only VCS (git), HTTP `fetch_local` (GET/POST/PUT/DELETE via niquests; private/loopback hosts need a human policy grant, not YOLO) plus `fetch` on DeepSeek providers (public pages as Markdown through the provider's Fetch API), human prompts (`ask_user_line` / `ask_user_choice` / `ask_user_form`), `wait` (line prompt with timeout; Enter disturbs), `request_directory_access` (out-of-workspace access grants), `get_truncated` (resume any truncated result via its `truncate_token=...`), skills (`skill_list` / `skill_read` / `skill_search` / `skill_create` / `skill_edit`), and todo stack tools (`todo_list` / `todo_push` / `todo_pop` / `todo_update` / `todo_clear`).
 
 **Skills** are instruction directories shared with other harnesses: a folder with a `SKILL.md` (YAML frontmatter — `name`, `description`, … — plus a Markdown body) and optional bundled files (scripts, references). Discovery, roots, grants, and the authoring format are documented in [doc/skills.md](doc/skills.md); the short version is that a session-start notice points the model at them (`skill_list` / `skill_read` / `skill_search`) without listing anything, so what exists (and the bodies) is read on demand rather than injected, and writing a skill is a separate grant (a timed `once`/`session`/`no` prompt, or `[skills].allow_write`) that is **not** a directory-access grant and is never skipped by YOLO.
 
