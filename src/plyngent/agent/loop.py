@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from .todo_nag import TodoNagStrategy
     from .todo_stack import TodoStack
-    from .tools import ToolRegistry
+    from .tools import BatchConfirmDecision, ToolRegistry
     from .types import AnyLLMClient
 
     type LimitContinueHook = Callable[[str], bool | Awaitable[bool]]
@@ -89,10 +89,11 @@ async def _run_one_tool(
     call: AnyAssistantToolCall,
     *,
     max_result_chars: int,
+    decision: BatchConfirmDecision | None = None,
 ) -> tuple[ToolChatMessage, ErrorEvent | None]:
     if isinstance(call, AssistantFunctionToolCall):
         try:
-            result_text = await tools.execute(call.function.name, call.function.arguments)
+            result_text = await tools.execute(call.function.name, call.function.arguments, decision=decision)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -124,12 +125,31 @@ async def _execute_tool_calls(
     for call in tool_calls:
         yield ToolCallEvent(tool_call=call)
 
+    # One confirm prompt for the round's mutating calls, so a batch of moves or
+    # deletes asks once instead of once per call. Calls that need no confirm (or
+    # cannot run) keep ``None`` and go through their own path below.
+    requests: list[tuple[str, str]] = []
+    positions: list[int] = []
+    for index, call in enumerate(tool_calls):
+        if isinstance(call, AssistantFunctionToolCall):
+            requests.append((call.function.name, call.function.arguments))
+            positions.append(index)
+    decisions: list[BatchConfirmDecision | None] = [None] * len(tool_calls)
+    for index, decision in zip(positions, await tools.prepare_batch_confirm(requests), strict=True):
+        decisions[index] = decision
+
     if parallel and len(tool_calls) > 1:
         results = await asyncio.gather(
-            *[_run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
+            *[
+                _run_one_tool(tools, call, max_result_chars=max_result_chars, decision=decision)
+                for call, decision in zip(tool_calls, decisions, strict=True)
+            ]
         )
     else:
-        results = [await _run_one_tool(tools, call, max_result_chars=max_result_chars) for call in tool_calls]
+        results = [
+            await _run_one_tool(tools, call, max_result_chars=max_result_chars, decision=decision)
+            for call, decision in zip(tool_calls, decisions, strict=True)
+        ]
 
     # Record every result before yielding any: a caller that goes away mid-batch
     # (cancel, display error) must not lose work that already ran, or the retry

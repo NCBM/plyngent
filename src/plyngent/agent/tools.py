@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import types
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from enum import Flag, auto
 from pathlib import Path
 from typing import Any, cast, get_args, get_origin, get_type_hints, overload
@@ -22,6 +23,39 @@ type ToolConfirmHook = Callable[
     [str, Mapping[str, object], str],
     ToolConfirmResult | Awaitable[ToolConfirmResult],
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolConfirmRequest:
+    """One call of a batch that needs a soft confirm before it may run."""
+
+    name: str
+    args: Mapping[str, object]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class BatchConfirmDecision:
+    """Host answer for one round's soft-confirm requests.
+
+    It covers the calls of that round only; the next round asks again. With
+    ``each`` the host hands the calls back to the one-call prompt instead of
+    answering for the batch (``allowed``/``comment`` then carry no meaning).
+    """
+
+    allowed: bool
+    comment: str | None = None
+    each: bool = False
+
+
+# One prompt for a round's requests; a single request keeps ``ToolConfirmHook``.
+type ToolBatchConfirmHook = Callable[
+    [Sequence[ToolConfirmRequest]],
+    BatchConfirmDecision | Awaitable[BatchConfirmDecision],
+]
+
+MIN_BATCH_CONFIRM_REQUESTS = 2
+"""Below this many requests a round asks one call at a time (see ``prepare_batch_confirm``)."""
 
 _PRIMITIVE_SCHEMA: dict[type, JSONSchema] = {
     str: {"type": "string"},
@@ -242,6 +276,24 @@ def _missing_required_error(definition: ToolDefinition, args: Mapping[str, objec
     return f"error: `{definition.name}` is missing required argument(s): {', '.join(missing)}{hint}"
 
 
+def _decode_tool_args(arguments_json: str) -> dict[str, object] | str:
+    """Decode one call's arguments; a returned string is the model-facing error."""
+    try:
+        raw_args: object = msgspec.json.decode(arguments_json.encode())
+    except (msgspec.DecodeError, UnicodeEncodeError) as exc:
+        return f"error: invalid tool arguments JSON: {exc}"
+    if not isinstance(raw_args, dict):
+        return "error: tool arguments must be a JSON object"
+    return {str(key): value for key, value in cast("dict[object, object]", raw_args).items()}
+
+
+def _denied_error(name: str, reason: str, comment: str | None) -> str:
+    """Model-facing text for a denied soft confirm (carries a user comment if one was given)."""
+    if comment is not None and comment.strip():
+        return f"error: tool {name!r} denied by user confirm ({reason}); user comment: {comment.strip()}"
+    return f"error: tool {name!r} denied by user confirm ({reason})"
+
+
 def _write_path_key(value: str) -> str:
     """Comparable key for one path argument of a writing tool.
 
@@ -257,6 +309,7 @@ class ToolRegistry:
     _tools: dict[str, ToolDefinition]
     _danger: DangerClassifier | None
     _on_confirm: ToolConfirmHook | None
+    _on_confirm_batch: ToolBatchConfirmHook | None
     _confirm_lock: asyncio.Lock
     # One lock per written file, kept for the registry's life (a session's edits
     # bound the map), so a batch's writes to one file apply one at a time.
@@ -272,6 +325,7 @@ class ToolRegistry:
         *,
         danger: DangerClassifier | None = None,
         on_confirm: ToolConfirmHook | None = None,
+        on_confirm_batch: ToolBatchConfirmHook | None = None,
         yolo: bool = False,
         auto_bind_state: bool = False,
         instance_state: object | None = None,
@@ -280,6 +334,7 @@ class ToolRegistry:
         self._tools = {}
         self._danger = danger
         self._on_confirm = on_confirm
+        self._on_confirm_batch = on_confirm_batch
         self._confirm_lock = asyncio.Lock()
         self._write_locks = {}
         self._yolo = yolo
@@ -339,6 +394,7 @@ class ToolRegistry:
             definitions,
             danger=self._danger,
             on_confirm=self._on_confirm,
+            on_confirm_batch=self._on_confirm_batch,
             yolo=self._yolo if yolo is None else yolo,
             auto_bind_state=self._auto_bind_state if auto_bind_state is None else auto_bind_state,
             instance_state=instance_state,
@@ -463,9 +519,92 @@ class ToolRegistry:
         if decision is True:
             await self._record_grant(name, tags=tags)
             return None
-        if isinstance(decision, str) and decision.strip():
-            return f"error: tool {name!r} denied by user confirm ({reason}); user comment: {decision.strip()}"
-        return f"error: tool {name!r} denied by user confirm ({reason})"
+        comment = decision if isinstance(decision, str) else None
+        return _denied_error(name, reason, comment)
+
+    async def _apply_batch_decision(
+        self,
+        name: str,
+        reason: str,
+        decision: BatchConfirmDecision,
+        *,
+        tags: ToolTag,
+    ) -> str | None:
+        if decision.allowed:
+            await self._record_grant(name, tags=tags)
+            return None
+        return _denied_error(name, reason, decision.comment)
+
+    def _prepare_confirm(self, name: str, arguments_json: str) -> ToolConfirmRequest | None:
+        """Soft-confirm request for one call, or ``None`` when it needs none.
+
+        Mirrors the front half of :meth:`execute`: a call whose arguments fail to
+        decode or miss a required argument is answered with an error there and
+        must not be put in front of the user now.
+        """
+        definition = self._tools.get(name)
+        if self._danger is None or definition is None:
+            return None
+        args = _decode_tool_args(arguments_json)
+        if isinstance(args, str) or _missing_required_error(definition, args) is not None:
+            return None
+        reason = self._danger(name, args)
+        return None if reason is None else ToolConfirmRequest(name=name, args=args, reason=reason)
+
+    def _batch_requests(
+        self,
+        calls: Sequence[tuple[str, str]],
+    ) -> tuple[list[ToolConfirmRequest], list[int]]:
+        """Requests for a round, plus the index each one came from."""
+        requests: list[ToolConfirmRequest] = []
+        positions: list[int] = []
+        for index, (name, arguments_json) in enumerate(calls):
+            request = self._prepare_confirm(name, arguments_json)
+            if request is not None:
+                requests.append(request)
+                positions.append(index)
+        return requests, positions
+
+    async def _record_batch_allow(
+        self,
+        requests: Sequence[ToolConfirmRequest],
+        decision: BatchConfirmDecision,
+    ) -> None:
+        """Record the trust a batch allow carries (the trustable grants)."""
+        if decision.allowed:
+            for request in requests:
+                definition = self._tools.get(request.name)
+                if definition is not None:
+                    await self._record_grant(request.name, tags=definition.tags)
+
+    async def prepare_batch_confirm(
+        self,
+        calls: Sequence[tuple[str, str]],
+    ) -> list[BatchConfirmDecision | None]:
+        """Ask once for every soft confirm a round's calls would raise.
+
+        Returns one entry per call: a decision to apply instead of prompting, or
+        ``None`` to fall through to the per-call path. Fewer than
+        :data:`MIN_BATCH_CONFIRM_REQUESTS` requests keep the plain one-call
+        prompt, a host without a batch hook keeps the per-call prompts, and a
+        :attr:`BatchConfirmDecision.each` answer hands this round back to them.
+        """
+        decisions: list[BatchConfirmDecision | None] = [None] * len(calls)
+        if self._danger is None or self._on_confirm_batch is None:
+            return decisions
+        requests, positions = self._batch_requests(calls)
+        if len(requests) < MIN_BATCH_CONFIRM_REQUESTS:
+            return decisions
+        async with self._confirm_lock:
+            decision = self._on_confirm_batch(requests)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            if decision.each:
+                return decisions
+            await self._record_batch_allow(requests, decision)
+        for index in positions:
+            decisions[index] = decision
+        return decisions
 
     async def _maybe_confirm(
         self,
@@ -473,12 +612,14 @@ class ToolRegistry:
         args: dict[str, object],
         *,
         tags: ToolTag,
+        decision: BatchConfirmDecision | None = None,
     ) -> str | None:
         """Soft-confirm gate driven by danger reason + tags + grants.
 
         Pipeline (soft gate only; hard denylists stay in tool handlers)::
 
             no soft reason → run
+            batch decision for this call → apply it
             (tags & TRUSTABLE) and grant exists → allow
             else → on_confirm (decorator YOLO tag does not override
                    dangerous invocations — internal danger classification
@@ -491,22 +632,31 @@ class ToolRegistry:
             return None
 
         async with self._confirm_lock:
+            if decision is not None:
+                return await self._apply_batch_decision(name, reason, decision, tags=tags)
             if self._grant_allows(name, tags=tags):
                 return None
             return await self._prompt_soft_confirm(name, args, reason, tags=tags)
 
-    async def execute(self, name: str, arguments_json: str) -> str:
-        """Run a tool by name; returns a string result (errors become error text)."""
+    async def execute(
+        self,
+        name: str,
+        arguments_json: str,
+        *,
+        decision: BatchConfirmDecision | None = None,
+    ) -> str:
+        """Run a tool by name; returns a string result (errors become error text).
+
+        *decision* is the host's answer for this call from
+        :meth:`prepare_batch_confirm`; ``None`` means the call was not part of an
+        aggregated prompt and confirms on its own.
+        """
         definition = self._tools.get(name)
         if definition is None:
             return f"error: unknown tool {name!r}"
-        try:
-            raw_args: object = msgspec.json.decode(arguments_json.encode())
-        except (msgspec.DecodeError, UnicodeEncodeError) as exc:
-            return f"error: invalid tool arguments JSON: {exc}"
-        if not isinstance(raw_args, dict):
-            return "error: tool arguments must be a JSON object"
-        args = {str(key): value for key, value in cast("dict[object, object]", raw_args).items()}
+        args = _decode_tool_args(arguments_json)
+        if isinstance(args, str):
+            return args
         # Argument shape/coverage problems are answered before any confirm prompt:
         # the human should never be asked about a call that cannot run.
         missing_error = _missing_required_error(definition, args)
@@ -522,7 +672,7 @@ class ToolRegistry:
             async with AsyncExitStack() as held:
                 for lock in self._write_locks_for(definition, args):
                     await held.enter_async_context(lock)
-                denied = await self._maybe_confirm(name, args, tags=definition.tags)
+                denied = await self._maybe_confirm(name, args, tags=definition.tags, decision=decision)
                 if denied is not None:
                     return denied
                 return await self._invoke(definition, args)

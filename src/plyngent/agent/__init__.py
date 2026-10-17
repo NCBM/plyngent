@@ -28,8 +28,11 @@ from .notices import has_notice as has_notice
 from .notices import resume_notice as resume_notice
 from .notices import skill_tools_notice as skill_tools_notice
 from .notices import truncated_turn_notice as truncated_turn_notice
+from .tools import BatchConfirmDecision as BatchConfirmDecision
 from .tools import DangerClassifier as DangerClassifier
+from .tools import ToolBatchConfirmHook as ToolBatchConfirmHook
 from .tools import ToolConfirmHook as ToolConfirmHook
+from .tools import ToolConfirmRequest as ToolConfirmRequest
 from .tools import ToolDefinition as ToolDefinition
 from .tools import ToolRegistry as ToolRegistry
 from .tools import ToolTag as ToolTag
