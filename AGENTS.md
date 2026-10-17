@@ -28,6 +28,10 @@ GitHub Actions runs `ruff check`, `ruff format --check`, `basedpyright`, then `p
 
 ## Architecture
 
+### Conversation units: turn vs round
+
+A **round** is one model round trip: the request, the single assistant message it produced, and the tool batch that message asked for (one `UsageEvent` each). A **turn** is one user message through the explicit stop — the first round whose assistant message asks for no tools — and holds 0..N rounds; `retry` continues the *same* turn instead of opening a new one. `max_rounds` (32 by default) bounds rounds per turn. Turn-scoped state (read-before-edit, `yyy` auto-continue, `/yolo once`, todo-nag "touched" flag, `last_turn_usage`/`last_turn_rounds`) resets on the next user message; session-scoped state (rows, todo stack, grants) does not. Details: [doc/turns-and-rounds.md](doc/turns-and-rounds.md).
+
 ### Data modeling: `msgspec.Struct`
 
 All protocol models use `msgspec.Struct` — not dataclasses, not Pydantic. Optional fields use `msgspec.field(default=UNSET)` / `default=UNSET` with type `T | Unset`.
