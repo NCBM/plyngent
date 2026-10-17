@@ -61,7 +61,7 @@ def test_without_search_sources_there_is_no_local_tool() -> None:
     # for a search (the hosted path on the Anthropic convention is unaffected).
     assert _effective(convention="responses", sources=[]).search_sources == []
     assert local_web_search(_effective(convention="responses", sources=[])) is False
-    assert _effective(convention="responses").search_sources == ["deepseek", "bing"]
+    assert _effective(convention="responses").search_sources == ["deepseek"]
 
 
 def test_api_base_url_drops_the_convention_and_version_paths() -> None:

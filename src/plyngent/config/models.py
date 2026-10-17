@@ -392,10 +392,10 @@ def _default_deepseek_models() -> dict[str, ModelConfig]:
 def _default_deepseek_search_sources() -> list[SearchSource]:
     """Sources for the local ``web_search`` tool, in fallback order.
 
-    DeepSeek's own index (the platform Search API) first, Bing's RSS as the
-    backstop when a search fails or finds nothing.
+    DeepSeek's own index (the platform Search API) is the default. Bing's RSS is
+    a brittle, SEO-heavy backstop: list ``"bing"`` explicitly to opt in.
     """
-    return ["deepseek", "bing"]
+    return ["deepseek"]
 
 
 class DeepseekProvider(ProviderConfig, tag="deepseek"):
@@ -411,10 +411,11 @@ class DeepseekProvider(ProviderConfig, tag="deepseek"):
     disables the hosted one). DeepSeek hosts a search only on the Anthropic
     surface; every other convention gets a local ``web_search`` tool instead
     (see ``config.routing.local_web_search``). ``search_sources`` names what
-    that local tool searches with, in fallback order — ``["deepseek", "bing"]``
-    by default (the platform Search API, then Bing's RSS), ``[]`` to not offer
-    it. The two settings are independent: turning hosted tools off on the
-    Anthropic convention leaves the local Search API tool in place.
+    that local tool searches with, in fallback order — ``["deepseek"]`` by
+    default (the platform Search API), ``[]`` to not offer it. ``"bing"`` adds
+    Bing's RSS as an opt-in backstop. The two settings are independent: turning
+    hosted tools off on the Anthropic convention leaves the local Search API tool
+    in place.
 
     ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
     key is parsed but ignored (prefer the typed ``convention`` field).
