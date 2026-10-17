@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from plyngent.agent import BatchConfirmDecision, ToolConfirmRequest
 from plyngent.cli.display import close_open_pretty_line
 from plyngent.cli.interrupt import off_loop_prompt, pause_task_cancel_for_prompt
 from plyngent.prompting import (
@@ -39,6 +40,11 @@ _BOX_PAD = 2  # spaces inside left/right borders
 _CONTINUE_PROMPT = "Raise limit and continue? [Y/n/yyy] (yyy = stop asking this turn): "
 _CONTINUE_YES_TOKENS = frozenset({"", "y", "yes"})
 _CONTINUE_AUTO_TOKEN = "yyy"
+
+# Batch confirm answers: ``y`` allows the round's calls, ``m`` reviews them one
+# at a time through the per-call prompt.
+_BATCH_YES_TOKENS = frozenset({"y", "yes"})
+_BATCH_MANUAL_TOKENS = frozenset({"m", "manual", "each"})
 
 
 @dataclass
@@ -105,18 +111,13 @@ def _wrap_line(text: str, width: int) -> list[str]:
     return out
 
 
-def format_tool_confirm_box(name: str, reason: str) -> str:
-    """Multi-line boxed confirm body (header + reason lines).
-
-    Printed with :meth:`PromptBackend.echo` before a short ``confirm()`` prompt
-    so terminals keep newlines (unlike a single jammed readline line).
-    """
+def _box(header: str, lines: Sequence[str]) -> str:
+    """Rounded box: a header row, a rule, then the wrapped body lines."""
     term = _terminal_width()
     inner = max(20, term - 4)  # room for ``│ `` + `` │``
-    header = f"confirm · tool {name!r}"
     body_lines: list[str] = []
-    for raw in reason.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        body_lines.extend(_wrap_line(raw, inner - _BOX_PAD))
+    for raw in lines:
+        body_lines.extend(_wrap_line(raw.replace("\r\n", "\n").replace("\r", "\n"), inner - _BOX_PAD))
     content = [header, "─" * min(inner, max(len(header), 12)), *body_lines]
     width = min(inner, max(len(line) for line in content) + _BOX_PAD)
     width = max(width, min(inner, len(header) + _BOX_PAD))
@@ -132,6 +133,15 @@ def format_tool_confirm_box(name: str, reason: str) -> str:
         rows.append(f"│ {padded} │")
     rows.append(bottom)
     return "\n".join(rows)
+
+
+def format_tool_confirm_box(name: str, reason: str) -> str:
+    """Multi-line boxed confirm body for one tool call.
+
+    Printed with :meth:`PromptBackend.echo` before a short ``confirm()`` prompt
+    so terminals keep newlines (unlike a single jammed readline line).
+    """
+    return _box(f"confirm · tool {name!r}", reason.split("\n"))
 
 
 def _echo_tool_confirm(name: str, reason: str) -> None:
@@ -480,6 +490,65 @@ async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reaso
     except NonInteractiveError:
         return False
     return comment or False
+
+
+async def prompt_confirm_batch_async(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
+    """One confirm for one round's soft-confirm requests (``y`` / ``N`` / ``m``).
+
+    The answer covers exactly those calls — the next round asks again; ``m``
+    asks them one at a time instead, and a deny carries one comment shared by
+    every one of them.
+    """
+    try:
+        from plyngent.prompting import run_prompt_async
+
+        return await run_prompt_async(lambda: _prompt_confirm_batch_sync(requests))
+    except NonInteractiveError:
+        return BatchConfirmDecision(allowed=False)
+
+
+def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
+    backend = get_prompt_backend()
+    if not backend.is_interactive():
+        # Non-interactive: deny, like the default of the single prompt.
+        return BatchConfirmDecision(allowed=False)
+    backend.echo()
+    backend.secho(format_batch_confirm_box(requests), fg="yellow")
+    backend.secho("m = review them one call at a time", fg="bright_black")
+    backend.echo()
+    try:
+        token = (
+            backend.read_line(
+                f"Allow these {len(requests)} tool calls? [y/N/m]:",
+                default="n",
+            )
+            .strip()
+            .lower()
+        )
+    except NonInteractiveError:
+        return BatchConfirmDecision(allowed=False)
+    if token in _BATCH_MANUAL_TOKENS:
+        return BatchConfirmDecision(allowed=False, each=True)
+    if token in _BATCH_YES_TOKENS:
+        return BatchConfirmDecision(allowed=True)
+    try:
+        comment = ask(
+            "Optional comment for the agent (why denied; empty to skip):",
+            default="",
+        ).strip()
+    except NonInteractiveError:
+        comment = ""
+    return BatchConfirmDecision(allowed=False, comment=comment or None)
+
+
+def format_batch_confirm_box(requests: Sequence[ToolConfirmRequest]) -> str:
+    """Boxed body listing every call a round wants to make, one numbered block each."""
+    lines: list[str] = []
+    for index, request in enumerate(requests, start=1):
+        reason_lines = request.reason.split("\n")
+        lines.append(f"{index}. [{request.name}] {reason_lines[0]}")
+        lines.extend(f"   {line}" for line in reason_lines[1:])
+    return _box(f"confirm · {len(requests)} tool calls", lines)
 
 
 def _prompt_workspace_mismatch_sync(

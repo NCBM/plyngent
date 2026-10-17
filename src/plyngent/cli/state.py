@@ -347,7 +347,7 @@ class ReplState:
     def _tool_registry(self) -> ToolRegistry | None:
         if not self.tools_enabled:
             return None
-        from plyngent.cli.limits import prompt_confirm_tool_async
+        from plyngent.cli.limits import prompt_confirm_batch_async, prompt_confirm_tool_async
         from plyngent.tools.catalog import register_builtin_tools
         from plyngent.tools.danger import classify_danger
         from plyngent.tools.plugins import load_plugin_tools
@@ -375,6 +375,7 @@ class ReplState:
             tools,
             danger=classify_danger,
             on_confirm=prompt_confirm_tool_async,
+            on_confirm_batch=prompt_confirm_batch_async,
             yolo=yolo,
             auto_bind_state=True,
             instance_state=self.instance_state,
