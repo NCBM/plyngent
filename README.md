@@ -224,6 +224,14 @@ agent's Anthropic Messages path (tools, streaming, usage). DeepSeek maps
 DeepSeek ids pass through as-is. `GET /models` is not documented on that
 base, so model selection is config-driven.
 
+On the Chat Completions and Responses conventions DeepSeek ignores a hosted
+search tool, so plyngent offers its own `web_search` tool instead. It queries
+DeepSeek's Search API (`POST /v1/tools/search`, one request per search, billed
+per successful request, 5 QPS account-wide) and falls back to Bing's RSS when
+that fails or finds nothing. `search_sources` sets the source order (`[]`
+disables the tool); `provider_tools = []` on the Anthropic convention switches
+that surface to the same local tool.
+
 If `[database]` is omitted (or SQLite `url` is unset/empty), chat uses a durable file under the user data dir (e.g. `~/.local/share/plyngent/chat.db` on Linux). Set `url = ":memory:"` for a true in-memory SQLite (CLI warns; no file; useful for tests).
 
 ## Chat

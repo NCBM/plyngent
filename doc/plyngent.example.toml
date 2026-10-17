@@ -192,6 +192,14 @@ access_key_or_token = "sk-replace-me"
 # # Thinking strength for this provider; per-model entries below may override it.
 # # reasoning_effort = "high"
 #
+# # Local ``web_search`` sources, in fallback order (``[]`` disables the tool).
+# # "deepseek" is the platform Search API (POST /v1/tools/search; billed per
+# # successful request, 5 QPS); "bing" is Bing's RSS backstop (no key needed).
+# # ``provider_tools`` controls only the hosted search, these sources control
+# # plyngent's own tool: on the Anthropic convention ``provider_tools = []``
+# # leaves you the local Search API tool instead of the hosted one.
+# search_sources = ["deepseek", "bing"]
+#
 # [providers.deepseek.models]
 # "deepseek-flash" = { text = true, convention = "responses" }
 # "deepseek-v4-pro" = { text = true, reasoning_effort = "max" }

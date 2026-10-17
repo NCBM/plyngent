@@ -9,7 +9,8 @@ from msgspec import Struct, field
 # - "anthropic"           → Anthropic Messages API (``POST /messages`` on
 #                           ``https://api.deepseek.com/anthropic``)
 type DeepSeekConvention = Literal["", "openai", "anthropic", "responses"]
-# Sources the local ``web_search`` tool can use (see ``SearchBackend``).
+# Sources the local ``web_search`` tool can use (see ``SearchBackend``):
+# ``deepseek`` = the platform Search API, ``bing`` = Bing's RSS backstop.
 type SearchSource = Literal["deepseek", "bing"]
 
 # Static directory pre-allow mode for ``[agent].allow_paths`` (path → mode).
@@ -385,8 +386,8 @@ def _default_deepseek_models() -> dict[str, ModelConfig]:
 def _default_deepseek_search_sources() -> list[SearchSource]:
     """Sources for the local ``web_search`` tool, in fallback order.
 
-    DeepSeek's own index first (it is the provider's own search), Bing's RSS as
-    the backstop when a search fails or finds nothing.
+    DeepSeek's own index (the platform Search API) first, Bing's RSS as the
+    backstop when a search fails or finds nothing.
     """
     return ["deepseek", "bing"]
 
@@ -401,11 +402,13 @@ class DeepseekProvider(ProviderConfig, tag="deepseek"):
       ``https://api.deepseek.com/anthropic``)
 
     ``provider_tools`` asks for a search tool like OpenAI's does (``[]``
-    disables it). DeepSeek runs a hosted search only on the Anthropic surface, so
-    the other conventions get a local ``web_search`` tool instead (see
-    ``config.routing.local_web_search``); ``search_sources`` names what that tool
-    searches with, in fallback order — ``["deepseek", "bing"]`` by default,
-    ``[]`` to not offer it.
+    disables the hosted one). DeepSeek hosts a search only on the Anthropic
+    surface; every other convention gets a local ``web_search`` tool instead
+    (see ``config.routing.local_web_search``). ``search_sources`` names what
+    that local tool searches with, in fallback order — ``["deepseek", "bing"]``
+    by default (the platform Search API, then Bing's RSS), ``[]`` to not offer
+    it. The two settings are independent: turning hosted tools off on the
+    Anthropic convention leaves the local Search API tool in place.
 
     ``extras`` keeps arbitrary provider keys; the legacy ``extras.convention``
     key is parsed but ignored (prefer the typed ``convention`` field).
