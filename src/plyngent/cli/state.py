@@ -655,6 +655,7 @@ class ReplState:
 
         self.config.reload()
         self.instance_state.workspace.path_denylist = tuple(self.config.agent_config.path_denylist or ())
+        self.instance_state.workspace.trash_enabled = self.config.trash_config.enabled
         # Roots and their switches came from the file that was just re-read.
         self._install_skills()
 

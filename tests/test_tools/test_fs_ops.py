@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from plyngent.tools.file import copy_path, delete_path, fs_ops, move_path, read_file, write_file
+from plyngent.tools.workspace import set_trash_enabled
 from tests.test_tools.helpers import call_sync
 
 
@@ -166,6 +167,19 @@ def test_permanent_delete_skips_the_trash(workspace: object, monkeypatch: pytest
     _ = call_sync(write_file, "t.txt", "x")
 
     out = call_sync(delete_path, "t.txt", permanent=True)
+
+    assert out == "deleted file t.txt"
+    assert not (workspace / "t.txt").exists()
+
+
+def test_the_host_switch_turns_the_trash_off(workspace: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``[trash] enabled = false`` restores the behaviour from before the trash."""
+    assert isinstance(workspace, Path)
+    _elsewhere_than_temp(monkeypatch)
+    set_trash_enabled(enabled=False)
+    _ = call_sync(write_file, "t.txt", "x")
+
+    out = call_sync(delete_path, "t.txt")
 
     assert out == "deleted file t.txt"
     assert not (workspace / "t.txt").exists()

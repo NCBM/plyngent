@@ -101,6 +101,7 @@ from .workspace import denylist_match as denylist_match
 from .workspace import get_command_denylist as get_command_denylist
 from .workspace import get_path_denylist as get_path_denylist
 from .workspace import get_policy_confirm_timeout as get_policy_confirm_timeout
+from .workspace import get_trash_enabled as get_trash_enabled
 from .workspace import get_workspace_root as get_workspace_root
 from .workspace import grant_policy_command as grant_policy_command
 from .workspace import granted_access_mode as granted_access_mode
@@ -116,5 +117,6 @@ from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout
 from .workspace import set_static_read_roots as set_static_read_roots
+from .workspace import set_trash_enabled as set_trash_enabled
 from .workspace import set_workspace_root as set_workspace_root
 from .workspace import within_workspace_roots as within_workspace_roots

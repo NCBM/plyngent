@@ -7,12 +7,14 @@ from plyngent.tools import (
     WorkspaceError,
     active_workspace_policy,
     check_command_allowed,
+    get_trash_enabled,
     get_workspace_root,
     mode_covers,
     parse_access_mode,
     resolve_path,
     set_command_denylist,
     set_path_denylist,
+    set_trash_enabled,
 )
 from plyngent.tools.context import SessionState, bind_session
 
@@ -53,6 +55,16 @@ def test_access_mode_parse_and_covers() -> None:
     assert mode_covers(AccessMode.EXEC, AccessMode.WRITE)
     assert mode_covers(AccessMode.WRITE, AccessMode.WRITE)
     assert not mode_covers(AccessMode.READ, AccessMode.WRITE)
+
+
+def test_trash_switch(workspace: object) -> None:
+    """Deletes go to the trash until a host clears the switch."""
+    del workspace
+    assert get_trash_enabled() is True
+    set_trash_enabled(enabled=False)
+    assert get_trash_enabled() is False
+    set_trash_enabled(enabled=True)
+    assert get_trash_enabled() is True
 
 
 def test_config_grant_modes(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:

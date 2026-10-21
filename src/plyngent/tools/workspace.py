@@ -120,6 +120,8 @@ class WorkspacePolicy:
     # read them, nothing may write them. Not a grant, so they stay out of
     # ``/grants``; writes go through the owning tool's own confirm.
     static_read: list[Path] = field(default_factory=list)
+    # ``[trash] enabled``: deletes go to the system trash unless cleared.
+    trash_enabled: bool = True
 
 
 def _bound_instance() -> InstanceState | None:
@@ -186,6 +188,16 @@ def set_path_denylist(patterns: list[str] | tuple[str, ...] | None) -> None:
 def get_path_denylist() -> tuple[str, ...]:
     """Return the current path substring denylist."""
     return active_workspace_policy().path_denylist
+
+
+def set_trash_enabled(*, enabled: bool) -> None:
+    """Set whether ``delete_path`` moves to the system trash (``[trash]``)."""
+    active_workspace_policy().trash_enabled = bool(enabled)
+
+
+def get_trash_enabled() -> bool:
+    """Whether deletes go to the system trash rather than being final."""
+    return active_workspace_policy().trash_enabled
 
 
 def set_command_denylist(names: list[str] | tuple[str, ...] | frozenset[str] | None) -> None:

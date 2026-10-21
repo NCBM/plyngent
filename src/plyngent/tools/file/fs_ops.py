@@ -5,7 +5,13 @@ from pathlib import Path
 
 from plyngent.agent import ToolTag, invalidate_lineno_read, tool
 from plyngent.tools.trash import move_to_trash, under_system_temp
-from plyngent.tools.workspace import AccessMode, WorkspaceError, get_workspace_root, resolve_path
+from plyngent.tools.workspace import (
+    AccessMode,
+    WorkspaceError,
+    get_trash_enabled,
+    get_workspace_root,
+    resolve_path,
+)
 
 
 def _kind(path: Path) -> str:
@@ -164,7 +170,8 @@ async def delete_path(path: str, *, recursive: bool = False, permanent: bool = F
     path, nothing is deleted and the error says how to delete on purpose.
 
     Paths under the OS temporary directory are deleted for good either way: they
-    are scratch space, not something to restore.
+    are scratch space, not something to restore. A host with ``[trash] enabled =
+    false`` removes the path outright, as ``permanent=true`` does.
     """
     try:
         target = resolve_path(path, required=AccessMode.WRITE)
@@ -181,7 +188,7 @@ async def delete_path(path: str, *, recursive: bool = False, permanent: bool = F
             target,
             path,
             recursive=recursive,
-            permanent=permanent or under_system_temp(target),
+            permanent=permanent or not get_trash_enabled() or under_system_temp(target),
         )
     except OSError as exc:
         return f"error: delete failed: {exc}"
