@@ -29,8 +29,11 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatTextPart,
     DeveloperChatMessage,
     SystemChatMessage,
+    ToolChatMessage,
     ToolFunctionItem,
     UserChatMessage,
 )
@@ -175,6 +178,35 @@ def _group_tool_outputs(
     return out
 
 
+def _image_to_input_part(part: ChatImagePart) -> dict[str, Any]:
+    """One chat image part as a Responses ``input_image`` item."""
+    item: dict[str, Any] = {"type": "input_image", "image_url": part.image_url.url}
+    if part.image_url.detail is not UNSET:
+        item["detail"] = part.image_url.detail
+    return item
+
+
+def _user_content_to_input(content: str | list[ChatTextPart | ChatImagePart]) -> str | list[dict[str, Any]]:
+    """A chat user turn's content as ``input`` content (plain text stays a string)."""
+    if isinstance(content, str):
+        return content
+    return [
+        {"type": "input_text", "text": part.text} if isinstance(part, ChatTextPart) else _image_to_input_part(part)
+        for part in content
+    ]
+
+
+def _tool_output(message: ToolChatMessage) -> str | list[dict[str, Any]]:
+    """A tool result's ``output``: its text, plus any images the tool returned."""
+    if message.images is UNSET or not message.images:
+        return message.content
+    parts: list[dict[str, Any]] = []
+    if message.content:
+        parts.append({"type": "input_text", "text": message.content})
+    parts.extend(_image_to_input_part(part) for part in message.images)
+    return parts
+
+
 def chat_messages_to_responses_input(
     messages: Sequence[AnyChatMessage],
 ) -> tuple[str | None, list[dict[str, Any] | ResponseEasyInputMessage | ResponseFunctionToolCallOutput]]:
@@ -191,7 +223,7 @@ def chat_messages_to_responses_input(
             if message.content.strip():
                 items.append(ResponseEasyInputMessage(role="developer", content=message.content))
         elif isinstance(message, UserChatMessage):
-            items.append(ResponseEasyInputMessage(role="user", content=message.content))
+            items.append(ResponseEasyInputMessage(role="user", content=_user_content_to_input(message.content)))
         elif isinstance(message, AssistantChatMessage):
             items.extend(_assistant_to_input_items(message))
         else:
@@ -199,7 +231,7 @@ def chat_messages_to_responses_input(
             items.append(
                 ResponseFunctionToolCallOutput(
                     call_id=message.tool_call_id,
-                    output=message.content,
+                    output=_tool_output(message),
                 )
             )
 

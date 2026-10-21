@@ -98,10 +98,15 @@ class ResponseFunctionToolCall(Struct, tag_field="type", tag="function_call"):
 
 
 class ResponseFunctionToolCallOutput(Struct, tag_field="type", tag="function_call_output"):
-    """Tool result item passed back in subsequent ``input``."""
+    """Tool result item passed back in subsequent ``input``.
+
+    ``output`` may be a part array instead of text: a tool that returns an image
+    puts an ``input_image`` part beside its ``input_text`` (the Responses guide
+    documents images there, and a live probe reads them back).
+    """
 
     call_id: str
-    output: str
+    output: str | list[dict[str, Any]]
     id: str | Unset = UNSET
     status: ResponseItemStatus | Unset = UNSET
 

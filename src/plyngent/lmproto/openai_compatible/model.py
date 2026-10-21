@@ -19,6 +19,41 @@ type Verbosity = Literal["low", "medium", "high"]
 type GrammarSyntax = Literal["lark", "regex"]
 
 
+type ImageDetail = Literal["low", "high", "original", "auto"]
+
+
+class ChatImageUrl(Struct, omit_defaults=True):
+    """The ``image_url`` payload of one image part (the canonical chat shape)."""
+
+    url: str
+    detail: ImageDetail | Unset = UNSET
+
+
+class ChatImagePart(Struct, tag_field="type", tag="image_url"):
+    """One image a message carries: an ``http(s)`` URL or a ``data:`` URL.
+
+    This is the shape OpenAI-compatible chat completions take. The other two
+    surfaces lift it into their own form — ``compat.chat_messages_with_images``
+    for chat completions, ``agent.messages_bridge`` (Anthropic ``image``
+    blocks) and ``agent.responses_bridge`` (``input_image`` parts).
+    """
+
+    image_url: ChatImageUrl
+
+
+class ChatTextPart(Struct, tag_field="type", tag="text"):
+    """A text block beside images, when a message's content is a part array."""
+
+    text: str
+
+
+type ChatContentPart = ChatTextPart | ChatImagePart
+type ChatContent = str | list[ChatContentPart]
+
+# What a text view of a part array shows where an image sits.
+IMAGE_MARKER = "[image]"
+
+
 class ChatMessage(Struct):
     content: str
 
@@ -28,11 +63,28 @@ class SystemChatMessage(ChatMessage, tag_field="role", tag="system"):
 
 
 class UserChatMessage(ChatMessage, tag_field="role", tag="user"):
+    # A user turn may carry images beside its text; chat completions already take
+    # that shape as ``content`` blocks, and the other two surfaces translate it
+    # (``agent.messages_bridge``, ``agent.responses_bridge``). The wider type is
+    # deliberate: only a user turn takes images, so the base stays a string and
+    # prose-only callers read it through ``content_to_text``.
+    content: str | list[ChatContentPart]  # pyright: ignore[reportIncompatibleVariableOverride]
     name: str | Unset = UNSET
 
 
 class DeveloperChatMessage(ChatMessage, tag_field="role", tag="developer"):
     name: str | Unset = UNSET
+
+
+def content_to_text(content: ChatContent) -> str:
+    """The plain text of a message ``content``, with ``[image]`` for each image.
+
+    Callers that only need prose (summaries, transcripts, exports, comparisons)
+    must not print a part array's ``repr``.
+    """
+    if isinstance(content, str):
+        return content
+    return " ".join(part.text if isinstance(part, ChatTextPart) else IMAGE_MARKER for part in content)
 
 
 type NamedChatMessage = SystemChatMessage | UserChatMessage | DeveloperChatMessage
@@ -84,6 +136,11 @@ class AssistantChatMessage(Struct, tag_field="role", tag="assistant"):
 
 class ToolChatMessage(ChatMessage, tag_field="role", tag="tool"):
     tool_call_id: str
+    # Images the tool returned. Chat completions cannot put an image in a
+    # ``tool`` message, so on that wire they move into the user message that
+    # follows the tool run (``compat.chat_messages_with_images``); the Anthropic
+    # and Responses surfaces carry them in the result itself.
+    images: list[ChatImagePart] | Unset = UNSET
 
 
 type AnyChatMessage = (

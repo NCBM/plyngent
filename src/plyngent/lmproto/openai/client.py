@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 import msgspec
 
 from plyngent.lmproto.openai_compatible.client import BaseOpenAIClient
+from plyngent.lmproto.openai_compatible.compat import chat_messages_with_images
 from plyngent.lmproto.openai_compatible.config import OpenAIConfig  # noqa: TC001
 from plyngent.lmproto.openai_compatible.model import (  # noqa: TC001
     ChatCompletionChunk,
@@ -49,6 +50,11 @@ class OpenAIClient(BaseOpenAIClient):
         self, param: ChatCompletionsParam, *, stream: bool = False
     ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
         param = msgspec.structs.replace(param, stream=stream)
+        # Lift images into content parts, like every other chat-completions wire;
+        # the OpenAI API takes the ``developer`` role as-is, so only that step.
+        images = chat_messages_with_images(param.messages)
+        if images != param.messages:
+            param = msgspec.structs.replace(param, messages=images)
         data = self.encoder.encode(param)
         if stream:
             resp = await self.session.post(

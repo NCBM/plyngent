@@ -28,6 +28,7 @@ from plyngent.lmproto.openai_compatible.model import (
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
+    content_to_text,
 )
 
 if TYPE_CHECKING:
@@ -225,7 +226,7 @@ def build_transcript(messages: Sequence[AnyChatMessage], *, pending_retry_text: 
 
     if turns and pending_retry_text is not None:
         user = turns[-1].user.message
-        if isinstance(user, UserChatMessage) and user.content == pending_retry_text:
+        if isinstance(user, UserChatMessage) and content_to_text(user.content) == pending_retry_text:
             turns[-1] = replace(turns[-1], incomplete=True)
     return Transcript(prelude=tuple(prelude), turns=tuple(turns))
 
@@ -239,7 +240,9 @@ def echo_row(row: Row, *, detail: Detail) -> None:
         _echo_assistant(row, reasoning=detail == "full")
         return
     click.echo(row.prefix())
-    click.echo(row.message.content or "")
+    message = row.message
+    click.echo(content_to_text(message.content) if isinstance(message, UserChatMessage) else message.content)
+    click.echo()
     click.echo()
 
 

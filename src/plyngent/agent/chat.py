@@ -15,6 +15,7 @@ from plyngent.lmproto.openai_compatible.model import (
     SystemChatMessage,
     ToolChatMessage,
     UserChatMessage,
+    content_to_text,
 )
 
 from .budget import (
@@ -162,12 +163,12 @@ def incomplete_turn_user_text(messages: Sequence[AnyChatMessage]) -> str | None:
         return None
     last = body[-1]
     if isinstance(last, UserChatMessage):
-        return last.content
+        return content_to_text(last.content)
     if isinstance(last, ToolChatMessage) or (truncated and isinstance(last, AssistantChatMessage)):
         # Walk back to the user that opened this turn.
         for msg in reversed(body):
             if isinstance(msg, UserChatMessage):
-                return msg.content
+                return content_to_text(msg.content)
         return None
     return None
 
@@ -558,7 +559,9 @@ class ChatAgent:
             raise RuntimeError(msg)
         for i in range(len(self.messages) - 1, -1, -1):
             msg = self.messages[i]
-            if isinstance(msg, UserChatMessage) and msg.content == text:
+            # ``incomplete_turn_user_text`` returns the text view, so compare that
+            # (a turn carrying images is a part array, not a string).
+            if isinstance(msg, UserChatMessage) and content_to_text(msg.content) == text:
                 return i
         msg = "nothing to retry"
         raise RuntimeError(msg)

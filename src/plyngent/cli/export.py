@@ -10,6 +10,7 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionToolCall,
     ToolChatMessage,
     UserChatMessage,
+    content_to_text,
 )
 
 if TYPE_CHECKING:
@@ -78,7 +79,7 @@ def format_session_export_md(
 
 def _format_message_md(message: AnyChatMessage) -> list[str]:
     if isinstance(message, UserChatMessage):
-        return ["## user", "", message.content]
+        return ["## user", "", content_to_text(message.content)]
     if isinstance(message, AssistantChatMessage):
         parts: list[str] = ["## assistant", ""]
         reasoning = message.reasoning_content

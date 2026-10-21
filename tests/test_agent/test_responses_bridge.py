@@ -19,6 +19,9 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionTool,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatImageUrl,
+    ChatTextPart,
     DeveloperChatMessage,
     SystemChatMessage,
     ToolChatMessage,
@@ -74,6 +77,62 @@ def test_chat_messages_to_input_and_instructions() -> None:
     assert instructions == "You are helpful."
     # user message, then the call turn's reasoning + call, then its output.
     assert _input_item_types(items) == ["message", "reasoning", "function_call", "function_call_output"]
+
+
+def test_a_user_turn_carries_its_images_as_input_parts() -> None:
+    messages = [
+        UserChatMessage(
+            content=[
+                ChatTextPart(text="what is this?"),
+                ChatImagePart(image_url=ChatImageUrl(url="https://example.com/a.jpg", detail="low")),
+            ]
+        )
+    ]
+    _, items = chat_messages_to_responses_input(messages)
+
+    assert items[0] == ResponseEasyInputMessage(
+        role="user",
+        content=[
+            {"type": "input_text", "text": "what is this?"},
+            {"type": "input_image", "image_url": "https://example.com/a.jpg", "detail": "low"},
+        ],
+    )
+
+
+def test_a_tool_output_carries_the_images_the_tool_returned() -> None:
+    messages = [
+        AssistantChatMessage(
+            content=None,
+            tool_calls=[
+                AssistantFunctionToolCall(
+                    id="call_1", function=AssistantFunctionTool(name="view_image", arguments="{}")
+                )
+            ],
+        ),
+        ToolChatMessage(
+            content="image: shot.png (2 KB)",
+            tool_call_id="call_1",
+            images=[ChatImagePart(image_url=ChatImageUrl(url="data:image/png;base64,AAAA"))],
+        ),
+    ]
+    _, items = chat_messages_to_responses_input(messages)
+
+    output = items[-1]
+    assert isinstance(output, ResponseFunctionToolCallOutput)
+    assert output.call_id == "call_1"
+    assert output.output == [
+        {"type": "input_text", "text": "image: shot.png (2 KB)"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
+
+
+def test_a_plain_tool_output_stays_a_string() -> None:
+    messages = [ToolChatMessage(content="file body", tool_call_id="call_1")]
+    _, items = chat_messages_to_responses_input(messages)
+
+    output = items[0]
+    assert isinstance(output, ResponseFunctionToolCallOutput)
+    assert output.output == "file body"
 
 
 def test_parallel_tool_outputs_group_after_the_rounds_calls() -> None:

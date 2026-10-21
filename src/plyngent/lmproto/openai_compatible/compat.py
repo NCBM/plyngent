@@ -7,12 +7,18 @@ from typing import TYPE_CHECKING, Any, cast
 import msgspec
 from msgspec import UNSET
 
-from .model import AssistantChatMessage, DeveloperChatMessage, SystemChatMessage
+from .model import (
+    AssistantChatMessage,
+    DeveloperChatMessage,
+    SystemChatMessage,
+    ToolChatMessage,
+    UserChatMessage,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .model import AnyChatMessage, ChatCompletionsParam
+    from .model import AnyChatMessage, ChatCompletionsParam, ChatImagePart
 
 
 def developer_to_system_message(message: DeveloperChatMessage) -> SystemChatMessage:
@@ -38,6 +44,38 @@ def coerce_developer_messages_to_system(messages: Sequence[AnyChatMessage]) -> l
     return out if changed else list(messages)
 
 
+def chat_messages_with_images(messages: Sequence[AnyChatMessage]) -> list[AnyChatMessage]:
+    """Return *messages* with tool-result images lifted into the chat wire.
+
+    A user turn already carries its images in ``content`` blocks, which chat
+    completions take as-is. A ``tool`` role message may only carry text, so a
+    tool result's images move into the user turn emitted right after the run of
+    consecutive tool results.
+
+    With no such images the sequence's items come back unchanged.
+    """
+    out: list[AnyChatMessage] = []
+    pending: list[ChatImagePart] = []
+    changed = False
+
+    def flush_images() -> None:
+        if pending:
+            out.append(UserChatMessage(content=list(pending)))
+            pending.clear()
+
+    for message in messages:
+        if isinstance(message, ToolChatMessage) and message.images is not UNSET and message.images:
+            out.append(msgspec.structs.replace(message, images=UNSET))
+            pending.extend(message.images)
+            changed = True
+            continue
+        if pending and not isinstance(message, ToolChatMessage):
+            flush_images()
+        out.append(message)
+    flush_images()
+    return out if changed else list(messages)
+
+
 def coerce_chat_messages(messages: Sequence[AnyChatMessage]) -> list[AnyChatMessage]:
     """Return *messages* as a chat-completions wire can take them.
 
@@ -46,18 +84,19 @@ def coerce_chat_messages(messages: Sequence[AnyChatMessage]) -> list[AnyChatMess
     and ``AssistantChatMessage.provider_blocks`` is dropped — those blocks
     belong to the surface that produced them (Anthropic ``thinking`` and
     server-tool blocks; see ``agent.messages_bridge``) and no other provider
-    knows the key.
+    knows the key. Tool-result images are lifted last (see
+    :func:`chat_messages_with_images`).
     """
     coerced = coerce_developer_messages_to_system(messages)
     changed = False
-    out: list[AnyChatMessage] = []
+    stripped: list[AnyChatMessage] = []
     for message in coerced:
         if isinstance(message, AssistantChatMessage) and message.provider_blocks is not UNSET:
-            out.append(msgspec.structs.replace(message, provider_blocks=UNSET))
+            stripped.append(msgspec.structs.replace(message, provider_blocks=UNSET))
             changed = True
         else:
-            out.append(message)
-    return out if changed else coerced
+            stripped.append(message)
+    return chat_messages_with_images(stripped if changed else coerced)
 
 
 def coerce_chat_completions_param(param: ChatCompletionsParam) -> ChatCompletionsParam:

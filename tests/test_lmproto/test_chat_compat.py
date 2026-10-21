@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import msgspec
 from msgspec import UNSET
@@ -18,10 +19,18 @@ from plyngent.lmproto.openai_compatible.compat import (
 from plyngent.lmproto.openai_compatible.model import (
     AnyChatMessage,
     AssistantChatMessage,
+    AssistantFunctionTool,
+    AssistantFunctionToolCall,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatImageUrl,
+    ChatTextPart,
     DeveloperChatMessage,
+    ImageDetail,
     SystemChatMessage,
+    ToolChatMessage,
     UserChatMessage,
+    content_to_text,
 )
 
 
@@ -119,3 +128,82 @@ def test_coerce_chat_messages_drops_provider_blocks() -> None:
 def test_coerce_chat_messages_leaves_plain_history_alone() -> None:
     messages: list[AnyChatMessage] = [UserChatMessage(content="hi"), AssistantChatMessage(content="done")]
     assert coerce_chat_messages(messages) == messages
+
+
+def _image(url: str = "data:image/png;base64,AAAA", detail: ImageDetail = "low") -> ChatImagePart:
+    return ChatImagePart(image_url=ChatImageUrl(url=url, detail=detail))
+
+
+def _wire(messages: Sequence[AnyChatMessage]) -> list[dict[str, Any]]:
+    param = ChatCompletionsParam(model="m", messages=coerce_chat_messages(messages))
+    raw: dict[str, Any] = msgspec.json.decode(msgspec.json.encode(param))
+    messages_raw: list[dict[str, Any]] = raw["messages"]
+    return messages_raw
+
+
+def test_user_images_reach_the_chat_wire_as_blocks() -> None:
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(
+            content=[
+                ChatTextPart(text="what is this?"),
+                ChatImagePart(image_url=ChatImageUrl(url="https://example.com/a.png", detail="low")),
+            ]
+        )
+    ]
+
+    assert _wire(messages) == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png", "detail": "low"}},
+            ],
+        }
+    ]
+
+
+def test_tool_result_images_move_into_the_user_turn_after_the_tool_run() -> None:
+    messages: list[AnyChatMessage] = [
+        AssistantChatMessage(
+            content="",
+            tool_calls=[
+                AssistantFunctionToolCall(
+                    id="call-1", function=AssistantFunctionTool(name="view_image", arguments="{}")
+                )
+            ],
+        ),
+        ToolChatMessage(content="image: shot.png (1 KB)", tool_call_id="call-1", images=[_image()]),
+        ToolChatMessage(content="second result", tool_call_id="call-2"),
+        AssistantChatMessage(content="I can see it."),
+    ]
+    raw = _wire(messages)
+
+    assert [item["role"] for item in raw] == ["assistant", "tool", "tool", "user", "assistant"]
+    # The tool message keeps its text and loses the field chat completions cannot send.
+    assert raw[1] == {"role": "tool", "content": "image: shot.png (1 KB)", "tool_call_id": "call-1"}
+    assert raw[3]["content"] == [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA", "detail": "low"}}
+    ]
+    # The stored history keeps its own image parts.
+    assert messages[1].images is not UNSET
+
+
+def test_a_tool_result_without_images_keeps_the_history_untouched() -> None:
+    messages: list[AnyChatMessage] = [ToolChatMessage(content="plain", tool_call_id="call-1")]
+    assert coerce_chat_messages(messages) == messages
+
+
+def test_the_deepseek_param_takes_a_user_turn_with_images() -> None:
+    base = DeepseekChatCompletionsParam(
+        model="deepseek-flash",
+        messages=[UserChatMessage(content=[_image()])],
+    )
+    coerced = coerce_chat_completions_param_any(base)
+    raw = msgspec.json.decode(msgspec.json.encode(coerced))
+
+    assert raw["messages"][0]["content"][0]["type"] == "image_url"
+
+
+def test_content_to_text_replaces_images_with_a_marker() -> None:
+    assert content_to_text("plain") == "plain"
+    assert content_to_text([ChatTextPart(text="look:"), _image()]) == "look: [image]"

@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 from msgspec import UNSET
 
+from plyngent.agent.images import split_data_url
 from plyngent.lmproto.anthropic.model import (
     AnthropicAssistantMessage,
+    AnthropicImageContent,
     AnthropicMessageResponse,
     AnthropicMessagesParam,
     AnthropicOutputConfig,
@@ -39,8 +41,11 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChoice,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatTextPart,
     DeveloperChatMessage,
     SystemChatMessage,
+    ToolChatMessage,
     ToolFunctionItem,
     UserChatMessage,
 )
@@ -135,6 +140,52 @@ def _tool_choice_from_chat(param: ChatCompletionsParam) -> AnthropicToolChoice |
     return UNSET
 
 
+def _image_to_anthropic(part: ChatImagePart) -> AnthropicImageContent:
+    """One chat image part as an Anthropic ``image`` block.
+
+    An inline ``data:`` URL becomes a ``base64`` source (the provider then reads
+    the media type we sniffed); anything else is a ``url`` source.
+    """
+    inline = split_data_url(part.image_url.url)
+    if inline is None:
+        return AnthropicImageContent(source={"type": "url", "url": part.image_url.url})
+    media_type, payload = inline
+    return AnthropicImageContent(source={"type": "base64", "media_type": media_type, "data": payload})
+
+
+type _AnthropicUserBlock = AnthropicTextContent | AnthropicImageContent | AnthropicToolResultContent
+
+
+def _user_blocks_to_anthropic(
+    content: str | list[ChatTextPart | ChatImagePart],
+) -> str | list[_AnthropicUserBlock]:
+    """A chat user turn's content as Anthropic blocks (plain text stays a string)."""
+    if isinstance(content, str):
+        return content
+    return [
+        AnthropicTextContent(text=part.text) if isinstance(part, ChatTextPart) else _image_to_anthropic(part)
+        for part in content
+    ]
+
+
+def _tool_result_content(
+    message: ToolChatMessage,
+) -> str | list[AnthropicTextContent | AnthropicImageContent]:
+    """A tool result's content: its text, plus any images the tool returned.
+
+    Anthropic takes image blocks inside ``tool_result.content`` (a live probe
+    confirms the DeepSeek surface reads them), so the images ride in the result
+    itself instead of a separate user turn.
+    """
+    if message.images is UNSET or not message.images:
+        return message.content
+    blocks: list[AnthropicTextContent | AnthropicImageContent] = []
+    if message.content:
+        blocks.append(AnthropicTextContent(text=message.content))
+    blocks.extend(_image_to_anthropic(part) for part in message.images)
+    return blocks
+
+
 def _assistant_to_anthropic(message: AssistantChatMessage) -> AnthropicAssistantMessage | None:
     """The assistant turn for the wire: opaque blocks, then text, then calls.
 
@@ -211,7 +262,7 @@ def chat_messages_to_anthropic(  # noqa: C901 — multi-role conversion
 
         if isinstance(message, UserChatMessage):
             flush_tool_results()
-            out.append(AnthropicUserMessage(content=message.content))
+            out.append(AnthropicUserMessage(content=_user_blocks_to_anthropic(message.content)))
             continue
 
         if isinstance(message, AssistantChatMessage):
@@ -225,7 +276,7 @@ def chat_messages_to_anthropic(  # noqa: C901 — multi-role conversion
         pending_tool_results.append(
             AnthropicToolResultContent(
                 tool_use_id=message.tool_call_id,
-                content=message.content,
+                content=_tool_result_content(message),
             )
         )
 

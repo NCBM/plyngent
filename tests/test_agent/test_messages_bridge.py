@@ -20,10 +20,12 @@ from plyngent.agent.messages_bridge import (
 )
 from plyngent.lmproto.anthropic.model import (
     AnthropicAssistantMessage,
+    AnthropicImageContent,
     AnthropicMessageResponse,
     AnthropicResponseText,
     AnthropicResponseToolUse,
     AnthropicServerToolUseContent,
+    AnthropicTextContent,
     AnthropicThinkingContent,
     AnthropicToolDefinition,
     AnthropicToolResultContent,
@@ -37,6 +39,9 @@ from plyngent.lmproto.openai_compatible.model import (
     AssistantFunctionTool,
     AssistantFunctionToolCall,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatImageUrl,
+    ChatTextPart,
     DeveloperChatMessage,
     ReasoningEffort,
     SystemChatMessage,
@@ -134,6 +139,57 @@ def test_merge_consecutive_tool_results() -> None:
     assert isinstance(items[2], AnthropicUserMessage)
     assert isinstance(items[2].content, list)
     assert len(items[2].content) == 2
+
+
+def test_a_user_turn_carries_its_images_as_blocks() -> None:
+    messages = [
+        UserChatMessage(
+            content=[
+                ChatTextPart(text="what is this?"),
+                ChatImagePart(image_url=ChatImageUrl(url="data:image/png;base64,AAAA", detail="low")),
+                ChatImagePart(image_url=ChatImageUrl(url="https://example.com/a.jpg")),
+            ]
+        )
+    ]
+    _, items = chat_messages_to_anthropic(messages)
+
+    assert isinstance(items[0], AnthropicUserMessage)
+    blocks = items[0].content
+    assert isinstance(blocks, list)
+    assert blocks[0] == AnthropicTextContent(text="what is this?")
+    # An inline data URL becomes a base64 source carrying the sniffed media type.
+    assert blocks[1] == AnthropicImageContent(source={"type": "base64", "media_type": "image/png", "data": "AAAA"})
+    # A public link stays a url source.
+    assert blocks[2] == AnthropicImageContent(source={"type": "url", "url": "https://example.com/a.jpg"})
+
+
+def test_a_tool_result_carries_its_images_inside_the_result() -> None:
+    messages = [
+        UserChatMessage(content="screenshot please"),
+        AssistantChatMessage(
+            content=None,
+            tool_calls=[
+                AssistantFunctionToolCall(id="c1", function=AssistantFunctionTool(name="view_image", arguments="{}"))
+            ],
+        ),
+        ToolChatMessage(
+            content="image: shot.png (2 KB)",
+            tool_call_id="c1",
+            images=[ChatImagePart(image_url=ChatImageUrl(url="data:image/png;base64,AAAA"))],
+        ),
+    ]
+    _, items = chat_messages_to_anthropic(messages)
+
+    result = items[2]
+    assert isinstance(result, AnthropicUserMessage)
+    assert isinstance(result.content, list)
+    block = result.content[0]
+    assert isinstance(block, AnthropicToolResultContent)
+    assert block.tool_use_id == "c1"
+    assert block.content == [
+        AnthropicTextContent(text="image: shot.png (2 KB)"),
+        AnthropicImageContent(source={"type": "base64", "media_type": "image/png", "data": "AAAA"}),
+    ]
 
 
 def test_anthropic_response_to_assistant_with_tools() -> None:
