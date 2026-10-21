@@ -16,6 +16,7 @@ from .models import (
     PluginsConfig,
     Provider,
     SkillsConfig,
+    TrashConfig,
 )
 
 if TYPE_CHECKING:
@@ -80,6 +81,22 @@ def _parse_notify(raw: dict[str, object]) -> NotifyConfig:
     known = set(NotifyConfig.__struct_fields__)
     if set(raw) - known:
         return NotifyConfig()
+    return config
+
+
+def _parse_trash(raw: dict[str, object]) -> TrashConfig:
+    """Parse the ``[trash]`` section, falling back to defaults.
+
+    Unknown keys are rejected like ``[mcp]`` does: a typo leaves deletes going
+    to the trash instead of half-applying a policy about destructive ones.
+    """
+    try:
+        config = msgspec.convert(raw, TrashConfig)
+    except msgspec.ValidationError:
+        return TrashConfig()
+    known = set(TrashConfig.__struct_fields__)
+    if set(raw) - known:
+        return TrashConfig()
     return config
 
 
@@ -178,6 +195,7 @@ class ConfigStore:
     _mcp: McpConfig
     _skills: SkillsConfig
     _notify: NotifyConfig
+    _trash: TrashConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -193,6 +211,7 @@ class ConfigStore:
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
         self._skills = _parse_skills(cast("dict[str, object]", raw.get("skills", {})))
         self._notify = _parse_notify(cast("dict[str, object]", raw.get("notify", {})))
+        self._trash = _parse_trash(cast("dict[str, object]", raw.get("trash", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -263,6 +282,13 @@ class ConfigStore:
     def notify_config(self) -> NotifyConfig:
         """Typed notifications section (grace, channels, actions)."""
         return self._notify
+
+    # -- trash (read-only) --
+
+    @property
+    def trash_config(self) -> TrashConfig:
+        """Typed trash section (whether a delete can be undone)."""
+        return self._trash
 
     def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
         """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
@@ -469,6 +495,7 @@ class ConfigStore:
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
         self._notify = _parse_notify(cast("dict[str, object]", raw.get("notify", {})))
+        self._trash = _parse_trash(cast("dict[str, object]", raw.get("trash", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --

@@ -304,6 +304,21 @@ class NotifyConfig(Struct, omit_defaults=True):
     protocol: str = ""
 
 
+class TrashConfig(Struct, omit_defaults=True):
+    """Whether a delete lands in the system trash or is final.
+
+    ``enabled`` (the default) sends every path ``delete_path`` removes to the
+    desktop's own trash — the freedesktop trash on Linux, the Finder trash on
+    macOS, the Recycle Bin on Windows — so a deletion can be undone there.
+    ``false`` restores the old behaviour of removing the path outright.
+
+    Scratch paths under the OS temporary directory, and a call that passes
+    ``permanent=true``, are deleted for good either way.
+    """
+
+    enabled: bool = True
+
+
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags and optional routing overrides for a model.
 
