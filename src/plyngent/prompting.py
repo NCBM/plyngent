@@ -117,6 +117,66 @@ def _break_output() -> None:
         hook()
 
 
+@dataclass(frozen=True, slots=True)
+class PromptWait:
+    """A prompt that is about to block on the human.
+
+    ``kind`` names the prompt family (``confirm``, ``ask``, ``secret``,
+    ``choose``, ``policy``, ``access``, ``skills``, ``limit``) so the host can
+    tailor what it shows and which answers it offers; ``title`` is short and
+    safe to surface anywhere, while ``detail`` carries one optional line the
+    caller has already redacted.
+    """
+
+    kind: str
+    title: str
+    detail: str = ""
+
+
+@runtime_checkable
+class PromptAnswerSource(Protocol):
+    """Answers a waiting prompt may take from a host surface (a notification)."""
+
+    @property
+    def supports_actions(self) -> bool:
+        """Whether :meth:`take` can answer this prompt at all."""
+        ...
+
+    def take(self) -> str | None:
+        """Take the next host answer without blocking (``allow`` / ``deny`` / reply text)."""
+        ...
+
+
+type PromptWaitHook = Callable[[PromptWait], AbstractContextManager[PromptAnswerSource | None]]
+
+# Hook run *while* a prompt blocks on the human. It yields the answer source the
+# read consults (``None`` = notify only), so a host can reach someone who has
+# switched to another window; without a hook, prompting behaves as before.
+_wait_hook: PromptWaitHook | None = None
+
+
+def set_prompt_wait_hook(hook: PromptWaitHook | None) -> None:
+    """Install the hook run while a prompt blocks (None clears it)."""
+    global _wait_hook  # noqa: PLW0603
+    _wait_hook = hook
+
+
+def get_prompt_wait_hook() -> PromptWaitHook | None:
+    """The installed prompt-wait hook, if any."""
+    return _wait_hook
+
+
+@contextlib.contextmanager
+def prompt_wait(kind: str, title: str, detail: str = "") -> Generator[PromptAnswerSource | None]:
+    """Announce a blocking prompt to the host; yields its answer source (or None)."""
+    hook = _wait_hook
+    if hook is None:
+        yield None
+        return
+    with hook(PromptWait(kind, title, detail)) as source:
+        yield source
+
+
 def _readline_input(prompt: str, *, completions: Sequence[str] | None = None) -> str:
     """``input()`` with optional Tab completion via readline when available."""
     try:
@@ -157,45 +217,60 @@ type PollFn = Callable[
 
 def _read_line_with_timeout_posix(
     prompt: str,
-    timeout: float,
+    timeout: float | None,
     *,
     stream: TextIO,
     poll: PollFn,
+    source: PromptAnswerSource | None = None,
 ) -> str | None:
     """Blocking line read on POSIX: poll stdin, then read one line on data.
 
     Returns the line (without trailing newline), ``""`` for an empty Enter, or
-    ``None`` when the timeout elapses before any line is complete (EOF too).
-    Raises :class:`PromptCancelledError` when :func:`prompt_cancelled` turns true
-    while waiting (the poll loop notices within one interval).
+    ``None`` when the timeout elapses before any line is complete (EOF too); a
+    ``None`` *timeout* waits until a line or a *source* answer arrives. Raises
+    :class:`PromptCancelledError` when :func:`prompt_cancelled` turns true while
+    waiting (the poll loop notices within one interval).
     """
     _ = sys.stdout.write(prompt)
     _ = sys.stdout.flush()
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
+        if deadline is None:
+            remaining = 0.1
+        else:
+            remaining = min(deadline - time.monotonic(), 0.1)
+            if remaining <= 0:
+                return None
         if prompt_cancelled():
             raise PromptCancelledError
-        ready, _, _ = poll([stream], [], [], min(remaining, 0.1))
-        if not ready:
-            continue
-        line = stream.readline()
-        if line == "":
-            return None  # EOF
-        return line.rstrip("\n")
+        ready, _, _ = poll([stream], [], [], remaining)
+        if ready:
+            line = stream.readline()
+            if line == "":
+                return None  # EOF
+            return line.rstrip("\n")
+        if source is not None:
+            answer = source.take()
+            if answer is not None:
+                _ = sys.stdout.write(f"{answer}\n")
+                _ = sys.stdout.flush()
+                return answer
 
 
-def _read_line_with_timeout_windows(prompt: str, timeout: float) -> str | None:
+def _read_line_with_timeout_windows(
+    prompt: str,
+    timeout: float | None,
+    *,
+    source: PromptAnswerSource | None = None,
+) -> str | None:
     """Blocking line read on Windows via msvcrt char polling (best-effort)."""
     import msvcrt
 
     _ = sys.stdout.write(prompt)
     _ = sys.stdout.flush()
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     buf: list[str] = []
-    while time.monotonic() < deadline:
+    while deadline is None or time.monotonic() < deadline:
         if prompt_cancelled():
             raise PromptCancelledError
         if msvcrt.kbhit():
@@ -214,28 +289,47 @@ def _read_line_with_timeout_windows(prompt: str, timeout: float) -> str | None:
             buf.append(ch)
             _ = sys.stdout.write(ch)
             _ = sys.stdout.flush()
-        else:
-            time.sleep(0.05)
+            continue
+        if source is not None:
+            answer = source.take()
+            if answer is not None:
+                _ = sys.stdout.write(f"{answer}\n")
+                _ = sys.stdout.flush()
+                return answer
+        time.sleep(0.05)
     _ = sys.stdout.write("\n")
     _ = sys.stdout.flush()
     return None
 
 
-def read_line_with_timeout(prompt: str, timeout: float) -> str | None:
-    """Read one line, blocking at most ``timeout`` seconds.
+def read_line_with_timeout(
+    prompt: str,
+    timeout: float | None,
+    *,
+    source: PromptAnswerSource | None = None,
+) -> str | None:
+    """Read one line, blocking at most ``timeout`` seconds (``None`` = no limit).
 
     Returns the typed line (without trailing newline), ``""`` for an empty
-    Enter, or ``None`` when the timeout elapses first (EOF too). Ctrl+C
-    propagates as :class:`KeyboardInterrupt`; :func:`cancel_prompt_read` (the
-    SIGINT target of an off-loop prompt read) raises
-    :class:`PromptCancelledError` instead. POSIX polls stdin via ``select``;
-    Windows uses ``msvcrt`` char polling (best-effort).
+    Enter, or ``None`` when the timeout elapses first (EOF too). With a
+    *source*, its answers end the read as well — the answer is echoed on the
+    prompt line like a typed one. Ctrl+C propagates as
+    :class:`KeyboardInterrupt`; :func:`cancel_prompt_read` (the SIGINT target of
+    an off-loop prompt read) raises :class:`PromptCancelledError` instead.
+    POSIX polls stdin via ``select``; Windows uses ``msvcrt`` char polling
+    (best-effort).
     """
-    if timeout < 0:
+    if timeout is not None and timeout < 0:
         timeout = 0.0
     if sys.platform == "win32":
-        return _read_line_with_timeout_windows(prompt, timeout)
-    return _read_line_with_timeout_posix(prompt, timeout, stream=sys.stdin, poll=cast("PollFn", select.select))
+        return _read_line_with_timeout_windows(prompt, timeout, source=source)
+    return _read_line_with_timeout_posix(
+        prompt,
+        timeout,
+        stream=sys.stdin,
+        poll=cast("PollFn", select.select),
+        source=source,
+    )
 
 
 class ClickPromptBackend:
@@ -345,11 +439,12 @@ def get_prompt_backend() -> PromptBackend:
 
 
 def reset_prompting() -> None:
-    """Restore the default backend; clear the pause/output hooks and cancel flag (tests)."""
-    global _backend, _pause_factory, _before_output  # noqa: PLW0603
+    """Restore the default backend; clear the pause/output/wait hooks and cancel flag (tests)."""
+    global _backend, _pause_factory, _before_output, _wait_hook  # noqa: PLW0603
     _backend = ClickPromptBackend()
     _pause_factory = None
     _before_output = None
+    _wait_hook = None
     _prompt_cancel.clear()
 
 
@@ -415,8 +510,9 @@ def ask(
     if not backend.is_interactive() and default is None:
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
-    backend.secho(prompt, fg="yellow")
-    return backend.read_line("Answer", default=default, completions=completions).strip()
+    with prompt_wait("ask", prompt):
+        backend.secho(prompt, fg="yellow")
+        return backend.read_line("Answer", default=default, completions=completions).strip()
 
 
 def ask_secret(prompt: str) -> str:
@@ -428,8 +524,9 @@ def ask_secret(prompt: str) -> str:
     if not backend.is_interactive():
         msg = f"non-interactive: cannot prompt for secret {prompt!r}"
         raise NonInteractiveError(msg)
-    backend.secho(prompt, fg="yellow")
-    return backend.read_secret_line("Secret")
+    with prompt_wait("secret", prompt):
+        backend.secho(prompt, fg="yellow")
+        return backend.read_secret_line("Secret")
 
 
 def choose(
@@ -461,11 +558,12 @@ def choose(
         raise NonInteractiveError(msg)
 
     while True:
-        raw = backend.read_line(
-            "Choice",
-            default=default_display,
-            completions=completions,
-        ).strip()
+        with prompt_wait("choose", prompt):
+            raw = backend.read_line(
+                "Choice",
+                default=default_display,
+                completions=completions,
+            ).strip()
         if not raw:
             if default is not None:
                 return default
@@ -489,7 +587,8 @@ def confirm(prompt: str, *, default: bool = False) -> bool:
     if not backend.is_interactive():
         return default
     backend.echo()
-    return backend.confirm(prompt, default=default)
+    with prompt_wait("confirm", prompt):
+        return backend.confirm(prompt, default=default)
 
 
 def form(

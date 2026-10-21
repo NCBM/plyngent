@@ -12,8 +12,10 @@ from plyngent.prompting import (
     NonInteractiveBackend,
     NonInteractiveError,
     PromptCancelledError,
+    PromptWait,
     _read_line_with_timeout_posix,
     ask,
+    ask_secret,
     cancel_prompt_read,
     choose,
     configure_prompting,
@@ -21,12 +23,15 @@ from plyngent.prompting import (
     form,
     get_prompt_backend,
     get_prompt_output_hook,
+    get_prompt_wait_hook,
     prompt_cancelled,
+    prompt_wait,
     read_line_with_timeout,
     reset_prompting,
     run_cancellable_prompt_async,
     run_prompt_async,
     set_prompt_output_hook,
+    set_prompt_wait_hook,
     temporary_backend,
 )
 
@@ -279,3 +284,101 @@ def test_prompt_output_hook_runs_before_chrome(capsys: pytest.CaptureFixture[str
     assert calls == ["break", "break"]
     assert get_prompt_output_hook() is None
     assert "box" in capsys.readouterr().out
+
+
+class _AnswerSource:
+    """Stand-in for a host surface that answers a waiting prompt."""
+
+    supports_actions = True
+
+    def __init__(self, answer: str | None) -> None:
+        self.answers = [answer] if answer is not None else []
+
+    def take(self) -> str | None:
+        return self.answers.pop(0) if self.answers else None
+
+
+def test_read_line_with_timeout_takes_source_answer(capsys: pytest.CaptureFixture[str]) -> None:
+    """A host answer ends the read even though stdin never becomes readable."""
+    stream = io.StringIO()
+    try:
+        got = _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_never_poll, source=_AnswerSource("allow"))
+    finally:
+        stream.close()
+    assert got == "allow"
+    # The answer is echoed on the prompt line, so the terminal is not left mid-line.
+    assert "allow" in capsys.readouterr().out
+
+
+def test_read_line_with_timeout_prefers_stdin_over_source() -> None:
+    """A human typing at the terminal wins over a pending host answer."""
+    stream = io.StringIO("typed\n")
+    try:
+        got = _read_line_with_timeout_posix("p> ", 5.0, stream=stream, poll=_ready_poll, source=_AnswerSource("allow"))
+    finally:
+        stream.close()
+    assert got == "typed"
+
+
+def test_read_line_with_timeout_without_deadline() -> None:
+    """``timeout=None`` waits until an answer arrives instead of giving up."""
+    stream = io.StringIO()
+    try:
+        got = _read_line_with_timeout_posix("p> ", None, stream=stream, poll=_never_poll, source=_AnswerSource("deny"))
+    finally:
+        stream.close()
+    assert got == "deny"
+
+
+def test_prompt_wait_without_hook_yields_none() -> None:
+    """Without a hook the seam is a no-op (library hosts keep the old behaviour)."""
+    assert get_prompt_wait_hook() is None
+    with prompt_wait("confirm", "Allow?") as source:
+        assert source is None
+
+
+def test_prompt_wait_hook_wraps_ask() -> None:
+    """The CLI hook sees one PromptWait per prompt and is exited afterwards."""
+    seen: list[PromptWait] = []
+    entered: list[str] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        seen.append(wait)
+        entered.append("in")
+        try:
+            yield None
+        finally:
+            entered.append("out")
+
+    set_prompt_wait_hook(hook)
+    backend = ScriptedBackend(["hi"])
+    with temporary_backend(backend):
+        assert ask("Name?") == "hi"
+    assert [(wait.kind, wait.title) for wait in seen] == [("ask", "Name?")]
+    assert entered == ["in", "out"]
+
+
+def test_prompt_wait_hook_reports_the_prompt_family() -> None:
+    """Each entry point announces its own kind so a host can pick a surface."""
+    kinds: list[str] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        kinds.append(wait.kind)
+        yield None
+
+    set_prompt_wait_hook(hook)
+    backend = ScriptedBackend(["hello"], confirms=[True], secrets=["s3cret"])
+    with temporary_backend(backend):
+        _ = ask_secret("Token?")
+        _ = choose("Pick", ["a", "b"])
+        _ = confirm("Go?")
+    assert kinds == ["secret", "choose", "confirm"]
+
+
+def test_reset_prompting_clears_the_wait_hook() -> None:
+    set_prompt_wait_hook(lambda wait: contextlib.nullcontext(None))
+    assert get_prompt_wait_hook() is not None
+    reset_prompting()
+    assert get_prompt_wait_hook() is None
