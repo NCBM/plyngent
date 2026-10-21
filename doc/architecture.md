@@ -45,4 +45,6 @@ Images (a turn's pictures, a tool result's pictures, what each wire surface
 takes): [images.md](./images.md).
 Prompt notifications (a prompt that waits on the human, and how it can be
 answered from the notification): [notifications.md](./notifications.md).
+Deletes (a `delete_path` call moves the path into the system trash, and what
+that does not cover): [trash.md](./trash.md).
 

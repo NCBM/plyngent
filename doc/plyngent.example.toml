@@ -63,6 +63,14 @@
 # include_reason = false
 # protocol = ""            # terminal protocol: "" = detect, or osc777 / osc9 / bell
 
+# Deletes. `delete_path` moves the path into the desktop's trash (freedesktop
+# trash / Finder trash / Recycle Bin) so it can be restored from the file
+# manager; `permanent=true` on the call removes it for good, and paths under the
+# system temp dir are always deleted outright. `enabled = false` restores the
+# old "a delete is final" behaviour for every call. See doc/trash.md.
+# [trash]
+# enabled = true
+
 # MCP (Model Context Protocol) servers exposed as agent tools.
 # Defining a server opts it in; tools appear as mcp__<server>__<tool> with
 # LOCAL tags (confirm flow applies). Names in disable stay disconnected.

@@ -50,6 +50,8 @@ retrying that path.
 fix `old_string` or `max_replaces`; shell workarounds rarely help.
 - `write_file` refuses to replace an existing file (read it, or change it with \
 `edit_replace` / `edit_lineno`); a full replacement needs `overwrite=true`, which asks the human.
+- `delete_path` moves the path into the system trash, so a delete stays undoable \
+(`permanent=true` deletes for good; scratch paths under the OS temp dir always do).
 - `edit_replace` defaults to the first match; if remaining matches are reported, \
 raise `max_replaces` or narrow `old_string`.
 - `edit_lineno` edits only lines you read via `read_file(path, with_lineno=true)`; \
