@@ -53,6 +53,40 @@ Images belong to **user** messages only: a picture in a system or assistant
 message is a 400 (`Image in assistant message is unsupported`). A tool result
 lives inside a user turn, which is why it can carry one.
 
+## Files API (upload once, reference by id)
+
+Every surface we speak to can take a picture as an uploaded file instead of
+inline bytes. The upload half of that is de-facto one shape; the object it
+returns and the way a message refers to it are not standardized at all. Field
+names below come from each vendor's own reference (DeepSeek `guides/files_api`,
+OpenAI `resources/files` + `guides/file-inputs`, Anthropic `api/beta/files`).
+
+| | OpenAI | Anthropic | DeepSeek |
+|---|---|---|---|
+| Upload | `POST /v1/files`, multipart: `file` + `purpose` (`user_data`, `vision`, …), optional `expires_after[anchor]` / `[seconds]` | `POST /v1/files`, multipart: `file` only; needs `anthropic-version` and `anthropic-beta: files-api-2025-04-14` | `POST /files`, OpenAI shape (`file` + `purpose="user_data"`, optional `expires_after[…]`); the same operations are also served under `/anthropic/v1/files` in the Anthropic shape |
+| Id | `file-abc123` | `file_01HX…` | `file-api-…` |
+| File object | `object:"file"`, `bytes`, `created_at` (unix seconds), `filename`, `purpose`, `expires_at` when it was asked for | `type:"file"`, `size_bytes`, `created_at` (RFC 3339), `filename`, `mime_type`, `downloadable` | both dialects: OpenAI shape on `/files`, Anthropic shape on `/anthropic/v1/files` |
+| Reference in a message | Responses `{"type":"input_image","file_id":…}` (mutually exclusive with `image_url`); chat completions cannot reference an image by id at all — its `image_url` part has no `file_id`, and its `file` part is documents only | `{"type":"image","source":{"type":"file","file_id":…}}`, plus the beta header | chat: `{"type":"file","file_id":…}`, or inline `file_data` + `filename`; Anthropic: `source.type="file"` plus beta; Responses: `input_image.file_id` |
+| Limits | 512 MB per file (what `purpose` allows) | not verified here (the API reference is unreachable from this host's region) | 64 MiB per file, 25 GiB and 10 000 files per account, expiry 1 h – 30 d or permanent |
+
+What is shared: `POST …/files` as `multipart/form-data` with a `file` part,
+and a string id back. What is not: the field names (`bytes` vs `size_bytes`),
+the type tag (`object` vs `type`), the timestamp format, the cursor and paging
+fields, the beta header, and every reference block above. A client therefore
+needs one uploader and three reference shapes — the split this module already
+has.
+
+Three rules if this is ever wired in:
+
+- a `file_id` is scoped to the provider (and account) that minted it, so a
+  stored id belongs to the surface that produced it, exactly like
+  `AssistantChatMessage.provider_blocks`; `/provider` cannot carry it across;
+- OpenAI's chat-completions surface cannot reference an image id, so on that
+  provider the feature implies the Responses convention;
+- the token bill does not change: the model still processes the picture in
+  every request that carries it. Uploading buys the 32 MiB inline cap, a
+  smaller request body, and not re-sending the same screenshot each round.
+
 ## Verified against the DeepSeek API
 
 The 2026-10-17 docs plus a live probe (`deepseek-flash`):
@@ -119,8 +153,6 @@ has to be declared: the flag is an explicit opt-in.
 
 ## Not implemented
 
-- **Files API** (`POST /files` → `file_id`): it lifts the 32 MiB per-image cap
-  and avoids re-uploading the same bytes, but it does not change the token bill
-  (the model still processes the picture in every request that carries it), so a
-  local 8 MiB cap plus resizing covers the common case.
+- **Files API**: see above — no image path uses it today; a local 8 MiB cap plus
+  resizing covers the common case, and the upload changes no token cost.
 - **Image output**: the API documents none.
