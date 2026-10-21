@@ -16,7 +16,8 @@ dependencies = [
   "click>=8.4.2",
   "awaitlet>=0.0.1",
   "pywinpty>=2.0.0; sys_platform == \"win32\"",
-  "rich>=13"
+  "rich>=13",
+  "send2trash>=2.1.0"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
