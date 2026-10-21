@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, cast
 
 from plyngent.agent.tools import DangerReason
 from plyngent.tools.command_scan import dash_c_code, escalators_in_chain, is_interpreter, unwrap_command
-from plyngent.tools.workspace import AccessMode, WorkspaceError, resolve_path
+from plyngent.tools.trash import under_system_temp
+from plyngent.tools.workspace import AccessMode, WorkspaceError, get_trash_enabled, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -132,7 +133,23 @@ def _delete_path_reason(args: Mapping[str, object]) -> str | None:
     path = args.get("path")
     recursive = bool(args.get("recursive", False))
     extra = " recursively" if recursive else ""
-    return f"delete path {path!r}{extra}"
+    if _delete_is_final(args):
+        return f"delete path {path!r}{extra} permanently"
+    return f"move path {path!r}{extra} to the system trash"
+
+
+def _delete_is_final(args: Mapping[str, object]) -> bool:
+    """True when the delete destroys the path instead of trashing it."""
+    if bool(args.get("permanent", False)):
+        return True
+    try:
+        if not get_trash_enabled():
+            return True
+        target = resolve_path(str(args.get("path", "")), required=AccessMode.WRITE)
+    except WorkspaceError:
+        # Path policy will refuse the call; word the confirm as the default.
+        return False
+    return under_system_temp(target)
 
 
 def _run_argv_reason(args: Mapping[str, object]) -> DangerReason | None:

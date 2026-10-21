@@ -657,6 +657,12 @@ async def test_pretty_mutators(capsys: pytest.CaptureFixture[str]) -> None:
         ),
         ("move_path", '{"src": "src", "dst": "dst"}', "moved directory src -> dst", "* Move 'src' → 'dst' (done)"),
         ("delete_path", '{"path": "tmp/x.txt"}', "deleted file tmp/x.txt", "* Delete 'tmp/x.txt' (done)"),
+        (
+            "delete_path",
+            '{"path": "tmp/x.txt"}',
+            "deleted file tmp/x.txt (moved to system trash)",
+            "* Delete 'tmp/x.txt' (to trash)",
+        ),
     ]
     for name, args, content, expected in cases:
         await render_events(_aiter([_pretty_call(name, args), _result(content)]))

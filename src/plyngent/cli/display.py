@@ -550,6 +550,8 @@ def _mutator_detail(name: str, result: str) -> str:
         if match:
             chars, _path = match.groups()
             return _pretty_segments((f"({chars} chars)", None))
+    if name == "delete_path" and "system trash" in result:
+        return _pretty_segments(("(to trash)", "green"))
     return _pretty_segments(("(done)", "green"))
 
 

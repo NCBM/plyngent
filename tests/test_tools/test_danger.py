@@ -4,6 +4,7 @@ from pathlib import Path
 
 from plyngent.agent import DangerReason
 from plyngent.tools.danger import classify_danger
+from plyngent.tools.workspace import set_trash_enabled
 
 
 def _reason(name: str, args: dict[str, object]) -> str | None:
@@ -22,9 +23,26 @@ def _danger(name: str, args: dict[str, object]) -> DangerReason:
 
 
 def test_classify_delete_and_move() -> None:
-    assert _reason("delete_path", {"path": "a.txt"}) == "delete path 'a.txt'"
+    # No bound workspace here, so the confirm falls back to the default wording.
+    assert _reason("delete_path", {"path": "a.txt"}) == "move path 'a.txt' to the system trash"
     assert "recursively" in (_reason("delete_path", {"path": "d", "recursive": True}) or "")
     assert "move" in (_reason("move_path", {"src": "a", "dst": "b"}) or "")
+
+
+def test_classify_permanent_delete() -> None:
+    assert _reason("delete_path", {"path": "a.txt", "permanent": True}) == "delete path 'a.txt' permanently"
+
+
+def test_a_scratch_path_is_announced_as_permanent(workspace: object) -> None:
+    """The confirm says what will happen: the temp workspace is never trashed."""
+    del workspace
+    assert _reason("delete_path", {"path": "a.txt"}) == "delete path 'a.txt' permanently"
+
+
+def test_the_host_switch_is_announced_as_permanent(workspace: object) -> None:
+    del workspace
+    set_trash_enabled(enabled=False)
+    assert _reason("delete_path", {"path": "a.txt"}) == "delete path 'a.txt' permanently"
 
 
 def test_classify_copy() -> None:
