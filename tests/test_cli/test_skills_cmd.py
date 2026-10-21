@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -44,7 +45,9 @@ def _skill_notice_rows(state: ReplState) -> list[str]:
 def _config_doc(tmp_path: Path, *, paths: list[Path] | None = None, extra: str = "") -> tomlkit.TOMLDocument:
     lines = ["[skills]", "discover = []"]
     if paths:
-        rendered = ", ".join(f'"{path}"' for path in paths)
+        # JSON string escaping is TOML escaping too, so a Windows path's
+        # backslashes survive instead of reading as an escape (``\u``).
+        rendered = ", ".join(json.dumps(str(path)) for path in paths)
         lines.append(f"paths = [{rendered}]")
     if extra:
         lines.append(extra)
@@ -215,12 +218,12 @@ async def test_skill_tools_are_offered_and_can_read_skill_files(
 
     skill_file = skills_state.skills.skills[0].skill_file if skills_state.skills else None
     assert skill_file is not None
-    read = await skills_state.agent.tools.execute("read_file", f'{{"path": "{skill_file}"}}')
+    read = await skills_state.agent.tools.execute("read_file", json.dumps({"path": str(skill_file)}))
     assert "Deploy the acme stack" in read
 
     denied = await skills_state.agent.tools.execute(
         "write_file",
-        f'{{"path": "{skill_file}", "content": "x"}}',
+        json.dumps({"path": str(skill_file), "content": "x"}),
     )
     assert denied.startswith("error:")
     assert "escapes workspace root" in denied

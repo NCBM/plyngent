@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -147,7 +148,10 @@ async def test_config_allow_paths_installed(
 ) -> None:
     outside = (tmp_path.parent / "outside-config").resolve()
     outside.mkdir(exist_ok=True)
-    document = tomlkit.parse(f'[agent]\nallow_paths = {{ "{outside}" = "read", "/does/not/exist" = "read" }}\n')
+    # JSON string escaping is TOML escaping too, so a Windows path's backslashes
+    # survive instead of reading as an escape (``\u``).
+    key = json.dumps(str(outside))
+    document = tomlkit.parse(f'[agent]\nallow_paths = {{ {key} = "read", "/does/not/exist" = "read" }}\n')
     state, memory = await _new_state(tmp_path, document=document)
     try:
         assert state.instance_state.workspace.config_allow == {outside: AccessMode.READ}

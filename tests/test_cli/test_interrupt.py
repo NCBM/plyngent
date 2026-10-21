@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -34,6 +35,14 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     import pytest as pytest_module
+
+# The router is asyncio's SIGINT handler, which only exists where signals do; on
+# Windows a test could not deliver one either — ``os.kill(pid, SIGINT)`` is
+# ``TerminateProcess`` there, so it kills the runner instead of interrupting it.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="SIGINT routing needs POSIX signal handling",
+)
 
 
 class FakeTarget:

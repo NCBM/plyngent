@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from plyngent.config.models import SkillsConfig
 from plyngent.skills import SKILL_FILE, Skill, SkillStore, build_roots, validate_skill_name
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _write_skill(root: Path, name: str, *, description: str | None = "A test skill", body: str = "Body.") -> Path:
@@ -28,12 +25,13 @@ def test_build_roots_orders_explicit_paths_first(tmp_path: Path) -> None:
         user_config_dir=tmp_path / "config",
         home=tmp_path / "home",
     )
-    assert [(r.origin, r.scope, str(r.path)) for r in roots] == [
-        ("config", "user", str(tmp_path / "home" / "team-skills")),
-        ("config", "user", "/srv/skills"),
-        ("plyngent", "user", str(tmp_path / "config" / "skills")),
-        ("claude", "user", str(tmp_path / "home" / ".claude" / "skills")),
-        ("claude", "project", str(tmp_path / "proj" / ".claude" / "skills")),
+    # Paths, not strings: a Windows run spells the same root differently.
+    assert [(r.origin, r.scope, r.path) for r in roots] == [
+        ("config", "user", tmp_path / "home" / "team-skills"),
+        ("config", "user", Path("/srv/skills")),
+        ("plyngent", "user", tmp_path / "config" / "skills"),
+        ("claude", "user", tmp_path / "home" / ".claude" / "skills"),
+        ("claude", "project", tmp_path / "proj" / ".claude" / "skills"),
     ]
 
 
