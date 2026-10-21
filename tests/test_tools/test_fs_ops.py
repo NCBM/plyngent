@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from plyngent.tools.file import copy_path, delete_path, move_path, read_file, write_file
+import pytest
+
+from plyngent.tools.file import copy_path, delete_path, fs_ops, move_path, read_file, write_file
 from tests.test_tools.helpers import call_sync
 
 
@@ -75,6 +77,8 @@ def test_delete_nonempty_requires_recursive(workspace: object) -> None:
     out = call_sync(delete_path, "box")
     assert "not empty" in out
     assert (workspace / "box" / "a.txt").is_file()
+    # The workspace fixture lives under the system temp dir, so it is removed
+    # for good rather than trashed (see the trash tests below).
     out2 = call_sync(delete_path, "box", recursive=True)
     assert "recursive" in out2
     assert not (workspace / "box").exists()
@@ -97,3 +101,71 @@ def test_missing_source(workspace: object) -> None:
     assert "does not exist" in call_sync(copy_path, "nope", "x")
     assert "does not exist" in call_sync(move_path, "nope", "x")
     assert "does not exist" in call_sync(delete_path, "nope")
+
+
+def _elsewhere_than_temp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the workspace is not scratch space, so deletes use the trash."""
+    monkeypatch.setattr(fs_ops, "under_system_temp", lambda _path: False)
+
+
+def test_a_temp_path_is_deleted_for_good(workspace: object) -> None:
+    assert isinstance(workspace, Path)
+    _ = call_sync(write_file, "t.txt", "x")
+    out = call_sync(delete_path, "t.txt")
+    assert "trash" not in out
+    assert not (workspace / "t.txt").exists()
+
+
+def test_delete_goes_to_the_trash(workspace: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert isinstance(workspace, Path)
+    _elsewhere_than_temp(monkeypatch)
+    trashed: list[Path] = []
+    monkeypatch.setattr(fs_ops, "move_to_trash", trashed.append)
+    _ = call_sync(write_file, "t.txt", "x")
+
+    out = call_sync(delete_path, "t.txt")
+
+    assert out == "deleted file t.txt (moved to system trash)"
+    assert [path.name for path in trashed] == ["t.txt"]
+
+
+def test_recursive_delete_goes_to_the_trash(workspace: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert isinstance(workspace, Path)
+    _elsewhere_than_temp(monkeypatch)
+    trashed: list[Path] = []
+    monkeypatch.setattr(fs_ops, "move_to_trash", trashed.append)
+    _ = call_sync(write_file, "box/a.txt", "a")
+
+    out = call_sync(delete_path, "box", recursive=True)
+
+    assert out == "deleted directory box (moved to system trash)"
+    assert [path.name for path in trashed] == ["box"]
+
+
+def test_a_refused_trash_keeps_the_path(workspace: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert isinstance(workspace, Path)
+    _elsewhere_than_temp(monkeypatch)
+    refused = "error: cannot move to trash: nope (use permanent=true)"
+    monkeypatch.setattr(fs_ops, "move_to_trash", lambda _target: refused)
+    _ = call_sync(write_file, "t.txt", "x")
+
+    out = call_sync(delete_path, "t.txt")
+
+    assert out == refused
+    assert (workspace / "t.txt").is_file()
+
+
+def test_permanent_delete_skips_the_trash(workspace: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert isinstance(workspace, Path)
+
+    def _never(_target: Path) -> str | None:
+        msg = "a permanent delete must not touch the trash"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(fs_ops, "move_to_trash", _never)
+    _ = call_sync(write_file, "t.txt", "x")
+
+    out = call_sync(delete_path, "t.txt", permanent=True)
+
+    assert out == "deleted file t.txt"
+    assert not (workspace / "t.txt").exists()

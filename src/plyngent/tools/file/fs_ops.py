@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from plyngent.agent import ToolTag, invalidate_lineno_read, tool
+from plyngent.tools.trash import move_to_trash, under_system_temp
 from plyngent.tools.workspace import AccessMode, WorkspaceError, get_workspace_root, resolve_path
 
 
@@ -124,37 +125,46 @@ async def move_path(src: str, dst: str, *, overwrite: bool = False) -> str:
     return _copy_or_move_validated(source, dest, root, src=src, dst=dst, overwrite=overwrite, action="move")
 
 
-def _delete_directory(target: Path, path: str, *, recursive: bool) -> str:
-    if recursive:
-        shutil.rmtree(target)
+def _discard(target: Path, path: str, *, kind: str, permanent: bool, detail: str = "") -> str:
+    """Move *target* to the system trash (default), or delete it for good."""
+    if permanent:
+        _remove_existing(target)
         invalidate_lineno_read(str(target))
-        return f"deleted directory {path} (recursive)"
-    try:
-        _ = next(target.iterdir())
-    except StopIteration:
-        target.rmdir()
-        invalidate_lineno_read(str(target))
-        return f"deleted empty directory {path}"
-    return f"error: directory not empty: {path} (set recursive=true)"
+        return f"deleted {kind} {path}{detail}"
+    error = move_to_trash(target)
+    if error is not None:
+        return error
+    invalidate_lineno_read(str(target))
+    return f"deleted {kind} {path} (moved to system trash)"
 
 
-def _delete_target(target: Path, path: str, *, recursive: bool) -> str:
+def _delete_target(target: Path, path: str, *, recursive: bool, permanent: bool) -> str:
+    if target.is_dir() and not target.is_symlink():
+        if recursive:
+            return _discard(target, path, kind="directory", permanent=permanent, detail=" (recursive)")
+        try:
+            _ = next(target.iterdir())
+        except StopIteration:
+            return _discard(target, path, kind="empty directory", permanent=permanent)
+        return f"error: directory not empty: {path} (set recursive=true)"
     if target.is_symlink() or target.is_file():
-        kind = _kind(target)
-        target.unlink()
-        invalidate_lineno_read(str(target))
-        return f"deleted {kind} {path}"
-    if target.is_dir():
-        return _delete_directory(target, path, recursive=recursive)
+        return _discard(target, path, kind=_kind(target), permanent=permanent)
     return f"error: unsupported path type: {path}"
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
-async def delete_path(path: str, *, recursive: bool = False) -> str:
+async def delete_path(path: str, *, recursive: bool = False, permanent: bool = False) -> str:
     """Delete a file or directory under the workspace.
 
-    Files and empty directories are removed always. Non-empty directories require
-    ``recursive=true`` (uses ``shutil.rmtree``). The workspace root cannot be deleted.
+    The path goes to the system trash (the desktop's own trash / Recycle Bin), so
+    a deletion can be undone there; ``permanent=true`` removes it for good
+    instead. Files and empty directories are removed always, while non-empty
+    directories require ``recursive=true`` (uses ``shutil.rmtree``). The
+    workspace root cannot be deleted. When the trash is unavailable for this
+    path, nothing is deleted and the error says how to delete on purpose.
+
+    Paths under the OS temporary directory are deleted for good either way: they
+    are scratch space, not something to restore.
     """
     try:
         target = resolve_path(path, required=AccessMode.WRITE)
@@ -167,6 +177,11 @@ async def delete_path(path: str, *, recursive: bool = False) -> str:
     if target == root:
         return "error: cannot delete the workspace root"
     try:
-        return _delete_target(target, path, recursive=recursive)
+        return _delete_target(
+            target,
+            path,
+            recursive=recursive,
+            permanent=permanent or under_system_temp(target),
+        )
     except OSError as exc:
         return f"error: delete failed: {exc}"

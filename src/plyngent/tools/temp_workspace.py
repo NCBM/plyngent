@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.trash import under_system_temp
 from plyngent.tools.workspace import (
     MAX_TEMPORARY_WORKSPACES,
     WorkspaceError,
@@ -32,22 +33,14 @@ def _sanitize_prefix(prefix: str) -> str:
     return cleaned
 
 
-def _is_under_system_temp(path: Path) -> bool:
-    """True if *path* is under the OS temporary directory (safe to rmtree)."""
-    try:
-        temp_root = Path(tempfile.gettempdir()).expanduser().resolve()
-        resolved = path.expanduser().resolve()
-        _ = resolved.relative_to(temp_root)
-    except OSError, ValueError:
-        return False
-    return True
-
-
 def cleanup_temporary_workspaces() -> int:
     """Remove directories created by :func:`new_temporary_workspace` (chat exit).
 
     Only deletes paths still under the system temp dir. Returns the number of
     directories removed. No-op when no instance is bound.
+
+    These are scratch directories, so they are removed for good rather than
+    moved to the trash the delete tool would use.
     """
     from plyngent.tools.context import get_instance
 
@@ -55,7 +48,7 @@ def cleanup_temporary_workspaces() -> int:
         return 0
     removed = 0
     for path in pop_owned_temporary_workspaces():
-        if not _is_under_system_temp(path):
+        if not under_system_temp(path):
             remove_workspace_allowlist(path)
             continue
         if path.is_dir():
