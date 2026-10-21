@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, override
 import pytest
 
 from plyngent.agent import ToolOutput
-from plyngent.tools.context import read_only_context
+from plyngent.tools.context import get_instance, read_only_context
 from plyngent.tools.danger import classify_danger
 from plyngent.tools.net import fetch_local, grant_private_host
 from plyngent.tools.net.policy import (
@@ -223,6 +223,24 @@ async def test_an_image_response_comes_back_as_the_picture(workspace: Path, http
     assert "status=200" in output.text
     part = output.images[0]
     assert part.image_url.url.startswith("data:image/png;base64,")
+
+
+async def test_a_text_only_model_keeps_the_metadata_and_the_reason(
+    workspace: Path,
+    http_server: str,
+) -> None:
+    """The picture stays behind, and the model is told why (``image_in``)."""
+    grant_private_host("127.0.0.1", int(http_server.rsplit(":", 1)[1]))
+    instance = get_instance()
+    assert instance is not None
+    instance.workspace.image_in = False
+    instance.workspace.image_model = ("ds", "text-only")
+
+    output = await fetch_local.handler(f"{http_server}/png")
+
+    assert isinstance(output, str)
+    assert "body_kind=image" in output
+    assert "error: model 'text-only' does not accept image input" in output
 
 
 async def test_fetch_read_only_context_blocks_non_get(workspace: Path, http_server: str) -> None:

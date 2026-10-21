@@ -16,6 +16,7 @@ from plyngent.lmproto.openai_compatible.model import (
     ToolChatMessage,
     UserChatMessage,
 )
+from plyngent.tools.context import InstanceState
 
 
 def _image() -> ChatImagePart:
@@ -100,3 +101,36 @@ def test_the_char_estimate_counts_images() -> None:
     assert estimate_message_chars(ToolChatMessage(content="shot", tool_call_id="call-1", images=[_image()])) == (
         len("shot") + len("call-1") + IMAGE_CHARS
     )
+
+
+def _registry_for(instance: InstanceState) -> ToolRegistry:
+    @tool(register=False)
+    def shot() -> ToolOutput:
+        """Pretend to take a screenshot."""
+        return ToolOutput(text="image: shot.png (2 KB)", images=[_image()])
+
+    return ToolRegistry([shot], instance_state=instance)
+
+
+async def test_a_text_only_model_never_receives_a_plugin_tool_image() -> None:
+    """The registry is the safety net for tools that do not check ``image_in``."""
+    instance = InstanceState()
+    instance.workspace.image_in = False
+    instance.workspace.image_model = ("ds", "text-only")
+
+    output = await _registry_for(instance).execute_output("shot", "{}")
+
+    assert output.text.startswith("image: shot.png (2 KB)")
+    assert "image dropped" in output.text
+    assert "image_in = true" in output.text
+    assert not output.has_images
+
+
+async def test_a_vision_model_keeps_a_plugin_tool_image() -> None:
+    instance = InstanceState()
+    instance.workspace.image_in = True
+
+    output = await _registry_for(instance).execute_output("shot", "{}")
+
+    assert output.text == "image: shot.png (2 KB)"
+    assert output.images == [_image()]

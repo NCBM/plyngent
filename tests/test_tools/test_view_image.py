@@ -6,6 +6,7 @@ import base64
 from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolOutput
+from plyngent.tools.context import get_instance
 from plyngent.tools.file.read import read_file
 from plyngent.tools.file.view_image import view_image
 
@@ -58,6 +59,21 @@ async def test_a_missing_file_is_an_error(workspace: Path) -> None:
     del workspace
 
     assert await view_image.handler("nope.png") == "error: file not found: nope.png"
+
+
+async def test_a_text_only_model_gets_the_reason_instead_of_the_picture(workspace: Path) -> None:
+    """``image_in`` gates the tool exactly like an ``@path`` mention."""
+    (workspace / "shot.png").write_bytes(PNG)
+    instance = get_instance()
+    assert instance is not None
+    instance.workspace.image_in = False
+    instance.workspace.image_model = ("deepseek", "deepseek-v4-pro")
+
+    result = await view_image.handler("shot.png")
+
+    assert isinstance(result, str)
+    assert result.startswith("error: model 'deepseek-v4-pro' does not accept image input")
+    assert 'set image_in = true under [providers.deepseek.models."deepseek-v4-pro"]' in result
 
 
 async def test_read_file_points_at_view_image_for_a_picture(workspace: Path) -> None:

@@ -24,6 +24,8 @@ from plyngent.lmproto.openai_compatible.model import (
     UserChatMessage,
 )
 from plyngent.memory import MemoryStore
+from plyngent.tools import image_input_refusal
+from plyngent.tools.context import bind_instance
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -855,3 +857,23 @@ async def test_a_picture_mention_is_skipped_for_a_text_only_model(
     note = payload.notes[0]
     assert "does not accept image input" in note
     assert "image_in = true" in note
+
+
+async def test_the_tool_image_gate_follows_the_selected_model(state: ReplState) -> None:
+    """The image-carrying tools read the same verdict the mention gate uses."""
+    policy = state.instance_state.workspace
+
+    state.sync_image_capability()
+    assert policy.image_in is False
+    assert policy.image_model == (state.provider_name, state.model)
+
+    state.provider.models[state.model] = ModelConfig(image_in=True)
+    state.sync_image_capability()
+    assert policy.image_in is True
+
+    state.provider.models[state.model] = ModelConfig(image_in=False)
+    state.sync_image_capability()
+    with bind_instance(state.instance_state):
+        refusal = image_input_refusal()
+    assert refusal is not None
+    assert f'[providers.{state.provider_name}.models."{state.model}"]' in refusal

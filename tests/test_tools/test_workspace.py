@@ -9,10 +9,12 @@ from plyngent.tools import (
     check_command_allowed,
     get_trash_enabled,
     get_workspace_root,
+    image_input_refusal,
     mode_covers,
     parse_access_mode,
     resolve_path,
     set_command_denylist,
+    set_image_in,
     set_path_denylist,
     set_trash_enabled,
 )
@@ -65,6 +67,34 @@ def test_trash_switch(workspace: object) -> None:
     assert get_trash_enabled() is False
     set_trash_enabled(enabled=True)
     assert get_trash_enabled() is True
+
+
+def test_image_switch(workspace: object) -> None:
+    """A picture is refused once the host says the model cannot take one."""
+    del workspace
+    assert image_input_refusal() is None
+
+    set_image_in(image_in=False)
+    unnamed = image_input_refusal()
+    assert unnamed is not None
+    assert "does not accept image input" in unnamed
+
+    set_image_in(image_in=False, provider="ds", model="text-only")
+    named = image_input_refusal()
+    assert named is not None
+    assert "model 'text-only' does not accept image input" in named
+    assert '[providers.ds.models."text-only"]' in named
+
+    set_image_in(image_in=True, provider="ds", model="vision")
+    assert image_input_refusal() is None
+
+
+def test_the_image_switch_needs_a_declaration(workspace: object) -> None:
+    """No host verdict (``None``) sends the picture: only ``False`` refuses."""
+    del workspace
+    policy = active_workspace_policy()
+    assert policy.image_in is None
+    assert image_input_refusal() is None
 
 
 def test_config_grant_modes(workspace: object, tmp_path_factory: pytest.TempPathFactory) -> None:
