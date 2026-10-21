@@ -32,8 +32,10 @@
       ``@tool`` / tags / registry. History stays chat-completions-shaped.
     - tools: Workspace file/process/VCS/chat/todo/net/skill tools + directory-access
       grants (`access`); catalog; plugins; instance/session context and views.
-    - prompting: Shared ask/choose/form for CLI and tools.
-    - cli: Click entry, slash registry, REPL, one-shot chat.
+    - prompting: Shared ask/choose/form for CLI and tools; the hooks a host uses
+      to take over a prompt (output break, SIGINT guard, waiting notification).
+    - cli: Click entry, slash registry, REPL, one-shot chat; `notify` announces a
+      prompt that waits on the human.
     - web: Web service (Phase H; not implemented).
 
 Plugins (third-party entry points, allowlisted under ``[plugins]``): [plugins.md](./plugins.md).
@@ -41,4 +43,6 @@ Conversation units (a *round* = one request→response plus its tool batch, a
 *turn* = a user message to the explicit stop): [turns-and-rounds.md](./turns-and-rounds.md).
 Images (a turn's pictures, a tool result's pictures, what each wire surface
 takes): [images.md](./images.md).
+Prompt notifications (a prompt that waits on the human, and how it can be
+answered from the notification): [notifications.md](./notifications.md).
 
