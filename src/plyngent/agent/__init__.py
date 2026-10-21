@@ -34,6 +34,7 @@ from .tools import ToolBatchConfirmHook as ToolBatchConfirmHook
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolConfirmRequest as ToolConfirmRequest
 from .tools import ToolDefinition as ToolDefinition
+from .tools import ToolOutput as ToolOutput
 from .tools import ToolRegistry as ToolRegistry
 from .tools import ToolTag as ToolTag
 from .tools import schema_from_callable as schema_from_callable

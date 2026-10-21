@@ -7,7 +7,10 @@ from msgspec import UNSET
 
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
+    ChatImagePart,
+    ChatTextPart,
     ToolChatMessage,
+    UserChatMessage,
 )
 
 if TYPE_CHECKING:
@@ -23,6 +26,11 @@ DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
 # Soft-compact: leave this many most-recent tool results at full size.
 DEFAULT_RECENT_TOOL_RESULTS = 12
+
+# What one image costs in chars: a provider bills it by its resized size, at most
+# 1024 tokens, and this estimator works in chars at ~4 chars/token. The shrinkers
+# below never drop an image, so they must at least count it.
+IMAGE_CHARS = 4_096
 
 # Backward-compat alias (older code/docs may still import this name).
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
@@ -50,12 +58,21 @@ def truncate_tool_result(
     return truncate_generic(text, max_chars)
 
 
+def _content_chars(content: str | list[ChatTextPart | ChatImagePart]) -> int:
+    if isinstance(content, str):
+        return len(content)
+    return sum(len(part.text) if isinstance(part, ChatTextPart) else IMAGE_CHARS for part in content)
+
+
 def estimate_message_chars(message: AnyChatMessage) -> int:
     """Rough character estimate for soft context budgeting (not tokenizer-accurate)."""
     total = 0
-    content = getattr(message, "content", None)
-    if isinstance(content, str):
-        total += len(content)
+    if isinstance(message, UserChatMessage):
+        total += _content_chars(message.content)
+    else:
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            total += len(content)
     if isinstance(message, AssistantChatMessage):
         tool_calls = message.tool_calls
         if tool_calls is not UNSET and tool_calls:
@@ -71,6 +88,9 @@ def estimate_message_chars(message: AnyChatMessage) -> int:
                     total += len(getattr(custom, "input", "") or "")
     if isinstance(message, ToolChatMessage):
         total += len(message.tool_call_id)
+        images = message.images
+        if images is not UNSET and images:
+            total += IMAGE_CHARS * len(images)
     return total
 
 

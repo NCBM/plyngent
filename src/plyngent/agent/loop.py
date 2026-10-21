@@ -93,7 +93,7 @@ async def _run_one_tool(
 ) -> tuple[ToolChatMessage, ErrorEvent | None]:
     if isinstance(call, AssistantFunctionToolCall):
         try:
-            result_text = await tools.execute(call.function.name, call.function.arguments, decision=decision)
+            output = await tools.execute_output(call.function.name, call.function.arguments, decision=decision)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -101,8 +101,16 @@ async def _run_one_tool(
             err = ErrorEvent(message=result_text, retryable=True, source="tool")
             truncated = truncate_tool_result(result_text, max_result_chars)
             return ToolChatMessage(content=truncated, tool_call_id=call.id), err
-        truncated = truncate_tool_result(result_text, max_result_chars)
-        return ToolChatMessage(content=truncated, tool_call_id=call.id), None
+        # Only the text is capped; an image the tool returned rides along whole.
+        truncated = truncate_tool_result(output.text, max_result_chars)
+        return (
+            ToolChatMessage(
+                content=truncated,
+                tool_call_id=call.id,
+                images=output.images or UNSET,
+            ),
+            None,
+        )
     msg = ToolChatMessage(
         content="error: custom tool calls are not supported",
         tool_call_id=call.id,

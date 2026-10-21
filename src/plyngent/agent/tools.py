@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, cast, get_args, get_origin, get_type_hints, overload
 
 import msgspec
+from msgspec import Struct
 
-from plyngent.lmproto.openai_compatible.model import ToolFunction, ToolFunctionItem
+from plyngent.lmproto.openai_compatible.model import ChatImagePart, ToolFunction, ToolFunctionItem
 from plyngent.typedef import JSONSchema  # noqa: TC001
 
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
@@ -23,6 +24,24 @@ type ToolConfirmHook = Callable[
     [str, Mapping[str, object], str],
     ToolConfirmResult | Awaitable[ToolConfirmResult],
 ]
+
+
+class ToolOutput(Struct):
+    """A tool result: the model-facing text, plus images the model should see.
+
+    Most tools return their text directly; one that produced an image (a
+    screenshot, a chart, a downloaded picture) returns this so the image rides
+    along with the text that explains it. ``execute`` hands the pair to the
+    loop, which keeps the text as the tool message's content and the images
+    beside it.
+    """
+
+    text: str
+    images: list[ChatImagePart] = msgspec.field(default_factory=list)
+
+    @property
+    def has_images(self) -> bool:
+        return bool(self.images)
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,7 +463,7 @@ class ToolRegistry:
                 return f"error: tool {definition.name!r} requires session state (SESSION_STATE) but none is bound"
         return None
 
-    async def _invoke(self, definition: ToolDefinition, args: dict[str, object]) -> str:
+    async def _invoke(self, definition: ToolDefinition, args: dict[str, object]) -> str | ToolOutput:
         try:
             result = definition.handler(**args)
             if inspect.isawaitable(result):
@@ -455,7 +474,7 @@ class ToolRegistry:
             return f"error: invalid tool arguments: {exc}"
         except Exception as exc:  # noqa: BLE001 — surface tool failures to the model
             return f"error: tool {definition.name!r} failed: {exc}"
-        if isinstance(result, str):
+        if isinstance(result, str | ToolOutput):
             return result
         return msgspec.json.encode(result).decode()
 
@@ -645,28 +664,42 @@ class ToolRegistry:
         *,
         decision: BatchConfirmDecision | None = None,
     ) -> str:
-        """Run a tool by name; returns a string result (errors become error text).
+        """Run a tool by name; returns its text (errors become error text).
 
-        *decision* is the host's answer for this call from
-        :meth:`prepare_batch_confirm`; ``None`` means the call was not part of an
-        aggregated prompt and confirms on its own.
+        An image the tool returned is dropped here — this is the text-only entry
+        point. :meth:`execute_output` returns it; the agent loop uses that one.
+        """
+        return (await self.execute_output(name, arguments_json, decision=decision)).text
+
+    async def execute_output(
+        self,
+        name: str,
+        arguments_json: str,
+        *,
+        decision: BatchConfirmDecision | None = None,
+    ) -> ToolOutput:
+        """Run a tool by name; returns its text plus any images it produced.
+
+        Errors become error text. *decision* is the host's answer for this call
+        from :meth:`prepare_batch_confirm`; ``None`` means the call was not part
+        of an aggregated prompt and confirms on its own.
         """
         definition = self._tools.get(name)
         if definition is None:
-            return f"error: unknown tool {name!r}"
+            return ToolOutput(text=f"error: unknown tool {name!r}")
         args = _decode_tool_args(arguments_json)
         if isinstance(args, str):
-            return args
+            return ToolOutput(text=args)
         # Argument shape/coverage problems are answered before any confirm prompt:
         # the human should never be asked about a call that cannot run.
         missing_error = _missing_required_error(definition, args)
         if missing_error is not None:
-            return missing_error
+            return ToolOutput(text=missing_error)
 
-        async def _run() -> str:
+        async def _run() -> ToolOutput:
             missing = self._check_state_tags(definition)
             if missing is not None:
-                return missing
+                return ToolOutput(text=missing)
             # Held before the confirm prompt, so a sibling call writing the same
             # file waits for this one instead of overtaking its prompt.
             async with AsyncExitStack() as held:
@@ -674,8 +707,9 @@ class ToolRegistry:
                     await held.enter_async_context(lock)
                 denied = await self._maybe_confirm(name, args, tags=definition.tags, decision=decision)
                 if denied is not None:
-                    return denied
-                return await self._invoke(definition, args)
+                    return ToolOutput(text=denied)
+                result = await self._invoke(definition, args)
+                return result if isinstance(result, ToolOutput) else ToolOutput(text=result)
 
         # Bind host-provided state for tools that read contextvars (todo, workspace).
         # Tag enforcement remains gated by ``auto_bind_state``; binding is always useful
