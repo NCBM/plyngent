@@ -34,6 +34,19 @@ def _echo_interrupted() -> None:
         click.echo()
 
 
+async def _send_turn(state: ReplState, text: str) -> None:
+    """Send one user turn, attaching whatever its ``@path`` mentions point at."""
+    from plyngent.cli.mentions import resolve_mentions
+
+    payload = resolve_mentions(state, text)
+    for note in payload.notes:
+        click.secho(note, fg="yellow")
+    try:
+        _ = await run_user_text_with_retries(state.agent, payload.text, images=payload.images or None)
+    finally:
+        state.expire_yolo_once()
+
+
 async def run_repl(state: ReplState) -> None:
     """Interactive chat loop with readline editing, history, and Tab completion."""
     setup_readline(state)
@@ -79,16 +92,10 @@ async def run_repl(state: ReplState) -> None:
                     text = state.pending_user_text
                     state.pending_user_text = None
                     _echo_user(text)
-                    try:
-                        _ = await run_user_text_with_retries(state.agent, text)
-                    finally:
-                        state.expire_yolo_once()
+                    await _send_turn(state, text)
                 continue
 
             _echo_user(entry)
-            try:
-                _ = await run_user_text_with_retries(state.agent, entry)
-            finally:
-                state.expire_yolo_once()
+            await _send_turn(state, entry)
         except KeyboardInterrupt:
             _echo_interrupted()

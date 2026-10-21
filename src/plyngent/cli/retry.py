@@ -13,10 +13,11 @@ from plyngent.cli.interrupt import install_sigint_router, sigint_cancels
 from plyngent.cli.limits import reset_auto_continue_turn
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Coroutine
+    from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 
     from plyngent.agent import AgentEvent
     from plyngent.agent.chat import ChatAgent
+    from plyngent.lmproto.openai_compatible.model import ChatImagePart
 
 # Auto-retry budget after the first failure (10 attempts by default).
 DEFAULT_MAX_AUTO_RETRIES = 10
@@ -238,10 +239,11 @@ async def run_user_text_with_retries(
     agent: ChatAgent,
     text: str,
     *,
+    images: Sequence[ChatImagePart] | None = None,
     delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS_SECONDS,
 ) -> bool:
     """Send a new user message with auto-retry (empty ``delays`` = no auto-retry)."""
-    return await run_turn_with_retries(agent, starter=lambda: agent.run(text), delays=delays)
+    return await run_turn_with_retries(agent, starter=lambda: agent.run(text, images=images), delays=delays)
 
 
 async def retry_pending_with_retries(agent: ChatAgent) -> bool:

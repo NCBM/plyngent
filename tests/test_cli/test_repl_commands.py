@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import base64
 from typing import TYPE_CHECKING, Literal, overload
 
 import pytest
 import tomlkit
 
 from plyngent.agent import ChatAgent, Notice
+from plyngent.cli.mentions import resolve_mentions
+from plyngent.cli.repl import _send_turn
 from plyngent.cli.slash import handle_slash
 from plyngent.cli.state import ReplState
-from plyngent.config.models import DatabaseConfig, OpenAIProvider
+from plyngent.config.models import DatabaseConfig, ModelConfig, OpenAIProvider
 from plyngent.config.store import ConfigStore
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -16,12 +19,26 @@ from plyngent.lmproto.openai_compatible.model import (
     ChatCompletionChunk,
     ChatCompletionResponse,
     ChatCompletionsParam,
+    ChatImagePart,
+    ChatTextPart,
+    UserChatMessage,
 )
 from plyngent.memory import MemoryStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
+
+
+# A real 1x1 PNG: ``/image`` sniffs the format from these bytes.
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def _accept_images(state: ReplState) -> None:
+    """Mark the fixture's model as taking pictures (the config default is text-only)."""
+    state.provider.models[state.model] = ModelConfig(image_in=True)
 
 
 class DummyClient:
@@ -543,7 +560,7 @@ async def test_repl_ctrl_c_from_turn_returns_to_prompt(
             raise EOFError
         return "hello"
 
-    async def interrupted_turn(_agent: object, _text: str) -> bool:
+    async def interrupted_turn(_agent: object, _text: str, **_kwargs: object) -> bool:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(repl_mod, "setup_readline", lambda _state: None)
@@ -573,7 +590,7 @@ async def test_repl_second_ctrl_c_after_cancel_returns_to_prompt(
             raise EOFError
         return reads[calls["reads"] - 1]
 
-    async def cancel_turn(_agent: object, _text: str) -> bool:
+    async def cancel_turn(_agent: object, _text: str, **_kwargs: object) -> bool:
         raise KeyboardInterrupt  # first Ctrl+C: cancels every turn
 
     def echo_user(text: str) -> None:
@@ -780,3 +797,61 @@ async def test_todos_update_takes_a_listing_number(state: ReplState, capsys: pyt
 
     assert await handle_slash(state, "/todos pop") is True
     assert "popped TOP group (first, second)" in capsys.readouterr().out
+
+
+async def test_a_mention_attaches_the_picture_to_the_turn(state: ReplState, tmp_path: Path) -> None:
+    _accept_images(state)
+    shot = tmp_path / "shot.png"
+    _ = shot.write_bytes(_PNG)
+    state.agent.stream = False
+
+    payload = resolve_mentions(state, f"look at @{shot}")
+    assert payload.notes == []
+    assert len(payload.images) == 1
+    assert payload.text == f"look at @{shot}"
+
+    await _send_turn(state, payload.text)
+    user = next(m for m in state.agent.messages if isinstance(m, UserChatMessage))
+    assert isinstance(user.content, list)
+    text_part, image_part = user.content
+    assert isinstance(text_part, ChatTextPart)
+    assert text_part.text == f"look at @{shot}"
+    assert isinstance(image_part, ChatImagePart)
+    assert image_part.image_url.url.startswith("data:image/png;base64,")
+
+
+async def test_a_mention_inlines_a_text_file(state: ReplState, tmp_path: Path) -> None:
+    notes = tmp_path / "notes.txt"
+    _ = notes.write_text("the deploy needs acme", encoding="utf-8")
+
+    payload = resolve_mentions(state, f"read @{notes}")
+
+    assert payload.images == []
+    assert payload.notes == []
+    assert payload.text.startswith(f"read @{notes}")
+    assert f"--- @{notes} (21 chars) ---" in payload.text
+    assert payload.text.endswith("the deploy needs acme")
+
+
+async def test_a_mention_of_a_missing_file_is_a_note(state: ReplState, tmp_path: Path) -> None:
+    payload = resolve_mentions(state, "@nope.png is gone")
+
+    assert payload.images == []
+    assert payload.notes == ["@nope.png: file not found"]
+    assert payload.text == "@nope.png is gone"
+
+
+async def test_a_picture_mention_is_skipped_for_a_text_only_model(
+    state: ReplState,
+    tmp_path: Path,
+) -> None:
+    """``image_in`` is the gate: a text-only model never receives a picture."""
+    shot = tmp_path / "shot.png"
+    _ = shot.write_bytes(_PNG)
+
+    payload = resolve_mentions(state, f"@{shot}")
+
+    assert payload.images == []
+    note = payload.notes[0]
+    assert "does not accept image input" in note
+    assert "image_in = true" in note

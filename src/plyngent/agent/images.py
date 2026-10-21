@@ -14,8 +14,19 @@ and over. A larger image has to be resized first.
 from __future__ import annotations
 
 import base64
+from typing import TYPE_CHECKING
 
-from plyngent.lmproto.openai_compatible.model import ChatImagePart, ChatImageUrl, ImageDetail
+from plyngent.lmproto.openai_compatible.model import (
+    ChatImagePart,
+    ChatImageUrl,
+    ChatTextPart,
+    ImageDetail,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from plyngent.lmproto.openai_compatible.model import ChatContentPart
 
 # Inline payload ceiling for one image (the API allows 32 MiB; see the module docstring).
 MAX_INLINE_IMAGE_BYTES = 8 * 1024 * 1024
@@ -74,3 +85,17 @@ def image_part_from_bytes(data: bytes, *, detail: ImageDetail = "auto") -> ChatI
 def image_part_from_url(url: str, *, detail: ImageDetail = "auto") -> ChatImagePart:
     """An image part for a public ``http(s)`` URL or an inline ``data:`` URL."""
     return ChatImagePart(image_url=ChatImageUrl(url=url, detail=detail))
+
+
+def user_content(
+    text: str,
+    images: Sequence[ChatImagePart] | None = None,
+) -> str | list[ChatContentPart]:
+    """A user turn's content: the text alone, or a part array when images ride along."""
+    if not images:
+        return text
+    parts: list[ChatContentPart] = []
+    if text:
+        parts.append(ChatTextPart(text=text))
+    parts.extend(images)
+    return parts

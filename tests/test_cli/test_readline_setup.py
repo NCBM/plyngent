@@ -170,6 +170,46 @@ def test_completer_stream_on_off(tmp_path: object, monkeypatch: object) -> None:
     assert completer("o", 1) == "off"
 
 
+def test_completer_path_mentions(tmp_path: object, monkeypatch: object) -> None:
+    """An ``@path`` token completes files, wherever it sits in the line."""
+    import readline
+    from pathlib import Path
+
+    import pytest
+
+    assert isinstance(tmp_path, Path)
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+    (tmp_path / "shot.png").write_bytes(b"")
+    (tmp_path / "screens").mkdir()
+
+    state = _minimal_state(tmp_path)
+    completer = build_completer(state)
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "look at @sh")
+    monkeypatch.setattr(readline, "get_begidx", lambda: len("look at "))
+    monkeypatch.chdir(tmp_path)
+
+    found = [item for index in range(10) if (item := completer("@sh", index)) is not None]
+    assert found == ["@shot.png"]
+
+
+def test_a_plain_word_is_still_a_slash_argument(tmp_path: object, monkeypatch: object) -> None:
+    """The mention branch must not swallow ordinary argument completion."""
+    import readline
+    from pathlib import Path
+
+    import pytest
+
+    assert isinstance(tmp_path, Path)
+    assert isinstance(monkeypatch, pytest.MonkeyPatch)
+
+    state = _minimal_state(tmp_path)
+    completer = build_completer(state)
+    monkeypatch.setattr(readline, "get_line_buffer", lambda: "/provider r")
+    monkeypatch.setattr(readline, "get_begidx", lambda: len("/provider "))
+
+    assert completer("r", 0) == "remote"
+
+
 def test_complete_slash_args_from_registry(tmp_path: object) -> None:
     from pathlib import Path
 

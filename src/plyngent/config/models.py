@@ -344,9 +344,9 @@ class ProviderConfig(Struct, tag_field="preset", omit_defaults=True):
 def _default_openai_models() -> dict[str, ModelConfig]:
     """Current OpenAI text catalog when TOML omits ``models``."""
     return {
-        "gpt-5.4": ModelConfig(text=True),
-        "gpt-5.4-mini": ModelConfig(text=True),
-        "gpt-5.4-nano": ModelConfig(text=True),
+        "gpt-5.4": ModelConfig(text=True, image_in=True),
+        "gpt-5.4-mini": ModelConfig(text=True, image_in=True),
+        "gpt-5.4-nano": ModelConfig(text=True, image_in=True),
     }
 
 
@@ -382,9 +382,14 @@ class AnthropicProvider(ProviderConfig, tag="anthropic"):
 
 
 def _default_deepseek_models() -> dict[str, ModelConfig]:
-    """Current DeepSeek text catalog when TOML omits ``models``."""
+    """Current DeepSeek text catalog when TOML omits ``models``.
+
+    Only ``deepseek-flash`` reads pictures (JPEG, PNG, GIF, WebP in a user
+    message); ``deepseek-v4-pro`` stays text-only, so ``image_in`` is the flag
+    that decides whether a turn may carry one.
+    """
     return {
-        "deepseek-flash": ModelConfig(text=True),
+        "deepseek-flash": ModelConfig(text=True, image_in=True),
         "deepseek-v4-pro": ModelConfig(text=True),
     }
 

@@ -28,6 +28,7 @@ from .directive_checkpoint import (
     parse_checkpoint_bands,
 )
 from .events import UsageEvent
+from .images import user_content
 from .loop import DEFAULT_MAX_ROUNDS, DEFAULT_MAX_TRUNCATION_CONTINUES, run_chat_loop
 from .notices import TRUNCATED_NOTICE_KIND, notice_of_kind
 from .todo_nag import (
@@ -41,7 +42,7 @@ from .usage import TokenUsage
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
-    from plyngent.lmproto.openai_compatible.model import AnyAssistantToolCall, AnyChatMessage
+    from plyngent.lmproto.openai_compatible.model import AnyAssistantToolCall, AnyChatMessage, ChatImagePart
     from plyngent.memory import MemoryStore
 
     from .events import AgentEvent
@@ -664,11 +665,20 @@ class ChatAgent:
             await self._persist_range(self._persist_from, len(self.messages))
         await self._persist_context_usage()
 
-    async def run(self, user_text: str) -> AsyncIterator[AgentEvent]:
-        """Append a user message (persist immediately), run the tool loop, yield events."""
+    async def run(
+        self,
+        user_text: str,
+        *,
+        images: Sequence[ChatImagePart] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Append a user message (persist immediately), run the tool loop, yield events.
+
+        *images* ride along with the text as content parts, which is the shape
+        the model sees an attachment in (see ``agent.images``).
+        """
         _ = reset_lineno_tracker()
         self._ensure_system_prompt()
-        user_msg = UserChatMessage(content=user_text)
+        user_msg = UserChatMessage(content=user_content(user_text, images))
         self.messages.append(user_msg)
         await self._persist(user_msg)
         self._persist_from = len(self.messages)

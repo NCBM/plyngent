@@ -45,12 +45,16 @@ def build_completer(state: ReplState) -> Callable[[str, int], str | None]:
     def completer(text: str, state_index: int) -> str | None:
         import readline
 
+        from plyngent.cli.mentions import mention_completions
         from plyngent.cli.slash import complete_slash_args
 
         buffer = readline.get_line_buffer()
         begidx = readline.get_begidx()
+        # An ``@path`` mention completes files wherever it sits in the line.
+        if text.startswith("@"):
+            options = mention_completions(text)
         # Completing the first token (command).
-        if begidx == 0 or (begidx > 0 and buffer[:begidx].strip() == ""):
+        elif begidx == 0 or (begidx > 0 and buffer[:begidx].strip() == ""):
             options = filter_prefix(text, slash_commands())
         else:
             head = buffer[:begidx].strip()
