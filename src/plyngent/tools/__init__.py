@@ -105,6 +105,7 @@ from .workspace import get_trash_enabled as get_trash_enabled
 from .workspace import get_workspace_root as get_workspace_root
 from .workspace import grant_policy_command as grant_policy_command
 from .workspace import granted_access_mode as granted_access_mode
+from .workspace import image_input_refusal as image_input_refusal
 from .workspace import list_workspace_allowlist as list_workspace_allowlist
 from .workspace import match_command_denylist as match_command_denylist
 from .workspace import mode_covers as mode_covers
@@ -113,6 +114,7 @@ from .workspace import pop_owned_temporary_workspaces as pop_owned_temporary_wor
 from .workspace import remove_workspace_allowlist as remove_workspace_allowlist
 from .workspace import resolve_path as resolve_path
 from .workspace import set_command_denylist as set_command_denylist
+from .workspace import set_image_in as set_image_in
 from .workspace import set_path_denylist as set_path_denylist
 from .workspace import set_policy_confirm_hook as set_policy_confirm_hook
 from .workspace import set_policy_confirm_timeout as set_policy_confirm_timeout

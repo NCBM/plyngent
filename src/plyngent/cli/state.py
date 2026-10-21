@@ -507,6 +507,7 @@ class ReplState:
         # Preserve live stream toggle if agent already exists.
         if hasattr(self, "agent"):
             self.stream_enabled = self.agent.stream
+        self.sync_image_capability()
         self.client = create_client(self.provider, model=self.model, reasoning=self.reasoning)
         self.agent = self._make_agent()
         # Restore history without re-marking already-stored messages as dirty.
@@ -516,6 +517,21 @@ class ReplState:
         # Drop remote catalog when provider identity/url changed (not on model-only switch).
         if self._remote_models_key is not None and self._remote_models_key != self._models_cache_key():
             self.invalidate_remote_models()
+
+    def sync_image_capability(self) -> None:
+        """Publish the selected model's ``image_in`` to the image-carrying tools.
+
+        Same verdict the ``@path`` mention gate uses: only a model declared with
+        ``image_in = true`` takes pictures, so a text-only model (or one behind a
+        gateway that cannot read image blocks) is answered with an error instead
+        of a picture it could never describe.
+        """
+        from plyngent.config.routing import model_config_for
+
+        model_config = model_config_for(self.provider, self.model)
+        policy = self.instance_state.workspace
+        policy.image_in = model_config is not None and bool(model_config.image_in)
+        policy.image_model = (self.provider_name, self.model)
 
     def _models_cache_key(self) -> tuple[str, str]:
         # Remote model lists belong to the provider endpoint used for discovery,

@@ -58,6 +58,27 @@ class ToolOutput(Struct):
         return bool(self.images)
 
 
+def _without_refused_images(output: ToolOutput) -> ToolOutput:
+    """Drop a picture the selected model cannot take, and say why.
+
+    ``view_image`` and ``fetch_local`` refuse on their own, before any bytes are
+    read, so the model gets a clean error. This is the safety net for the rest —
+    an MCP server's image content, a plugin's ``ToolOutput`` — where the picture
+    would otherwise reach a model that answers ``[Unsupported Image]``, or a
+    gateway that hands it raw base64 (see ``doc/images.md``).
+    """
+    if not output.images:
+        return output
+    from plyngent.tools.workspace import image_input_refusal
+
+    refusal = image_input_refusal()
+    if refusal is None:
+        return output
+    note = refusal.removeprefix("error: ")
+    text = f"{output.text}\n(error: image dropped: {note})" if output.text else f"error: image dropped: {note}"
+    return ToolOutput(text=text)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolConfirmRequest:
     """One call of a batch that needs a soft confirm before it may run."""
@@ -737,7 +758,7 @@ class ToolRegistry:
                 if denied is not None:
                     return ToolOutput(text=denied)
                 result = await self._invoke(definition, args)
-                return result if isinstance(result, ToolOutput) else ToolOutput(text=result)
+                return _without_refused_images(result if isinstance(result, ToolOutput) else ToolOutput(text=result))
 
         # Bind host-provided state for tools that read contextvars (todo, workspace).
         # Tag enforcement remains gated by ``auto_bind_state``; binding is always useful

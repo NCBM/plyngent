@@ -122,6 +122,14 @@ class WorkspacePolicy:
     static_read: list[Path] = field(default_factory=list)
     # ``[trash] enabled``: deletes go to the system trash unless cleared.
     trash_enabled: bool = True
+    # ``[providers.*.models.*].image_in`` of the model this host is talking to:
+    # ``None`` = the host did not say, so a picture is passed through unchanged.
+    # ``False`` makes every image-carrying tool refuse, instead of sending bytes
+    # the model cannot read (the provider answers ``[Unsupported Image]``, or a
+    # gateway that ignores the block hands the model raw base64).
+    image_in: bool | None = None
+    # ``(provider name, model id)`` that verdict came from, for the message.
+    image_model: tuple[str, str] | None = None
 
 
 def _bound_instance() -> InstanceState | None:
@@ -198,6 +206,40 @@ def set_trash_enabled(*, enabled: bool) -> None:
 def get_trash_enabled() -> bool:
     """Whether deletes go to the system trash rather than being final."""
     return active_workspace_policy().trash_enabled
+
+
+def set_image_in(*, image_in: bool | None, provider: str | None = None, model: str | None = None) -> None:
+    """Record whether the current model takes pictures (``image_in``).
+
+    ``None`` means the host did not declare it, and an image is sent as usual;
+    ``False`` is the explicit opt-out the image-carrying tools and the agent's
+    tool registry check through :func:`image_input_refusal`.
+    """
+    policy = active_workspace_policy()
+    policy.image_in = image_in
+    policy.image_model = (provider, model) if provider and model else None
+
+
+def image_input_refusal() -> str | None:
+    """``error: …`` text for an image the current model cannot take, else ``None``.
+
+    Mirrors the ``@path`` mention gate (``cli/mentions.py``): a picture is not
+    sent to a model whose ``image_in`` is off. The message names the config key
+    that turns it on, so the fix is one line away. With no instance bound the
+    host has declared nothing, and the picture passes through.
+    """
+    instance = _bound_instance()
+    if instance is None:
+        return None
+    policy = instance.workspace
+    if policy.image_in is not False:
+        return None
+    named = policy.image_model
+    if named is None:
+        return "error: this model does not accept image input (set image_in = true in the provider config)"
+    provider, model = named
+    hint = f'set image_in = true under [providers.{provider}.models."{model}"]'
+    return f"error: model {model!r} does not accept image input ({hint})"
 
 
 def set_command_denylist(names: list[str] | tuple[str, ...] | frozenset[str] | None) -> None:

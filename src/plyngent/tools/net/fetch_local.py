@@ -19,6 +19,7 @@ from plyngent.tools.net.policy import (
     soft_confirm_reason,
 )
 from plyngent.tools.truncate_token import truncate_to_memory
+from plyngent.tools.workspace import image_input_refusal
 
 
 def format_fetch_result(
@@ -147,10 +148,14 @@ def _attach_image(text: str, result: FetchResult) -> str | ToolOutput:
     """An image response is handed over as a picture, beside the usual metadata.
 
     The preview line stays in the text so ``body_kind=image`` and the byte count
-    are still visible to the model.
+    are still visible to the model. A model without ``image_in`` keeps the
+    metadata and is told why the picture stayed behind.
     """
     if result.body_kind != "image" or not result.body_image:
         return text
+    refusal = image_input_refusal()
+    if refusal is not None:
+        return f"{text}\n{refusal}"
     part = image_part_from_bytes(result.body_image)
     if isinstance(part, str):
         return f"{text}\n{part}"

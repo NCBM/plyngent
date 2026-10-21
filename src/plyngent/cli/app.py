@@ -351,6 +351,7 @@ async def _run_chat(  # noqa: C901, PLR0915 — chat orchestration
         # instance.workspace (no process bag).
         state.instance_state.workspace.path_denylist = tuple(store.agent_config.path_denylist or ())
         state.instance_state.workspace.trash_enabled = store.trash_config.enabled
+        state.sync_image_capability()
         from plyngent.tools.net import set_ssrf_assume_public_cidrs
 
         # Clash Fake-IP etc.: treat configured CIDRs as public for fetch_local SSRF.

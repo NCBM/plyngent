@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 from plyngent.agent import ToolOutput, ToolTag, tool
 from plyngent.agent.images import image_part_from_bytes
-from plyngent.tools.workspace import AccessMode, resolve_path
+from plyngent.tools.workspace import AccessMode, image_input_refusal, resolve_path
 
 if TYPE_CHECKING:
     from plyngent.lmproto.openai_compatible.model import ImageDetail
@@ -27,7 +27,9 @@ async def view_image(path: str, detail: str = "auto") -> str | ToolOutput:
     picture as it is, and ``auto`` (the default) lets the provider decide.
 
     The format is read from the file's own bytes, so a misnamed file still
-    works; anything else comes back as an error.
+    works; anything else comes back as an error. A model whose
+    ``[providers.*.models.*].image_in`` is off gets an error naming that key
+    instead of an attachment it could never read.
     """
     if detail not in _DETAILS:
         return f"error: detail must be one of {', '.join(sorted(_DETAILS))}"
@@ -36,6 +38,9 @@ async def view_image(path: str, detail: str = "auto") -> str | ToolOutput:
         return f"error: file not found: {path}"
     if not target.is_file():
         return f"error: not a file: {path}"
+    refusal = image_input_refusal()
+    if refusal is not None:
+        return refusal
     part = image_part_from_bytes(target.read_bytes(), detail=cast("ImageDetail", detail))
     if isinstance(part, str):
         return f"error: {path}: {part.removeprefix('error: ')}"
