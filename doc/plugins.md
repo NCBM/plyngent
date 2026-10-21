@@ -48,8 +48,10 @@ Notes:
 - Session-only helpers may add **`PUBLIC`** and **`SESSION_STATE`** when they
   only touch session data and host-approved APIs (see plans under `doc/plans/`).
 - Optional soft-confirm bits: **`YOLO`** (eligible for YOLO auto-approve),
-  **`TRUSTABLE`** (grant once per session after approve). Hard denylists are
-  never YOLO-skipped.
+  **`TRUSTABLE`** (grant once per session after approve). The host's danger
+  classifier may refuse that skip for one call by returning
+  `DangerReason(text, yolo_skip=False)` — plyngent does so for a command that
+  escalates privileges. Hard denylists are never YOLO-skipped.
 - Optional host-policy bit: **`READ_ONLY`** marks tools that never mutate host
   state — they become eligible for read-only contexts such as
   `/btw --tools=read` side turns or planning. Tools that only sometimes mutate
