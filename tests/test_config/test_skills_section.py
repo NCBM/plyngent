@@ -40,6 +40,17 @@ allow_write = true
     assert cfg.allow_write is True
 
 
+def test_skills_section_survives_reload(tmp_path: Path) -> None:
+    path = tmp_path / "c.toml"
+    _ = path.write_text('[skills]\npaths = ["~/a"]\n', encoding="utf-8")
+    store = load(path)
+    assert store.skills_config.paths == ["~/a"]
+    _ = path.write_text("[skills]\nenabled = false\npaths = []\n", encoding="utf-8")
+    store.reload()
+    assert store.skills_config.enabled is False
+    assert store.skills_config.paths == []
+
+
 def test_skills_section_invalid_falls_back(tmp_path: Path) -> None:
     """An unknown discovery source or a bad type degrades to the defaults."""
     path = tmp_path / "c.toml"

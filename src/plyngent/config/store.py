@@ -494,6 +494,7 @@ class ConfigStore:
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
+        self._skills = _parse_skills(cast("dict[str, object]", raw.get("skills", {})))
         self._notify = _parse_notify(cast("dict[str, object]", raw.get("notify", {})))
         self._trash = _parse_trash(cast("dict[str, object]", raw.get("trash", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
