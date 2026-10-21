@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import ToolOutput, ToolTag, tool
+from plyngent.agent.images import image_part_from_bytes
 from plyngent.tools.context import is_read_only_context
-from plyngent.tools.net.client import http_fetch
+from plyngent.tools.net.client import FetchResult, http_fetch
 from plyngent.tools.net.policy import (
     DEFAULT_MAX_BODY_CHARS_IN,
     DEFAULT_MAX_BYTES,
@@ -76,7 +77,7 @@ async def fetch_local(
     follow_redirects: bool = True,
     allow_http_downgrade: bool = False,
     offset: int = 0,
-) -> str:
+) -> str | ToolOutput:
     """HTTP request (GET/POST/PUT/DELETE); return status, metadata, and truncated body.
 
     Use for public docs/APIs or (after human policy allow) local/LAN servers.
@@ -87,6 +88,9 @@ async def fetch_local(
     ``user_agent`` sets User-Agent when provided and takes precedence over a
     User-Agent entry in ``headers``. A headers-only User-Agent is kept as-is.
     When both omit UA, a small default is used.
+
+    An image response (JPEG, PNG, GIF, WebP) comes back as the picture itself
+    beside that metadata, so you can look at it instead of reading a hex preview.
 
     Private/loopback/link-local hosts require an explicit human policy grant
     (not skipped by YOLO). HTTPS→HTTP redirects are blocked unless
@@ -121,7 +125,7 @@ async def fetch_local(
     except Exception as exc:  # noqa: BLE001 — tool surface returns error text
         return f"error: fetch_local failed: {exc}"
 
-    return format_fetch_result(
+    text = format_fetch_result(
         status=result.status,
         final_url=result.final_url,
         content_type=result.content_type,
@@ -136,6 +140,21 @@ async def fetch_local(
         max_chars=max_chars,
         offset=offset,
     )
+    return _attach_image(text, result)
+
+
+def _attach_image(text: str, result: FetchResult) -> str | ToolOutput:
+    """An image response is handed over as a picture, beside the usual metadata.
+
+    The preview line stays in the text so ``body_kind=image`` and the byte count
+    are still visible to the model.
+    """
+    if result.body_kind != "image" or not result.body_image:
+        return text
+    part = image_part_from_bytes(result.body_image)
+    if isinstance(part, str):
+        return f"{text}\n{part}"
+    return ToolOutput(text=text, images=[part])
 
 
 # Re-export for danger classifier without importing client.

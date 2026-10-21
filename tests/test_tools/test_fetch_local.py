@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING, override
 
 import pytest
 
+from plyngent.agent import ToolOutput
 from plyngent.tools.context import read_only_context
 from plyngent.tools.danger import classify_danger
 from plyngent.tools.net import fetch_local, grant_private_host
@@ -27,6 +29,12 @@ from tests.test_tools.helpers import call_async
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+# A real 1x1 PNG: the body must be sniffed by its bytes, not by the header.
+_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -65,6 +73,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/bin"):
             self._send(200, b"\x00\x01\x02\xffbinary", content_type="application/octet-stream")
+            return
+        if self.path.startswith("/png"):
+            self._send(200, _PNG_BYTES, content_type="image/png")
             return
         if self.path.startswith("/ua"):
             ua = (self.headers.get("User-Agent") or "").encode()
@@ -198,6 +209,20 @@ async def test_fetch_get_post_put_delete(workspace: Path, http_server: str) -> N
 
     out_del = await call_async(fetch_local, f"{base}/x", method="DELETE")
     assert "status=204" in out_del
+
+
+async def test_an_image_response_comes_back_as_the_picture(workspace: Path, http_server: str) -> None:
+    """A PNG body is handed to the model as an image part, not a hex preview."""
+    del workspace
+    grant_private_host("127.0.0.1", int(http_server.rsplit(":", 1)[1]))
+
+    output: object = await fetch_local.handler(f"{http_server}/png")
+
+    assert isinstance(output, ToolOutput)
+    assert "body_kind=image" in output.text
+    assert "status=200" in output.text
+    part = output.images[0]
+    assert part.image_url.url.startswith("data:image/png;base64,")
 
 
 async def test_fetch_read_only_context_blocks_non_get(workspace: Path, http_server: str) -> None:

@@ -206,6 +206,19 @@ def _read_file_prefix(args_json: str) -> str:
     return _pretty_prefix(f"* Read '{path}' ")
 
 
+def _view_image_prefix(args_json: str) -> str:
+    """``* View image 'path' ``: the picture is already on its way to the model."""
+    path = _json_str_arg(args_json, "path") or "?"
+    return _pretty_prefix(f"* View image '{path}' ")
+
+
+def _view_image_detail(_args_json: str, result: str) -> str:
+    """``view_image`` outcome: the picture was attached, or why it was not."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result.partition('error: ')[2]})", "red"))
+    return _pretty_segments(("(attached)", "green"))
+
+
 def _range_detail(result: str) -> str | None:
     """``L{begin}-{end} (done)`` detail of a ranged result, when it carries one."""
     first = result.splitlines()[0] if result else ""
@@ -896,6 +909,7 @@ def _skill_edit_detail(_args_json: str, result: str) -> str:
 # Pretty tools: ``prefix`` prints as the call starts, ``detail`` when it lands.
 _PRETTY_LINES: dict[str, PrettyLine] = {
     "read_file": PrettyLine(prefix=_read_file_prefix, detail=_read_file_detail),
+    "view_image": PrettyLine(prefix=_view_image_prefix, detail=_view_image_detail),
     "tree": PrettyLine(prefix=_tree_prefix, detail=_tree_detail),
     "todo_list": _todo_line("todo_list"),
     "todo_push": _todo_line("todo_push"),

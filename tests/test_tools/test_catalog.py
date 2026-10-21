@@ -59,6 +59,7 @@ def test_read_only_classification() -> None:
     read_only = {t.name for t in default_tool_definitions(surface="local") if t.tags & ToolTag.READ_ONLY}
     assert read_only == {
         "read_file",
+        "view_image",
         "get_truncated",
         "glob_paths",
         "regex_files",

@@ -8,6 +8,7 @@ the process: start, tool listing, tool calls, reconnect, shutdown.
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib.metadata
 import json
 import os
@@ -16,6 +17,10 @@ import sys
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
+
+from plyngent.agent.images import image_part_from_bytes
+from plyngent.agent.tools import ToolOutput
+from plyngent.lmproto.openai_compatible.model import ChatImagePart
 
 if TYPE_CHECKING:
     from typing import Any
@@ -84,9 +89,10 @@ class McpTool:
         )
 
 
-def _format_content(result: Json) -> str:
-    """Flatten a ``tools/call`` result payload into model-facing text."""
+def _format_content(result: Json) -> ToolOutput:
+    """Flatten a ``tools/call`` result payload into text plus any images."""
     parts: list[str] = []
+    images: list[ChatImagePart] = []
     for item in _json_list(result.get("content")):
         entry = _json_dict(item)
         kind = str(entry.get("type", ""))
@@ -94,12 +100,24 @@ def _format_content(result: Json) -> str:
             text = entry.get("text")
             if isinstance(text, str):
                 parts.append(text)
+        elif kind == "image":
+            # MCP carries an image as base64 + mimeType; the model wants the
+            # picture itself, not a ``[image: image/png]`` placeholder.
+            data = entry.get("data")
+            mime = entry.get("mimeType", "?")
+            part = image_part_from_bytes(base64.b64decode(data)) if isinstance(data, str) and data else None
+            if isinstance(part, ChatImagePart):
+                images.append(part)
+            elif isinstance(part, str):
+                parts.append(f"[image: {mime}] {part.removeprefix('error: ')}")
+            else:
+                parts.append(f"[image: {mime}]")
         elif kind == "resource":
             parts.append(f"[resource] {json.dumps(entry, ensure_ascii=False)}")
         else:
             mime = entry.get("mimeType", "?")
             parts.append(f"[{kind or 'unknown'}: {mime}]")
-    return "\n".join(parts)
+    return ToolOutput(text="\n".join(parts), images=images)
 
 
 class McpServerConnection:
@@ -307,17 +325,17 @@ class McpServerConnection:
             cursor = next_cursor
         return tools
 
-    async def call_tool(self, name: str, arguments: Json) -> str:
-        """Run ``tools/call`` and return the flattened text result.
+    async def call_tool(self, name: str, arguments: Json) -> ToolOutput:
+        """Run ``tools/call`` and return its text plus any images it produced.
 
         Tool-level failures (``isError``) come back as ``error: …`` text, not
         exceptions: the protocol round-trip itself succeeded.
         """
         result = await self._request("tools/call", {"name": name, "arguments": arguments})
-        text = _format_content(result)
+        output = _format_content(result)
         if result.get("isError") is True:
-            return f"error: {text or 'tool reported failure without content'}"
-        return text
+            return ToolOutput(text=f"error: {output.text or 'tool reported failure without content'}")
+        return output
 
 
 class McpManager:
@@ -393,7 +411,7 @@ class McpManager:
                 connection.tools = await connection.list_tools()
                 connection.tools_stale = False
 
-    async def call(self, server: str, tool: str, arguments: Json) -> str:
+    async def call(self, server: str, tool: str, arguments: Json) -> ToolOutput:
         connection = self._connections.get(server)
         if connection is None or not connection.connected:
             msg = f"server {server!r} is not connected"

@@ -11,10 +11,12 @@ from .listdir import listdir as listdir
 from .read import read_file as read_file
 from .regex_files import regex_files as regex_files
 from .tree import tree as tree
+from .view_image import view_image as view_image
 from .write import write_file as write_file
 
 FILE_TOOLS = [
     read_file,
+    view_image,
     write_file,
     listdir,
     tree,

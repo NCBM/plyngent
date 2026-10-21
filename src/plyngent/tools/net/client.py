@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import niquests
 
+from plyngent.agent.images import sniff_image_media_type
 from plyngent.tools.net.grants import ensure_host_allowed
 from plyngent.tools.net.policy import (
     DEFAULT_MAX_BYTES,
@@ -50,7 +51,10 @@ class FetchResult:
     method: str
     security: str
     warnings: list[str] = field(default_factory=list)
-    body_kind: str = "text"  # text | binary | empty
+    body_kind: str = "text"  # text | binary | image | empty
+    # Raw bytes, kept only for an image body so the caller can hand the picture
+    # to the model instead of a hex preview.
+    body_image: bytes = b""
 
 
 def _content_type(headers: Mapping[str, str] | object | None) -> str:
@@ -132,6 +136,10 @@ def _body_payload(data: bytes, content_type: str) -> tuple[str, str]:
         return "empty", ""
     if _looks_text(content_type, data):
         return "text", _decode_body(data, content_type)
+    if sniff_image_media_type(data) is not None:
+        # An image is handed to the model as a picture, so the preview line only
+        # carries what the part cannot say itself.
+        return "image", f"(image body; content_type={content_type!r}; bytes={len(data)})"
     preview = data[:64].hex()
     return (
         "binary",
@@ -279,6 +287,7 @@ async def http_fetch(
                 ),
                 warnings=list(dict.fromkeys(warnings)),
                 body_kind=body_kind,
+                body_image=data if body_kind == "image" else b"",
             )
 
 

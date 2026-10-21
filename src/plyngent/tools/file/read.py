@@ -4,6 +4,7 @@ from typing import cast
 
 from plyngent.agent import ToolTag, mark_lineno_read, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
+from plyngent.agent.images import sniff_image_media_type
 from plyngent.tools.truncate_token import TruncateToken, truncate_with_token, truncation_marker
 from plyngent.tools.workspace import AccessMode, resolve_path
 
@@ -39,9 +40,15 @@ def read_raw_text(path: str) -> tuple[str | None, str]:
 
     Shared by ``read_file`` and ``get_truncated`` so truncate-token char offsets
     always refer to the raw file text (never the ``L{begin}-{end}`` header).
-    Missing paths and directories are distinguished for the caller.
+    Missing paths and directories are distinguished for the caller, and a picture
+    is answered with the tool that shows it instead of decode noise.
     """
     target = resolve_path(path, required=AccessMode.READ)
+    if target.is_file():
+        with target.open("rb") as handle:
+            media_type = sniff_image_media_type(handle.read(16))
+        if media_type is not None:
+            return None, f"error: {path} is an image ({media_type}); use view_image to look at it"
     if not target.exists():
         return None, f"error: file not found: {path}"
     if not target.is_file():
@@ -71,6 +78,8 @@ async def read_file(
     ``DEFAULT_TOOL_RESULT_MAX_CHARS``); a ``truncate_token`` is appended when cut
     so ``get_truncated`` can continue reading the rest without a new request.
     Pass ``max_chars < 1`` to read unbounded.
+
+    An image file is refused with a pointer to ``view_image``, which shows it.
     """
     target = resolve_path(path, required=AccessMode.READ)
     text, err = read_raw_text(path)

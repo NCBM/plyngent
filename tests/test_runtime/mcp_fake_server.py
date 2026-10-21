@@ -11,6 +11,8 @@ import os
 import sys
 
 _FAKE_INSTRUCTIONS = os.environ.get("PLYNGENT_MCP_FAKE_INSTRUCTIONS", "")
+# A real 1x1 PNG (base64), what an image-carrying tool result looks like.
+_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
 
 def respond(request_id: int, result: object) -> None:
@@ -61,6 +63,11 @@ def main() -> None:
                             "description": "Sleeps past any client timeout.",
                             "inputSchema": {"type": "object", "properties": {}},
                         },
+                        {
+                            "name": "shot",
+                            "description": "Returns a picture beside its text.",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        },
                     ]
                 },
             )
@@ -72,6 +79,17 @@ def main() -> None:
                     int(request_id),
                     {
                         "content": [{"type": "text", "text": f"echo: {text}"}],
+                        "isError": False,
+                    },
+                )
+            elif name == "shot":
+                respond(
+                    int(request_id),
+                    {
+                        "content": [
+                            {"type": "text", "text": "shot.png"},
+                            {"type": "image", "data": _PNG_BASE64, "mimeType": "image/png"},
+                        ],
                         "isError": False,
                     },
                 )

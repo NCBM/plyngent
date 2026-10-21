@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from plyngent.agent.tools import ToolDefinition, ToolTag
+from plyngent.agent.tools import ToolDefinition, ToolOutput, ToolTag
 from plyngent.tools.catalog import ToolSource, get_catalog
 
 if TYPE_CHECKING:
@@ -43,8 +43,8 @@ def _make_handler(
     manager: McpManager,
     server: str,
     tool: str,
-) -> Callable[..., Awaitable[str]]:
-    async def handler(**arguments: object) -> str:
+) -> Callable[..., Awaitable[ToolOutput]]:
+    async def handler(**arguments: object) -> ToolOutput:
         return await manager.call(server, tool, dict(arguments))
 
     return handler

@@ -68,7 +68,7 @@ async def test_slash_mcp_list_statuses(state: ReplState, capsys: pytest.CaptureF
         out = capsys.readouterr().out
         assert "fake" in out
         assert "connected" in out
-        assert "tools=3" in out
+        assert "tools=4" in out
     finally:
         await manager.aclose()
 
@@ -92,7 +92,7 @@ async def test_slash_mcp_reconnect_connects_new_config(
         statuses = state.mcp_manager.statuses()
         assert [name for name, _, _ in statuses] == ["fake"]
         assert statuses[0][1] == "connected"
-        assert statuses[0][2] == 3
+        assert statuses[0][2] == 4
         out = capsys.readouterr().out
         assert "tools=off" in out
         assert "fake" in out

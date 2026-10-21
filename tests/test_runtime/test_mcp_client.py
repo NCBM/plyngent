@@ -34,13 +34,28 @@ async def test_connection_handshake_lists_and_calls_tools() -> None:
         assert connection.connected
         assert connection.error is None
         assert connection.instructions is None
-        assert [tool.name for tool in connection.tools] == ["echo", "fail", "slow"]
+        assert [tool.name for tool in connection.tools] == ["echo", "fail", "slow", "shot"]
         echo = connection.tools[0]
         assert echo.description == "Echo the given text back."
         assert echo.input_schema["type"] == "object"
 
         result = await connection.call_tool("echo", {"text": "hello"})
-        assert result == "echo: hello"
+        assert result.text == "echo: hello"
+        assert result.images == []
+    finally:
+        await connection.aclose()
+
+
+async def test_an_image_content_block_becomes_an_image_part() -> None:
+    """A server that returns pixels gets them to the model, not a placeholder."""
+    connection = McpServerConnection("fake", _server_config())
+    await connection.start()
+    try:
+        output = await connection.call_tool("shot", {})
+
+        assert output.text == "shot.png"
+        assert len(output.images) == 1
+        assert output.images[0].image_url.url.startswith("data:image/png;base64,")
     finally:
         await connection.aclose()
 
@@ -64,7 +79,7 @@ async def test_tool_error_returns_error_text() -> None:
     await connection.start()
     try:
         result = await connection.call_tool("fail", {})
-        assert result == "error: boom"
+        assert result.text == "error: boom"
     finally:
         await connection.aclose()
 
@@ -122,9 +137,9 @@ async def test_manager_start_status_and_call() -> None:
     manager = McpManager(McpConfig(servers={"fake": _server_config()}, disable=[]))
     await manager.ensure_started()
     try:
-        assert [(name, status, count) for name, status, count in manager.statuses()] == [("fake", "connected", 3)]
+        assert [(name, status, count) for name, status, count in manager.statuses()] == [("fake", "connected", 4)]
         assert manager.instructions() == []
-        assert await manager.call("fake", "echo", {"text": "hi"}) == "echo: hi"
+        assert (await manager.call("fake", "echo", {"text": "hi"})).text == "echo: hi"
     finally:
         await manager.aclose()
     assert manager.statuses() == [("fake", "not started", 0)]
@@ -157,5 +172,5 @@ async def test_manager_disable_and_restart() -> None:
 
     await manager.restart(McpConfig(servers={"fake": _server_config()}, disable=[]))
     await manager.ensure_started()
-    assert manager.statuses() == [("fake", "connected", 3)]
+    assert manager.statuses() == [("fake", "connected", 4)]
     await manager.aclose()
