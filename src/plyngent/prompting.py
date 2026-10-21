@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import select
 import sys
 import threading
@@ -154,6 +155,9 @@ type PromptWaitHook = Callable[[PromptWait], AbstractContextManager[PromptAnswer
 # switched to another window; without a hook, prompting behaves as before.
 _wait_hook: PromptWaitHook | None = None
 
+# Depth of the prompt_wait blocks currently entered (see prompt_wait).
+_wait_depth: contextvars.ContextVar[int] = contextvars.ContextVar("prompt_wait_depth", default=0)
+
 
 def set_prompt_wait_hook(hook: PromptWaitHook | None) -> None:
     """Install the hook run while a prompt blocks (None clears it)."""
@@ -168,13 +172,22 @@ def get_prompt_wait_hook() -> PromptWaitHook | None:
 
 @contextlib.contextmanager
 def prompt_wait(kind: str, title: str, detail: str = "") -> Generator[PromptAnswerSource | None]:
-    """Announce a blocking prompt to the host; yields its answer source (or None)."""
+    """Announce a blocking prompt to the host; yields its answer source (or None).
+
+    Only the outermost prompt of a nested read is announced: a confirm that asks
+    a follow-up question while it is already on screen must not notify — and
+    interrupt — a second time.
+    """
     hook = _wait_hook
-    if hook is None:
+    if hook is None or _wait_depth.get() > 0:
         yield None
         return
-    with hook(PromptWait(kind, title, detail)) as source:
-        yield source
+    token = _wait_depth.set(_wait_depth.get() + 1)
+    try:
+        with hook(PromptWait(kind, title, detail)) as source:
+            yield source
+    finally:
+        _wait_depth.reset(token)
 
 
 def _readline_input(prompt: str, *, completions: Sequence[str] | None = None) -> str:

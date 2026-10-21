@@ -4,6 +4,7 @@ import contextlib
 import selectors
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -13,6 +14,7 @@ from plyngent.cli.interrupt import off_loop_prompt, pause_task_cancel_for_prompt
 from plyngent.prompting import (
     ChoiceOption,
     NonInteractiveError,
+    PromptAnswerSource,
     ask,
     ask_async,
     choose,
@@ -20,6 +22,7 @@ from plyngent.prompting import (
     configure_prompting,
     confirm,
     get_prompt_backend,
+    prompt_wait,
     set_prompt_output_hook,
 )
 from plyngent.tools.access import AccessDecision
@@ -30,11 +33,36 @@ from plyngent.tools.workspace import AccessMode, parse_access_mode
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
 type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
+
+# Answers a notification offers (see `cli/notify.py`) mapped onto the keys the
+# prompts below already accept, so one answer source fits every confirm.
+_NOTIFY_ANSWERS = {"allow": "y", "deny": "n"}
 
 _BOX_MIN_WIDTH = 40
 _BOX_MAX_WIDTH = 100
 _BOX_PAD = 2  # spaces inside left/right borders
+
+# How long one poll slice waits before a pending notification answer is checked.
+_ANSWER_POLL_SECONDS = 0.1
+
+
+def _answer_source(wait: PromptAnswerSource | None) -> PromptAnswerSource | None:
+    """The wait's answer source, but only when the prompt offered answers."""
+    return wait if wait is not None and wait.supports_actions else None
+
+
+def _read_answer(
+    timeout_seconds: float | None,
+    wait: PromptAnswerSource | None,
+) -> str | None:
+    """One answer line, from stdin or the notification (``None`` on timeout)."""
+    raw = _read_yes_no_line_with_timeout(timeout_seconds, source=_answer_source(wait))
+    if raw is None:
+        return None
+    return _NOTIFY_ANSWERS.get(raw.strip().lower(), raw)
+
 
 # Limit prompts accept ``yyy`` to stop asking for the rest of the turn.
 _CONTINUE_PROMPT = "Raise limit and continue? [Y/n/yyy] (yyy = stop asking this turn): "
@@ -174,8 +202,9 @@ def _decide_continue_limit(reason: str) -> bool:
     backend = get_prompt_backend()
     if not backend.is_interactive():
         return False
-    _echo_continue_limit(reason)
-    token = backend.read_line(_CONTINUE_PROMPT, default="y").strip().lower()
+    with prompt_wait("limit", "limit reached — continue?", reason):
+        _echo_continue_limit(reason)
+        token = backend.read_line(_CONTINUE_PROMPT, default="y").strip().lower()
     if token == _CONTINUE_AUTO_TOKEN:
         _auto_continue.turn = True
         return True
@@ -205,12 +234,33 @@ async def prompt_continue_limit_async(reason: str) -> bool:
         return False
 
 
+def _confirm_with(wait: PromptAnswerSource | None, prompt: str, *, default: bool) -> bool:
+    """Yes/no, also taking an answer that arrived through a notification."""
+    source = _answer_source(wait)
+    if source is None:
+        return confirm(prompt, default=default)
+    suffix = "[Y/n]" if default else "[y/N]"
+    with contextlib.suppress(OSError):
+        _ = sys.stderr.write(f"{prompt} {suffix}: ")
+        _ = sys.stderr.flush()
+    try:
+        raw = _read_answer(None, wait)
+    except (KeyboardInterrupt, EOFError) as exc:
+        msg = "prompt cancelled"
+        raise NonInteractiveError(msg) from exc
+    token = (raw or "").strip().lower()
+    if not token:
+        return default
+    return token in {"y", "yes"}
+
+
 def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """True allow; False deny; non-empty str = deny with comment for the model."""
     del args
     try:
-        _echo_tool_confirm(name, reason)
-        allowed = confirm("Allow this tool call?", default=False)
+        with prompt_wait("confirm", f"tool {name!r} needs confirmation", reason) as wait:
+            _echo_tool_confirm(name, reason)
+            allowed = _confirm_with(wait, "Allow this tool call?", default=False)
     except NonInteractiveError:
         return False
     if allowed:
@@ -242,34 +292,64 @@ def _try_readline() -> str | None:
         return None
 
 
-def _read_yes_no_line_with_timeout(timeout_seconds: float) -> str | None:
-    """Read one line from stdin with *timeout_seconds*; ``None`` on timeout/EOF.
-
-    Uses :mod:`selectors` on the process stdin FD. On Windows without selector
-    support, falls back to blocking readline (no true timeout).
-    """
+def _stdin_selector() -> selectors.BaseSelector | None:
+    """A selector watching process stdin, or ``None`` when it cannot be polled."""
     try:
-        if not sys.stdin.isatty():
-            return None
         fd = sys.stdin.fileno()
-    except OSError, ValueError, AttributeError:
-        return _try_readline()
-
-    try:
         selector = selectors.DefaultSelector()
         _ = selector.register(fd, selectors.EVENT_READ)
     except OSError, ValueError, AttributeError:
+        return None
+    return selector
+
+
+def _read_yes_no_line_with_timeout(
+    timeout_seconds: float | None,
+    *,
+    source: PromptAnswerSource | None = None,
+) -> str | None:
+    """Read one line from stdin with *timeout_seconds*; ``None`` on timeout/EOF.
+
+    Polls the process stdin FD in short slices, so a *source* (a notification
+    answer) can end the read too; stdin wins whenever it becomes readable. A
+    ``None`` timeout waits for a line or an answer, whichever comes first; with
+    neither stdin nor a *source* pollable the read gives up at once.
+    On Windows without selector support, falls back to blocking readline (no
+    true timeout, and no answers from a *source*).
+    """
+    try:
+        if not sys.stdin.isatty():
+            return None if source is None else source.take()
+    except OSError, ValueError, AttributeError:
         return _try_readline()
 
+    selector = _stdin_selector()
+    if selector is None:
+        return _try_readline()
+
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    result: str | None = None
     try:
-        events = selector.select(timeout_seconds)
-        if not events:
-            return None
-        return sys.stdin.readline()
-    except OSError, ValueError, EOFError:
-        return None
+        while True:
+            if deadline is None:
+                remaining = _ANSWER_POLL_SECONDS
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+            if selector.select(min(remaining, _ANSWER_POLL_SECONDS)):
+                try:
+                    result = sys.stdin.readline()
+                except OSError, EOFError:
+                    result = None
+                break
+            answer = None if source is None else source.take()
+            if answer is not None:
+                result = answer
+                break
     finally:
         selector.close()
+    return result
 
 
 def prompt_policy_command_confirm(
@@ -290,7 +370,10 @@ def prompt_policy_command_confirm(
         f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)"
     )
     try:
-        with pause_task_cancel_for_prompt():
+        with (
+            pause_task_cancel_for_prompt(),
+            prompt_wait("policy", f"allow command {basename!r}?", reason) as wait,
+        ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
                 return False
@@ -301,7 +384,7 @@ def prompt_policy_command_confirm(
             with contextlib.suppress(OSError):
                 _ = sys.stderr.write(prompt)
                 _ = sys.stderr.flush()
-            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            raw = _read_answer(timeout_seconds, wait)
             if raw is None:
                 with contextlib.suppress(OSError, NonInteractiveError):
                     backend.secho(
@@ -334,7 +417,10 @@ def prompt_policy_fetch_confirm(
         f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)"
     )
     try:
-        with pause_task_cancel_for_prompt():
+        with (
+            pause_task_cancel_for_prompt(),
+            prompt_wait("policy", f"allow fetch_local {host!r}?", reason) as wait,
+        ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
                 return False
@@ -346,7 +432,7 @@ def prompt_policy_fetch_confirm(
             with contextlib.suppress(OSError):
                 _ = sys.stderr.write(prompt)
                 _ = sys.stderr.flush()
-            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            raw = _read_answer(timeout_seconds, wait)
             if raw is None:
                 with contextlib.suppress(OSError, NonInteractiveError):
                     backend.secho(
@@ -380,7 +466,10 @@ def prompt_skill_write_confirm(
         f"(timeout {timeout_seconds:g}s defaults to DENY; not skipped by YOLO)",
     ]
     try:
-        with pause_task_cancel_for_prompt():
+        with (
+            pause_task_cancel_for_prompt(),
+            prompt_wait("skills", f"allow {action} in {skill_dir.name!r}?", detail) as wait,
+        ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
                 return SkillWriteDecision(allow=False)
@@ -393,7 +482,7 @@ def prompt_skill_write_confirm(
             with contextlib.suppress(OSError):
                 _ = sys.stderr.write(prompt)
                 _ = sys.stderr.flush()
-            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            raw = _read_answer(timeout_seconds, wait)
             if raw is None:
                 with contextlib.suppress(OSError, NonInteractiveError):
                     backend.secho(f"[skills] timed out after {timeout_seconds:g}s — denied", fg="red", err=True)
@@ -428,7 +517,10 @@ def prompt_directory_access_confirm(
         lines.append(f"why: {reason}")
     lines.append(f"(timeout {timeout_seconds:g}s defaults to DENY)")
     try:
-        with pause_task_cancel_for_prompt():
+        with (
+            pause_task_cancel_for_prompt(),
+            prompt_wait("access", f"allow {mode.name.lower()} access to {path}?", reason) as wait,
+        ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
                 return None
@@ -444,7 +536,7 @@ def prompt_directory_access_confirm(
             with contextlib.suppress(OSError):
                 _ = sys.stderr.write(prompt)
                 _ = sys.stderr.flush()
-            raw = _read_yes_no_line_with_timeout(timeout_seconds)
+            raw = _read_answer(timeout_seconds, wait)
             if raw is None:
                 with contextlib.suppress(OSError, NonInteractiveError):
                     backend.secho(
@@ -470,8 +562,9 @@ async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reaso
     try:
         # Box is printed inside the worker thread via confirm's backend.
         def _run() -> bool:
-            _echo_tool_confirm(name, reason)
-            return confirm("Allow this tool call?", default=False)
+            with prompt_wait("confirm", f"tool {name!r} needs confirmation", reason) as wait:
+                _echo_tool_confirm(name, reason)
+                return _confirm_with(wait, "Allow this tool call?", default=False)
 
         from plyngent.prompting import run_prompt_async
 
@@ -512,21 +605,30 @@ def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchC
     if not backend.is_interactive():
         # Non-interactive: deny, like the default of the single prompt.
         return BatchConfirmDecision(allowed=False)
-    backend.echo()
-    backend.secho(format_batch_confirm_box(requests), fg="yellow")
-    backend.secho("m = review them one call at a time", fg="bright_black")
-    backend.echo()
-    try:
-        token = (
-            backend.read_line(
-                f"Allow these {len(requests)} tool calls? [y/N/m]:",
-                default="n",
-            )
-            .strip()
-            .lower()
-        )
-    except NonInteractiveError:
-        return BatchConfirmDecision(allowed=False)
+    names = ", ".join(request.name for request in requests)
+    with prompt_wait("batch", f"{len(requests)} tool calls need confirmation", names) as wait:
+        backend.echo()
+        backend.secho(format_batch_confirm_box(requests), fg="yellow")
+        backend.secho("m = review them one call at a time", fg="bright_black")
+        backend.echo()
+        source = _answer_source(wait)
+        try:
+            if source is None:
+                token = (
+                    backend.read_line(
+                        f"Allow these {len(requests)} tool calls? [y/N/m]:",
+                        default="n",
+                    )
+                    .strip()
+                    .lower()
+                )
+            else:
+                with contextlib.suppress(OSError):
+                    _ = sys.stderr.write(f"Allow these {len(requests)} tool calls? [y/N]: ")
+                    _ = sys.stderr.flush()
+                token = (_read_answer(None, wait) or "n").strip().lower()
+        except NonInteractiveError:
+            return BatchConfirmDecision(allowed=False)
     if token in _BATCH_MANUAL_TOKENS:
         return BatchConfirmDecision(allowed=False, each=True)
     if token in _BATCH_YES_TOKENS:

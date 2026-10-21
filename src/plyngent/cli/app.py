@@ -35,6 +35,7 @@ from plyngent.runtime import McpManager, ProviderNotSupportedError, create_clien
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from plyngent.config.models import NotifyConfig
     from plyngent.config.store import ConfigStore
 
 _DEFAULT_DB_FILENAME = "chat.db"
@@ -128,13 +129,22 @@ def _read_prompt_text(prompt: str | None, *, stdin_isatty: bool) -> str | None:
     return text or None
 
 
-def _setup_hooks(*, interactive: bool, auto_continue: bool) -> None:
+def _setup_hooks(*, interactive: bool, auto_continue: bool, notify: NotifyConfig) -> None:
     """Install limit hooks (workspace policy is set on ReplState).
 
     ``auto_continue`` keeps the PTY/limit hook installed for one-shot runs so
     ``--auto-continue`` / ``[agent] auto_continue_limits`` can raise limits
-    without a prompt; otherwise non-interactive runs keep today's deny.
+    without a prompt; otherwise non-interactive runs keep today's deny. The
+    prompt-wait notifier only makes sense for a human at a terminal, so a
+    non-interactive run clears it whatever ``[notify]`` says.
     """
+    from plyngent.cli.notify import install_notifier
+    from plyngent.prompting import set_prompt_wait_hook
+
+    if interactive:
+        _ = install_notifier(notify)
+    else:
+        set_prompt_wait_hook(None)
     if interactive or auto_continue:
         install_cli_limit_hooks()
     else:
@@ -248,7 +258,7 @@ async def _run_chat(  # noqa: C901, PLR0915 — chat orchestration
             _warn_recoverable_providers(store.recoverable_providers)
 
     auto_effective = auto_continue or store.agent_config.auto_continue_limits
-    _setup_hooks(interactive=interactive, auto_continue=auto_effective)
+    _setup_hooks(interactive=interactive, auto_continue=auto_effective, notify=store.notify_config)
     # --yes forces sticky YOLO; else derive from config.confirm_destructive.
     from plyngent.cli.state import YoloMode
 

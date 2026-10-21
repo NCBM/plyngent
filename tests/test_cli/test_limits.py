@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,12 +16,18 @@ from plyngent.cli.limits import (
     reset_auto_continue_turn,
     set_auto_continue_default,
 )
-from plyngent.prompting import NonInteractiveBackend, get_prompt_backend, get_prompt_output_hook, temporary_backend
+from plyngent.prompting import (
+    NonInteractiveBackend,
+    get_prompt_backend,
+    get_prompt_output_hook,
+    get_prompt_wait_hook,
+    temporary_backend,
+)
 from plyngent.tools.process.pty_session import PtyManager
 from tests.test_prompting import ScriptedBackend
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 
 @pytest.fixture
@@ -84,10 +91,11 @@ def test_prompt_continue_limit_noninteractive_denies() -> None:
 def test_setup_hooks_installs_pty_hook_for_auto_continue(clean_auto_continue: None) -> None:
     del clean_auto_continue
     from plyngent.cli.app import _setup_hooks
+    from plyngent.config.models import NotifyConfig
 
-    _setup_hooks(interactive=False, auto_continue=True)
+    _setup_hooks(interactive=False, auto_continue=True, notify=NotifyConfig())
     assert PtyManager._limit_continue is not None
-    _setup_hooks(interactive=False, auto_continue=False)
+    _setup_hooks(interactive=False, auto_continue=False, notify=NotifyConfig())
     assert PtyManager._limit_continue is None
 
 
@@ -157,15 +165,134 @@ def test_directory_access_prompt_yes_and_level(monkeypatch: pytest.MonkeyPatch) 
 
     target = Path("/tmp")
     with temporary_backend(ScriptedBackend([])):
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "y\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "y\n")
         assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == AccessDecision(
             AccessMode.READ
         )
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "exec\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "exec\n")
         assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == AccessDecision(
             AccessMode.EXEC
         )
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "n\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "n\n")
         assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: None)
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: None)
         assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None
+
+
+class _AnswerSource:
+    """A host surface offering answers to a waiting prompt."""
+
+    supports_actions = True
+
+    def __init__(self, *answers: str) -> None:
+        self._answers = list(answers)
+
+    def take(self) -> str | None:
+        return self._answers.pop(0) if self._answers else None
+
+
+@contextlib.contextmanager
+def _answered(*answers: str) -> Generator[_AnswerSource]:
+    """Install a wait hook whose prompt can be answered by the notification."""
+    from plyngent.prompting import set_prompt_wait_hook
+
+    source = _AnswerSource(*answers)
+    previous = get_prompt_wait_hook()
+    set_prompt_wait_hook(lambda _wait: contextlib.nullcontext(source))
+    try:
+        yield source
+    finally:
+        set_prompt_wait_hook(previous)
+
+
+def test_directory_access_takes_a_notification_answer() -> None:
+    """``allow`` from the notification approves the requested level."""
+    from pathlib import Path
+
+    from plyngent.cli import limits
+    from plyngent.tools.access import AccessDecision
+    from plyngent.tools.workspace import AccessMode
+
+    with temporary_backend(ScriptedBackend([])), _answered("allow"):
+        assert limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0) == AccessDecision(
+            AccessMode.READ
+        )
+
+
+def test_directory_access_denied_by_the_notification() -> None:
+    from pathlib import Path
+
+    from plyngent.cli import limits
+    from plyngent.tools.workspace import AccessMode
+
+    with temporary_backend(ScriptedBackend([])), _answered("deny"):
+        assert limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0) is None
+
+
+def test_tool_confirm_takes_a_notification_answer() -> None:
+    with temporary_backend(ScriptedBackend([])), _answered("allow"):
+        assert prompt_confirm_tool("run_argv", {}, "runs a command") is True
+
+
+def test_tool_confirm_denied_by_the_notification() -> None:
+    with temporary_backend(ScriptedBackend([""])), _answered("deny"):
+        assert prompt_confirm_tool("run_argv", {}, "runs a command") is False
+
+
+def test_batch_confirm_takes_a_notification_answer() -> None:
+    from plyngent.agent import ToolConfirmRequest
+    from plyngent.cli.limits import _prompt_confirm_batch_sync
+
+    requests = [
+        ToolConfirmRequest(name="run_argv", args={}, reason="one"),
+        ToolConfirmRequest(name="run_argv", args={}, reason="two"),
+    ]
+    with temporary_backend(ScriptedBackend([])), _answered("allow"):
+        assert _prompt_confirm_batch_sync(requests).allowed is True
+
+
+def test_batch_confirm_denied_by_the_notification() -> None:
+    from plyngent.agent import ToolConfirmRequest
+    from plyngent.cli.limits import _prompt_confirm_batch_sync
+
+    requests = [
+        ToolConfirmRequest(name="run_argv", args={}, reason="one"),
+        ToolConfirmRequest(name="run_argv", args={}, reason="two"),
+    ]
+    with temporary_backend(ScriptedBackend([""])), _answered("deny"):
+        assert _prompt_confirm_batch_sync(requests).allowed is False
+
+
+def test_every_confirm_announces_itself() -> None:
+    """Each blocking confirm reports its kind, so a host can pick a surface."""
+    from pathlib import Path
+
+    from plyngent.agent import ToolConfirmRequest
+    from plyngent.cli import limits
+    from plyngent.tools.workspace import AccessMode
+
+    kinds: list[str] = []
+
+    @contextlib.contextmanager
+    def hook(wait: object) -> Generator[None]:
+        kinds.append(wait.kind)  # type: ignore[attr-defined]
+        yield None
+
+    from plyngent.prompting import set_prompt_wait_hook
+
+    previous = get_prompt_wait_hook()
+    set_prompt_wait_hook(hook)
+    try:
+        with temporary_backend(ScriptedBackend(["y", "y", "y"], confirms=[True])):
+            _ = prompt_confirm_tool("run_argv", {}, "reason")
+            _ = limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0)
+            _ = limits._prompt_confirm_batch_sync(
+                [
+                    ToolConfirmRequest(name="run_argv", args={}, reason="one"),
+                    ToolConfirmRequest(name="run_argv", args={}, reason="two"),
+                ]
+            )
+            _ = prompt_continue_limit("limit")
+    finally:
+        set_prompt_wait_hook(previous)
+    assert kinds == ["confirm", "access", "batch", "limit"]

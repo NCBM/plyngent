@@ -313,13 +313,13 @@ def test_prompt_skill_write_confirm_answers(monkeypatch: pytest.MonkeyPatch) -> 
 
     target = Path("/skills/acme")
     with temporary_backend(ScriptedBackend([])):
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "o\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "o\n")
         once = limits.prompt_skill_write_confirm(target, "create", "create skill", 30.0)
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "s\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "s\n")
         session = limits.prompt_skill_write_confirm(target, "create", "create skill", 30.0)
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: "n\n")
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "n\n")
         denied = limits.prompt_skill_write_confirm(target, "create", "create skill", 30.0)
-        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout: None)
+        monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: None)
         timed_out = limits.prompt_skill_write_confirm(target, "create", "create skill", 30.0)
     assert (once.allow, once.session) == (True, False)
     assert (session.allow, session.session) == (True, True)
