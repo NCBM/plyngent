@@ -509,6 +509,34 @@ def _show_choices(
         backend.echo("  (or type a custom answer)")
 
 
+def _read_with_source(
+    prompt: str,
+    source: PromptAnswerSource | None,
+    *,
+    default: str | None,
+    completions: Sequence[str] | None = None,
+) -> str:
+    """Read one answer line, also accepting one offered by *source*.
+
+    The backend's readline path is kept whenever nothing can answer remotely, so
+    line editing (and Tab completion) only go away when the human asked for a
+    notification that carries the answer.
+    """
+    backend = get_prompt_backend()
+    if source is None:
+        return backend.read_line(prompt, default=default, completions=completions).strip()
+    try:
+        answer = source.take() if not sys.stdin.isatty() else read_line_with_timeout(f"{prompt}: ", None, source=source)
+    except OSError, ValueError, AttributeError:
+        answer = source.take()
+    if answer is None:
+        if default is not None:
+            return default
+        msg = "prompt cancelled"
+        raise NonInteractiveError(msg)
+    return answer.strip()
+
+
 def ask(
     prompt: str,
     *,
@@ -523,9 +551,10 @@ def ask(
     if not backend.is_interactive() and default is None:
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
-    with prompt_wait("ask", prompt):
+    with prompt_wait("ask", prompt) as wait:
         backend.secho(prompt, fg="yellow")
-        return backend.read_line("Answer", default=default, completions=completions).strip()
+        source = wait if wait is not None and wait.supports_actions else None
+        return _read_with_source("Answer", source, default=default, completions=completions)
 
 
 def ask_secret(prompt: str) -> str:

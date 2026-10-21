@@ -382,3 +382,35 @@ def test_reset_prompting_clears_the_wait_hook() -> None:
     assert get_prompt_wait_hook() is not None
     reset_prompting()
     assert get_prompt_wait_hook() is None
+
+
+def test_ask_takes_an_answer_from_the_notification() -> None:
+    """A reply typed into the notification is the answer (no readline involved)."""
+    from plyngent.prompting import set_prompt_wait_hook
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[_AnswerSource]:
+        del wait
+        yield _AnswerSource("feature/x")
+
+    set_prompt_wait_hook(hook)
+    backend = ScriptedBackend([])  # any readline would raise
+    with temporary_backend(backend):
+        assert ask("Which branch?") == "feature/x"
+
+
+def test_ask_ignores_a_source_that_offers_no_actions() -> None:
+    """A notify-only surface leaves the terminal read alone."""
+    from plyngent.prompting import set_prompt_wait_hook
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[_AnswerSource]:
+        del wait
+        source = _AnswerSource("from the notification")
+        source.supports_actions = False
+        yield source
+
+    set_prompt_wait_hook(hook)
+    backend = ScriptedBackend(["typed here"])
+    with temporary_backend(backend):
+        assert ask("Which branch?") == "typed here"
