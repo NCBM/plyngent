@@ -278,6 +278,32 @@ class SkillsConfig(Struct, omit_defaults=True):
     allow_write: bool = False
 
 
+class NotifyConfig(Struct, omit_defaults=True):
+    """Desktop notifications shown while a prompt waits on the human.
+
+    A prompt is announced only after ``grace_seconds`` of waiting, so answering
+    at the terminal stays silent; ``min_interval_seconds`` throttles bursts.
+    ``channels`` picks the surfaces: ``auto`` tries the desktop first and falls
+    back to the terminal, ``desktop`` / ``terminal`` pin one of them.
+
+    Desktop notifications come from the optional ``desktop-notifier`` extra
+    (``pip install plyngent[notify]``); without it the terminal channel is all
+    that is left. ``actions = false`` keeps the notification text-only, and
+    ``include_reason`` lets the one-line reason through — it can name a command
+    or a URL, so it stays off by default (notifications outlive the prompt and
+    may be mirrored to a lock screen).
+    """
+
+    enabled: bool = True
+    grace_seconds: float = 5.0
+    min_interval_seconds: float = 10.0
+    channels: list[str] = field(default_factory=lambda: ["auto"])
+    actions: bool = True
+    include_reason: bool = False
+    # Terminal protocol override: "" = detect, else osc777 / osc9 / bell.
+    protocol: str = ""
+
+
 class ModelConfig(Struct, omit_defaults=True):
     """Capability flags and optional routing overrides for a model.
 

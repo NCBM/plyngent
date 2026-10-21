@@ -17,6 +17,7 @@ from .models import McpConfig as McpConfig
 from .models import McpServerConfig as McpServerConfig
 from .models import ModelConfig as ModelConfig
 from .models import NetworkingConfig as NetworkingConfig
+from .models import NotifyConfig as NotifyConfig
 from .models import OpenAICompatibleProvider as OpenAICompatibleProvider
 from .models import OpenAIProvider as OpenAIProvider
 from .models import PluginsConfig as PluginsConfig

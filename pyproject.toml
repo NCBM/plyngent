@@ -22,6 +22,10 @@ requires-python = ">=3.14,<4"
 readme = "README.md"
 license = { text = "MIT" }
 
+[project.optional-dependencies]
+# Desktop notifications while a prompt waits on the human (see `[notify]`).
+notify = ["desktop-notifier>=6.2.0"]
+
 [project.scripts]
 plyngent = "plyngent.cli:main"
 

@@ -12,6 +12,7 @@ from .models import (
     McpConfig,
     ModelConfig,
     NetworkingConfig,
+    NotifyConfig,
     PluginsConfig,
     Provider,
     SkillsConfig,
@@ -64,6 +65,22 @@ def _parse_skills(raw: dict[str, object]) -> SkillsConfig:
         return msgspec.convert(raw, SkillsConfig)
     except msgspec.ValidationError:
         return SkillsConfig()
+
+
+def _parse_notify(raw: dict[str, object]) -> NotifyConfig:
+    """Parse the ``[notify]`` section, falling back to defaults.
+
+    Unknown keys are rejected like ``[mcp]`` does: a typo degrades to the
+    defaults (notifications on, ``auto`` channel) instead of half-applying.
+    """
+    try:
+        config = msgspec.convert(raw, NotifyConfig)
+    except msgspec.ValidationError:
+        return NotifyConfig()
+    known = set(NotifyConfig.__struct_fields__)
+    if set(raw) - known:
+        return NotifyConfig()
+    return config
 
 
 def _parse_mcp(raw: dict[str, object]) -> McpConfig:
@@ -160,6 +177,7 @@ class ConfigStore:
     _networking: NetworkingConfig
     _mcp: McpConfig
     _skills: SkillsConfig
+    _notify: NotifyConfig
     _providers: dict[str, Provider]
     _bad_providers: dict[str, object]
     _recoverable_providers: dict[str, Provider]
@@ -174,6 +192,7 @@ class ConfigStore:
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
         self._skills = _parse_skills(cast("dict[str, object]", raw.get("skills", {})))
+        self._notify = _parse_notify(cast("dict[str, object]", raw.get("notify", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(document)
 
     @property
@@ -237,6 +256,13 @@ class ConfigStore:
     def skills_config(self) -> SkillsConfig:
         """Typed skills section (roots, discovery sources, catalog limits)."""
         return self._skills
+
+    # -- notify (read-only) --
+
+    @property
+    def notify_config(self) -> NotifyConfig:
+        """Typed notifications section (grace, channels, actions)."""
+        return self._notify
 
     def set_plugins_enable(self, names: Sequence[str]) -> PluginsConfig:
         """Replace the plugin enable list (in-memory; call :meth:`write` to persist)."""
@@ -442,6 +468,7 @@ class ConfigStore:
         self._plugins = _parse_plugins(cast("dict[str, object]", raw.get("plugins", {})))
         self._networking = _parse_networking(cast("dict[str, object]", raw.get("networking", {})))
         self._mcp = _parse_mcp(cast("dict[str, object]", raw.get("mcp", {})))
+        self._notify = _parse_notify(cast("dict[str, object]", raw.get("notify", {})))
         self._providers, self._bad_providers, self._recoverable_providers = _parse_providers(self._document)
 
     # -- internal sync helpers --
