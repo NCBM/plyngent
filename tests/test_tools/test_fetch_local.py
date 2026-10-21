@@ -184,9 +184,9 @@ def test_soft_confirm_reason_matrix() -> None:
 def test_classify_danger_fetch() -> None:
     assert classify_danger("fetch_local", {"url": "https://example.com/", "method": "GET"}) is None
     reason = classify_danger("fetch_local", {"url": "http://example.com/", "method": "GET"})
-    assert reason is not None and "cleartext" in reason
+    assert isinstance(reason, str) and "cleartext" in reason
     reason2 = classify_danger("fetch_local", {"url": "https://example.com/api", "method": "DELETE"})
-    assert reason2 is not None and "DELETE" in reason2
+    assert isinstance(reason2, str) and "DELETE" in reason2
 
 
 async def test_fetch_get_post_put_delete(workspace: Path, http_server: str) -> None:

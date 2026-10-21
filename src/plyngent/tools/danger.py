@@ -4,7 +4,8 @@ import json
 import shlex
 from typing import TYPE_CHECKING, cast
 
-from plyngent.tools.command_scan import is_interpreter, unwrap_command
+from plyngent.agent.tools import DangerReason
+from plyngent.tools.command_scan import dash_c_code, escalators_in_chain, is_interpreter, unwrap_command
 from plyngent.tools.workspace import AccessMode, WorkspaceError, resolve_path
 
 if TYPE_CHECKING:
@@ -23,19 +24,6 @@ def _as_argv(args: Mapping[str, object], *, key: str = "command") -> list[str] |
     return out
 
 
-def _dash_c_code(command: Sequence[str]) -> tuple[int, str] | None:
-    """Index and text of the ``-c`` code in an interpreter argv, if present.
-
-    Only interpreters hand ``-c`` a block of code; for anything else it is a
-    plain flag (``grep -c``, ``od -c``) with nothing to review.
-    """
-    for index, part in enumerate(command[1:], start=1):
-        if part == "-c":
-            return index, command[index + 1] if index + 1 < len(command) else ""
-        # Combined short forms are uncommon; only exact -c is supported.
-    return None
-
-
 def _indent_block(text: str, *, prefix: str = "  ") -> str:
     """Indent every line of *text* (for multi-line -c code in confirm prompts)."""
     if not text:
@@ -51,7 +39,7 @@ def _format_argv_for_confirm(argv: Sequence[str], *, code_index: int | None) -> 
     return shlex.join(parts)
 
 
-def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
+def _command_reason(argv: Sequence[str], *, via: str) -> DangerReason | None:
     """Confirm a command that runs code or detaches, whatever wraps it.
 
     Multi-line reason (shown inside the CLI confirm box). ``via`` is a short
@@ -65,6 +53,11 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
     (``env -S "…"``, ``su -c "…"``) hides code the same way, so it is confirmed
     too, with the text it carries printed under its own ``<wrapper> <option>:``
     label.
+
+    A command that escalates privileges (``sudo``/``doas``/``pkexec`` as the
+    program or a wrapper) is confirmed with ``yolo_skip=False``. It never adds a
+    reason of its own: the denylist gate in the handler always asks about the
+    escalation, so a second prompt here would only repeat it.
     """
     scan = unwrap_command(argv)
     interpreter = is_interpreter(scan.base)
@@ -75,7 +68,10 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
     findings = list(dict.fromkeys(findings))
     if not findings:
         return None
-    code = _dash_c_code(scan.command) if interpreter else None
+    escalators = escalators_in_chain(argv)
+    if escalators:
+        findings.append(f"privilege escalation {', '.join(escalators)}")
+    code = dash_c_code(scan.command) if interpreter else None
     code_index = scan.offset + code[0] if code is not None else None
     display = _format_argv_for_confirm(argv, code_index=code_index)
     reason = f"{via}: {' + '.join(findings)} — review before allow\n  argv: {display}"
@@ -83,7 +79,7 @@ def _command_reason(argv: Sequence[str], *, via: str) -> str | None:
         reason += f"\n  command:\n{_indent_block(code[1])}"
     for span in scan.command_strings:
         reason += f"\n  {span.label}:\n{_indent_block(span.text)}"
-    return reason
+    return DangerReason(text=reason, yolo_skip=not escalators)
 
 
 def _write_file_reason(args: Mapping[str, object]) -> str | None:
@@ -139,7 +135,7 @@ def _delete_path_reason(args: Mapping[str, object]) -> str | None:
     return f"delete path {path!r}{extra}"
 
 
-def _run_argv_reason(args: Mapping[str, object]) -> str | None:
+def _run_argv_reason(args: Mapping[str, object]) -> DangerReason | None:
     argv = _as_argv(args, key="argv")
     if argv is None:
         return None
@@ -161,8 +157,12 @@ def _batch_step_argv(item: object) -> list[str] | None:
     return parts or None
 
 
-def _run_argv_batch_reason(args: Mapping[str, object]) -> str | None:
-    """One confirm for the whole batch if any step runs code or detaches."""
+def _run_argv_batch_reason(args: Mapping[str, object]) -> DangerReason | None:
+    """One confirm for the whole batch if any step runs code or detaches.
+
+    YOLO mode may drop it only when every step's reason allows that, so one
+    escalating step keeps the whole batch in front of the human.
+    """
     raw = args.get("steps")
     if isinstance(raw, str):
         try:
@@ -181,10 +181,13 @@ def _run_argv_batch_reason(args: Mapping[str, object]) -> str | None:
     if not risky:
         return None
     header = f"run_argv_batch: {len(risky)} risky step(s) (review before allow)"
-    return header + "\n" + "\n".join(risky)
+    return DangerReason(
+        text=header + "\n" + "\n".join(reason.text for reason in risky),
+        yolo_skip=all(reason.yolo_skip for reason in risky),
+    )
 
 
-def _open_pty_reason(args: Mapping[str, object]) -> str | None:
+def _open_pty_reason(args: Mapping[str, object]) -> DangerReason | None:
     argv = _as_argv(args)
     if argv is None:
         return None
@@ -204,14 +207,18 @@ def _fetch_reason(args: Mapping[str, object]) -> str | None:
     return fetch_soft_reason(method, url, body)
 
 
-def classify_danger(name: str, args: Mapping[str, object]) -> str | None:  # noqa: PLR0911
-    """Return a short reason if ``name``/``args`` need user confirm, else ``None``.
+def classify_danger(name: str, args: Mapping[str, object]) -> str | DangerReason | None:  # noqa: PLR0911
+    """Return why ``name``/``args`` need a user confirm, else ``None``.
 
     Hard denylists (paths/commands) still raise independently. This only covers
     soft confirms for mutating tools and risky command launches — interpreters
     (however invoked) and detached runners such as ``nohup``, resolved past
     environment wrappers and ``<launcher> run``.
     Private/loopback fetch_local targets use a separate policy grant (not YOLO).
+
+    A reason also says whether YOLO mode may drop its prompt
+    (:attr:`DangerReason.yolo_skip`); a command that escalates privileges
+    refuses.
     """
     if name == "delete_path":
         return _delete_path_reason(args)

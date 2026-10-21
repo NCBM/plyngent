@@ -16,8 +16,22 @@ from msgspec import Struct
 from plyngent.lmproto.openai_compatible.model import ChatImagePart, ToolFunction, ToolFunctionItem
 from plyngent.typedef import JSONSchema  # noqa: TC001
 
+
+@dataclass(frozen=True, slots=True)
+class DangerReason:
+    """Why a call needs a soft confirm, and whether YOLO mode may drop that prompt.
+
+    ``yolo_skip`` is false for a call that reaches rights the session does not
+    have (``sudo`` / ``doas`` / ``pkexec`` and friends): the human answers it
+    however YOLO mode is set.
+    """
+
+    text: str
+    yolo_skip: bool = True
+
+
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
-type DangerClassifier = Callable[[str, Mapping[str, object]], str | None]
+type DangerClassifier = Callable[[str, Mapping[str, object]], str | DangerReason | None]
 # Returns True to allow, False to deny, or a non-empty str as denial reason for the model.
 type ToolConfirmResult = bool | str
 type ToolConfirmHook = Callable[
@@ -313,6 +327,13 @@ def _denied_error(name: str, reason: str, comment: str | None) -> str:
     return f"error: tool {name!r} denied by user confirm ({reason})"
 
 
+def _as_danger_reason(raw: str | DangerReason | None) -> DangerReason | None:
+    """Normalize a classifier answer; a bare string is a reason YOLO mode may drop."""
+    if raw is None:
+        return None
+    return raw if isinstance(raw, DangerReason) else DangerReason(text=raw)
+
+
 def _write_path_key(value: str) -> str:
     """Comparable key for one path argument of a writing tool.
 
@@ -559,7 +580,9 @@ class ToolRegistry:
 
         Mirrors the front half of :meth:`execute`: a call whose arguments fail to
         decode or miss a required argument is answered with an error there and
-        must not be put in front of the user now.
+        must not be put in front of the user now, and a call whose reason YOLO
+        mode covers runs unprompted, so it must not take a slot in the round's
+        aggregated prompt either.
         """
         definition = self._tools.get(name)
         if self._danger is None or definition is None:
@@ -567,8 +590,10 @@ class ToolRegistry:
         args = _decode_tool_args(arguments_json)
         if isinstance(args, str) or _missing_required_error(definition, args) is not None:
             return None
-        reason = self._danger(name, args)
-        return None if reason is None else ToolConfirmRequest(name=name, args=args, reason=reason)
+        reason = _as_danger_reason(self._danger(name, args))
+        if reason is None or (self._yolo and (definition.tags & ToolTag.YOLO) and reason.yolo_skip):
+            return None
+        return ToolConfirmRequest(name=name, args=args, reason=reason.text)
 
     def _batch_requests(
         self,
@@ -633,29 +658,32 @@ class ToolRegistry:
         tags: ToolTag,
         decision: BatchConfirmDecision | None = None,
     ) -> str | None:
-        """Soft-confirm gate driven by danger reason + tags + grants.
+        """Soft-confirm gate driven by danger reason + tags + grants + YOLO.
 
         Pipeline (soft gate only; hard denylists stay in tool handlers)::
 
             no soft reason → run
+            YOLO mode, (tags & YOLO) and a reason it may drop → allow
             batch decision for this call → apply it
             (tags & TRUSTABLE) and grant exists → allow
-            else → on_confirm (decorator YOLO tag does not override
-                   dangerous invocations — internal danger classification
-                   always takes precedence)
+            else → on_confirm (a tool without the YOLO tag, or a reason YOLO
+                   may not drop — a privilege escalation — still prompts
+                   under YOLO mode)
         """
         if self._danger is None:
             return None
-        reason = self._danger(name, args)
+        reason = _as_danger_reason(self._danger(name, args))
         if reason is None:
+            return None
+        if self._yolo and (tags & ToolTag.YOLO) and reason.yolo_skip:
             return None
 
         async with self._confirm_lock:
             if decision is not None:
-                return await self._apply_batch_decision(name, reason, decision, tags=tags)
+                return await self._apply_batch_decision(name, reason.text, decision, tags=tags)
             if self._grant_allows(name, tags=tags):
                 return None
-            return await self._prompt_soft_confirm(name, args, reason, tags=tags)
+            return await self._prompt_soft_confirm(name, args, reason.text, tags=tags)
 
     async def execute(
         self,

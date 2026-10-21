@@ -30,6 +30,7 @@ from .notices import skill_tools_notice as skill_tools_notice
 from .notices import truncated_turn_notice as truncated_turn_notice
 from .tools import BatchConfirmDecision as BatchConfirmDecision
 from .tools import DangerClassifier as DangerClassifier
+from .tools import DangerReason as DangerReason
 from .tools import ToolBatchConfirmHook as ToolBatchConfirmHook
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolConfirmRequest as ToolConfirmRequest

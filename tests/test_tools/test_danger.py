@@ -2,19 +2,35 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from plyngent.agent import DangerReason
 from plyngent.tools.danger import classify_danger
 
 
+def _reason(name: str, args: dict[str, object]) -> str | None:
+    """Confirm text of a classifier answer (``None`` when the call needs none)."""
+    found = classify_danger(name, args)
+    if found is None:
+        return None
+    return found if isinstance(found, str) else found.text
+
+
+def _danger(name: str, args: dict[str, object]) -> DangerReason:
+    """Classifier answer as a typed reason (the call must need a confirm)."""
+    found = classify_danger(name, args)
+    assert isinstance(found, DangerReason), found
+    return found
+
+
 def test_classify_delete_and_move() -> None:
-    assert classify_danger("delete_path", {"path": "a.txt"}) == "delete path 'a.txt'"
-    assert "recursively" in (classify_danger("delete_path", {"path": "d", "recursive": True}) or "")
-    assert "move" in (classify_danger("move_path", {"src": "a", "dst": "b"}) or "")
+    assert _reason("delete_path", {"path": "a.txt"}) == "delete path 'a.txt'"
+    assert "recursively" in (_reason("delete_path", {"path": "d", "recursive": True}) or "")
+    assert "move" in (_reason("move_path", {"src": "a", "dst": "b"}) or "")
 
 
 def test_classify_copy() -> None:
     # Without overwrite flag, copy is not soft-confirmed.
-    assert classify_danger("copy_path", {"src": "a", "dst": "b"}) is None
-    assert classify_danger("copy_path", {"src": "a", "dst": "b", "overwrite": False}) is None
+    assert _reason("copy_path", {"src": "a", "dst": "b"}) is None
+    assert _reason("copy_path", {"src": "a", "dst": "b", "overwrite": False}) is None
 
 
 def test_classify_write_overwrite_only(tmp_path: Path) -> None:
@@ -25,35 +41,35 @@ def test_classify_write_overwrite_only(tmp_path: Path) -> None:
     with bind_instance(instance):
         _ = set_workspace_root(tmp_path)
         # New file: no soft-confirm, with or without the overwrite flag
-        assert classify_danger("write_file", {"path": "new.txt"}) is None
-        assert classify_danger("write_file", {"path": "new.txt", "overwrite": True}) is None
+        assert _reason("write_file", {"path": "new.txt"}) is None
+        assert _reason("write_file", {"path": "new.txt", "overwrite": True}) is None
         # Partial edits: never soft-confirm
-        assert classify_danger("edit_replace", {"path": "x.txt"}) is None
-        assert classify_danger("edit_lineno", {"path": "x.txt", "start_line": 1, "end_line": 2}) is None
+        assert _reason("edit_replace", {"path": "x.txt"}) is None
+        assert _reason("edit_lineno", {"path": "x.txt", "start_line": 1, "end_line": 2}) is None
         # Existing file: only an explicit overwrite asks; an unset/false flag is
         # refused inside the tool, so no prompt may fire for it.
         (tmp_path / "x.txt").write_text("old", encoding="utf-8")
-        assert classify_danger("write_file", {"path": "x.txt"}) is None
-        assert classify_danger("write_file", {"path": "x.txt", "overwrite": False}) is None
-        reason = classify_danger("write_file", {"path": "x.txt", "overwrite": True})
+        assert _reason("write_file", {"path": "x.txt"}) is None
+        assert _reason("write_file", {"path": "x.txt", "overwrite": False}) is None
+        reason = _reason("write_file", {"path": "x.txt", "overwrite": True})
         assert reason is not None and "overwrite" in reason
         (tmp_path / "dst.txt").write_text("d", encoding="utf-8")
         (tmp_path / "src.txt").write_text("s", encoding="utf-8")
-        assert classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": False}) is None
-        creason = classify_danger("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": True})
+        assert _reason("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": False}) is None
+        creason = _reason("copy_path", {"src": "src.txt", "dst": "dst.txt", "overwrite": True})
         assert creason is not None and "overwrite" in creason
 
 
 def test_classify_safe_tools() -> None:
-    assert classify_danger("read_file", {"path": "a"}) is None
-    assert classify_danger("listdir", {"path": "."}) is None
-    assert classify_danger("run_argv", {"argv": ["echo", "hi"]}) is None
-    assert classify_danger("open_pty", {"command": ["true"]}) is None
-    assert classify_danger("run_argv", {"argv": ["ls", "-la"]}) is None
+    assert _reason("read_file", {"path": "a"}) is None
+    assert _reason("listdir", {"path": "."}) is None
+    assert _reason("run_argv", {"argv": ["echo", "hi"]}) is None
+    assert _reason("open_pty", {"command": ["true"]}) is None
+    assert _reason("run_argv", {"argv": ["ls", "-la"]}) is None
 
 
 def test_classify_run_argv_batch_risky() -> None:
-    reason = classify_danger(
+    reason = _reason(
         "run_argv_batch",
         {
             "steps": [
@@ -66,7 +82,7 @@ def test_classify_run_argv_batch_risky() -> None:
     assert "run_argv_batch" in reason
     assert "risky" in reason or "bash" in reason
     assert (
-        classify_danger(
+        _reason(
             "run_argv_batch",
             {"steps": [{"argv": ["echo", "ok"]}]},
         )
@@ -75,42 +91,42 @@ def test_classify_run_argv_batch_risky() -> None:
 
 
 def test_classify_shell_and_dash_c() -> None:
-    r = classify_danger("run_argv", {"argv": ["bash", "-c", "rm -rf /"]})
+    r = _reason("run_argv", {"argv": ["bash", "-c", "rm -rf /"]})
     assert r is not None
     assert "bash -c" in r
     assert "rm -rf" in r
 
-    r2 = classify_danger("run_argv", {"argv": ["python3", "-c", "print(1)"]})
+    r2 = _reason("run_argv", {"argv": ["python3", "-c", "print(1)"]})
     assert r2 is not None
     assert "python" in r2
     assert "-c" in r2
     assert "print(1)" in r2
 
-    r_py = classify_danger("run_argv", {"argv": ["python", "-c", "import os"]})
+    r_py = _reason("run_argv", {"argv": ["python", "-c", "import os"]})
     assert r_py is not None and "python -c" in r_py
 
-    r3 = classify_danger("open_pty", {"command": ["bash"]})
+    r3 = _reason("open_pty", {"command": ["bash"]})
     assert r3 is not None and "bash" in r3
     assert "interactive" in r3 or "review" in r3
 
-    r4 = classify_danger("open_pty", {"command": ["python3"]})
+    r4 = _reason("open_pty", {"command": ["python3"]})
     assert r4 is not None and "python" in r4
 
-    r5 = classify_danger("open_pty", {"command": ["python3", "-c", "x=1"]})
+    r5 = _reason("open_pty", {"command": ["python3", "-c", "x=1"]})
     assert r5 is not None and "-c" in r5
 
 
 def test_dash_c_means_code_only_for_interpreters() -> None:
     # ``-c`` is a plain flag elsewhere: no code to review, no confirm.
-    assert classify_danger("run_argv", {"argv": ["grep", "-c", "needle", "f.txt"]}) is None
-    assert classify_danger("run_argv", {"argv": ["od", "-c", "f.bin"]}) is None
-    assert classify_danger("run_argv", {"argv": ["sort", "-c", "f.txt"]}) is None
+    assert _reason("run_argv", {"argv": ["grep", "-c", "needle", "f.txt"]}) is None
+    assert _reason("run_argv", {"argv": ["od", "-c", "f.bin"]}) is None
+    assert _reason("run_argv", {"argv": ["sort", "-c", "f.txt"]}) is None
 
 
 def test_interpreter_review_does_not_split_on_dash_c() -> None:
-    script = classify_danger("run_argv", {"argv": ["python", "script.py"]})
-    one_liner = classify_danger("run_argv", {"argv": ["python", "-c", "print(1)"]})
-    bare_shell = classify_danger("open_pty", {"command": ["bash"]})
+    script = _reason("run_argv", {"argv": ["python", "script.py"]})
+    one_liner = _reason("run_argv", {"argv": ["python", "-c", "print(1)"]})
+    bare_shell = _reason("open_pty", {"command": ["bash"]})
     assert script is not None and "interpreter 'python'" in script
     assert one_liner is not None and "interpreter 'python'" in one_liner
     assert bare_shell is not None and "interpreter 'bash'" in bare_shell
@@ -121,7 +137,7 @@ def test_interpreter_review_does_not_split_on_dash_c() -> None:
 
 
 def test_versioned_interpreter_is_still_reviewed() -> None:
-    reason = classify_danger("run_argv", {"argv": ["python3.12", "-c", "import os"]})
+    reason = _reason("run_argv", {"argv": ["python3.12", "-c", "import os"]})
     assert reason is not None and "interpreter 'python3.12'" in reason
     assert "import os" in reason
 
@@ -134,7 +150,7 @@ def test_wrappers_reach_the_interpreter() -> None:
         ["pdm", "run", "python", "-c", "print(1)"],
         ["uv", "run", "--with", "rich", "python", "-c", "print(1)"],
     ):
-        reason = classify_danger("run_argv", {"argv": argv})
+        reason = _reason("run_argv", {"argv": argv})
         assert reason is not None, argv
         assert "interpreter 'python'" in reason or "interpreter 'bash'" in reason
         assert "$(command)" in reason
@@ -142,7 +158,7 @@ def test_wrappers_reach_the_interpreter() -> None:
 
 def test_value_free_flags_do_not_hide_the_interpreter() -> None:
     """``exec -c`` takes no value, so the interpreter behind it is still reviewed."""
-    reason = classify_danger("run_argv", {"argv": ["exec", "-c", "python", "-c", "print(1)"]})
+    reason = _reason("run_argv", {"argv": ["exec", "-c", "python", "-c", "print(1)"]})
     assert reason is not None
     assert "interpreter 'python'" in reason
     assert "print(1)" in reason
@@ -150,26 +166,26 @@ def test_value_free_flags_do_not_hide_the_interpreter() -> None:
 
 def test_wrapper_command_line_option_is_reviewed() -> None:
     """`env -S` / `su -c` carry a command line, so they are confirmed like `-c`."""
-    reason = classify_danger("run_argv", {"argv": ["env", "-S", "rm -rf /"]})
+    reason = _reason("run_argv", {"argv": ["env", "-S", "rm -rf /"]})
     assert reason is not None
     assert "env -S runs a command line" in reason
     assert "  env -S:\n  rm -rf /" in reason
 
     # Plain wrapper options are not a review trigger.
-    assert classify_danger("run_argv", {"argv": ["env", "-u", "FOO=1", "git", "status"]}) is None
-    assert classify_danger("run_argv", {"argv": ["env", "FOO=1", "git", "-c", "x=y", "log"]}) is None
+    assert _reason("run_argv", {"argv": ["env", "-u", "FOO=1", "git", "status"]}) is None
+    assert _reason("run_argv", {"argv": ["env", "FOO=1", "git", "-c", "x=y", "log"]}) is None
 
 
 def test_wrapper_command_line_value_needs_no_interpreter() -> None:
     """The wrapper's value is reviewed even when no interpreter is resolved."""
-    reason = classify_danger("run_argv", {"argv": ["env", "-S", "python -O script.py"]})
+    reason = _reason("run_argv", {"argv": ["env", "-S", "python -O script.py"]})
     assert reason is not None
     assert "env -S runs a command line" in reason
     assert "python -O script.py" in reason
 
 
 def test_only_the_interpreter_dash_c_becomes_a_placeholder() -> None:
-    reason = classify_danger("run_argv", {"argv": ["ionice", "-c", "2", "python", "-c", "print(1)"]})
+    reason = _reason("run_argv", {"argv": ["ionice", "-c", "2", "python", "-c", "print(1)"]})
     assert reason is not None
     argv_line = next(line for line in reason.splitlines() if line.startswith("  argv:"))
     assert "ionice -c 2" in argv_line
@@ -178,13 +194,41 @@ def test_only_the_interpreter_dash_c_becomes_a_placeholder() -> None:
 
 
 def test_detached_runner_is_always_reviewed() -> None:
-    assert classify_danger("run_argv", {"argv": ["sleep", "5"]}) is None
-    reason = classify_danger("run_argv", {"argv": ["nohup", "sleep", "5"]})
+    assert _reason("run_argv", {"argv": ["sleep", "5"]}) is None
+    reason = _reason("run_argv", {"argv": ["nohup", "sleep", "5"]})
     assert reason is not None and "nohup (detached run)" in reason
-    nested = classify_danger("run_argv", {"argv": ["nohup", "python", "-c", "print(1)"]})
+    nested = _reason("run_argv", {"argv": ["nohup", "python", "-c", "print(1)"]})
     assert nested is not None
     assert "nohup (detached run)" in nested and "interpreter 'python'" in nested
     assert "print(1)" in nested
+
+
+def test_privilege_escalation_refuses_the_yolo_skip() -> None:
+    """A reason that runs through `sudo`/`doas` keeps its prompt under YOLO mode."""
+    reason = _danger("run_argv", {"argv": ["sudo", "python", "-c", "print(1)"]})
+    assert "interpreter 'python'" in reason.text
+    assert "privilege escalation sudo" in reason.text
+    assert reason.yolo_skip is False
+
+    assert _danger("run_argv", {"argv": ["env", "FOO=1", "doas", "bash", "-c", "ls"]}).yolo_skip is False
+    # A plain interpreter run is still YOLO mode's to drop.
+    assert _danger("run_argv", {"argv": ["bash", "-c", "echo hi"]}).yolo_skip is True
+    # Escalation adds no reason of its own: the denylist gate asks about it.
+    assert classify_danger("run_argv", {"argv": ["sudo", "ls"]}) is None
+
+
+def test_batch_refuses_the_yolo_skip_when_a_step_escalates() -> None:
+    """One escalating step keeps the batch prompt; all-plain steps may be dropped."""
+    mixed = _danger(
+        "run_argv_batch",
+        {"steps": [{"argv": ["bash", "-c", "ls"]}, {"argv": ["sudo", "python", "-c", "print(1)"]}]},
+    )
+    assert mixed.yolo_skip is False
+    plain = _danger(
+        "run_argv_batch",
+        {"steps": [{"argv": ["bash", "-c", "ls"]}, {"argv": ["python", "-c", "print(1)"]}]},
+    )
+    assert plain.yolo_skip is True
 
 
 async def test_confirm_deny_with_comment() -> None:
@@ -208,7 +252,7 @@ async def test_confirm_deny_with_comment() -> None:
 
 def test_shell_confirm_formats_command_placeholder() -> None:
     script = chr(10).join(["line1", "line2", "line3"])
-    reason = classify_danger(
+    reason = _reason(
         "run_argv",
         {"argv": ["bash", "-c", script]},
     )

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from plyngent.agent import ToolRegistry, ToolTag, tool
+from plyngent.agent import DangerReason, ToolRegistry, ToolTag, tool
 from plyngent.tools.context import SessionState, bind_tool_context
 from plyngent.tools.grants import clear_grants, has_grant, hydrate_grants, persist_grants
 from plyngent.tools.view import MemoryViewStore, session_data_view
 
 
-async def test_danger_overrides_yolo_tag() -> None:
-    """Decorator YOLO tag does not bypass confirm when danger flags the call."""
+async def test_yolo_only_skips_yolo_tagged_tools() -> None:
+    """YOLO mode auto-approves the soft confirms of YOLO-tagged tools only."""
     calls: list[str] = []
 
     @tool(tags=ToolTag.LOCAL | ToolTag.YOLO, register=False)
-    async def yolo_tool() -> str:
+    async def yolo_ok() -> str:
         return "y"
 
     @tool(tags=ToolTag.LOCAL, register=False)
@@ -28,15 +28,55 @@ async def test_danger_overrides_yolo_tag() -> None:
         return True
 
     reg = ToolRegistry(
-        [yolo_tool, no_yolo],
+        [yolo_ok, no_yolo],
         danger=danger,
         on_confirm=confirm,
         yolo=True,
     )
-    assert await reg.execute("yolo_tool", "{}") == "y"
-    assert calls == ["yolo_tool"]
+    assert await reg.execute("yolo_ok", "{}") == "y"
+    assert calls == []
     assert await reg.execute("no_yolo", "{}") == "n"
-    assert calls == ["yolo_tool", "no_yolo"]
+    assert calls == ["no_yolo"]
+
+
+async def test_yolo_off_keeps_the_yolo_tagged_prompt() -> None:
+    """The YOLO tag is a policy bit: with YOLO off the call still asks."""
+    calls: list[str] = []
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.YOLO, register=False)
+    async def yolo_ok() -> str:
+        return "y"
+
+    def danger(_name: str, _args: object) -> str | None:
+        return "soft reason"
+
+    async def confirm(name: str, _args: object, _reason: str) -> bool:
+        calls.append(name)
+        return True
+
+    reg = ToolRegistry([yolo_ok], danger=danger, on_confirm=confirm, yolo=False)
+    assert await reg.execute("yolo_ok", "{}") == "y"
+    assert calls == ["yolo_ok"]
+
+
+async def test_yolo_keeps_a_reason_that_refuses_the_skip() -> None:
+    """`DangerReason(yolo_skip=False)` — a privilege escalation — still prompts."""
+    seen: list[str] = []
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.YOLO, register=False)
+    async def escalated() -> str:
+        return "x"
+
+    def danger(_name: str, _args: object) -> DangerReason:
+        return DangerReason("interpreter 'python' + privilege escalation sudo", yolo_skip=False)
+
+    async def confirm(_name: str, _args: object, reason: str) -> bool:
+        seen.append(reason)
+        return True
+
+    reg = ToolRegistry([escalated], danger=danger, on_confirm=confirm, yolo=True)
+    assert await reg.execute("escalated", "{}") == "x"
+    assert seen == ["interpreter 'python' + privilege escalation sudo"]
 
 
 async def test_trustable_grant_once() -> None:

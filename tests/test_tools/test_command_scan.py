@@ -1,12 +1,21 @@
 from __future__ import annotations
 
-from plyngent.tools.command_scan import basename, is_interpreter, unwrap_command
+from plyngent.tools.command_scan import basename, escalators_in_chain, is_interpreter, unwrap_command
 
 
 def test_basename() -> None:
     assert basename("/usr/bin/python3.12") == "python3.12"
     assert basename("C:\\Tools\\RM.EXE") == "rm"
     assert basename("pdm") == "pdm"
+
+
+def test_escalators_in_chain() -> None:
+    assert escalators_in_chain(["sudo", "-u", "root", "python", "-c", "print(1)"]) == ("sudo",)
+    assert escalators_in_chain(["env", "FOO=1", "doas", "id"]) == ("doas",)
+    assert escalators_in_chain(["pdm", "run", "sudo", "id"]) == ("sudo",)
+    # Only the command line counts: the code an interpreter carries is not read.
+    assert escalators_in_chain(["bash", "-c", "sudo id"]) == ()
+    assert escalators_in_chain(["grep", "-c", "sudo", "notes.txt"]) == ()
 
 
 def test_unwrap_plain_command() -> None:

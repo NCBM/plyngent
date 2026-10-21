@@ -16,7 +16,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["CommandString", "UnwrappedCommand", "basename", "is_interpreter", "unwrap_command"]
+__all__ = [
+    "ESCALATION_PROGRAMS",
+    "CommandString",
+    "UnwrappedCommand",
+    "basename",
+    "dash_c_code",
+    "escalators_in_chain",
+    "is_interpreter",
+    "unwrap_command",
+]
 
 # Wrappers that run the program named on their own command line.
 _ENV_WRAPPERS: frozenset[str] = frozenset(
@@ -99,6 +108,10 @@ _INTERPRETERS: frozenset[str] = frozenset(
 # Trailing version of an interpreter: ``python3.12`` / ``node20`` / ``php8.2``.
 _VERSION_SUFFIX = re.compile(r"[0-9][0-9.]*$")
 
+# Privilege escalation: these run with rights the session itself does not have,
+# so a call that reaches one is never approved on the caller's behalf
+# (``danger._command_reason`` keeps the confirm whatever YOLO mode says).
+ESCALATION_PROGRAMS: frozenset[str] = frozenset({"doas", "pkexec", "run0", "su", "sudo", "systemd-run"})
 # ``FOO=bar`` in front of a program (env/sudo style).
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -243,6 +256,31 @@ def is_interpreter(base: str) -> bool:
     count as interpreters too.
     """
     return base in _INTERPRETERS or _VERSION_SUFFIX.sub("", base) in _INTERPRETERS
+
+
+def dash_c_code(command: Sequence[str]) -> tuple[int, str] | None:
+    """Index and text of the ``-c`` code in an interpreter argv, if present.
+
+    Only interpreters hand ``-c`` a block of code; for anything else it is a
+    plain flag (``grep -c``, ``od -c``) with nothing to review.
+    """
+    for index, part in enumerate(command[1:], start=1):
+        if part == "-c":
+            return index, command[index + 1] if index + 1 < len(command) else ""
+        # Combined short forms are uncommon; only exact -c is supported.
+    return None
+
+
+def escalators_in_chain(argv: Sequence[str]) -> tuple[str, ...]:
+    """Escalation programs *argv* runs: the program itself or a wrapper around it.
+
+    ``sudo -u root python …`` and ``doas bash`` both count, whatever program they
+    finally run. Code an interpreter only carries as text is out of scope here —
+    this reads the command line, not what the text would do.
+    """
+    scan = unwrap_command(argv)
+    names = (scan.base, *scan.wrappers)
+    return tuple(dict.fromkeys(name for name in names if name in ESCALATION_PROGRAMS))
 
 
 def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:

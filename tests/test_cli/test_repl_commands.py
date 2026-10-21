@@ -486,8 +486,8 @@ async def test_yolo_rebuilds_tool_registry(tmp_path: Path) -> None:
     )
     try:
         assert st.agent.tools is not None
-        # Soft-confirm hooks stay installed; YOLO mode does not bypass
-        # dangerous invocations — internal danger classification takes precedence.
+        # Soft-confirm hooks stay installed; YOLO mode only auto-approves the
+        # confirms of YOLO-tagged tools, so the others still prompt.
         assert st.agent.tools.soft_confirm is True
         assert st.agent.tools.yolo is False
         st.set_yolo("on")

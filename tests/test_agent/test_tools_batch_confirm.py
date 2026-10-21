@@ -93,6 +93,46 @@ async def test_round_asks_once_for_many_mutating_calls() -> None:
     assert single_prompts == []
 
 
+async def test_yolo_calls_are_left_out_of_the_prompt() -> None:
+    """Under YOLO mode a YOLO-tagged call runs unprompted, batch prompt included."""
+    batch_prompts: list[list[str]] = []
+    single_prompts: list[str] = []
+
+    @tool(tags=ToolTag.LOCAL | ToolTag.YOLO, register=False)
+    async def yolo_ok(path: str) -> str:
+        return f"stamped {path}"
+
+    @tool(tags=ToolTag.LOCAL, register=False)
+    async def always_ask(path: str) -> str:
+        return f"stamped {path}"
+
+    def on_batch(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
+        batch_prompts.append([request.name for request in requests])
+        return BatchConfirmDecision(allowed=True)
+
+    async def on_single(name: str, _args: Mapping[str, object], _reason: str) -> bool:
+        single_prompts.append(name)
+        return True
+
+    reg = ToolRegistry(
+        [yolo_ok, always_ask],
+        danger=_danger,
+        on_confirm=on_single,
+        on_confirm_batch=on_batch,
+        yolo=True,
+    )
+    calls = [("yolo_ok", '{"path": "a"}'), ("always_ask", '{"path": "b"}'), ("always_ask", '{"path": "c"}')]
+    decisions = await reg.prepare_batch_confirm(calls)
+
+    assert decisions[0] is None
+    assert batch_prompts == [["always_ask", "always_ask"]]
+    results = [
+        await reg.execute(name, arguments, decision=decisions[index]) for index, (name, arguments) in enumerate(calls)
+    ]
+    assert results == ["stamped a", "stamped b", "stamped c"]
+    assert single_prompts == []
+
+
 async def test_single_request_keeps_the_one_call_prompt() -> None:
     """One mutating call stays the plain per-call confirm."""
     batch_prompts: list[int] = []
