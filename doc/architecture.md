@@ -39,4 +39,6 @@
 Plugins (third-party entry points, allowlisted under ``[plugins]``): [plugins.md](./plugins.md).
 Conversation units (a *round* = one request→response plus its tool batch, a
 *turn* = a user message to the explicit stop): [turns-and-rounds.md](./turns-and-rounds.md).
+Images (a turn's pictures, a tool result's pictures, what each wire surface
+takes): [images.md](./images.md).
 

@@ -124,7 +124,9 @@ access_key_or_token = "sk-replace-me"
 # timeout = { connect = 10, read = 600 }
 
 [providers.openai_compat.models]
-"gpt-4o-mini" = { text = true, cost_factor = 1.0 }
+# ``image_in`` is the opt-in for a model that reads pictures (JPEG, PNG, GIF,
+# WebP); an ``@image`` mention is skipped without it. See doc/images.md.
+"gpt-4o-mini" = { text = true, image_in = true, cost_factor = 1.0 }
 
 # --- OpenAI platform (Responses API; tag is "openai") ---
 # If ``preset`` is omitted, it defaults to "openai".
@@ -202,5 +204,7 @@ access_key_or_token = "sk-replace-me"
 # search_sources = ["deepseek"]
 #
 # [providers.deepseek.models]
-# "deepseek-flash" = { text = true, convention = "responses" }
+# Defaults: "deepseek-flash" takes pictures (image_in = true), "deepseek-v4-pro"
+# is text-only.
+# "deepseek-flash" = { text = true, image_in = true, convention = "responses" }
 # "deepseek-v4-pro" = { text = true, reasoning_effort = "max" }
