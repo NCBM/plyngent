@@ -93,9 +93,27 @@ completed in its quoted form).
 
 ## Opting in
 
-`[providers.<name>.models."<model>"].image_in` is the gate — an `@image` mention
-is skipped, with a note naming the key, on a model that does not set it, and the
-default catalogs mark what takes pictures (`deepseek-flash` yes,
+`[providers.<name>.models."<model>"].image_in` is the gate, and it covers every
+way a picture can enter a turn — not only an `@image` mention:
+
+| Path | Where it is gated |
+|---|---|
+| an `@image` mention (`cli/mentions.py`) | skipped, with a note naming the key |
+| the `view_image` tool | `error: model '…' does not accept image input (set image_in = true under [providers.x.models."y"])` |
+| an image body from `fetch_local` | the metadata stays, the picture is left behind with the same reason |
+| an MCP server's image content, a plugin's `ToolOutput` | dropped by the registry's safety net (`agent/tools.py`), with the reason appended to the text |
+
+`ReplState.sync_image_capability` publishes the selected model's verdict on
+`InstanceState.workspace` and runs on every provider/model/client rebuild, so a
+`/model` switch flips the gate at once. A host that binds no instance declares
+nothing, and the picture is sent as usual.
+
+The point is to fail loudly: without the gate a text-only model answers
+`[Unsupported Image]` one round later, and a gateway that cannot read image
+blocks hands the model raw base64 — which reads like the picture arrived when it
+did not.
+
+The default catalogs mark what takes pictures (`deepseek-flash` yes,
 `deepseek-v4-pro` no, OpenAI's defaults yes). A model missing from the catalog
 has to be declared: the flag is an explicit opt-in.
 
