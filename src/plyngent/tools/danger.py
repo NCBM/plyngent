@@ -59,12 +59,19 @@ def _command_reason(argv: Sequence[str], *, via: str) -> DangerReason | None:
     program or a wrapper) is confirmed with ``yolo_skip=False``. It never adds a
     reason of its own: the denylist gate in the handler always asks about the
     escalation, so a second prompt here would only repeat it.
+
+    A command on another machine (``ssh``/``mosh``) is reviewed by the program it
+    runs there — the client's destination and options are skipped. With
+    ``-o BatchMode=yes`` the client cannot prompt at either end, so the command
+    is always confirmed, whatever program it is.
     """
     scan = unwrap_command(argv)
     interpreter = is_interpreter(scan.base)
     findings = [f"{name} (detached run)" for name in scan.self_review]
     if interpreter:
         findings.append(f"interpreter {scan.base!r}")
+    if scan.remote is not None and scan.remote.batch:
+        findings.append(f"remote command on {scan.remote.host!r} (BatchMode=yes, no prompt on either end)")
     findings.extend(f"{span.label} runs a command line" for span in scan.command_strings)
     findings = list(dict.fromkeys(findings))
     if not findings:

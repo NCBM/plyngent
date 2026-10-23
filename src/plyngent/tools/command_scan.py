@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ESCALATION_PROGRAMS",
     "CommandString",
+    "RemoteTarget",
     "UnwrappedCommand",
     "basename",
     "dash_c_code",
@@ -174,6 +175,46 @@ _COMMAND_STRING_OPTS: dict[str, frozenset[str]] = {
     "su": frozenset({"-c", "--command", "--session-command"}),
 }
 
+# Remote wrappers: ``ssh``/``mosh`` run their command on another machine, so the
+# program under review is the one *after* the destination instead of the client.
+# A remote wrapper with no command only opens a remote shell — what is typed or
+# piped into that shell never reaches this scan (see the SSH note in AGENTS.md).
+_REMOTE_WRAPPERS: frozenset[str] = frozenset({"mosh", "ssh"})
+
+# Length of a short option (``-p``), so ``-p2222`` reads as option plus value.
+_SHORT_OPTION = 2
+
+# Remote-client options that consume a value (``ssh -o BatchMode=yes -p 2222``).
+_REMOTE_VALUE_OPTS: dict[str, frozenset[str]] = {
+    "mosh": frozenset({"-p", "--client-port", "--family", "--port", "--predict", "--server", "--ssh"}),
+    "ssh": frozenset(
+        {
+            "-B",
+            "-b",
+            "-c",
+            "-D",
+            "-E",
+            "-e",
+            "-F",
+            "-I",
+            "-i",
+            "-J",
+            "-L",
+            "-l",
+            "-m",
+            "-O",
+            "-o",
+            "-P",
+            "-p",
+            "-Q",
+            "-R",
+            "-S",
+            "-W",
+            "-w",
+        }
+    ),
+}
+
 # Launcher options that consume a value (``uv run --with rich python``).
 _RUN_VALUE_OPTS: frozenset[str] = frozenset(
     {
@@ -227,6 +268,16 @@ class CommandString:
 
 
 @dataclass(frozen=True)
+class RemoteTarget:
+    """The hop a remote wrapper (``ssh`` / ``mosh``) sends its command to."""
+
+    wrapper: str
+    host: str
+    #: ``-o BatchMode=yes``: the client never prompts, so the command runs.
+    batch: bool = False
+
+
+@dataclass(frozen=True)
 class UnwrappedCommand:
     """A command plus the program it really runs, past wrappers and launchers."""
 
@@ -236,6 +287,8 @@ class UnwrappedCommand:
     base: str
     self_review: tuple[str, ...]
     command_strings: tuple[CommandString, ...] = ()
+    #: The remote hop, when the command runs on another machine.
+    remote: RemoteTarget | None = None
 
     @property
     def command(self) -> tuple[str, ...]:
@@ -289,13 +342,26 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
     Wrappers are unwrapped outer → inner as long as a program still follows
     them; their own options and ``FOO=bar`` assignments are skipped, and an
     option that carries a command line is collected in ``command_strings``.
+
+    ``ssh`` / ``mosh`` are unwrapped the same way — the program under review is
+    the one after the destination (``ssh prod rm -rf /`` runs ``rm``), and the
+    hop is reported in :attr:`UnwrappedCommand.remote`. A client with no command
+    opens a remote shell, which this scan does not look into.
     """
     parts = list(argv)
     wrappers: list[str] = []
     command_strings: list[CommandString] = []
+    remote: RemoteTarget | None = None
     index = 0
     while index < len(parts):
         name = basename(parts[index])
+        if name in _REMOTE_WRAPPERS:
+            start = _skip_remote(name, parts, index + 1)
+            if start is not None:
+                remote = start.target
+                wrappers.append(name)
+                index = start.index
+                continue
         nxt = _skip_wrapper(name, parts, index + 1, command_strings=command_strings)
         if nxt is None:
             break
@@ -310,7 +376,74 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
         base=base,
         self_review=tuple(name for name in chain if name in _SELF_REVIEW),
         command_strings=tuple(command_strings),
+        remote=remote,
     )
+
+
+@dataclass(frozen=True)
+class _RemoteStart:
+    """Where a remote client's own command starts, and the hop it reaches."""
+
+    index: int
+    target: RemoteTarget
+
+
+def _skip_remote(name: str, parts: list[str], start: int) -> _RemoteStart | None:
+    """Where the command *name* runs elsewhere starts; ``None`` for a bare shell.
+
+    The destination is the first token that is not one of the client's own
+    options (``ssh -o BatchMode=yes -p 2222 [user@]host …``); the command follows
+    it, or — for ``mosh`` — follows an explicit ``--``. No token after the
+    destination means the client just opens a remote shell.
+    """
+    value_opts = _REMOTE_VALUE_OPTS.get(name, frozenset())
+    index = start
+    host = ""
+    batch = False
+    while index < len(parts):
+        token = parts[index]
+        if not token.startswith("-"):
+            host = token
+            index += 1
+            break
+        option, value, consumed = _remote_option(token, parts, index, value_opts=value_opts)
+        index += consumed
+        if option == "-o" and value is not None and value.partition("=")[0].strip().lower() == "batchmode":
+            batch = value.partition("=")[2].strip().lower() in {"1", "on", "true", "yes"}
+    if not host:
+        return None
+    if name == "mosh" and index < len(parts) and parts[index] == "--":
+        index += 1
+    if index >= len(parts):
+        return None
+    return _RemoteStart(index=index, target=RemoteTarget(wrapper=name, host=host, batch=batch))
+
+
+def _remote_option(
+    token: str,
+    parts: list[str],
+    index: int,
+    *,
+    value_opts: frozenset[str],
+) -> tuple[str, str | None, int]:
+    """The option *token* names, its value, and how many tokens it consumed.
+
+    Jammed forms carry the value in the token itself: ``-p2222`` and
+    ``-oBatchMode=yes`` are one token, ``--ssh='ssh -p 2222'`` too.
+    """
+    if token.startswith("--"):
+        option, equal, attached = token.partition("=")
+        if equal:
+            return option, attached, 1
+    else:
+        option = token[:_SHORT_OPTION]
+        if option in value_opts and len(token) > _SHORT_OPTION:
+            return option, token[_SHORT_OPTION:], 1
+    if option not in value_opts:
+        return token, None, 1
+    if index + 1 < len(parts):
+        return option, parts[index + 1], 2
+    return option, "", 1
 
 
 def _skip_wrapper(
