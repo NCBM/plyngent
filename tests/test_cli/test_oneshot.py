@@ -135,10 +135,12 @@ access_key_or_token = "sk"
         lambda _p, **_kw: DummyClient(),
     )
 
-    from platformdirs import user_data_path
-
-    global_db = user_data_path("plyngent") / "chat.db"
-    global_mtime = global_db.stat().st_mtime if global_db.exists() else None
+    # The durable default must stay untouched, and the test must not read the
+    # host's own chat.db to prove it: point that default into tmp_path and check
+    # nothing was created there.
+    unused_data_dir = tmp_path / "user-data"
+    _ = unused_data_dir.mkdir()
+    monkeypatch.setattr("plyngent.cli.app.user_data_path", lambda *_args, **_kwargs: unused_data_dir)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -162,8 +164,7 @@ access_key_or_token = "sk"
     assert result.exit_code == EXIT_OK
     assert "pong" in result.output
     assert db_path.is_file()
-    if global_mtime is not None:
-        assert global_db.stat().st_mtime == global_mtime
+    assert not (unused_data_dir / "chat.db").exists()
 
 
 def test_chat_help_mentions_prompt() -> None:
