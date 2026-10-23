@@ -77,6 +77,8 @@ def _command_reason(argv: Sequence[str], *, via: str) -> DangerReason | None:
         findings.append(f"remote shell on {remote.host!r} ({remote.wrapper} with no command; its input is not checked)")
     elif remote is not None and remote.batch:
         findings.append(f"remote command on {remote.host!r} (BatchMode=yes, no prompt on either end)")
+    if scan.unparsed:
+        findings.append(f"options not understood {scan.unparsed} — the wrapped program is a guess")
     findings.extend(f"{span.label} runs a command line" for span in scan.command_strings)
     findings = list(dict.fromkeys(findings))
     if not findings:
