@@ -58,7 +58,10 @@
 # The body says what is asked: a question or a choice travels whole (the title is
 # only a short label), a confirmation names the program or file it is about, and a
 # timed prompt says when silence answers ("no answer in 30s = deny", which is a
-# deny for the denylist, directory-access and skill-write prompts).
+# deny for the denylist, directory-access and skill-write prompts). The last line
+# is the workspace the chat runs in (`~` for home), so several waiting chats are
+# told apart; a prompt that has a deadline hands it to the popup, which then
+# disappears with it.
 # `include_reason` adds the one-line reason — it can name a command or a URL, so
 # it stays off by default (a notification may be mirrored to a lock screen). A
 # secret is never announced.

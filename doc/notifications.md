@@ -16,12 +16,14 @@ label; the body carries, in this order:
 | the reason line | only with `include_reason = true`: it can name a command, argv or URL, and a notification outlives the prompt (and may be mirrored to a lock screen) |
 | the object | a confirmation or a batch: the program's name (`program: rm`), the file's (`target: todo.md`), the tools of a batch, `kind: directory` for an access request, the skill directory — never an argument, a URL or a piece of code |
 | `no answer in 30s = deny` | a prompt that takes a default answer on timeout (command denylist, directory access, skill write) |
+| the workspace | always: the directory the chat runs in, with the home directory shown as `~` (`~/Projects/plyngent`), so several waiting chats are told apart — it follows a session resumed in another workspace |
 
 The lines are filled in that order until the body is full and each one is
-capped, so a long reason drops out before the deadline does — the deadline is
-the one line a human must not miss, because not answering *is* an answer there.
-A desktop popup wraps and keeps the lines apart; the terminal channel carries
-the same body on a single line.
+capped, so a long reason drops out before the deadline and the workspace do.
+The deadline is the one line a human must not miss, because not answering *is*
+an answer there; the workspace comes last and is kept for the same reason. A
+desktop popup wraps and keeps the lines apart; the terminal channel carries the
+same body on a single line.
 
 ## Configuration
 
@@ -58,9 +60,12 @@ a prompt answered inside the grace period is never announced at all.
 Each prompt says which answers it accepts (`prompt_wait(..., choices=…)`), and
 those are the buttons; one that names none gets Allow once / Deny / Go to
 terminal. "Go to terminal" is always the last button: it withdraws the
-notification and leaves the prompt waiting — and so does a click on the
-notification's body, which is the platform's own default action, so a
-notification with no room for buttons still has that way back.
+notification, rings the terminal's bell and leaves the prompt waiting — and so
+does a click on the notification's body, which is the platform's own default
+action, so a notification with no room for buttons still has that way back.
+Nothing can raise another application's window portably (Wayland has no such
+call), so the bell is what says *which* window holds the waiting prompt; the
+notification is gone after that, and the prompt is announced no second time.
 
 An answer read from the notification is treated exactly like a typed one —
 `allow` is the `y` the prompt accepts, `deny` is `n` — and it never records a
@@ -105,11 +110,14 @@ The notification stays on screen: it is sent with no expiry (`timeout = 0`, the
 freedesktop value for "until dismissed"), so the server does not slide it into
 the tray a few seconds later. That is the point of it — the turn is blocked
 until the prompt is answered, and a collapsed notification is one the human
-would find only on coming back anyway. Urgency stays at the library default: on
-KDE Plasma, `critical` keeps the notification up just the same but paints the
-popup as urgent, and on every platform it asks the Focus mode to let it through
-— which a prompt has no business doing. Once the prompt is answered, the
-notification is dismissed.
+would find only on coming back anyway. A prompt that gives up on its own is the
+exception: the popup is sent with its deadline as its timeout (30 seconds for a
+prompt that denies after 30s), so the notification disappears when the answer
+window closes instead of announcing a prompt that is already gone. Urgency stays
+at the library default: on KDE Plasma, `critical` keeps the notification up just
+the same but paints the popup as urgent, and on every platform it asks the Focus
+mode to let it through — which a prompt has no business doing. Once the prompt
+is answered, the notification is dismissed.
 
 ## Terminal channel
 
