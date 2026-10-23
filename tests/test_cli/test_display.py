@@ -801,7 +801,7 @@ async def test_pretty_pty_write_and_keys(capsys: pytest.CaptureFixture[str]) -> 
     status = "session_id=3\nalive=true\nexit_code=\nwrote=5"
     await render_events(_aiter([_pretty_call("write_pty", '{"session_id": 3, "data": "ls -la"}'), _result(status)]))
     out = capsys.readouterr().out
-    assert "* PTY Write 3 (5 chars)" in out
+    assert "* PTY Write 3 'ls -la' (5 chars)" in out
 
     await render_events(
         _aiter(
@@ -813,6 +813,21 @@ async def test_pretty_pty_write_and_keys(capsys: pytest.CaptureFixture[str]) -> 
     )
     out = capsys.readouterr().out
     assert "* PTY Keys 3 '<c-c><enter>' (2 chars)" in out
+
+
+async def test_pretty_pty_write_escapes_and_shortens_the_payload(capsys: pytest.CaptureFixture[str]) -> None:
+    """A newline or an ESC must not break the line, and a long payload is cut."""
+    status = "session_id=3\nalive=true\nexit_code=\nwrote=4"
+    await render_events(_aiter([_pretty_call("write_pty", '{"session_id": 3, "data": "a\\nb"}'), _result(status)]))
+    out = capsys.readouterr().out
+    assert "* PTY Write 3 'a\\nb' (4 chars)" in out
+
+    long = "x" * 60
+    call = _pretty_call("write_pty", f'{{"session_id": 3, "data": "{long}"}}')
+    await render_events(_aiter([call, _result(status)]))
+    out = capsys.readouterr().out
+    assert "* PTY Write 3 '" + "x" * 40 + "…'" in out
+    assert "x" * 41 not in out
 
 
 async def test_pretty_ask_into_pty_never_shows_the_answer(capsys: pytest.CaptureFixture[str]) -> None:
