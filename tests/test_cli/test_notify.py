@@ -11,7 +11,6 @@ import pytest
 from plyngent.cli.notify import (
     ALLOW,
     DENY,
-    REVIEW,
     DesktopNotifierChannel,
     DesktopRequest,
     WaitNotifier,
@@ -217,7 +216,9 @@ def test_desktop_channel_can_be_pinned() -> None:
     with notifier(PromptWait("confirm", "Allow?")) as handle:
         handle._notify()
     assert len(desktop.requests) == 1
-    assert written == []
+    # No terminal notification (it was pinned), but the bell still says which
+    # window holds the prompt.
+    assert written == ["\a"]
 
 
 def test_terminal_fallback_when_the_desktop_refuses() -> None:
@@ -258,14 +259,14 @@ def test_disabled_notifications_send_nothing() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_confirmation_offers_three_buttons() -> None:
+def test_a_confirmation_offers_allow_and_deny() -> None:
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)
     with notifier(PromptWait("confirm", "Allow?")) as handle:
         handle._notify()
         assert handle.supports_actions is True
     request = desktop.requests[0]
-    assert [key for key, _ in request.buttons] == [ALLOW, DENY, REVIEW]
+    assert [key for key, _ in request.buttons] == [ALLOW, DENY]
     assert request.reply_field is False
 
 
@@ -304,7 +305,7 @@ def test_a_question_offers_a_reply_field_without_the_answers() -> None:
         handle._notify()
     request = desktop.requests[0]
     assert request.reply_field is True
-    assert request.buttons == ((REVIEW, "Go to terminal"),)
+    assert request.buttons == ()
 
 
 def test_a_question_carries_the_question_in_its_body() -> None:
@@ -343,7 +344,7 @@ def test_a_long_reason_goes_before_the_deadline_does() -> None:
 
 
 def test_a_click_on_the_notification_leaves_the_prompt_waiting() -> None:
-    """The body click is the default action: back to the terminal."""
+    """The body click is the default action: the notification goes, the wait stays."""
     desktop = _FakeDesktop()
     notifier, written = _notifier(desktop=desktop)
     with notifier(PromptWait("confirm", "Allow?")) as handle:
@@ -353,21 +354,18 @@ def test_a_click_on_the_notification_leaves_the_prompt_waiting() -> None:
         request.on_click()
         assert handle.take() is None
         assert desktop.cleared == ["id-1"]
-    # Nothing here can raise another window, so the terminal rings instead.
+    # One bell, rung when the notification went out — not again for the click.
     assert written == ["\a"]
 
 
-def test_going_to_the_terminal_rings_it() -> None:
-    """The button means the same as a click on the body."""
+def test_the_bell_rings_when_the_popup_goes_out() -> None:
+    """A popup can sit on another virtual desktop; the bell says where to look."""
     desktop = _FakeDesktop()
     notifier, written = _notifier(desktop=desktop)
     with notifier(PromptWait("confirm", "Allow?")) as handle:
         handle._notify()
-        answer = desktop.requests[0].on_answer
-        assert answer is not None
-        answer(REVIEW)
     assert written == ["\a"]
-    assert desktop.cleared == ["id-1"]
+    assert desktop.requests[0].buttons == ((ALLOW, "Allow once"), (DENY, "Deny"))
 
 
 def test_the_body_names_the_workspace_under_a_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -407,16 +405,16 @@ def test_a_prompt_without_a_deadline_keeps_its_popup() -> None:
     assert desktop.requests[0].timeout is None
 
 
-def test_a_reply_spelling_review_reaches_the_prompt() -> None:
-    """Typed text is an answer even when it reads like a button."""
+def test_a_reply_is_an_answer_whatever_it_spells() -> None:
+    """A reply field's text is the answer, even when it reads like a button key."""
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)
     with notifier(PromptWait("ask", "a question is waiting", body="What now?")) as handle:
         handle._notify()
         request = desktop.requests[0]
         assert request.on_reply is not None
-        request.on_reply(REVIEW)
-        assert handle.take() == REVIEW
+        request.on_reply("review")
+        assert handle.take() == "review"
 
 
 def test_a_secret_prompt_is_never_announced() -> None:
@@ -483,18 +481,6 @@ def test_a_reply_reaches_the_prompt() -> None:
         assert request.on_reply is not None
         request.on_reply("feature/x")
         assert handle.take() == "feature/x"
-
-
-def test_review_keeps_waiting_and_dismisses() -> None:
-    desktop = _FakeDesktop()
-    notifier, _ = _notifier(desktop=desktop)
-    with notifier(PromptWait("confirm", "Allow?")) as handle:
-        handle._notify()
-        request = desktop.requests[0]
-        assert request.on_answer is not None
-        request.on_answer(REVIEW)
-        assert handle.take() is None
-        assert desktop.cleared == ["id-1"]
 
 
 def test_an_answer_after_the_prompt_is_ignored() -> None:
@@ -617,14 +603,14 @@ def test_the_popup_can_be_told_when_to_expire() -> None:
 
 
 def test_a_prompt_offers_its_own_answers() -> None:
-    """The prompt's ``choices`` become the buttons, plus a way to the terminal."""
+    """The prompt's ``choices`` become the buttons."""
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)
     choices = (("y", "Continue"), ("yyy", "Continue, stop asking"), ("n", "Stop here"))
     with notifier(PromptWait("limit", "limit reached — continue?", "why", choices)) as handle:
         handle._notify()
         request = desktop.requests[0]
-        assert request.buttons == (*choices, (REVIEW, "Go to terminal"))
+        assert request.buttons == choices
         assert request.on_answer is not None
         request.on_answer("yyy")
         assert handle.take() == "yyy"
@@ -639,7 +625,6 @@ def test_a_prompt_without_choices_gets_the_usual_buttons() -> None:
     assert request.buttons == (
         (ALLOW, "Allow once"),
         (DENY, "Deny"),
-        (REVIEW, "Go to terminal"),
     )
     # Neither channel repeats the title in the body.
     assert request.message == ""
