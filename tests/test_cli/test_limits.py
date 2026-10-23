@@ -19,9 +19,11 @@ from plyngent.cli.limits import (
 )
 from plyngent.prompting import (
     NonInteractiveBackend,
+    PromptWait,
     get_prompt_backend,
     get_prompt_output_hook,
     get_prompt_wait_hook,
+    set_prompt_wait_hook,
     temporary_backend,
 )
 from plyngent.tools.process.pty_session import PtyManager
@@ -404,6 +406,51 @@ def test_a_skill_write_can_be_allowed_for_the_chat_from_the_notification() -> No
         decision = limits.prompt_skill_write_confirm(Path("/tmp/skill"), "write", "one line", 30.0)
     assert decision.allow is True
     assert decision.session is True
+
+
+def test_a_tool_confirm_names_the_object_it_is_about() -> None:
+    """A notification body carries the program or file, never the argument."""
+    seen: list[PromptWait] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        seen.append(wait)
+        yield None
+
+    previous = get_prompt_wait_hook()
+    set_prompt_wait_hook(hook)
+    try:
+        with temporary_backend(ScriptedBackend([], confirms=[True, True])):
+            _ = prompt_confirm_tool("run_argv", {"argv": ["/usr/bin/rm", "-rf", "build"]}, "command 'rm'")
+            _ = prompt_confirm_tool("write_file", {"path": "notes/todo.md", "content": "x"}, "overwrite")
+    finally:
+        set_prompt_wait_hook(previous)
+    assert [wait.facts for wait in seen] == [("program: rm",), ("target: todo.md",)]
+
+
+def test_a_timed_prompt_says_when_silence_answers() -> None:
+    """Timeout is a deny, so the notification must not hide the clock."""
+    from pathlib import Path
+
+    from plyngent.cli import limits
+    from plyngent.tools.workspace import AccessMode
+
+    seen: list[PromptWait] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        seen.append(wait)
+        yield None
+
+    previous = get_prompt_wait_hook()
+    set_prompt_wait_hook(hook)
+    try:
+        with temporary_backend(ScriptedBackend(["y"], confirms=[True])):
+            _ = limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0)
+    finally:
+        set_prompt_wait_hook(previous)
+    assert seen[0].expires_in == 30.0
+    assert seen[0].facts == ("kind: directory",)
 
 
 def test_every_confirm_announces_itself() -> None:

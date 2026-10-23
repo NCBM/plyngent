@@ -356,6 +356,34 @@ def test_prompt_wait_without_hook_yields_none() -> None:
         assert source is None
 
 
+def test_prompt_wait_carries_what_the_caller_declares() -> None:
+    """Everything a host needs to say what is asked and when silence answers."""
+    seen: list[PromptWait] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        seen.append(wait)
+        yield None
+
+    set_prompt_wait_hook(hook)
+    choices = (("y", "Continue"), ("n", "Stop"))
+    with prompt_wait(
+        "policy",
+        "allow command 'rm'?",
+        "argv: rm -rf x",
+        choices,
+        body="",
+        facts=("program: rm",),
+        expires_in=30.0,
+    ):
+        pass
+    assert seen[0].body == ""
+    assert seen[0].detail == "argv: rm -rf x"
+    assert seen[0].choices == choices
+    assert seen[0].facts == ("program: rm",)
+    assert seen[0].expires_in == 30.0
+
+
 def test_prompt_wait_hook_wraps_ask() -> None:
     """The CLI hook sees one PromptWait per prompt and is exited afterwards."""
     seen: list[PromptWait] = []
@@ -374,8 +402,24 @@ def test_prompt_wait_hook_wraps_ask() -> None:
     backend = ScriptedBackend(["hi"])
     with temporary_backend(backend):
         assert ask("Name?") == "hi"
-    assert [(wait.kind, wait.title) for wait in seen] == [("ask", "Name?")]
+    assert [(wait.kind, wait.title, wait.body) for wait in seen] == [("ask", "a question is waiting", "Name?")]
     assert entered == ["in", "out"]
+
+
+def test_a_choice_prompt_names_its_question_and_options() -> None:
+    """The prompt a host shows carries the question and what can be picked."""
+    seen: list[PromptWait] = []
+
+    @contextlib.contextmanager
+    def hook(wait: PromptWait) -> Generator[None]:
+        seen.append(wait)
+        yield None
+
+    set_prompt_wait_hook(hook)
+    with temporary_backend(ScriptedBackend(["1"])):
+        assert choose("Pick one", ["main", "release", "next", "other", "fifth"]) == "main"
+    assert seen[0].body == "Pick one"
+    assert seen[0].facts == ("main", "release", "next", "other")
 
 
 def test_prompt_wait_hook_reports_the_prompt_family() -> None:

@@ -294,14 +294,85 @@ def test_no_answer_is_expected_without_the_capability() -> None:
         assert handle.supports_actions is False
 
 
-def test_an_ask_offers_a_reply_field_instead_of_buttons() -> None:
+def test_a_question_offers_a_reply_field_without_the_answers() -> None:
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)
-    with notifier(PromptWait("ask", "Which branch?")) as handle:
+    with notifier(PromptWait("ask", "a question is waiting", body="Which branch?")) as handle:
         handle._notify()
     request = desktop.requests[0]
     assert request.reply_field is True
-    assert request.buttons == ()
+    assert request.buttons == ((REVIEW, "Go to terminal"),)
+
+
+def test_a_question_carries_the_question_in_its_body() -> None:
+    """A question *is* what is asked, so the title cannot be the whole story."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    question = "Which branch should the release be cut from?"
+    with notifier(PromptWait("ask", "a question is waiting", body=question)) as handle:
+        handle._notify()
+    assert desktop.requests[0].message == question
+
+
+def test_the_body_names_the_object_and_when_not_answering_answers() -> None:
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    wait = PromptWait("policy", "allow command 'rm'?", facts=("program: rm",), expires_in=30.0)
+    with notifier(wait) as handle:
+        handle._notify()
+    # A popup wraps, so the desktop body keeps its lines apart.
+    assert desktop.requests[0].message.split("\n") == ["program: rm", "no answer in 30s = deny"]
+
+
+def test_the_terminal_body_stays_on_one_line() -> None:
+    notifier, _ = _notifier()
+    wait = PromptWait("confirm", "Allow?", facts=("program: rm",), expires_in=30.0)
+    assert notifier._message(wait) == "program: rm no answer in 30s = deny"
+
+
+def test_a_long_reason_goes_before_the_deadline_does() -> None:
+    """The deadline is short and is the one line a human must not miss."""
+    notifier, _ = _notifier(include_reason=True)
+    wait = PromptWait("confirm", "Allow?", "x" * 400, facts=("program: rm",), expires_in=30.0)
+    message = notifier._message(wait)
+    assert message.endswith("no answer in 30s = deny")
+    assert len(message) <= 200
+
+
+def test_a_click_on_the_notification_leaves_the_prompt_waiting() -> None:
+    """The body click is the default action: back to the terminal."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        handle._notify()
+        request = desktop.requests[0]
+        assert request.on_click is not None
+        request.on_click()
+        assert handle.take() is None
+        assert desktop.cleared == ["id-1"]
+
+
+def test_a_reply_spelling_review_reaches_the_prompt() -> None:
+    """Typed text is an answer even when it reads like a button."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("ask", "a question is waiting", body="What now?")) as handle:
+        handle._notify()
+        request = desktop.requests[0]
+        assert request.on_reply is not None
+        request.on_reply(REVIEW)
+        assert handle.take() == REVIEW
+
+
+def test_a_secret_prompt_is_never_announced() -> None:
+    """The value would have to come back through a surface that outlives it."""
+    desktop = _FakeDesktop()
+    notifier, written = _notifier(desktop=desktop, grace_seconds=0.0)
+    with notifier(PromptWait("secret", "API key?")) as handle:
+        assert notifier.may_notify(handle) is False
+        handle._notify()
+    assert desktop.requests == []
+    assert written == []
 
 
 def test_a_limit_prompt_can_be_answered() -> None:
@@ -467,6 +538,19 @@ def test_a_desktop_notification_is_kept_on_screen() -> None:
     # `critical` only adds a colour and breaks through a Focus mode.
     assert "urgency" not in sent
     assert sent["buttons"] and sent["reply_field"] is not None
+
+
+@pytest.mark.usefixtures("_stub_extra")
+def test_the_desktop_call_carries_the_click_handler() -> None:
+    """Clicking the body is the default action, so it must reach the prompt."""
+    channel = DesktopNotifierChannel()
+    clicked: list[str] = []
+
+    def _click() -> None:
+        clicked.append("click")
+
+    _ = channel.send(DesktopRequest(title="Allow?", message="", on_click=_click))
+    assert _RecordingNotifier.sent[-1]["on_clicked"] is _click
 
 
 def test_a_prompt_offers_its_own_answers() -> None:
