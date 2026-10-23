@@ -52,9 +52,11 @@
 # `pip install plyngent[notify]`) and falls back to a terminal escape sequence;
 # "desktop" / "terminal" pin one of them.
 # `actions` offers the answers the prompt accepts as notification buttons (allow /
-# deny / review when it names none); where the platform has none the notification
-# stays text-only. Clicking a notification's body asks for no answer: it takes you
-# back to the terminal, like the "Go to terminal" button.
+# deny when it names none); where the platform has none the notification stays
+# text-only. Every notification that went to the desktop also rings the terminal's
+# bell — the popup may be on another virtual desktop, and no desktop lets a program
+# raise another application's window. Closing the popup (or clicking its body)
+# withdraws it and leaves the prompt waiting.
 # The body says what is asked: a question or a choice travels whole (the title is
 # only a short label), a confirmation names the program or file it is about, and a
 # timed prompt says when silence answers ("no answer in 30s = deny", which is a

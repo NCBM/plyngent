@@ -47,32 +47,37 @@ a prompt answered inside the grace period is never announced at all.
 
 | Prompt | Notification offers |
 |---|---|
-| tool confirm (single) | Allow once / Deny / Go to terminal |
-| a round's batch of confirms | Allow all / Review one by one / Deny / Go to terminal |
-| command denylist, `fetch_local` private host | Allow once / Deny / Go to terminal |
-| directory-access request | same three (the level asked for, not a lower one) |
-| skill write | Allow once / This chat / Deny / Go to terminal |
-| limit-continue | Continue / Continue, stop asking / Stop here / Go to terminal |
-| `ask_user_line` | a reply field, plus Go to terminal — the answer *is* the text you type |
+| tool confirm (single) | Allow once / Deny |
+| a round's batch of confirms | Allow all / Review one by one / Deny |
+| command denylist, `fetch_local` private host | Allow once / Deny |
+| directory-access request | same two (the level asked for, not a lower one) |
+| skill write | Allow once / This chat / Deny |
+| limit-continue | Continue / Continue, stop asking / Stop here |
+| `ask_user_line` | a reply field — the answer *is* the text you type |
 | `ask_user_choice`, `ask_user_form` | nothing (terminal only): the question and its options are in the body |
 | PTY secrets | nothing at all: a secret prompt is never announced |
 
 Each prompt says which answers it accepts (`prompt_wait(..., choices=…)`), and
-those are the buttons; one that names none gets Allow once / Deny / Go to
-terminal. "Go to terminal" is always the last button: it withdraws the
-notification, rings the terminal's bell and leaves the prompt waiting — and so
-does a click on the notification's body, which is the platform's own default
-action, so a notification with no room for buttons still has that way back.
-Nothing can raise another application's window portably (Wayland has no such
-call), so the bell is what says *which* window holds the waiting prompt; the
-notification is gone after that, and the prompt is announced no second time.
+those are the buttons; one that names none gets Allow once / Deny. There is no
+"go to terminal" button: it could not do what it says — no desktop lets a
+program raise another application's window (Wayland has no such call, the X11
+ones need a helper per window manager) — and the popup's own close button does
+as much. Clicking the body (the platform's default action) or closing the popup
+withdraws the notification and leaves the prompt waiting; the prompt is not
+announced a second time.
+
+What says *where* to look is the bell: every notification that went to the
+desktop also rings the terminal's bell. The announcement only happens when
+nobody answered inside the grace period, so the human is at some other window —
+possibly another virtual desktop, where a popup is easy to miss — and the bell
+is the only portable cue. It is the terminal's own bell, so a terminal with its
+bell switched off stays silent.
 
 An answer read from the notification is treated exactly like a typed one —
 `allow` is the `y` the prompt accepts, `deny` is `n` — and it never records a
 session grant: the button means "this once", which is why a prompt with an
 extra answer (this chat, stop asking) offers it as a button of its own. Text
-typed into a reply field is an answer even when it spells a button's key
-(`review` to a question is the word, not the button). A secret prompt is
+typed into a reply field is the answer, whatever it spells. A secret prompt is
 announced nowhere and echoable from nothing: its value would have to travel
 back through a surface that outlives it.
 
