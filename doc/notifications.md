@@ -5,12 +5,23 @@ window, the wait is invisible until you come back — so the CLI announces it.
 
 A prompt is announced only after `grace_seconds` of waiting (5s by default), so
 answering at the terminal stays silent. Bursts are throttled by
-`min_interval_seconds`, and the announcement says what is being asked, not what
-it would run: the one-line reason can name a command, argv or URL, and a
-notification outlives the prompt (and may be mirrored to a lock screen), so it
-travels only with `include_reason = true`. The title is the prompt line and the
-body is nothing but that reason — a channel gives the title a field of its own,
-so repeating it in the body would only say the same thing twice.
+`min_interval_seconds`.
+
+A notification says what is asked, not what would be run. The title is a short
+label; the body carries, in this order:
+
+| Line | When |
+|---|---|
+| the question itself | an `ask_user_line` question, an `ask_user_choice` prompt |
+| the reason line | only with `include_reason = true`: it can name a command, argv or URL, and a notification outlives the prompt (and may be mirrored to a lock screen) |
+| the object | a confirmation or a batch: the program's name (`program: rm`), the file's (`target: todo.md`), the tools of a batch, `kind: directory` for an access request, the skill directory — never an argument, a URL or a piece of code |
+| `no answer in 30s = deny` | a prompt that takes a default answer on timeout (command denylist, directory access, skill write) |
+
+The lines are filled in that order until the body is full and each one is
+capped, so a long reason drops out before the deadline does — the deadline is
+the one line a human must not miss, because not answering *is* an answer there.
+A desktop popup wraps and keeps the lines apart; the terminal channel carries
+the same body on a single line.
 
 ## Configuration
 
@@ -40,19 +51,25 @@ a prompt answered inside the grace period is never announced at all.
 | directory-access request | same three (the level asked for, not a lower one) |
 | skill write | Allow once / This chat / Deny / Go to terminal |
 | limit-continue | Continue / Continue, stop asking / Stop here / Go to terminal |
-| `ask_user_line` | a reply field — the answer *is* the text you type |
-| `ask_user_choice`, `ask_user_form`, PTY secrets | nothing (terminal only) |
+| `ask_user_line` | a reply field, plus Go to terminal — the answer *is* the text you type |
+| `ask_user_choice`, `ask_user_form` | nothing (terminal only): the question and its options are in the body |
+| PTY secrets | nothing at all: a secret prompt is never announced |
 
 Each prompt says which answers it accepts (`prompt_wait(..., choices=…)`), and
 those are the buttons; one that names none gets Allow once / Deny / Go to
 terminal. "Go to terminal" is always the last button: it withdraws the
-notification and leaves the prompt waiting.
+notification and leaves the prompt waiting — and so does a click on the
+notification's body, which is the platform's own default action, so a
+notification with no room for buttons still has that way back.
 
 An answer read from the notification is treated exactly like a typed one —
 `allow` is the `y` the prompt accepts, `deny` is `n` — and it never records a
 session grant: the button means "this once", which is why a prompt with an
-extra answer (this chat, stop asking) offers it as a button of its own. A secret
-is never asked for in a notification, and never echoed into one.
+extra answer (this chat, stop asking) offers it as a button of its own. Text
+typed into a reply field is an answer even when it spells a button's key
+(`review` to a question is the word, not the button). A secret prompt is
+announced nowhere and echoable from nothing: its value would have to travel
+back through a surface that outlives it.
 
 A prompt that can be answered from the notification reads both surfaces while it
 blocks, from the first moment — the notification itself only shows up after

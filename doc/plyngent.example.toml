@@ -53,9 +53,15 @@
 # "desktop" / "terminal" pin one of them.
 # `actions` offers the answers the prompt accepts as notification buttons (allow /
 # deny / review when it names none); where the platform has none the notification
-# stays text-only.
+# stays text-only. Clicking a notification's body asks for no answer: it takes you
+# back to the terminal, like the "Go to terminal" button.
+# The body says what is asked: a question or a choice travels whole (the title is
+# only a short label), a confirmation names the program or file it is about, and a
+# timed prompt says when silence answers ("no answer in 30s = deny", which is a
+# deny for the denylist, directory-access and skill-write prompts).
 # `include_reason` adds the one-line reason — it can name a command or a URL, so
-# it stays off by default (a notification may be mirrored to a lock screen).
+# it stays off by default (a notification may be mirrored to a lock screen). A
+# secret is never announced.
 # [notify]
 # enabled = true
 # grace_seconds = 5.0
