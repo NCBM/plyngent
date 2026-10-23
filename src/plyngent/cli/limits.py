@@ -6,6 +6,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from plyngent.agent import BatchConfirmDecision, ToolConfirmRequest
@@ -32,7 +33,6 @@ from plyngent.tools.workspace import AccessMode, parse_access_mode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
 type WorkspaceMismatchChoice = Literal["keep", "rebind", "abort"]
 
@@ -269,11 +269,34 @@ def _confirm_with(wait: PromptAnswerSource | None, prompt: str, *, default: bool
     return confirm(prompt, default=default, source=_answer_source(wait))
 
 
+def _tool_facts(args: Mapping[str, object]) -> tuple[str, ...]:
+    """What a call is about, short enough to travel in a notification.
+
+    Only the *object* — the program or the file — never an argument, a URL or a
+    piece of code: those stay in the reason, which a notification carries only
+    when ``include_reason`` allows it.
+    """
+    facts: list[str] = []
+    argv = args.get("argv")
+    if isinstance(argv, list) and argv and isinstance(argv[0], str):
+        facts.append(f"program: {Path(argv[0]).name}")
+    for key in ("path", "dst", "src"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            facts.append(f"target: {Path(value).name}")
+            break
+    return tuple(facts)
+
+
 def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """True allow; False deny; non-empty str = deny with comment for the model."""
-    del args
     try:
-        with prompt_wait("confirm", f"tool {name!r} needs confirmation", reason) as wait:
+        with prompt_wait(
+            "confirm",
+            f"tool {name!r} needs confirmation",
+            reason,
+            facts=_tool_facts(args),
+        ) as wait:
             _echo_tool_confirm(name, reason)
             allowed = _confirm_with(wait, "Allow this tool call?", default=False)
     except NonInteractiveError:
@@ -387,7 +410,7 @@ def prompt_policy_command_confirm(
     try:
         with (
             pause_task_cancel_for_prompt(),
-            prompt_wait("policy", f"allow command {basename!r}?", reason) as wait,
+            prompt_wait("policy", f"allow command {basename!r}?", reason, expires_in=timeout_seconds) as wait,
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
@@ -434,7 +457,7 @@ def prompt_policy_fetch_confirm(
     try:
         with (
             pause_task_cancel_for_prompt(),
-            prompt_wait("policy", f"allow fetch_local {host!r}?", reason) as wait,
+            prompt_wait("policy", f"allow fetch_local {host!r}?", reason, expires_in=timeout_seconds) as wait,
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
@@ -483,7 +506,14 @@ def prompt_skill_write_confirm(
     try:
         with (
             pause_task_cancel_for_prompt(),
-            prompt_wait("skills", f"allow {action} in {skill_dir.name!r}?", detail, choices=_SKILL_CHOICES) as wait,
+            prompt_wait(
+                "skills",
+                f"allow {action} in {skill_dir.name!r}?",
+                detail,
+                choices=_SKILL_CHOICES,
+                facts=(f"path: {skill_dir}",),
+                expires_in=timeout_seconds,
+            ) as wait,
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
@@ -524,9 +554,10 @@ def prompt_directory_access_confirm(
     that level instead. The host's hook decides YOLO/``--yes`` before calling
     this. Timeout, cancel, or non-interactive → ``None`` (deny).
     """
+    kind = "directory" if path.is_dir() else "file"
     lines = [
         f"request: {mode.name.lower()} access to {path}",
-        f"kind: {'directory' if path.is_dir() else 'file'}",
+        f"kind: {kind}",
     ]
     if reason:
         lines.append(f"why: {reason}")
@@ -534,7 +565,13 @@ def prompt_directory_access_confirm(
     try:
         with (
             pause_task_cancel_for_prompt(),
-            prompt_wait("access", f"allow {mode.name.lower()} access to {path}?", reason) as wait,
+            prompt_wait(
+                "access",
+                f"allow {mode.name.lower()} access to {path}?",
+                reason,
+                facts=(f"kind: {kind}",),
+                expires_in=timeout_seconds,
+            ) as wait,
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
@@ -573,11 +610,11 @@ def prompt_directory_access_confirm(
 
 async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:
     """Async confirm: True allow, False deny, str = deny with user comment."""
-    del args
+    facts = _tool_facts(args)
     try:
         # Box is printed inside the worker thread via confirm's backend.
         def _run() -> bool:
-            with prompt_wait("confirm", f"tool {name!r} needs confirmation", reason) as wait:
+            with prompt_wait("confirm", f"tool {name!r} needs confirmation", reason, facts=facts) as wait:
                 _echo_tool_confirm(name, reason)
                 return _confirm_with(wait, "Allow this tool call?", default=False)
 
@@ -620,8 +657,13 @@ def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchC
     if not backend.is_interactive():
         # Non-interactive: deny, like the default of the single prompt.
         return BatchConfirmDecision(allowed=False)
-    names = ", ".join(request.name for request in requests)
-    with prompt_wait("batch", f"{len(requests)} tool calls need confirmation", names, choices=_BATCH_CHOICES) as wait:
+    tools = tuple(dict.fromkeys(request.name for request in requests))
+    with prompt_wait(
+        "batch",
+        f"{len(requests)} tool calls need confirmation",
+        choices=_BATCH_CHOICES,
+        facts=tools,
+    ) as wait:
         backend.echo()
         backend.secho(format_batch_confirm_box(requests), fg="yellow")
         backend.secho("m = review them one call at a time", fg="bright_black")
