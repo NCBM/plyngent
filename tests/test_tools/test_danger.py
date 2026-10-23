@@ -174,6 +174,20 @@ def test_a_remote_command_is_judged_by_what_runs_there() -> None:
     assert pty is not None and "python3" in pty
 
 
+def test_a_remote_shell_is_announced() -> None:
+    """``ssh host`` runs nothing this scan can see, so the human is told first."""
+    reason = _reason("open_pty", {"command": ["ssh", "prod"]})
+    assert reason is not None
+    assert "remote shell on 'prod'" in reason
+    assert "input is not checked" in reason
+    # The same for a one-shot client: stdin is another unchecked input channel.
+    assert "remote shell on 'prod'" in (_reason("run_argv", {"argv": ["ssh", "-p", "2222", "prod"]}) or "")
+    # A mosh shell counts too, and a hop with nothing after it is not silent.
+    assert "remote shell" in (_reason("open_pty", {"command": ["mosh", "prod"]}) or "")
+    # A remote *command* keeps its own review (no shell wording).
+    assert "remote shell" not in (_reason("run_argv", {"argv": ["ssh", "prod", "uptime"]}) or "")
+
+
 def test_batch_mode_is_always_reviewed() -> None:
     """``BatchMode=yes`` cannot prompt at either end, so the command is shown."""
     reason = _reason("run_argv", {"argv": ["ssh", "-o", "BatchMode=yes", "prod", "deploy.sh"]})

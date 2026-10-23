@@ -275,6 +275,8 @@ class RemoteTarget:
     host: str
     #: ``-o BatchMode=yes``: the client never prompts, so the command runs.
     batch: bool = False
+    #: No command followed: the client opens a shell whose input is not scanned.
+    shell: bool = False
 
 
 @dataclass(frozen=True)
@@ -346,7 +348,8 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
     ``ssh`` / ``mosh`` are unwrapped the same way — the program under review is
     the one after the destination (``ssh prod rm -rf /`` runs ``rm``), and the
     hop is reported in :attr:`UnwrappedCommand.remote`. A client with no command
-    opens a remote shell, which this scan does not look into.
+    opens a remote shell (``remote.shell``); nothing behind it can be resolved
+    here.
     """
     parts = list(argv)
     wrappers: list[str] = []
@@ -359,6 +362,8 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
             start = _skip_remote(name, parts, index + 1)
             if start is not None:
                 remote = start.target
+                if start.index is None:
+                    break  # a remote shell: the client is the whole command
                 wrappers.append(name)
                 index = start.index
                 continue
@@ -384,12 +389,13 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
 class _RemoteStart:
     """Where a remote client's own command starts, and the hop it reaches."""
 
-    index: int
+    #: Index of the remote command, or ``None`` when only a shell opens.
+    index: int | None
     target: RemoteTarget
 
 
 def _skip_remote(name: str, parts: list[str], start: int) -> _RemoteStart | None:
-    """Where the command *name* runs elsewhere starts; ``None`` for a bare shell.
+    """Where the command *name* runs elsewhere starts; ``None`` without a hop.
 
     The destination is the first token that is not one of the client's own
     options (``ssh -o BatchMode=yes -p 2222 [user@]host …``); the command follows
@@ -415,7 +421,7 @@ def _skip_remote(name: str, parts: list[str], start: int) -> _RemoteStart | None
     if name == "mosh" and index < len(parts) and parts[index] == "--":
         index += 1
     if index >= len(parts):
-        return None
+        return _RemoteStart(index=None, target=RemoteTarget(wrapper=name, host=host, batch=batch, shell=True))
     return _RemoteStart(index=index, target=RemoteTarget(wrapper=name, host=host, batch=batch))
 
 

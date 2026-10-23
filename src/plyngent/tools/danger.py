@@ -63,15 +63,20 @@ def _command_reason(argv: Sequence[str], *, via: str) -> DangerReason | None:
     A command on another machine (``ssh``/``mosh``) is reviewed by the program it
     runs there — the client's destination and options are skipped. With
     ``-o BatchMode=yes`` the client cannot prompt at either end, so the command
-    is always confirmed, whatever program it is.
+    is always confirmed, whatever program it is. A client with no command opens a
+    remote shell, which is announced: nothing typed or piped into it can be
+    checked, so the human decides before it starts.
     """
     scan = unwrap_command(argv)
     interpreter = is_interpreter(scan.base)
     findings = [f"{name} (detached run)" for name in scan.self_review]
     if interpreter:
         findings.append(f"interpreter {scan.base!r}")
-    if scan.remote is not None and scan.remote.batch:
-        findings.append(f"remote command on {scan.remote.host!r} (BatchMode=yes, no prompt on either end)")
+    remote = scan.remote
+    if remote is not None and remote.shell:
+        findings.append(f"remote shell on {remote.host!r} ({remote.wrapper} with no command; its input is not checked)")
+    elif remote is not None and remote.batch:
+        findings.append(f"remote command on {remote.host!r} (BatchMode=yes, no prompt on either end)")
     findings.extend(f"{span.label} runs a command line" for span in scan.command_strings)
     findings = list(dict.fromkeys(findings))
     if not findings:

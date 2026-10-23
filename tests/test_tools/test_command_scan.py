@@ -171,11 +171,16 @@ def test_unwrap_remote_batch_mode() -> None:
 
 def test_unwrap_remote_client_alone() -> None:
     """A client with no command opens a remote shell: nothing to unwrap."""
-    for argv in (["ssh", "prod"], ["ssh", "-N", "prod"], ["ssh", "-G", "prod"], ["ssh"], ["mosh", "prod"]):
+    for argv in (["ssh", "prod"], ["ssh", "-N", "prod"], ["ssh", "-G", "prod"], ["mosh", "prod"]):
         scan = unwrap_command(argv)
         assert scan.wrappers == (), argv
         assert scan.base == argv[0], argv
-        assert scan.remote is None, argv
+        assert scan.remote is not None, argv
+        assert scan.remote.shell is True, argv
+        assert scan.remote.host == "prod", argv
+    # Without a destination there is no hop to announce.
+    for argv in (["ssh"], ["ssh", "-V"]):
+        assert unwrap_command(argv).remote is None, argv
 
 
 def test_unwrap_remote_command_still_reviews_what_runs() -> None:
