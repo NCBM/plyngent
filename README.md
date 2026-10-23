@@ -357,7 +357,7 @@ Safety defaults:
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.
   Prefer file tools over full-screen editors (`vim`/`nano`) for edits. `read_pty` sanitizes CSI/controls
   so tool results cannot reprogram the host TTY (no host terminal reset on exit).
-  `write_pty` is literal text only; use `write_pty_keys` for keys and bytes: `<c-c>` `<esc>` `<enter>` `<s-tab>` `<up>` … `<f12>`, `<up*3>` to repeat, `<m-x>` for Alt, and `\xHH` / `\uHHHH` for raw bytes. An unknown `<…>` is an error, never text typed into the terminal.
+  `write_pty` is literal text only; use `write_pty_keys` for keys and bytes: `<c-c>` `<esc>` `<enter>` `<s-tab>` `<up>` … `<f12>`, `<c-up>` `<s-home>` `<c-s-f5>` for modifier combinations, `<up*3>` to repeat, `<m-x>` for Alt, and `\xHH` / `\uHHHH` for raw bytes. An unknown `<…>` is an error, never text typed into the terminal.
   For passwords/sudo/ssh prompts use `ask_into_pty` (human types locally; answer never returns to the model).
 
 - Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`), a call that omits a required argument, or a non-numeric `wait` duration (numeric strings are accepted) returns an error showing the shape/names to send — the human never sees a garbage prompt, and no confirm prompt fires for a call that cannot run.
