@@ -26,7 +26,7 @@ def write_pty_payload(session_id: int, raw: str) -> str:
 async def write_pty(session_id: int, data: str) -> str:
     """Write **literal** text to a PTY session. Does not append a newline.
 
-    ``data`` is sent unchanged (no ``ctrl+x`` / ``\\\\xHH`` expansion). For
+    ``data`` is sent unchanged (no ``<enter>`` / ``\\xHH`` expansion). For
     control sequences use :func:`write_pty_keys`.
     """
     try:

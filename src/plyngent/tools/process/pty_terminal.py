@@ -10,11 +10,9 @@ from __future__ import annotations
 
 import re
 
-# Match common \xNN / \uNNNN / named ctrl+ / esc sequences in write_pty_keys data.
+# Escapes and ``<name>`` key markers in write_pty_keys data.
 _HEX_BYTE = re.compile(r"\\x([0-9A-Fa-f]{2})")
 _HEX_U = re.compile(r"\\u([0-9A-Fa-f]{4})")
-_CTRL = re.compile(r"ctrl\+([a-z@\[\\\]\^_])", re.IGNORECASE)
-_KEY = re.compile(r"key=(esc|escape|enter|tab|up|down|left|right)", re.IGNORECASE)
 _SIMPLE = {
     r"\n": "\n",
     r"\r": "\r",
@@ -23,18 +21,49 @@ _SIMPLE = {
     r"\E": "\x1b",
     r"\0": "\x00",
 }
+_SIMPLE_ESCAPE_LEN = 2
 
-_KEY_MAP = {
+#: ``<name>`` markers: the keys a terminal understands, and the bytes each sends.
+_KEY_NAMES: dict[str, str] = {
     "esc": "\x1b",
     "escape": "\x1b",
     "enter": "\r",
+    "return": "\r",
     "tab": "\t",
+    "s-tab": "\x1b[Z",
+    "space": " ",
+    "bs": "\x7f",
+    "backspace": "\x7f",
+    "del": "\x1b[3~",
+    "delete": "\x1b[3~",
+    "home": "\x1b[H",
+    "end": "\x1b[F",
     "up": "\x1b[A",
     "down": "\x1b[B",
-    "right": "\x1b[C",
     "left": "\x1b[D",
+    "right": "\x1b[C",
+    "pgup": "\x1b[5~",
+    "pgdn": "\x1b[6~",
+    "pageup": "\x1b[5~",
+    "pagedown": "\x1b[6~",
+    "f1": "\x1bOP",
+    "f2": "\x1bOQ",
+    "f3": "\x1bOR",
+    "f4": "\x1bOS",
+    "f5": "\x1b[15~",
+    "f6": "\x1b[17~",
+    "f7": "\x1b[18~",
+    "f8": "\x1b[19~",
+    "f9": "\x1b[20~",
+    "f10": "\x1b[21~",
+    "f11": "\x1b[23~",
+    "f12": "\x1b[24~",
 }
-_SIMPLE_ESCAPE_LEN = 2
+
+#: What a Ctrl may be combined with beyond A-Z: the rest of the C0 controls.
+_CONTROL_CHARS = "@[\\]^_"
+#: Longest marker content to look for, so a stray ``<`` stays a literal ``<``.
+_MAX_MARKER = 20
 
 # C0 controls except TAB/LF/CR (those stay for readable logs).
 _UNSAFE_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -58,15 +87,82 @@ def sanitize_pty_output_for_tool(data: str) -> str:
     return _UNSAFE_CTRL.sub(_esc_ctrl, out)
 
 
+class KeySyntaxError(ValueError):
+    """A ``<...>`` marker that names no key, or repeats it wrongly."""
+
+
+def _control(char: str) -> str:
+    """The C0 byte for ``<c-*char*>``."""
+    if len(char) != 1:
+        msg = f"ctrl takes one character, not {char!r} (write <c-a>)"
+        raise KeySyntaxError(msg)
+    upper = char.upper()
+    if not ("A" <= upper <= "Z" or char in _CONTROL_CHARS):
+        msg = f"no control byte for <c-{char}>"
+        raise KeySyntaxError(msg)
+    return chr(ord(upper) & 0x1F)
+
+
+def _key_bytes(name: str) -> str:
+    """What one ``<name>`` marker sends, ``c-`` / ``m-`` prefixes included."""
+    known = _KEY_NAMES.get(name.lower())
+    if known is not None:
+        return known
+    head, sep, rest = name.partition("-")
+    if sep and len(head) == 1 and rest:
+        if head.lower() == "c":
+            return _control(rest)
+        if head.lower() == "m":
+            return "\x1b" + (rest if len(rest) == 1 else _key_bytes(rest))
+    msg = f"unknown key <{name}> (see the write_pty_keys docs for the names)"
+    raise KeySyntaxError(msg)
+
+
+def _expansion(content: str) -> str:
+    """The bytes for the inside of one marker, honouring a ``*N`` repeat."""
+    name, _, count = content.partition("*")
+    if not count:
+        return _key_bytes(name)
+    if not count.isdigit() or int(count) < 1:
+        msg = f"bad repeat in <{content}> (write <up*3>)"
+        raise KeySyntaxError(msg)
+    return _key_bytes(name) * int(count)
+
+
+def _marker_at(data: str, index: int) -> tuple[str, int] | None:
+    """The marker starting at *index*, as ``(content, next index)``, or ``None``.
+
+    A ``<`` that is not followed by a short, whitespace-free ``>`` pair stays a
+    literal ``<`` — ordinary input like ``sort < file`` must not need escaping.
+    """
+    end = data.find(">", index + 1, index + 1 + _MAX_MARKER)
+    if end <= index + 1:
+        return None
+    content = data[index + 1 : end]
+    if any(char.isspace() or char == "<" for char in content):
+        return None
+    return content, end + 1
+
+
 def decode_write_data(data: str) -> str:
-    """Expand agent-friendly escapes into raw PTY input (for ``write_pty_keys`` only).
+    """Expand ``<key>`` markers and escapes into raw PTY input (``write_pty_keys``).
 
-    Supported (as literal characters in ``data``):
+    Markers, written between angle brackets:
 
-    - ``\\n`` ``\\r`` ``\\t`` ``\\e`` / ``\\E`` (ESC) ``\\0``
-    - ``\\xHH`` byte, ``\\uHHHH`` Unicode code point
-    - ``ctrl+c`` / ``ctrl+x`` ... (case-insensitive; A-Z or @ [ \\ ] ^ _)
-    - ``key=esc`` ``key=enter`` ``key=tab`` ``key=up|down|left|right``
+    - ``<esc>`` ``<enter>`` ``<tab>`` ``<s-tab>`` ``<space>`` ``<bs>`` ``<del>``
+      ``<home>`` ``<end>`` ``<up>`` ``<down>`` ``<left>`` ``<right>``
+      ``<pgup>`` ``<pgdn>`` ``<f1>`` … ``<f12>``
+    - ``<c-a>`` … ``<c-z>`` for Ctrl (plus ``<c-@>`` ``<c-[>`` ``<c-\\\\>``
+      ``<c-]>`` ``<c-^>`` ``<c-_>``), ``<m-x>`` for Alt: an ESC before the key
+    - ``<up*3>`` repeats a key three times, ``<<`` is a literal ``<``
+
+    An unknown name raises :class:`KeySyntaxError` rather than typing the marker
+    into the terminal. Anything that is not a marker or an escape is literal.
+
+    Escapes (literal characters in ``data``):
+
+    - ``\\\\n`` ``\\\\r`` ``\\\\t`` ``\\\\e`` / ``\\\\E`` (ESC) ``\\\\0``
+    - ``\\\\xHH`` byte, ``\\\\uHHHH`` Unicode code point
     """
     if not data:
         return data
@@ -75,18 +171,20 @@ def decode_write_data(data: str) -> str:
     i = 0
     n = len(data)
     while i < n:
+        if data[i] == "<":
+            if data.startswith("<<", i):
+                out.append("<")  # the escape for a literal one
+                i += 2
+                continue
+            marker = _marker_at(data, i)
+            if marker is not None:
+                content, i = marker
+                out.append(_expansion(content))
+                continue
+            out.append("<")  # a `<` that opens nothing
+            i += 1
+            continue
         rest = data[i:]
-        m_key = _KEY.match(rest)
-        if m_key is not None:
-            out.append(_KEY_MAP[m_key.group(1).lower()])
-            i += m_key.end()
-            continue
-        m_ctrl = _CTRL.match(rest)
-        if m_ctrl is not None:
-            ch = m_ctrl.group(1).upper()
-            out.append(chr((ord(ch) - ord("@")) & 0x1F))
-            i += m_ctrl.end()
-            continue
         m_hex = _HEX_BYTE.match(rest)
         if m_hex is not None:
             out.append(chr(int(m_hex.group(1), 16)))
