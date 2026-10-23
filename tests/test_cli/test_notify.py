@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import time
 import types
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
@@ -98,6 +99,7 @@ def _notifier(
     desktop: _FakeDesktop | None = None,
     grace_seconds: float = 60.0,
     min_interval_seconds: float = 0.0,
+    workspace: str | None = None,
     **kwargs: object,
 ) -> tuple[WaitNotifier, list[str]]:
     """A notifier with a captured terminal writer and a fake desktop channel."""
@@ -112,6 +114,7 @@ def _notifier(
         desktop=desktop,
         write=written.append,
         env={"TERM_PROGRAM": "WezTerm"},
+        workspace=workspace,
     )
     return notifier, written
 
@@ -342,7 +345,7 @@ def test_a_long_reason_goes_before_the_deadline_does() -> None:
 def test_a_click_on_the_notification_leaves_the_prompt_waiting() -> None:
     """The body click is the default action: back to the terminal."""
     desktop = _FakeDesktop()
-    notifier, _ = _notifier(desktop=desktop)
+    notifier, written = _notifier(desktop=desktop)
     with notifier(PromptWait("confirm", "Allow?")) as handle:
         handle._notify()
         request = desktop.requests[0]
@@ -350,6 +353,58 @@ def test_a_click_on_the_notification_leaves_the_prompt_waiting() -> None:
         request.on_click()
         assert handle.take() is None
         assert desktop.cleared == ["id-1"]
+    # Nothing here can raise another window, so the terminal rings instead.
+    assert written == ["\a"]
+
+
+def test_going_to_the_terminal_rings_it() -> None:
+    """The button means the same as a click on the body."""
+    desktop = _FakeDesktop()
+    notifier, written = _notifier(desktop=desktop)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        handle._notify()
+        answer = desktop.requests[0].on_answer
+        assert answer is not None
+        answer(REVIEW)
+    assert written == ["\a"]
+    assert desktop.cleared == ["id-1"]
+
+
+def test_the_body_names_the_workspace_under_a_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two chats look alike; which directory waits is what tells them apart."""
+    monkeypatch.setenv("HOME", "/home/tester")
+    notifier, _ = _notifier(workspace="/home/tester/work/plyngent")
+    assert notifier._message(PromptWait("confirm", "Allow?")) == "~/work/plyngent"
+    notifier.set_workspace("/srv/other")
+    assert notifier._message(PromptWait("confirm", "Allow?")) == "/srv/other"
+
+
+def test_a_rebound_workspace_moves_the_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resumed session runs in its own directory; the label follows it."""
+    monkeypatch.setenv("HOME", "/home/tester")
+    from plyngent.cli.state import ReplState
+
+    notifier = install_notifier(NotifyConfig(), workspace="/home/tester/one")
+    assert notifier is not None
+    ReplState._retarget_notifier(Path("/home/tester/two"))
+    assert notifier._message(PromptWait("confirm", "Allow?")) == "~/two"
+
+
+def test_a_timed_prompt_lets_the_popup_expire_with_it() -> None:
+    """The popup must not outlive the answer window it announces."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("policy", "allow command 'rm'?", expires_in=30.0)) as handle:
+        handle._notify()
+    assert desktop.requests[0].timeout == 30
+
+
+def test_a_prompt_without_a_deadline_keeps_its_popup() -> None:
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        handle._notify()
+    assert desktop.requests[0].timeout is None
 
 
 def test_a_reply_spelling_review_reaches_the_prompt() -> None:
@@ -551,6 +606,14 @@ def test_the_desktop_call_carries_the_click_handler() -> None:
 
     _ = channel.send(DesktopRequest(title="Allow?", message="", on_click=_click))
     assert _RecordingNotifier.sent[-1]["on_clicked"] is _click
+
+
+@pytest.mark.usefixtures("_stub_extra")
+def test_the_popup_can_be_told_when_to_expire() -> None:
+    """A prompt that gives up on its own takes its popup with it."""
+    channel = DesktopNotifierChannel()
+    _ = channel.send(DesktopRequest(title="Allow?", message="", timeout=30))
+    assert _RecordingNotifier.sent[-1]["timeout"] == 30
 
 
 def test_a_prompt_offers_its_own_answers() -> None:
