@@ -4,19 +4,21 @@ A prompt blocks the turn, so someone who switched to another window learns about
 it only when they come back. The notifier announces a prompt once it has waited
 ``grace_seconds`` — answering at the terminal stays silent — and, where the
 platform allows it, offers the answer itself: the prompt's own answers as
-buttons (allow / deny / review for a confirmation), a reply field for a
-question. It says what is asked: a question travels in the body where it is read
-whole, the object of a confirmation (a program or a file name) rides along with
-it, and a prompt that takes a default answer says when not answering gives it. A
-prompt that can be answered from the notification reads from both surfaces from
-its first poll, since the announcement only appears once the grace period is
-over. A prompt that follows an answer given on the notification is announced at
-once: the human is already looking at it.
+buttons (allow / deny for a confirmation), a reply field for a question. It says
+what is asked: a question travels in the body where it is read whole, the object
+of a confirmation (a program or a file name) rides along with it, a prompt that
+takes a default answer says when not answering gives it, and the workspace it
+belongs to comes last. A prompt that can be answered from the notification reads
+from both surfaces from its first poll, since the announcement only appears once
+the grace period is over. A prompt that follows an answer given on the
+notification is announced at once: the human is already looking at it.
 
 Two channels. The desktop one is the optional ``desktop-notifier`` extra
 (``pip install plyngent[notify]``); the terminal one writes an OSC escape
 sequence to the controlling terminal, which every modern terminal turns into a
-native notification without any dependency at all.
+native notification without any dependency at all. A notification that went to
+the desktop also rings the terminal's bell: the popup may be on another virtual
+desktop, and no desktop lets a program raise another application's window.
 """
 
 from __future__ import annotations
@@ -44,7 +46,6 @@ if TYPE_CHECKING:
 
 ALLOW = "allow"
 DENY = "deny"
-REVIEW = "review"
 
 #: Kinds whose notification carries an answer, and the capability it needs: a
 #: confirmation gets buttons, a question gets a reply field.
@@ -58,10 +59,10 @@ _ANSWER_CAPABILITY: dict[str, str] = {
     "ask": "reply",
 }
 
+#: The answers a confirmation offers when the prompt names none of its own.
 _BUTTONS: tuple[tuple[str, str], ...] = (
     (ALLOW, "Allow once"),
     (DENY, "Deny"),
-    (REVIEW, "Go to terminal"),
 )
 
 _MAX_TITLE = 80
@@ -451,9 +452,6 @@ class WaitHandle:
         """Record one answer pressed on the notification (a button)."""
         if self._closed:
             return
-        if key == REVIEW:
-            self.review()
-            return
         # The human is at the notification now, so a prompt that follows this
         # answer is announced at once instead of waiting out the grace period.
         self.notifier.handoff()
@@ -466,15 +464,15 @@ class WaitHandle:
         self.notifier.handoff()
         self._answers.put(text)
 
-    def review(self) -> None:
-        """Take the human back to the terminal: withdraw, and ring the bell.
+    def withdraw(self) -> None:
+        """Take the notification down; the prompt keeps waiting at the terminal.
 
-        Nothing here can raise another application's window — no desktop
-        exposes that portably — so the terminal rings instead: the prompt is
-        still waiting there, and the bell says which window holds it.
+        This is what a click on the body does, and the popup's own close button
+        means the same. Nothing can raise another application's window (no
+        desktop exposes that portably), which is why the bell — rung as the
+        notification went out — is what said where the prompt is.
         """
         self.notifier.dismiss(self)
-        self.notifier.ring()
 
     def __enter__(self) -> Self:
         delay = 0.0 if self.handoff else self.notifier.grace_seconds
@@ -499,8 +497,13 @@ class WaitHandle:
     def _notify(self) -> None:
         if self._closed or not self.notifier.may_notify(self):
             return
-        if not self.notifier.notify_desktop(self):
-            self.notifier.notify_terminal(self.wait)
+        if self.notifier.notify_desktop(self):
+            # The popup went to the desktop, so the human is looking at some
+            # other window — possibly another virtual desktop, where a popup is
+            # easy to miss. The terminal rings to say which window waits.
+            self.notifier.ring()
+            return
+        self.notifier.notify_terminal(self.wait)
 
 
 class WaitNotifier:
@@ -618,14 +621,12 @@ class WaitNotifier:
         )
 
     def _buttons(self, wait: PromptWait, capability: str) -> tuple[tuple[str, str], ...]:
-        """The answers *wait* accepts, and always a way back to the terminal."""
+        """The answers *wait* accepts; a reply prompt has none to offer."""
         if capability == "reply":
-            # A reply field carries the answer, so the only button left is the
-            # way out of the notification.
-            return ((REVIEW, "Go to terminal"),)
-        if not wait.choices:
-            return _BUTTONS
-        return (*wait.choices, (REVIEW, "Go to terminal"))
+            # The reply field carries the answer; a button beside it would only
+            # be a way out, and the popup's own close is that.
+            return ()
+        return wait.choices or _BUTTONS
 
     def desktop_channel(self) -> DesktopChannel | None:
         """The desktop surface, resolved once (importing the extra on demand)."""
@@ -681,7 +682,7 @@ class WaitNotifier:
                     reply_field=capability == "reply",
                     on_answer=handle.answer,
                     on_reply=handle.reply,
-                    on_click=handle.review,
+                    on_click=handle.withdraw,
                     timeout=_expiry(wait),
                 )
             )
