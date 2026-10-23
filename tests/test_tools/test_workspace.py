@@ -312,6 +312,26 @@ def test_command_denylist_reaches_through_wrappers(workspace: object) -> None:
         clear_policy_allowed_commands()
 
 
+def test_command_denylist_reaches_the_far_end_of_ssh(workspace: object) -> None:
+    """A remote command is judged by the program that runs there, not by ``ssh``."""
+    del workspace
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(None)
+    clear_policy_allowed_commands()
+    try:
+        with pytest.raises(WorkspaceError, match="basename 'rm' is blocked"):
+            check_command_allowed(["ssh", "prod", "rm", "-rf", "/"])
+        with pytest.raises(WorkspaceError, match="basename 'sudo' is blocked"):
+            check_command_allowed(["ssh", "-p", "2222", "prod", "sudo", "systemctl", "restart", "web"])
+        # A remote shell (no command) and harmless remote commands stay allowed.
+        check_command_allowed(["ssh", "prod"])
+        check_command_allowed(["ssh", "-o", "BatchMode=yes", "prod", "uptime"])
+        check_command_allowed(["mosh", "prod", "--", "htop"])
+    finally:
+        clear_policy_allowed_commands()
+
+
 def test_command_denylist_matches_lowercased_basename(workspace: object) -> None:
     del workspace
     from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook

@@ -160,6 +160,34 @@ def test_versioned_interpreter_is_still_reviewed() -> None:
     assert "import os" in reason
 
 
+def test_a_remote_command_is_judged_by_what_runs_there() -> None:
+    """``ssh``/``mosh`` do not hide the program from the review."""
+    # The remote slice decides, exactly like a local command.
+    plain = _reason("run_argv", {"argv": ["ssh", "prod", "uptime"]})
+    assert plain is None
+    code = _reason("run_argv", {"argv": ["ssh", "prod", "bash", "-c", "rm -rf /"]})
+    assert code is not None
+    assert "bash -c" in code
+    assert "rm -rf" in code
+    # And it is the same confirm through a PTY session.
+    pty = _reason("open_pty", {"command": ["ssh", "prod", "python3"]})
+    assert pty is not None and "python3" in pty
+
+
+def test_batch_mode_is_always_reviewed() -> None:
+    """``BatchMode=yes`` cannot prompt at either end, so the command is shown."""
+    reason = _reason("run_argv", {"argv": ["ssh", "-o", "BatchMode=yes", "prod", "deploy.sh"]})
+    assert reason is not None
+    assert "BatchMode=yes" in reason
+    assert "deploy.sh" in reason
+    assert _danger("run_argv", {"argv": ["ssh", "-oBatchMode=yes", "prod", "deploy.sh"]}).yolo_skip is True
+    # An escalation behind the hop still never skips the confirm under YOLO.
+    escalated = _danger("run_argv", {"argv": ["ssh", "prod", "sudo", "python3", "-c", "x=1"]})
+    assert escalated.yolo_skip is False
+    assert "escalation sudo" in escalated.text
+    assert "interpreter 'python3'" in escalated.text
+
+
 def test_wrappers_reach_the_interpreter() -> None:
     for argv in (
         ["env", "FOO=1", "python", "-c", "print(1)"],

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plyngent.tools.command_scan import basename, escalators_in_chain, is_interpreter, unwrap_command
+from plyngent.tools.command_scan import basename, dash_c_code, escalators_in_chain, is_interpreter, unwrap_command
 
 
 def test_basename() -> None:
@@ -130,6 +130,60 @@ def test_unwrap_empty_argv() -> None:
     scan = unwrap_command([])
     assert scan.base == ""
     assert scan.command == ()
+
+
+def test_unwrap_remote_command() -> None:
+    """``ssh``/``mosh`` are unwrapped to the program they run on the far end."""
+    scan = unwrap_command(["ssh", "prod", "rm", "-rf", "/"])
+    assert scan.wrappers == ("ssh",)
+    assert scan.base == "rm"
+    assert scan.command == ("rm", "-rf", "/")
+    assert scan.remote is not None
+    assert (scan.remote.wrapper, scan.remote.host, scan.remote.batch) == ("ssh", "prod", False)
+
+    scan = unwrap_command(["ssh", "-p", "2222", "-i", "~/.ssh/id", "user@prod", "ls", "-la"])
+    assert scan.base == "ls"
+    assert scan.command == ("ls", "-la")
+    assert scan.remote is not None and scan.remote.host == "user@prod"
+
+    # Jammed values, and a hop behind a local wrapper.
+    scan = unwrap_command(["ssh", "-p2222", "prod", "uptime"])
+    assert scan.base == "uptime"
+    assert unwrap_command(["sudo", "ssh", "prod", "id"]).base == "id"
+    scan = unwrap_command(["mosh", "prod", "--", "htop"])
+    assert scan.base == "htop"
+    assert scan.remote is not None and scan.remote.wrapper == "mosh"
+
+
+def test_unwrap_remote_batch_mode() -> None:
+    """``-o BatchMode=yes`` is reported: the code runs with no prompt at either end."""
+    for argv in (
+        ["ssh", "-o", "BatchMode=yes", "prod", "deploy.sh"],
+        ["ssh", "-oBatchMode=yes", "prod", "deploy.sh"],
+        ["ssh", "-o", "batchmode=YES", "-p", "22", "prod", "deploy.sh"],
+    ):
+        scan = unwrap_command(argv)
+        assert scan.remote is not None, argv
+        assert scan.remote.batch is True, argv
+    scan = unwrap_command(["ssh", "-o", "BatchMode=no", "prod", "deploy.sh"])
+    assert scan.remote is not None and scan.remote.batch is False
+
+
+def test_unwrap_remote_client_alone() -> None:
+    """A client with no command opens a remote shell: nothing to unwrap."""
+    for argv in (["ssh", "prod"], ["ssh", "-N", "prod"], ["ssh", "-G", "prod"], ["ssh"], ["mosh", "prod"]):
+        scan = unwrap_command(argv)
+        assert scan.wrappers == (), argv
+        assert scan.base == argv[0], argv
+        assert scan.remote is None, argv
+
+
+def test_unwrap_remote_command_still_reviews_what_runs() -> None:
+    """The remote slice is parsed like a local command (code, escalation)."""
+    scan = unwrap_command(["ssh", "prod", "bash", "-c", "rm -rf /"])
+    assert scan.base == "bash"
+    assert dash_c_code(scan.command) == (1, "rm -rf /")
+    assert escalators_in_chain(["ssh", "prod", "sudo", "rm", "-rf", "/"]) == ("sudo",)
 
 
 def test_is_interpreter_ignores_version_suffix() -> None:
