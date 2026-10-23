@@ -22,6 +22,11 @@ class Capability(Enum):
     THREAD = ...
     TIMEOUT = ...
 
+class Urgency(Enum):
+    Critical = ...
+    Normal = ...
+    Low = ...
+
 class Button:
     def __init__(
         self,
@@ -50,7 +55,7 @@ class DesktopNotifier:
         self,
         title: str,
         message: str,
-        urgency: Any = ...,
+        urgency: Urgency = ...,
         icon: Any = ...,
         buttons: Sequence[Button] = ...,
         reply_field: ReplyField | None = None,

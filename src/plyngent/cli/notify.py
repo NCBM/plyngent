@@ -60,6 +60,14 @@ _BUTTONS: tuple[tuple[str, str], ...] = (
 _MAX_TITLE = 80
 _MAX_MESSAGE = 200
 
+#: Seconds a desktop notification may stay up; ``0`` is the freedesktop value
+#: for "until dismissed" (``-1`` would hand the notification server's default
+#: back, which is a few seconds — after that the notification collapses into
+#: the tray, where nobody waiting on a prompt looks). Urgency stays at the
+#: library default: ``critical`` keeps the notification up just the same, but
+#: paints it as urgent and asks the platform's Focus mode to let it through.
+_NO_EXPIRY = 0
+
 
 def _clean(text: str, limit: int) -> str:
     """One line, no control characters, truncated to *limit* characters."""
@@ -171,6 +179,11 @@ class DesktopNotifierChannel:
                 send(
                     title=request.title,
                     message=request.message,
+                    # A prompt holds the turn until it is answered, so the
+                    # notification must still be on screen when the human looks
+                    # back. Dismissing is the prompt's own job once it is
+                    # answered, so nothing lingers.
+                    timeout=_NO_EXPIRY,
                     buttons=buttons,
                     reply_field=reply,
                 )
