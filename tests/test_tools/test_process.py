@@ -528,13 +528,24 @@ def test_decode_write_data_escapes() -> None:
     assert decode_write_data("<C-O>") == "\x0f"
     assert decode_write_data("<c-[>") == "\x1b"
     assert decode_write_data("<m-b>") == "\x1bb"
-    assert decode_write_data("<m-up>") == "\x1b\x1b[A"
+    assert decode_write_data("<m-tab>") == "\x1b\t"
     assert decode_write_data("<up*3>") == "\x1b[A" * 3
     assert decode_write_data("<<value>") == "<value>"
     assert decode_write_data("<home>") == "\x1b[H"
+    assert decode_write_data("<ins>") == "\x1b[2~"
     assert decode_write_data("<bs>") == "\x7f"
     assert decode_write_data("<pgup>") == "\x1b[5~"
     assert decode_write_data("<f5>") == "\x1b[15~"
+    # A modifier on a key that has one: xterm's 1 + shift/alt/ctrl parameter.
+    assert decode_write_data("<s-up>") == "\x1b[1;2A"
+    assert decode_write_data("<m-up>") == "\x1b[1;3A"
+    assert decode_write_data("<c-up>") == "\x1b[1;5A"
+    assert decode_write_data("<a-left>") == "\x1b[1;3D"
+    assert decode_write_data("<s-pgdn>") == "\x1b[6;2~"
+    assert decode_write_data("<c-del>") == "\x1b[3;5~"
+    assert decode_write_data("<c-s-f5>") == "\x1b[15;6~"
+    assert decode_write_data("<c-m-home>") == "\x1b[1;7H"
+    assert decode_write_data("<c-space>") == "\x00"
     # A `<` that does not open a marker stays literal, spaces included.
     assert decode_write_data("sort < file") == "sort < file"
     assert decode_write_data("a < b > c") == "a < b > c"
@@ -544,9 +555,37 @@ def test_decode_write_data_refuses_an_unknown_key() -> None:
     """A typo must be an error, not text typed into the terminal."""
     from plyngent.tools.process.pty_terminal import KeySyntaxError, decode_write_data
 
-    for data in ("<hme>", "<s-up>", "<c-1>", "<up*x>", "<up*0>", "<c->"):
+    for data in ("<hme>", "<c-1>", "<up*x>", "<up*0>", "<c->", "<s-a>", "<c-tab>", "<c-s-tab>"):
         with pytest.raises(KeySyntaxError):
             _ = decode_write_data(data)
+
+
+async def test_write_pty_keys_sends_modified_keys(workspace: object) -> None:
+    """`<c-up><s-tab>` leaves the session as the bytes a terminal would send."""
+    del workspace
+    try:
+        opened = await call_async(
+            open_pty,
+            _py(
+                "import sys, tty\n"
+                "tty.setraw(0)\n"
+                "sys.stdout.write('READY\\n')\n"
+                "sys.stdout.flush()\n"
+                "data = sys.stdin.buffer.read(9)\n"
+                "sys.stdout.write('GOT ' + repr(data))\n"
+                "sys.stdout.flush()\n"
+            ),
+        )
+        session_id = _session_id(opened)
+        # Raw mode first: a cooked PTY would hold the keys until a newline.
+        _ = await call_async(read_pty, session_id, timeout=5.0, until="READY")
+        written = await call_async(write_pty_keys, session_id, "<c-up><s-tab>")
+        assert "wrote=9" in written
+        text = await call_async(read_pty, session_id, timeout=2.0, until="GOT ")
+        assert "GOT " + repr(b"\x1b[1;5A\x1b[Z") in text
+        _ = await call_async(close_pty, session_id)
+    finally:
+        PtyManager.close_all()
 
 
 def test_sanitize_pty_output_escapes_csi() -> None:
