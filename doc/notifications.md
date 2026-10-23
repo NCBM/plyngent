@@ -8,7 +8,9 @@ answering at the terminal stays silent. Bursts are throttled by
 `min_interval_seconds`, and the announcement says what is being asked, not what
 it would run: the one-line reason can name a command, argv or URL, and a
 notification outlives the prompt (and may be mirrored to a lock screen), so it
-travels only with `include_reason = true`.
+travels only with `include_reason = true`. The title is the prompt line and the
+body is nothing but that reason — a channel gives the title a field of its own,
+so repeating it in the body would only say the same thing twice.
 
 ## Configuration
 
