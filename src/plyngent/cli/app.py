@@ -129,20 +129,27 @@ def _read_prompt_text(prompt: str | None, *, stdin_isatty: bool) -> str | None:
     return text or None
 
 
-def _setup_hooks(*, interactive: bool, auto_continue: bool, notify: NotifyConfig) -> None:
+def _setup_hooks(
+    *,
+    interactive: bool,
+    auto_continue: bool,
+    notify: NotifyConfig,
+    workspace: Path | None = None,
+) -> None:
     """Install limit hooks (workspace policy is set on ReplState).
 
     ``auto_continue`` keeps the PTY/limit hook installed for one-shot runs so
     ``--auto-continue`` / ``[agent] auto_continue_limits`` can raise limits
     without a prompt; otherwise non-interactive runs keep today's deny. The
     prompt-wait notifier only makes sense for a human at a terminal, so a
-    non-interactive run clears it whatever ``[notify]`` says.
+    non-interactive run clears it whatever ``[notify]`` says. *workspace* is
+    what a notification names, so two chats are told apart.
     """
     from plyngent.cli.notify import install_notifier
     from plyngent.prompting import set_prompt_wait_hook
 
     if interactive:
-        _ = install_notifier(notify)
+        _ = install_notifier(notify, workspace=workspace)
     else:
         set_prompt_wait_hook(None)
     if interactive or auto_continue:
@@ -258,7 +265,12 @@ async def _run_chat(  # noqa: C901, PLR0915 — chat orchestration
             _warn_recoverable_providers(store.recoverable_providers)
 
     auto_effective = auto_continue or store.agent_config.auto_continue_limits
-    _setup_hooks(interactive=interactive, auto_continue=auto_effective, notify=store.notify_config)
+    _setup_hooks(
+        interactive=interactive,
+        auto_continue=auto_effective,
+        notify=store.notify_config,
+        workspace=workspace,
+    )
     # --yes forces sticky YOLO; else derive from config.confirm_destructive.
     from plyngent.cli.state import YoloMode
 

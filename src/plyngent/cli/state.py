@@ -108,6 +108,7 @@ class ReplState:
         self.workspace = Path(self.workspace).expanduser().resolve()
         self.instance_state.workspace_root = self.workspace
         self.instance_state.workspace.root = self.workspace
+        self._retarget_notifier(self.workspace)
         self._install_config_access()
         self._install_skills()
         from plyngent.cli.limits import set_auto_continue_default
@@ -711,10 +712,23 @@ class ReplState:
         self.workspace = resolved
         self.instance_state.workspace_root = resolved
         self.instance_state.workspace.root = resolved
+        # A prompt announced from here names this directory, not the one the
+        # process started in.
+        self._retarget_notifier(resolved)
         # Project-scope skill roots follow the workspace.
         self._install_skills()
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_instance_state(self.instance_state)
+
+    @staticmethod
+    def _retarget_notifier(workspace: Path) -> None:
+        """Point an installed prompt notifier at *workspace* (if there is one)."""
+        from plyngent.cli.notify import WaitNotifier
+        from plyngent.prompting import get_prompt_wait_hook
+
+        hook = get_prompt_wait_hook()
+        if isinstance(hook, WaitNotifier):
+            hook.set_workspace(workspace)
 
     def _apply_session_workspace(self, row: SessionRow) -> None:
         """Bind tools/REPL workspace to the session's directory when set."""

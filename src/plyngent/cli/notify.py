@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib.util
+import math
 import os
 import sys
 import threading
@@ -96,6 +97,27 @@ def _deadline(wait: PromptWait) -> str:
     return _clean(_DEADLINE.format(seconds=wait.expires_in), _MAX_BODY_LINE)
 
 
+def _expiry(wait: PromptWait) -> int | None:
+    """How long the popup may stay up: as long as the prompt waits for an answer.
+
+    ``None`` keeps it until it is dismissed — a prompt with no deadline has no
+    moment at which the notification is stale.
+    """
+    if wait.expires_in is None or wait.expires_in <= 0:
+        return None
+    return max(1, math.ceil(wait.expires_in))
+
+
+def _shorten_home(path: Path) -> str:
+    """The path as the human types it: ``~`` for the home directory."""
+    home = Path.home()
+    if path == home:
+        return "~"
+    with contextlib.suppress(ValueError):
+        return f"~/{path.relative_to(home).as_posix()}"
+    return str(path)
+
+
 def _body_parts(wait: PromptWait, *, include_reason: bool) -> list[str]:
     """The lines the prompt asks for, in reading order.
 
@@ -113,25 +135,23 @@ def _body_parts(wait: PromptWait, *, include_reason: bool) -> list[str]:
     return [_clean(part, _MAX_BODY_LINE) for part in parts]
 
 
-def _body(wait: PromptWait, *, include_reason: bool, multiline: bool) -> str:
-    """The notification body, with the deadline kept whatever else does not fit.
+def _body(wait: PromptWait, *, include_reason: bool, multiline: bool, source: str = "") -> str:
+    """The notification body, with the deadline and the source kept for last.
 
     The lines are filled in reading order until the budget is gone — a long
     reason drops out before the deadline does — and each one is capped, so no
     single line can starve the rest. A desktop popup wraps, so its body keeps
     the lines apart; a terminal escape sequence carries the body on one line.
     """
-    deadline = _deadline(wait)
-    budget = _MAX_MESSAGE - (len(deadline) + 1 if deadline else 0)
+    tail = [line for line in (_deadline(wait), _clean(source, _MAX_BODY_LINE)) if line]
+    budget = _MAX_MESSAGE - sum(len(line) + 1 for line in tail)
     kept: list[str] = []
     for line in _body_parts(wait, include_reason=include_reason):
         if not line or len(line) + 1 > budget:
             continue
         kept.append(line)
         budget -= len(line) + 1
-    if deadline:
-        kept.append(deadline)
-    return "\n".join(kept) if multiline else " ".join(kept)
+    return "\n".join([*kept, *tail]) if multiline else " ".join([*kept, *tail])
 
 
 # --------------------------------------------------------------------------- #
@@ -150,6 +170,8 @@ class DesktopRequest:
     on_answer: Callable[[str], None] | None = None
     on_reply: Callable[[str], None] | None = None
     on_click: Callable[[], None] | None = None
+    #: Seconds the popup may stay up; ``None`` keeps it until it is dismissed.
+    timeout: int | None = None
 
 
 @runtime_checkable
@@ -240,9 +262,9 @@ class DesktopNotifierChannel:
                     message=request.message,
                     # A prompt holds the turn until it is answered, so the
                     # notification must still be on screen when the human looks
-                    # back. Dismissing is the prompt's own job once it is
-                    # answered, so nothing lingers.
-                    timeout=_NO_EXPIRY,
+                    # back: it stays up until it is dismissed — or, for a prompt
+                    # that gives up on its own, until that deadline.
+                    timeout=_NO_EXPIRY if request.timeout is None else request.timeout,
                     buttons=buttons,
                     reply_field=reply,
                     # Clicking the body is the default action: it takes the
@@ -430,8 +452,7 @@ class WaitHandle:
         if self._closed:
             return
         if key == REVIEW:
-            # "review" means "I will answer in the terminal": withdraw and wait.
-            self.notifier.dismiss(self)
+            self.review()
             return
         # The human is at the notification now, so a prompt that follows this
         # answer is announced at once instead of waiting out the grace period.
@@ -446,8 +467,14 @@ class WaitHandle:
         self._answers.put(text)
 
     def review(self) -> None:
-        """Take the human back to the terminal (a click on the notification)."""
+        """Take the human back to the terminal: withdraw, and ring the bell.
+
+        Nothing here can raise another application's window — no desktop
+        exposes that portably — so the terminal rings instead: the prompt is
+        still waiting there, and the bell says which window holds it.
+        """
         self.notifier.dismiss(self)
+        self.notifier.ring()
 
     def __enter__(self) -> Self:
         delay = 0.0 if self.handoff else self.notifier.grace_seconds
@@ -492,6 +519,7 @@ class WaitNotifier:
     _clock: Callable[[], float]
     _last_sent: float
     _handoff: bool
+    _source: str
 
     def __init__(
         self,
@@ -501,6 +529,7 @@ class WaitNotifier:
         write: Callable[[str], None] | None = None,
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        workspace: Path | str | None = None,
     ) -> None:
         self._config = config
         if isinstance(desktop, _Resolve):
@@ -515,6 +544,9 @@ class WaitNotifier:
         self._clock = clock
         self._last_sent = float("-inf")
         self._handoff = False
+        self._source = ""
+        if workspace is not None:
+            self.set_workspace(workspace)
 
     # -- hook ------------------------------------------------------------- #
 
@@ -524,6 +556,19 @@ class WaitNotifier:
     @property
     def grace_seconds(self) -> float:
         return self._config.grace_seconds
+
+    def set_workspace(self, workspace: Path | str | None) -> None:
+        """Name the directory the prompt belongs to (``~`` for a home path).
+
+        A chat can be rebound to another workspace, so the label is kept on the
+        notifier rather than baked into a notification: several chats look
+        alike, and which one is waiting is the first thing a human needs.
+        """
+        self._source = "" if workspace is None else _shorten_home(Path(workspace))
+
+    def ring(self) -> None:
+        """Ring the terminal's bell: the prompt is waiting *there*."""
+        self._write(_BELL)
 
     def handoff(self) -> None:
         """Note that the human is answering on the notification right now."""
@@ -556,11 +601,21 @@ class WaitNotifier:
 
     def _message(self, wait: PromptWait) -> str:
         """The one-line body the terminal channel carries."""
-        return _body(wait, include_reason=self._config.include_reason, multiline=False)
+        return _body(
+            wait,
+            include_reason=self._config.include_reason,
+            multiline=False,
+            source=self._source,
+        )
 
     def _desktop_message(self, wait: PromptWait) -> str:
         """The body the desktop channel carries: the same lines, kept apart."""
-        return _body(wait, include_reason=self._config.include_reason, multiline=True)
+        return _body(
+            wait,
+            include_reason=self._config.include_reason,
+            multiline=True,
+            source=self._source,
+        )
 
     def _buttons(self, wait: PromptWait, capability: str) -> tuple[tuple[str, str], ...]:
         """The answers *wait* accepts, and always a way back to the terminal."""
@@ -627,6 +682,7 @@ class WaitNotifier:
                     on_answer=handle.answer,
                     on_reply=handle.reply,
                     on_click=handle.review,
+                    timeout=_expiry(wait),
                 )
             )
         except Exception:  # noqa: BLE001 - a notification never breaks a prompt
@@ -656,12 +712,16 @@ class WaitNotifier:
             channel.clear(identifier)
 
 
-def install_notifier(config: NotifyConfig) -> WaitNotifier | None:
-    """Install the prompt-wait hook from ``[notify]`` (None clears it)."""
+def install_notifier(config: NotifyConfig, *, workspace: Path | str | None = None) -> WaitNotifier | None:
+    """Install the prompt-wait hook from ``[notify]`` (None clears it).
+
+    *workspace* is the directory the chat runs in: a notification names it, so
+    two waiting chats are told apart.
+    """
     if not config.enabled:
         set_prompt_wait_hook(None)
         return None
-    notifier = WaitNotifier(config)
+    notifier = WaitNotifier(config, workspace=workspace)
     notifier.warm()
     set_prompt_wait_hook(notifier)
     return notifier
