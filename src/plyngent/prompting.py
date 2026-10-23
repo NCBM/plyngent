@@ -126,12 +126,16 @@ class PromptWait:
     ``choose``, ``policy``, ``access``, ``skills``, ``limit``) so the host can
     tailor what it shows and which answers it offers; ``title`` is short and
     safe to surface anywhere, while ``detail`` carries one optional line the
-    caller has already redacted.
+    caller has already redacted. ``choices`` are the answers this particular
+    prompt accepts, as ``(key, label)`` pairs — a host that offers them sends
+    the key back, so the label can stay human and the key stay the token the
+    terminal read would accept. Empty means the host decides.
     """
 
     kind: str
     title: str
     detail: str = ""
+    choices: tuple[tuple[str, str], ...] = ()
 
 
 @runtime_checkable
@@ -176,8 +180,16 @@ def get_prompt_wait_hook() -> PromptWaitHook | None:
 
 
 @contextlib.contextmanager
-def prompt_wait(kind: str, title: str, detail: str = "") -> Generator[PromptAnswerSource | None]:
+def prompt_wait(
+    kind: str,
+    title: str,
+    detail: str = "",
+    choices: tuple[tuple[str, str], ...] = (),
+) -> Generator[PromptAnswerSource | None]:
     """Announce a blocking prompt to the host; yields its answer source (or None).
+
+    ``choices`` says which answers this prompt accepts (see :class:`PromptWait`);
+    a host that shows them sends the key back as the answer.
 
     Only the outermost prompt of a nested read is announced: a confirm that asks
     a follow-up question while it is already on screen must not notify — and
@@ -189,7 +201,7 @@ def prompt_wait(kind: str, title: str, detail: str = "") -> Generator[PromptAnsw
         return
     token = _wait_depth.set(_wait_depth.get() + 1)
     try:
-        with hook(PromptWait(kind, title, detail)) as source:
+        with hook(PromptWait(kind, title, detail, choices)) as source:
             yield source
     finally:
         _wait_depth.reset(token)

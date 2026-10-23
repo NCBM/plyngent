@@ -3,10 +3,12 @@
 A prompt blocks the turn, so someone who switched to another window learns about
 it only when they come back. The notifier announces a prompt once it has waited
 ``grace_seconds`` — answering at the terminal stays silent — and, where the
-platform allows it, offers the answer itself: allow / deny / review buttons for
-a confirmation, a reply field for a question. A prompt that can be answered from
-the notification reads from both surfaces from its first poll, since the
-announcement only appears once the grace period is over.
+platform allows it, offers the answer itself: the prompt's own answers as
+buttons (allow / deny / review for a confirmation), a reply field for a
+question. A prompt that can be answered from the notification reads from both
+surfaces from its first poll, since the announcement only appears once the
+grace period is over. A prompt that follows an answer given on the notification
+is announced at once: the human is already looking at it.
 
 Two channels. The desktop one is the optional ``desktop-notifier`` extra
 (``pip install plyngent[notify]``); the terminal one writes an OSC escape
@@ -48,6 +50,7 @@ _ANSWER_CAPABILITY: dict[str, str] = {
     "policy": "buttons",
     "access": "buttons",
     "skills": "buttons",
+    "limit": "buttons",
     "ask": "reply",
 }
 
@@ -339,12 +342,16 @@ class WaitHandle:
     #: one from the first moment it blocks — the notification itself is only
     #: shown after the grace period.
     supports_actions: bool
+    #: Whether this prompt continues an exchange the human answered on the
+    #: notification: it is then announced at once, and not throttled.
+    handoff: bool
 
     def __init__(self, notifier: WaitNotifier, wait: PromptWait) -> None:
         self.notifier = notifier
         self.wait = wait
         self.identifier = None
         self.supports_actions = notifier.answer_capability(wait.kind) is not None
+        self.handoff = notifier.take_handoff()
         self._answers: SimpleQueue[str] = SimpleQueue()
         self._timer: threading.Timer | None = None
         self._closed: bool = False
@@ -364,10 +371,14 @@ class WaitHandle:
             # "review" means "I will answer in the terminal": withdraw and wait.
             self.notifier.dismiss(self)
             return
+        # The human is at the notification now, so a prompt that follows this
+        # answer is announced at once instead of waiting out the grace period.
+        self.notifier.handoff()
         self._answers.put(key)
 
     def __enter__(self) -> Self:
-        timer = threading.Timer(self.notifier.grace_seconds, self._notify)
+        delay = 0.0 if self.handoff else self.notifier.grace_seconds
+        timer = threading.Timer(delay, self._notify)
         timer.daemon = True
         self._timer = timer
         timer.start()
@@ -386,7 +397,7 @@ class WaitHandle:
         self.notifier.dismiss(self)
 
     def _notify(self) -> None:
-        if self._closed or not self.notifier.may_notify():
+        if self._closed or not self.notifier.may_notify(self):
             return
         if not self.notifier.notify_desktop(self):
             self.notifier.notify_terminal(self.wait)
@@ -407,6 +418,7 @@ class WaitNotifier:
     _env: Mapping[str, str]
     _clock: Callable[[], float]
     _last_sent: float
+    _handoff: bool
 
     def __init__(
         self,
@@ -429,6 +441,7 @@ class WaitNotifier:
         self._env = os.environ if env is None else env
         self._clock = clock
         self._last_sent = float("-inf")
+        self._handoff = False
 
     # -- hook ------------------------------------------------------------- #
 
@@ -439,16 +452,27 @@ class WaitNotifier:
     def grace_seconds(self) -> float:
         return self._config.grace_seconds
 
+    def handoff(self) -> None:
+        """Note that the human is answering on the notification right now."""
+        self._handoff = True
+
+    def take_handoff(self) -> bool:
+        """Consume the handoff: this prompt is part of the same exchange."""
+        handoff = self._handoff
+        self._handoff = False
+        return handoff
+
     def _wants(self, channel: str) -> bool:
         channels = self._config.channels
         return channel in channels or "auto" in channels
 
-    def may_notify(self) -> bool:
-        """Whether a notification is worth sending right now."""
+    def may_notify(self, handle: WaitHandle) -> bool:
+        """Whether this prompt is worth announcing right now."""
         if not self._config.enabled or not get_prompt_backend().is_interactive():
             return False
         now = self._clock()
-        if now - self._last_sent < self._config.min_interval_seconds:
+        # A prompt the human reached through the notification is not a burst.
+        if not handle.handoff and now - self._last_sent < self._config.min_interval_seconds:
             return False
         self._last_sent = now
         return True
@@ -458,6 +482,12 @@ class WaitNotifier:
         if self._config.include_reason and wait.detail:
             return f"{title}\n{_clean(wait.detail, _MAX_MESSAGE)}"
         return title
+
+    def _buttons(self, wait: PromptWait) -> tuple[tuple[str, str], ...]:
+        """The answers *wait* accepts, and always a way back to the terminal."""
+        if not wait.choices:
+            return _BUTTONS
+        return (*wait.choices, (REVIEW, "Go to terminal"))
 
     def desktop_channel(self) -> DesktopChannel | None:
         """The desktop surface, resolved once (importing the extra on demand)."""
@@ -509,7 +539,7 @@ class WaitNotifier:
                 DesktopRequest(
                     title=_clean(wait.title, _MAX_TITLE),
                     message=self._message(wait),
-                    buttons=_BUTTONS if capability == "buttons" else (),
+                    buttons=self._buttons(wait) if capability == "buttons" else (),
                     reply_field=capability == "reply",
                     on_answer=handle.answer,
                     on_reply=handle.answer,

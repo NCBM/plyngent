@@ -284,7 +284,8 @@ class NotifyConfig(Struct, omit_defaults=True):
     """Desktop notifications shown while a prompt waits on the human.
 
     A prompt is announced only after ``grace_seconds`` of waiting, so answering
-    at the terminal stays silent; ``min_interval_seconds`` throttles bursts.
+    at the terminal stays silent; ``min_interval_seconds`` throttles bursts, and
+    a prompt that follows an answer given on the notification skips both.
     ``channels`` picks the surfaces: ``auto`` tries the desktop first and falls
     back to the terminal, ``desktop`` / ``terminal`` pin one of them.
 

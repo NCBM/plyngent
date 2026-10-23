@@ -69,10 +69,32 @@ _CONTINUE_PROMPT = "Raise limit and continue? [Y/n/yyy] (yyy = stop asking this 
 _CONTINUE_YES_TOKENS = frozenset({"", "y", "yes"})
 _CONTINUE_AUTO_TOKEN = "yyy"
 
+# The answers each prompt accepts, as notification buttons: the key is the
+# token the terminal read takes, the label is what a human reads there.
+_LIMIT_CHOICES: tuple[tuple[str, str], ...] = (
+    ("y", "Continue"),
+    (_CONTINUE_AUTO_TOKEN, "Continue, stop asking"),
+    ("n", "Stop here"),
+)
+
 # Batch confirm answers: ``y`` allows the round's calls, ``m`` reviews them one
 # at a time through the per-call prompt.
 _BATCH_YES_TOKENS = frozenset({"y", "yes"})
 _BATCH_MANUAL_TOKENS = frozenset({"m", "manual", "each"})
+
+_BATCH_CHOICES: tuple[tuple[str, str], ...] = (
+    ("y", "Allow all"),
+    ("m", "Review one by one"),
+    ("n", "Deny"),
+)
+
+# Skill writes: ``o`` allows this change, ``s`` the whole directory for the rest
+# of the chat.
+_SKILL_CHOICES: tuple[tuple[str, str], ...] = (
+    ("o", "Allow once"),
+    ("s", "This chat"),
+    ("n", "Deny"),
+)
 
 
 @dataclass
@@ -202,9 +224,17 @@ def _decide_continue_limit(reason: str) -> bool:
     backend = get_prompt_backend()
     if not backend.is_interactive():
         return False
-    with prompt_wait("limit", "limit reached — continue?", reason):
+    with prompt_wait("limit", "limit reached — continue?", reason, choices=_LIMIT_CHOICES) as wait:
         _echo_continue_limit(reason)
-        token = backend.read_line(_CONTINUE_PROMPT, default="y").strip().lower()
+        source = _answer_source(wait)
+        if source is None:
+            token = backend.read_line(_CONTINUE_PROMPT, default="y").strip().lower()
+        else:
+            # Same read as the timed confirms: stdin or the notification,
+            # whichever answers first, with the terminal's default on silence.
+            token = (_read_answer(None, wait) or "").strip().lower()
+            if not token:
+                token = "y"
     if token == _CONTINUE_AUTO_TOKEN:
         _auto_continue.turn = True
         return True
@@ -453,7 +483,7 @@ def prompt_skill_write_confirm(
     try:
         with (
             pause_task_cancel_for_prompt(),
-            prompt_wait("skills", f"allow {action} in {skill_dir.name!r}?", detail) as wait,
+            prompt_wait("skills", f"allow {action} in {skill_dir.name!r}?", detail, choices=_SKILL_CHOICES) as wait,
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
@@ -591,7 +621,7 @@ def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchC
         # Non-interactive: deny, like the default of the single prompt.
         return BatchConfirmDecision(allowed=False)
     names = ", ".join(request.name for request in requests)
-    with prompt_wait("batch", f"{len(requests)} tool calls need confirmation", names) as wait:
+    with prompt_wait("batch", f"{len(requests)} tool calls need confirmation", names, choices=_BATCH_CHOICES) as wait:
         backend.echo()
         backend.secho(format_batch_confirm_box(requests), fg="yellow")
         backend.secho("m = review them one call at a time", fg="bright_black")
