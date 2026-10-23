@@ -125,17 +125,27 @@ class PromptWait:
     ``kind`` names the prompt family (``confirm``, ``ask``, ``secret``,
     ``choose``, ``policy``, ``access``, ``skills``, ``limit``) so the host can
     tailor what it shows and which answers it offers; ``title`` is short and
-    safe to surface anywhere, while ``detail`` carries one optional line the
-    caller has already redacted. ``choices`` are the answers this particular
-    prompt accepts, as ``(key, label)`` pairs — a host that offers them sends
-    the key back, so the label can stay human and the key stay the token the
-    terminal read would accept. Empty means the host decides.
+    safe to surface anywhere. ``body`` is the prompt itself — a question, which
+    the host shows as it stands — while ``detail`` carries one optional reason
+    line the caller has already redacted: it can name a command or a URL, so a
+    host shows it only when the human allowed that. ``facts`` are short items
+    naming the *object* of the prompt (a program or a file name, never an
+    argument): they travel unconditionally, so a host that hides the reason
+    still says what the prompt is about. ``expires_in`` is how long the prompt
+    waits before taking its default answer, which is usually "deny" — a host
+    says so, because not answering is then an answer. ``choices`` are the
+    answers this particular prompt accepts, as ``(key, label)`` pairs — a host
+    that offers them sends the key back, so the label can stay human and the key
+    stay the token the terminal read would accept. Empty means the host decides.
     """
 
     kind: str
     title: str
     detail: str = ""
     choices: tuple[tuple[str, str], ...] = ()
+    body: str = ""
+    facts: tuple[str, ...] = ()
+    expires_in: float | None = None
 
 
 @runtime_checkable
@@ -185,11 +195,17 @@ def prompt_wait(
     title: str,
     detail: str = "",
     choices: tuple[tuple[str, str], ...] = (),
+    *,
+    body: str = "",
+    facts: tuple[str, ...] = (),
+    expires_in: float | None = None,
 ) -> Generator[PromptAnswerSource | None]:
     """Announce a blocking prompt to the host; yields its answer source (or None).
 
-    ``choices`` says which answers this prompt accepts (see :class:`PromptWait`);
-    a host that shows them sends the key back as the answer.
+    ``choices`` says which answers this prompt accepts, ``body`` what it asks,
+    ``facts`` what it is about and ``expires_in`` when its default answer takes
+    over (see :class:`PromptWait`); a host that shows them sends the key back as
+    the answer.
 
     Only the outermost prompt of a nested read is announced: a confirm that asks
     a follow-up question while it is already on screen must not notify — and
@@ -201,7 +217,8 @@ def prompt_wait(
         return
     token = _wait_depth.set(_wait_depth.get() + 1)
     try:
-        with hook(PromptWait(kind, title, detail, choices)) as source:
+        wait = PromptWait(kind, title, detail, choices, body, facts, expires_in)
+        with hook(wait) as source:
             yield source
     finally:
         _wait_depth.reset(token)
@@ -554,6 +571,15 @@ def _read_with_source(
     return answer.strip()
 
 
+#: Titles for the prompts whose own text *is* the question: a host gives the
+#: title a line of its own and cuts it short, so the question itself goes into
+#: the body, where it is read whole.
+_ASK_TITLE = "a question is waiting"
+_CHOOSE_TITLE = "a choice is waiting"
+#: How many option labels a choice prompt names alongside its question.
+_MAX_CHOICE_FACTS = 4
+
+
 def ask(
     prompt: str,
     *,
@@ -568,7 +594,7 @@ def ask(
     if not backend.is_interactive() and default is None:
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
-    with prompt_wait("ask", prompt) as wait:
+    with prompt_wait("ask", _ASK_TITLE, body=prompt) as wait:
         backend.secho(prompt, fg="yellow")
         source = wait if wait is not None and wait.supports_actions else None
         return _read_with_source("Answer", source, default=default, completions=completions)
@@ -576,6 +602,10 @@ def ask(
 
 def ask_secret(prompt: str) -> str:
     """Prompt for a secret line (no echo). Never use for values that return to the model.
+
+    The ``secret`` family is announced, never answered: the prompt is on screen
+    at the terminal only, since a value typed into a notification would have to
+    travel to get back to the process.
 
     Cancel (Ctrl+C / EOF) raises :class:`NonInteractiveError`.
     """
@@ -616,8 +646,9 @@ def choose(
         msg = f"non-interactive: cannot prompt for {prompt!r}"
         raise NonInteractiveError(msg)
 
+    facts = tuple(dict.fromkeys(option.label for option in choices[:_MAX_CHOICE_FACTS]))
     while True:
-        with prompt_wait("choose", prompt):
+        with prompt_wait("choose", _CHOOSE_TITLE, body=prompt, facts=facts):
             raw = backend.read_line(
                 "Choice",
                 default=default_display,
