@@ -183,6 +183,33 @@ def test_unwrap_remote_client_alone() -> None:
         assert unwrap_command(argv).remote is None, argv
 
 
+def test_unwrap_reads_options_with_getopt() -> None:
+    """Each wrapper's spec is a ``getopt`` pattern: flags and values are exact.
+
+    ``--`` ends the wrapper's options, jammed values work (``-p2222``), and a
+    launcher's common flags stay flags (``uv run --no-project pytest``).
+    """
+    assert unwrap_command(["sudo", "-u", "root", "--", "rm", "-rf", "/"]).base == "rm"
+    assert unwrap_command(["ssh", "-p2222", "prod", "uptime"]).base == "uptime"
+    assert unwrap_command(["uv", "run", "--no-project", "pytest", "-x"]).base == "pytest"
+    assert unwrap_command(["time", "-f", "%e", "python", "x.py"]).base == "python"
+    assert unwrap_command(["xargs", "-0", "--", "rm"]).base == "rm"
+
+
+def test_an_unknown_option_stops_the_unwrap_and_is_reported() -> None:
+    """The program behind an option we cannot read is a guess, so it is reported.
+
+    The wrapper itself stays the command: ``sudo <new flag> rm -rf /`` is still
+    judged as ``sudo`` by the denylist, so nothing hides behind the guess.
+    """
+    scan = unwrap_command(["sudo", "--new-sudo-flag", "rm", "-rf", "/"])
+    assert scan.base == "sudo", scan
+    assert scan.wrappers == ()
+    assert "new-sudo-flag" in scan.unparsed
+    # A known option is read, not reported.
+    assert unwrap_command(["sudo", "-E", "rm", "-rf", "/"]).unparsed == ""
+
+
 def test_unwrap_remote_command_still_reviews_what_runs() -> None:
     """The remote slice is parsed like a local command (code, escalation)."""
     scan = unwrap_command(["ssh", "prod", "bash", "-c", "rm -rf /"])

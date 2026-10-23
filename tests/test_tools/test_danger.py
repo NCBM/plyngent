@@ -174,6 +174,16 @@ def test_a_remote_command_is_judged_by_what_runs_there() -> None:
     assert pty is not None and "python3" in pty
 
 
+def test_an_unreadable_option_asks_instead_of_guessing() -> None:
+    """An option the spec does not know makes the wrapped program a guess."""
+    reason = _reason("run_argv", {"argv": ["sudo", "--new-sudo-flag", "uptime"]})
+    assert reason is not None
+    assert "options not understood" in reason
+    assert "new-sudo-flag" in reason
+    # A known option is read: no review for a harmless wrapped program.
+    assert _reason("run_argv", {"argv": ["sudo", "-E", "uptime"]}) is None
+
+
 def test_a_remote_shell_is_announced() -> None:
     """``ssh host`` runs nothing this scan can see, so the human is told first."""
     reason = _reason("open_pty", {"command": ["ssh", "prod"]})
