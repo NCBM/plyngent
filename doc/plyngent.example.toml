@@ -45,13 +45,15 @@
 # Notifications while a prompt waits on the human: a tool confirmation, a
 # directory-access grant, a skill write, an ``ask_user_*`` question, or the
 # limit-continue prompt. A prompt is announced only after `grace_seconds` of
-# waiting, so one you answer at the terminal stays silent; `min_interval_seconds`
-# throttles bursts.
+# waiting, so one you answer at the terminal stays silent — except a prompt that
+# follows an answer given on the notification, which is announced at once;
+# `min_interval_seconds` throttles bursts.
 # channels: "auto" tries the desktop first (needs the `notify` extra:
 # `pip install plyngent[notify]`) and falls back to a terminal escape sequence;
 # "desktop" / "terminal" pin one of them.
-# `actions` offers allow / deny / review as notification buttons; where the
-# platform has none the notification stays text-only.
+# `actions` offers the answers the prompt accepts as notification buttons (allow /
+# deny / review when it names none); where the platform has none the notification
+# stays text-only.
 # `include_reason` adds the one-line reason — it can name a command or a URL, so
 # it stays off by default (a notification may be mirrored to a lock screen).
 # [notify]

@@ -32,24 +32,36 @@ a prompt answered inside the grace period is never announced at all.
 
 | Prompt | Notification offers |
 |---|---|
-| tool confirm (single / a round's batch) | Allow once / Deny / Go to terminal |
-| command denylist, `fetch_local` private host | same three |
-| directory-access request, skill write | same three |
+| tool confirm (single) | Allow once / Deny / Go to terminal |
+| a round's batch of confirms | Allow all / Review one by one / Deny / Go to terminal |
+| command denylist, `fetch_local` private host | Allow once / Deny / Go to terminal |
+| directory-access request | same three (the level asked for, not a lower one) |
+| skill write | Allow once / This chat / Deny / Go to terminal |
+| limit-continue | Continue / Continue, stop asking / Stop here / Go to terminal |
 | `ask_user_line` | a reply field — the answer *is* the text you type |
 | `ask_user_choice`, `ask_user_form`, PTY secrets | nothing (terminal only) |
-| limit-continue | nothing (terminal only) |
+
+Each prompt says which answers it accepts (`prompt_wait(..., choices=…)`), and
+those are the buttons; one that names none gets Allow once / Deny / Go to
+terminal. "Go to terminal" is always the last button: it withdraws the
+notification and leaves the prompt waiting.
 
 An answer read from the notification is treated exactly like a typed one —
 `allow` is the `y` the prompt accepts, `deny` is `n` — and it never records a
-session grant: the button means "this once". "Go to terminal" withdraws the
-notification and leaves the prompt waiting. A secret is never asked for in a
-notification, and never echoed into one.
+session grant: the button means "this once", which is why a prompt with an
+extra answer (this chat, stop asking) offers it as a button of its own. A secret
+is never asked for in a notification, and never echoed into one.
 
 A prompt that can be answered from the notification reads both surfaces while it
 blocks, from the first moment — the notification itself only shows up after
 `grace_seconds`, so waiting for it to appear before listening would block on the
 terminal alone. Typing at the terminal always wins; a readline-only convenience
 (Tab completion on `ask_user_line`) is what a question gives up in exchange.
+
+A prompt that *follows* an answer given on the notification — the "why denied"
+comment, the per-call prompts after "Review one by one" — is announced at once,
+with no grace period and past the burst throttle: the human is looking at the
+notification, and the follow-up is the next thing they must answer.
 
 ## Desktop channel
 
@@ -69,6 +81,16 @@ reply field is KDE-only in practice: it is the `inline-reply` capability plus th
 Notifications are shown from the library's async API on a loop that runs in a
 daemon thread, because callbacks only fire while the loop that owns the
 notification is running.
+
+The notification stays on screen: it is sent with no expiry (`timeout = 0`, the
+freedesktop value for "until dismissed"), so the server does not slide it into
+the tray a few seconds later. That is the point of it — the turn is blocked
+until the prompt is answered, and a collapsed notification is one the human
+would find only on coming back anyway. Urgency stays at the library default: on
+KDE Plasma, `critical` keeps the notification up just the same but paints the
+popup as urgent, and on every platform it asks the Focus mode to let it through
+— which a prompt has no business doing. Once the prompt is answered, the
+notification is dismissed.
 
 ## Terminal channel
 
