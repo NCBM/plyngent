@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
 _ASK_SUBJECT_PREVIEW = 60
-_KEYS_PREVIEW = 40
+_PTY_PAYLOAD_PREVIEW = 40
 # ``run_argv_batch`` lists the commands it runs above its ``* Run batch `` row — one
 # line per command, a ``pipe_out`` chain joined into one — elided past this width.
 _RUN_BATCH_CMD_LIMIT = 80
@@ -632,14 +632,33 @@ def _pty_session_line(verb: str, detail: Callable[[str, str], str]) -> PrettyLin
     )
 
 
-def _write_keys_prefix(args_json: str) -> str:
-    """``* PTY Keys <session> '<keys>' ``: what was sent, not just how much.
+def _pty_payload(text: str, limit: int) -> str:
+    """A PTY payload as one quoted, escaped fragment, shortened to *limit*.
 
-    The markers are already human-readable (``<c-c>``), so the payload speaks
-    for itself; flattening keeps a stray newline from breaking the line.
+    ``repr`` keeps it on one line and makes what is invisible visible: a
+    trailing newline shows as ``\\n``, an ESC as ``\\x1b``, and a payload made
+    only of spaces can be told apart from an empty one.
     """
-    keys = " ".join((_json_str_arg(args_json, "data") or "").split())
-    return _pretty_prefix(f"* PTY Keys {_pty_session_label(args_json)} '{_preview(keys or '?', _KEYS_PREVIEW)}' ")
+    if len(text) <= limit:
+        return repr(text)
+    head = repr(text[:limit])
+    return f"{head[:-1]}…{head[-1]}"
+
+
+def _pty_write_prefix(verb: str) -> Callable[[str], str]:
+    """``* PTY <verb> <session> '<payload>' ``: what was sent, escaped and cut.
+
+    The payload is the one thing about a write worth seeing; the outcome line
+    still carries the exact size. ``ask_into_pty`` never uses this — the
+    human's answer must not be shown.
+    """
+
+    def prefix(args_json: str) -> str:
+        payload = _json_str_arg(args_json, "data") or ""
+        shown = _pty_payload(payload, _PTY_PAYLOAD_PREVIEW) if payload else "?"
+        return _pretty_prefix(f"* PTY {verb} {_pty_session_label(args_json)} {shown} ")
+
+    return prefix
 
 
 def _open_pty_prefix(args_json: str) -> str:
@@ -953,8 +972,8 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "skill_edit": PrettyLine(prefix=_skill_edit_prefix, detail=_skill_edit_detail),
     "open_pty": PrettyLine(prefix=_open_pty_prefix, detail=_open_pty_detail),
     "read_pty": _pty_session_line("Read", _read_pty_detail),
-    "write_pty": _pty_session_line("Write", _pty_write_detail),
-    "write_pty_keys": PrettyLine(prefix=_write_keys_prefix, detail=_pty_write_detail),
+    "write_pty": PrettyLine(prefix=_pty_write_prefix("Write"), detail=_pty_write_detail),
+    "write_pty_keys": PrettyLine(prefix=_pty_write_prefix("Keys"), detail=_pty_write_detail),
     "ask_into_pty": _pty_session_line("Ask", _pty_write_detail),
     "close_pty": _pty_session_line("Close", _close_pty_detail),
     "ask_user_line": _ask_line("", "question", _ask_detail),
