@@ -26,16 +26,13 @@ _SIMPLE_ESCAPE_LEN = 2
 #: ``<name>`` markers: the keys a terminal understands, and the bytes each sends.
 _KEY_NAMES: dict[str, str] = {
     "esc": "\x1b",
-    "escape": "\x1b",
     "enter": "\r",
-    "return": "\r",
     "tab": "\t",
     "s-tab": "\x1b[Z",
     "space": " ",
     "bs": "\x7f",
-    "backspace": "\x7f",
     "del": "\x1b[3~",
-    "delete": "\x1b[3~",
+    "ins": "\x1b[2~",
     "home": "\x1b[H",
     "end": "\x1b[F",
     "up": "\x1b[A",
@@ -44,8 +41,6 @@ _KEY_NAMES: dict[str, str] = {
     "right": "\x1b[C",
     "pgup": "\x1b[5~",
     "pgdn": "\x1b[6~",
-    "pageup": "\x1b[5~",
-    "pagedown": "\x1b[6~",
     "f1": "\x1bOP",
     "f2": "\x1bOQ",
     "f3": "\x1bOR",
@@ -60,10 +55,50 @@ _KEY_NAMES: dict[str, str] = {
     "f12": "\x1b[24~",
 }
 
+#: The longer spellings, so a marker can be written the way it is usually named.
+_KEY_ALIASES: dict[str, str] = {
+    "escape": "esc",
+    "return": "enter",
+    "backspace": "bs",
+    "delete": "del",
+    "insert": "ins",
+    "pageup": "pgup",
+    "pagedown": "pgdn",
+}
+
+#: Keys a modifier applies to, as the xterm sequence with the modifier slot.
+_MODIFIED: dict[str, str] = {
+    "up": "\x1b[1;{m}A",
+    "down": "\x1b[1;{m}B",
+    "right": "\x1b[1;{m}C",
+    "left": "\x1b[1;{m}D",
+    "home": "\x1b[1;{m}H",
+    "end": "\x1b[1;{m}F",
+    "ins": "\x1b[2;{m}~",
+    "del": "\x1b[3;{m}~",
+    "pgup": "\x1b[5;{m}~",
+    "pgdn": "\x1b[6;{m}~",
+    "f1": "\x1b[1;{m}P",
+    "f2": "\x1b[1;{m}Q",
+    "f3": "\x1b[1;{m}R",
+    "f4": "\x1b[1;{m}S",
+    "f5": "\x1b[15;{m}~",
+    "f6": "\x1b[17;{m}~",
+    "f7": "\x1b[18;{m}~",
+    "f8": "\x1b[19;{m}~",
+    "f9": "\x1b[20;{m}~",
+    "f10": "\x1b[21;{m}~",
+    "f11": "\x1b[23;{m}~",
+    "f12": "\x1b[24;{m}~",
+}
+
+#: Modifier prefixes a marker may carry: Ctrl, Alt (either spelling), Shift.
+_MODIFIERS = frozenset({"c", "a", "m", "s"})
+
 #: What a Ctrl may be combined with beyond A-Z: the rest of the C0 controls.
 _CONTROL_CHARS = "@[\\]^_"
 #: Longest marker content to look for, so a stray ``<`` stays a literal ``<``.
-_MAX_MARKER = 20
+_MAX_MARKER = 32
 
 # C0 controls except TAB/LF/CR (those stay for readable logs).
 _UNSAFE_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -92,7 +127,7 @@ class KeySyntaxError(ValueError):
 
 
 def _control(char: str) -> str:
-    """The C0 byte for ``<c-*char*>``."""
+    """The C0 byte for a Ctrl and one character."""
     if len(char) != 1:
         msg = f"ctrl takes one character, not {char!r} (write <c-a>)"
         raise KeySyntaxError(msg)
@@ -103,18 +138,44 @@ def _control(char: str) -> str:
     return chr(ord(upper) & 0x1F)
 
 
+def _canonical(name: str) -> str:
+    lowered = name.lower()
+    return _KEY_ALIASES.get(lowered, lowered)
+
+
 def _key_bytes(name: str) -> str:
-    """What one ``<name>`` marker sends, ``c-`` / ``m-`` prefixes included."""
-    known = _KEY_NAMES.get(name.lower())
+    """What one ``<name>`` marker sends, modifiers and all."""
+    known = _KEY_NAMES.get(_canonical(name))
     if known is not None:
         return known
-    head, sep, rest = name.partition("-")
-    if sep and len(head) == 1 and rest:
-        if head.lower() == "c":
-            return _control(rest)
-        if head.lower() == "m":
-            return "\x1b" + (rest if len(rest) == 1 else _key_bytes(rest))
+    *prefixes, base = name.split("-")
+    modifiers = {prefix.lower() for prefix in prefixes}
+    if prefixes and base and modifiers <= _MODIFIERS:
+        return _modified(name, base, modifiers)
     msg = f"unknown key <{name}> (see the write_pty_keys docs for the names)"
+    raise KeySyntaxError(msg)
+
+
+def _modified(name: str, base: str, modifiers: set[str]) -> str:
+    """One key under Ctrl / Alt / Shift, spelled the way xterm spells it."""
+    ctrl = "c" in modifiers
+    alt = bool(modifiers & {"a", "m"})
+    shift = "s" in modifiers
+    template = _MODIFIED.get(_canonical(base))
+    if template is not None:
+        # xterm's modifier parameter: 1 + shift(1) + alt(2) + ctrl(4).
+        return template.format(m=1 + shift * 1 + alt * 2 + ctrl * 4)
+    if ctrl and _canonical(base) == "space":
+        return "\x00"  # Ctrl+Space is NUL, not a CSI sequence
+    if len(base) == 1:
+        if shift:
+            msg = f"<s-{base}> is just {base.upper()!r} — drop the modifier"
+            raise KeySyntaxError(msg)
+        return ("\x1b" if alt else "") + (_control(base) if ctrl else base)
+    known = _KEY_NAMES.get(_canonical(base))
+    if known is not None and not (ctrl or shift):
+        return "\x1b" + known  # Alt alone: an ESC before the key, as terminals send it
+    msg = f"no sequence for <{name}> (write the raw bytes with \\x1b)"
     raise KeySyntaxError(msg)
 
 
@@ -150,10 +211,12 @@ def decode_write_data(data: str) -> str:
     Markers, written between angle brackets:
 
     - ``<esc>`` ``<enter>`` ``<tab>`` ``<s-tab>`` ``<space>`` ``<bs>`` ``<del>``
-      ``<home>`` ``<end>`` ``<up>`` ``<down>`` ``<left>`` ``<right>``
+      ``<ins>`` ``<home>`` ``<end>`` ``<up>`` ``<down>`` ``<left>`` ``<right>``
       ``<pgup>`` ``<pgdn>`` ``<f1>`` … ``<f12>``
-    - ``<c-a>`` … ``<c-z>`` for Ctrl (plus ``<c-@>`` ``<c-[>`` ``<c-\\\\>``
-      ``<c-]>`` ``<c-^>`` ``<c-_>``), ``<m-x>`` for Alt: an ESC before the key
+    - a modifier in front, alone or combined: ``<c-up>`` ``<s-home>``
+      ``<m-tab>`` ``<c-s-f5>`` — the xterm sequence where a key has one. On a
+      plain character, Ctrl is its control byte (``<c-a>``, ``<c-[>``) and Alt
+      is an ESC before it (``<m-x>``)
     - ``<up*3>`` repeats a key three times, ``<<`` is a literal ``<``
 
     An unknown name raises :class:`KeySyntaxError` rather than typing the marker

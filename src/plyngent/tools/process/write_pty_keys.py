@@ -17,9 +17,11 @@ async def write_pty_keys(session_id: int, data: str) -> str:
     Markers, written between angle brackets:
 
     - ``<esc>`` ``<enter>`` ``<tab>`` ``<s-tab>`` ``<space>`` ``<bs>`` ``<del>``
-      ``<home>`` ``<end>`` ``<up>`` ``<down>`` ``<left>`` ``<right>``
+      ``<ins>`` ``<home>`` ``<end>`` ``<up>`` ``<down>`` ``<left>`` ``<right>``
       ``<pgup>`` ``<pgdn>`` ``<f1>`` … ``<f12>``
-    - ``<c-a>`` … ``<c-z>`` for Ctrl, ``<m-x>`` for Alt (an ESC first)
+    - a modifier in front, alone or combined: ``<c-up>`` ``<s-home>``
+      ``<m-tab>`` ``<c-s-f5>``; on a plain character Ctrl is its control byte
+      (``<c-a>``) and Alt an ESC before it (``<m-x>``)
     - ``<up*3>`` repeats a key, ``<<`` is a literal ``<``
 
     An unknown marker is an error, not text typed into the terminal: a typo must
