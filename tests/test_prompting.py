@@ -267,6 +267,25 @@ def test_non_interactive_confirm_uses_default() -> None:
         assert confirm("ok?", default=True) is True
 
 
+def test_confirm_takes_a_host_answer() -> None:
+    """``allow`` / ``deny`` from a notification answer a yes/no like ``y`` / ``n``."""
+    with temporary_backend(ScriptedBackend([])):
+        assert confirm("Go?", source=_AnswerSource("allow")) is True
+        assert confirm("Go?", source=_AnswerSource("deny")) is False
+        assert confirm("Go?", source=_AnswerSource("n")) is False
+        # Nothing arrived: the prompt falls back to its default.
+        assert confirm("Go?", default=True, source=_AnswerSource(None)) is True
+
+
+def test_confirm_takes_an_answer_the_hook_offers() -> None:
+    backend = ScriptedBackend([], confirms=[False])
+    set_prompt_wait_hook(lambda _wait: contextlib.nullcontext(_AnswerSource("allow")))
+    with temporary_backend(backend):
+        assert confirm("Go?") is True
+    # The answer came from the surface, so the backend was never asked.
+    assert backend.confirms == [False]
+
+
 def test_prompt_output_hook_runs_before_chrome(capsys: pytest.CaptureFixture[str]) -> None:
     """A registered hook runs before echo/secho write; clearing it removes it.
 

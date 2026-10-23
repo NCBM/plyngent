@@ -257,6 +257,34 @@ def test_a_confirmation_offers_three_buttons() -> None:
     assert request.reply_field is False
 
 
+def test_a_waiting_prompt_is_answerable_before_it_is_announced() -> None:
+    """The offer is decided when the wait starts, not when the notification shows.
+
+    A notification only appears after the grace period, so a prompt that learned
+    about its answers from ``notify_desktop`` would already be blocked on stdin.
+    """
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop, grace_seconds=60.0)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        assert handle.supports_actions is True
+        assert desktop.requests == []  # not announced yet
+
+
+def test_a_question_is_answerable_before_it_is_announced() -> None:
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop, grace_seconds=60.0)
+    with notifier(PromptWait("ask", "Which branch?")) as handle:
+        assert handle.supports_actions is True
+        assert desktop.requests == []
+
+
+def test_no_answer_is_expected_without_the_capability() -> None:
+    desktop = _FakeDesktop(capabilities=frozenset({"buttons"}))
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("ask", "Which branch?")) as handle:
+        assert handle.supports_actions is False
+
+
 def test_an_ask_offers_a_reply_field_instead_of_buttons() -> None:
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)

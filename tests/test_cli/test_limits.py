@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -251,6 +252,60 @@ def test_tool_confirm_takes_a_notification_answer() -> None:
 def test_tool_confirm_denied_by_the_notification() -> None:
     with temporary_backend(ScriptedBackend([""])), _answered("deny"):
         assert prompt_confirm_tool("run_argv", {}, "runs a command") is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a pty is POSIX-only")
+def test_a_button_replaces_the_terminal_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A button pressed in the notification answers the waiting prompt.
+
+    The read consults stdin *and* the notification while it blocks: the button
+    only exists once the notification is shown, which is after the read began.
+    """
+    import os
+    import pty
+    import threading
+
+    from plyngent.cli.notify import ALLOW, DesktopRequest, WaitNotifier
+    from plyngent.config.models import NotifyConfig
+    from plyngent.prompting import set_prompt_wait_hook
+
+    class PressesTheButton:
+        """A desktop surface that answers once the notification is up."""
+
+        def __init__(self) -> None:
+            self.requests: list[DesktopRequest] = []
+
+        def capabilities(self) -> frozenset[str]:
+            return frozenset({"buttons", "reply"})
+
+        def send(self, request: DesktopRequest) -> str | None:
+            self.requests.append(request)
+            answer = request.on_answer
+            if answer is not None:
+                threading.Timer(0.2, answer, args=(ALLOW,)).start()
+            return "id-1"
+
+        def clear(self, identifier: str | None) -> None:
+            del identifier
+
+    desktop = PressesTheButton()
+    notifier = WaitNotifier(
+        NotifyConfig(grace_seconds=0.0, min_interval_seconds=0.0),
+        desktop=desktop,
+        write=lambda _sequence: None,
+    )
+    master, slave = pty.openpty()
+    stream = os.fdopen(slave)
+    set_prompt_wait_hook(notifier)
+    monkeypatch.setattr(sys, "stdin", stream)
+    try:
+        with temporary_backend(ScriptedBackend([])):
+            assert prompt_confirm_tool("run_argv", {}, "runs a command") is True
+    finally:
+        set_prompt_wait_hook(None)
+        stream.close()
+        os.close(master)
+    assert desktop.requests
 
 
 def test_batch_confirm_takes_a_notification_answer() -> None:
