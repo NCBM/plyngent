@@ -153,6 +153,12 @@ def test_terminal_sequence_osc777_and_osc9() -> None:
     assert terminal_sequence("bell", "T", "M") == "\a"
 
 
+def test_a_body_less_notification_states_its_title_once() -> None:
+    """OSC 9 joins title and body with a colon, which must not dangle."""
+    assert terminal_sequence("osc9", "T", "") == "\x1b]9;T\x07"
+    assert terminal_sequence("osc777", "T", "") == "\x1b]777;notify;T;\x07"
+
+
 def test_terminal_sequence_is_wrapped_for_tmux() -> None:
     seq = terminal_sequence("osc777", "T", "M", multiplexer="tmux")
     assert seq.startswith("\x1bPtmux;\x1b")
@@ -482,11 +488,14 @@ def test_a_prompt_without_choices_gets_the_usual_buttons() -> None:
     notifier, _ = _notifier(desktop=desktop)
     with notifier(PromptWait("confirm", "Allow?")) as handle:
         handle._notify()
-    assert desktop.requests[0].buttons == (
+    request = desktop.requests[0]
+    assert request.buttons == (
         (ALLOW, "Allow once"),
         (DENY, "Deny"),
         (REVIEW, "Go to terminal"),
     )
+    # Neither channel repeats the title in the body.
+    assert request.message == ""
 
 
 def test_a_prompt_after_a_notification_answer_is_announced_at_once() -> None:
@@ -529,9 +538,10 @@ def test_install_notifier_can_be_disabled() -> None:
 def test_reason_stays_out_unless_asked_for() -> None:
     notifier, _ = _notifier()
     wait = PromptWait("confirm", "Allow?", "argv: rm -rf /")
-    assert notifier._message(wait) == "Allow?"
+    # The title has a field of its own; the body is empty without a reason.
+    assert notifier._message(wait) == ""
     notifier, _ = _notifier(grace_seconds=0.0, include_reason=True)
-    assert "rm -rf" in notifier._message(wait)
+    assert notifier._message(wait) == "argv: rm -rf /"
 
 
 def test_temporary_backend_is_transparent_to_the_notifier() -> None:
