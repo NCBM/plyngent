@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 import time
-from typing import TYPE_CHECKING
+import types
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 
@@ -9,6 +11,7 @@ from plyngent.cli.notify import (
     ALLOW,
     DENY,
     REVIEW,
+    DesktopNotifierChannel,
     DesktopRequest,
     WaitNotifier,
     detect_multiplexer,
@@ -295,13 +298,17 @@ def test_an_ask_offers_a_reply_field_instead_of_buttons() -> None:
     assert request.buttons == ()
 
 
-def test_a_limit_prompt_carries_no_answers() -> None:
+def test_a_limit_prompt_can_be_answered() -> None:
+    """A limit prompt blocks the turn too, so it offers buttons like a confirm."""
     desktop = _FakeDesktop()
     notifier, _ = _notifier(desktop=desktop)
     with notifier(PromptWait("limit", "Round limit reached")) as handle:
+        assert handle.supports_actions is True
         handle._notify()
-        assert handle.supports_actions is False
-    assert desktop.requests[0].buttons == ()
+        answer = desktop.requests[0].on_answer
+        assert answer is not None
+        answer(ALLOW)
+        assert handle.take() == ALLOW
     assert desktop.requests[0].reply_field is False
 
 
@@ -377,6 +384,130 @@ def test_the_notification_is_dismissed_when_the_prompt_returns() -> None:
         assert handle.identifier == "id-1"
     assert handle.identifier is None
     assert desktop.cleared == ["id-1"]
+
+
+# --------------------------------------------------------------------------- #
+# The desktop-notifier call itself
+# --------------------------------------------------------------------------- #
+
+
+class _Capability:
+    BUTTONS = "buttons"
+    REPLY_FIELD = "reply"
+
+
+class _Urgency:
+    Critical = "critical"
+    Normal = "normal"
+    Low = "low"
+
+
+class _Field:
+    """A stand-in for ``Button`` / ``ReplyField`` (it only carries its keywords)."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+
+
+class _RecordingNotifier:
+    """A stand-in for ``DesktopNotifier`` that records every send."""
+
+    sent: ClassVar[list[dict[str, object]]] = []
+
+    def __init__(self, app_name: str) -> None:
+        self.app_name = app_name
+
+    async def get_capabilities(self) -> frozenset[str]:
+        return frozenset({_Capability.BUTTONS})
+
+    async def send(self, **kwargs: object) -> str:
+        _RecordingNotifier.sent.append(kwargs)
+        return "id-1"
+
+    async def clear(self, identifier: str) -> None:
+        del identifier
+
+
+@pytest.fixture
+def _stub_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put a stand-in ``desktop_notifier`` in place of the real extra."""
+    module = types.ModuleType("desktop_notifier")
+    module.Button = _Field  # type: ignore[attr-defined]
+    module.ReplyField = _Field  # type: ignore[attr-defined]
+    module.Capability = _Capability  # type: ignore[attr-defined]
+    module.Urgency = _Urgency  # type: ignore[attr-defined]
+    module.DesktopNotifier = _RecordingNotifier  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "desktop_notifier", module)
+    _RecordingNotifier.sent.clear()
+
+
+@pytest.mark.usefixtures("_stub_extra")
+def test_a_desktop_notification_is_kept_on_screen() -> None:
+    """It must not collapse into the tray while the turn waits for an answer."""
+    channel = DesktopNotifierChannel()
+    identifier = channel.send(
+        DesktopRequest(
+            title="Allow?",
+            message="Allow?",
+            buttons=((ALLOW, "Allow once"),),
+            reply_field=True,
+        )
+    )
+
+    assert identifier == "id-1"
+    sent = _RecordingNotifier.sent[-1]
+    assert sent["timeout"] == 0  # 0 = until dismissed; -1 = the server's few seconds
+    # Urgency stays at the library's default: no expiry is what keeps it up, and
+    # `critical` only adds a colour and breaks through a Focus mode.
+    assert "urgency" not in sent
+    assert sent["buttons"] and sent["reply_field"] is not None
+
+
+def test_a_prompt_offers_its_own_answers() -> None:
+    """The prompt's ``choices`` become the buttons, plus a way to the terminal."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    choices = (("y", "Continue"), ("yyy", "Continue, stop asking"), ("n", "Stop here"))
+    with notifier(PromptWait("limit", "limit reached — continue?", "why", choices)) as handle:
+        handle._notify()
+        request = desktop.requests[0]
+        assert request.buttons == (*choices, (REVIEW, "Go to terminal"))
+        assert request.on_answer is not None
+        request.on_answer("yyy")
+        assert handle.take() == "yyy"
+
+
+def test_a_prompt_without_choices_gets_the_usual_buttons() -> None:
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        handle._notify()
+    assert desktop.requests[0].buttons == (
+        (ALLOW, "Allow once"),
+        (DENY, "Deny"),
+        (REVIEW, "Go to terminal"),
+    )
+
+
+def test_a_prompt_after_a_notification_answer_is_announced_at_once() -> None:
+    """The deny comment follows the button press, so it must not wait again."""
+    desktop = _FakeDesktop()
+    notifier, _ = _notifier(desktop=desktop, grace_seconds=60.0, min_interval_seconds=600.0)
+    with notifier(PromptWait("confirm", "Allow?")) as handle:
+        handle._notify()
+        answer = desktop.requests[0].on_answer
+        assert answer is not None
+        answer(DENY)
+    with notifier(PromptWait("ask", "Why deny?")) as follow_up:
+        assert follow_up.handoff is True
+        deadline = time.monotonic() + 1.0
+        while len(desktop.requests) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    assert len(desktop.requests) == 2
+    # An unrelated prompt is throttled again, and waits out the grace period.
+    with notifier(PromptWait("confirm", "Allow?")) as later:
+        assert later.handoff is False
+        assert notifier.may_notify(later) is False
 
 
 # --------------------------------------------------------------------------- #

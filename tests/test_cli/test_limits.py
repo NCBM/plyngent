@@ -332,6 +332,80 @@ def test_batch_confirm_denied_by_the_notification() -> None:
         assert _prompt_confirm_batch_sync(requests).allowed is False
 
 
+def test_batch_confirm_can_ask_for_one_at_a_time_from_the_notification() -> None:
+    """``m`` is offered as a button, so the manual review stays reachable."""
+    from plyngent.agent import ToolConfirmRequest
+    from plyngent.cli.limits import _prompt_confirm_batch_sync
+
+    requests = [
+        ToolConfirmRequest(name="run_argv", args={}, reason="one"),
+        ToolConfirmRequest(name="run_argv", args={}, reason="two"),
+    ]
+    with temporary_backend(ScriptedBackend([])), _answered("m"):
+        decision = _prompt_confirm_batch_sync(requests)
+    assert decision.allowed is False
+    assert decision.each is True
+
+
+def test_batch_confirm_offers_its_three_answers() -> None:
+    from plyngent.agent import ToolConfirmRequest
+    from plyngent.cli.limits import _prompt_confirm_batch_sync
+    from plyngent.prompting import get_prompt_wait_hook, set_prompt_wait_hook
+
+    offered: list[tuple[tuple[str, str], ...]] = []
+
+    @contextlib.contextmanager
+    def hook(wait: object) -> Generator[None]:
+        offered.append(wait.choices)  # type: ignore[attr-defined]
+        yield None
+
+    requests = [ToolConfirmRequest(name="run_argv", args={}, reason="one")]
+    previous = get_prompt_wait_hook()
+    set_prompt_wait_hook(hook)
+    try:
+        with temporary_backend(ScriptedBackend(["n"])):
+            _ = _prompt_confirm_batch_sync(requests)
+    finally:
+        set_prompt_wait_hook(previous)
+    assert [key for key, _label in offered[0]] == ["y", "m", "n"]
+
+
+def test_a_limit_prompt_takes_its_answer_from_the_notification() -> None:
+    from plyngent.cli import limits
+
+    with temporary_backend(ScriptedBackend([])), _answered("y"):
+        assert limits.prompt_continue_limit("hit a wall") is True
+
+
+def test_a_limit_prompt_can_stop_asking_from_the_notification(clean_auto_continue: None) -> None:
+    """The ``yyy`` button is the one answer a single ``y`` cannot express."""
+    del clean_auto_continue
+    from plyngent.cli import limits
+
+    with temporary_backend(ScriptedBackend([])), _answered("yyy"):
+        assert limits.prompt_continue_limit("hit a wall") is True
+        assert auto_continue_enabled() is True
+
+
+def test_a_limit_prompt_can_stop_the_turn_from_the_notification() -> None:
+    from plyngent.cli import limits
+
+    with temporary_backend(ScriptedBackend([])), _answered("n"):
+        assert limits.prompt_continue_limit("hit a wall") is False
+
+
+def test_a_skill_write_can_be_allowed_for_the_chat_from_the_notification() -> None:
+    """``s`` (this chat) is a button, not only a terminal token."""
+    from pathlib import Path
+
+    from plyngent.cli import limits
+
+    with temporary_backend(ScriptedBackend([])), _answered("s"):
+        decision = limits.prompt_skill_write_confirm(Path("/tmp/skill"), "write", "one line", 30.0)
+    assert decision.allow is True
+    assert decision.session is True
+
+
 def test_every_confirm_announces_itself() -> None:
     """Each blocking confirm reports its kind, so a host can pick a surface."""
     from pathlib import Path
