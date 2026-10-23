@@ -5,10 +5,13 @@ it only when they come back. The notifier announces a prompt once it has waited
 ``grace_seconds`` — answering at the terminal stays silent — and, where the
 platform allows it, offers the answer itself: the prompt's own answers as
 buttons (allow / deny / review for a confirmation), a reply field for a
-question. A prompt that can be answered from the notification reads from both
-surfaces from its first poll, since the announcement only appears once the
-grace period is over. A prompt that follows an answer given on the notification
-is announced at once: the human is already looking at it.
+question. It says what is asked: a question travels in the body where it is read
+whole, the object of a confirmation (a program or a file name) rides along with
+it, and a prompt that takes a default answer says when not answering gives it. A
+prompt that can be answered from the notification reads from both surfaces from
+its first poll, since the announcement only appears once the grace period is
+over. A prompt that follows an answer given on the notification is announced at
+once: the human is already looking at it.
 
 Two channels. The desktop one is the optional ``desktop-notifier`` extra
 (``pip install plyngent[notify]``); the terminal one writes an OSC escape
@@ -62,6 +65,13 @@ _BUTTONS: tuple[tuple[str, str], ...] = (
 
 _MAX_TITLE = 80
 _MAX_MESSAGE = 200
+#: One body line is capped so a single long line cannot starve the others.
+_MAX_BODY_LINE = 100
+#: Prompt families a notification never announces: the value being asked for
+#: would have to travel back through a surface that outlives the prompt.
+_QUIET_KINDS = frozenset({"secret"})
+#: What not answering means, for a prompt that has a timed default.
+_DEADLINE = "no answer in {seconds:g}s = deny"
 
 #: Seconds a desktop notification may stay up; ``0`` is the freedesktop value
 #: for "until dismissed" (``-1`` would hand the notification server's default
@@ -79,6 +89,51 @@ def _clean(text: str, limit: int) -> str:
     return stripped if len(stripped) <= limit else stripped[: limit - 1] + "…"
 
 
+def _deadline(wait: PromptWait) -> str:
+    """What not answering means, when the prompt takes a default answer."""
+    if wait.expires_in is None:
+        return ""
+    return _clean(_DEADLINE.format(seconds=wait.expires_in), _MAX_BODY_LINE)
+
+
+def _body_parts(wait: PromptWait, *, include_reason: bool) -> list[str]:
+    """The lines the prompt asks for, in reading order.
+
+    The question first, then the reason when the config allows it, then what the
+    prompt is about: a host that hides the reason still says what is being asked
+    and what it concerns.
+    """
+    parts: list[str] = []
+    if wait.body:
+        parts.append(wait.body)
+    if include_reason and wait.detail:
+        parts.append(wait.detail)
+    if wait.facts:
+        parts.append(" · ".join(wait.facts))
+    return [_clean(part, _MAX_BODY_LINE) for part in parts]
+
+
+def _body(wait: PromptWait, *, include_reason: bool, multiline: bool) -> str:
+    """The notification body, with the deadline kept whatever else does not fit.
+
+    The lines are filled in reading order until the budget is gone — a long
+    reason drops out before the deadline does — and each one is capped, so no
+    single line can starve the rest. A desktop popup wraps, so its body keeps
+    the lines apart; a terminal escape sequence carries the body on one line.
+    """
+    deadline = _deadline(wait)
+    budget = _MAX_MESSAGE - (len(deadline) + 1 if deadline else 0)
+    kept: list[str] = []
+    for line in _body_parts(wait, include_reason=include_reason):
+        if not line or len(line) + 1 > budget:
+            continue
+        kept.append(line)
+        budget -= len(line) + 1
+    if deadline:
+        kept.append(deadline)
+    return "\n".join(kept) if multiline else " ".join(kept)
+
+
 # --------------------------------------------------------------------------- #
 # Desktop channel (optional `desktop-notifier` extra)
 # --------------------------------------------------------------------------- #
@@ -94,6 +149,7 @@ class DesktopRequest:
     reply_field: bool = False
     on_answer: Callable[[str], None] | None = None
     on_reply: Callable[[str], None] | None = None
+    on_click: Callable[[], None] | None = None
 
 
 @runtime_checkable
@@ -189,6 +245,9 @@ class DesktopNotifierChannel:
                     timeout=_NO_EXPIRY,
                     buttons=buttons,
                     reply_field=reply,
+                    # Clicking the body is the default action: it takes the
+                    # human back to the terminal instead of answering.
+                    on_clicked=request.on_click,
                 )
             )
         )
@@ -367,10 +426,10 @@ class WaitHandle:
             return None
 
     def answer(self, key: str) -> None:
-        """Record one answer from the notification (a button, or a reply)."""
+        """Record one answer pressed on the notification (a button)."""
         if self._closed:
             return
-        if key == REVIEW and self.wait.kind != "ask":
+        if key == REVIEW:
             # "review" means "I will answer in the terminal": withdraw and wait.
             self.notifier.dismiss(self)
             return
@@ -378,6 +437,17 @@ class WaitHandle:
         # answer is announced at once instead of waiting out the grace period.
         self.notifier.handoff()
         self._answers.put(key)
+
+    def reply(self, text: str) -> None:
+        """Record one answer typed into the notification's reply field."""
+        if self._closed:
+            return
+        self.notifier.handoff()
+        self._answers.put(text)
+
+    def review(self) -> None:
+        """Take the human back to the terminal (a click on the notification)."""
+        self.notifier.dismiss(self)
 
     def __enter__(self) -> Self:
         delay = 0.0 if self.handoff else self.notifier.grace_seconds
@@ -473,6 +543,10 @@ class WaitNotifier:
         """Whether this prompt is worth announcing right now."""
         if not self._config.enabled or not get_prompt_backend().is_interactive():
             return False
+        # A secret is never announced: its value would have to come back
+        # through a surface that outlives the prompt.
+        if handle.wait.kind in _QUIET_KINDS:
+            return False
         now = self._clock()
         # A prompt the human reached through the notification is not a burst.
         if not handle.handoff and now - self._last_sent < self._config.min_interval_seconds:
@@ -481,17 +555,19 @@ class WaitNotifier:
         return True
 
     def _message(self, wait: PromptWait) -> str:
-        """The body: the reason line, when the config allows it, else nothing.
+        """The one-line body the terminal channel carries."""
+        return _body(wait, include_reason=self._config.include_reason, multiline=False)
 
-        Both channels show the title as their own field, so repeating it in the
-        body only makes the notification say the same thing twice.
-        """
-        if self._config.include_reason and wait.detail:
-            return _clean(wait.detail, _MAX_MESSAGE)
-        return ""
+    def _desktop_message(self, wait: PromptWait) -> str:
+        """The body the desktop channel carries: the same lines, kept apart."""
+        return _body(wait, include_reason=self._config.include_reason, multiline=True)
 
-    def _buttons(self, wait: PromptWait) -> tuple[tuple[str, str], ...]:
+    def _buttons(self, wait: PromptWait, capability: str) -> tuple[tuple[str, str], ...]:
         """The answers *wait* accepts, and always a way back to the terminal."""
+        if capability == "reply":
+            # A reply field carries the answer, so the only button left is the
+            # way out of the notification.
+            return ((REVIEW, "Go to terminal"),)
         if not wait.choices:
             return _BUTTONS
         return (*wait.choices, (REVIEW, "Go to terminal"))
@@ -540,16 +616,17 @@ class WaitNotifier:
         if channel is None:
             return False
         wait = handle.wait
-        capability = self.answer_capability(wait.kind)
+        capability = self.answer_capability(wait.kind) or ""
         try:
             handle.identifier = channel.send(
                 DesktopRequest(
                     title=_clean(wait.title, _MAX_TITLE),
-                    message=self._message(wait),
-                    buttons=self._buttons(wait) if capability == "buttons" else (),
+                    message=self._desktop_message(wait),
+                    buttons=self._buttons(wait, capability) if capability else (),
                     reply_field=capability == "reply",
                     on_answer=handle.answer,
-                    on_reply=handle.answer,
+                    on_reply=handle.reply,
+                    on_click=handle.review,
                 )
             )
         except Exception:  # noqa: BLE001 - a notification never breaks a prompt
