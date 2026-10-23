@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 _TOOL_RESULT_PREVIEW = 120
 _TOOL_ARGS_PREVIEW = 80
 _ASK_SUBJECT_PREVIEW = 60
+_KEYS_PREVIEW = 40
 # ``run_argv_batch`` lists the commands it runs above its ``* Run batch `` row — one
 # line per command, a ``pipe_out`` chain joined into one — elided past this width.
 _RUN_BATCH_CMD_LIMIT = 80
@@ -631,6 +632,16 @@ def _pty_session_line(verb: str, detail: Callable[[str, str], str]) -> PrettyLin
     )
 
 
+def _write_keys_prefix(args_json: str) -> str:
+    """``* PTY Keys <session> '<keys>' ``: what was sent, not just how much.
+
+    The markers are already human-readable (``<c-c>``), so the payload speaks
+    for itself; flattening keeps a stray newline from breaking the line.
+    """
+    keys = " ".join((_json_str_arg(args_json, "data") or "").split())
+    return _pretty_prefix(f"* PTY Keys {_pty_session_label(args_json)} '{_preview(keys or '?', _KEYS_PREVIEW)}' ")
+
+
 def _open_pty_prefix(args_json: str) -> str:
     argv = _json_list_arg(args_json, "command")
     cmd = shlex.join(argv) if argv else "?"
@@ -943,7 +954,7 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "open_pty": PrettyLine(prefix=_open_pty_prefix, detail=_open_pty_detail),
     "read_pty": _pty_session_line("Read", _read_pty_detail),
     "write_pty": _pty_session_line("Write", _pty_write_detail),
-    "write_pty_keys": _pty_session_line("Keys", _pty_write_detail),
+    "write_pty_keys": PrettyLine(prefix=_write_keys_prefix, detail=_pty_write_detail),
     "ask_into_pty": _pty_session_line("Ask", _pty_write_detail),
     "close_pty": _pty_session_line("Close", _close_pty_detail),
     "ask_user_line": _ask_line("", "question", _ask_detail),
