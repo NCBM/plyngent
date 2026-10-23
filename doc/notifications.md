@@ -45,6 +45,12 @@ session grant: the button means "this once". "Go to terminal" withdraws the
 notification and leaves the prompt waiting. A secret is never asked for in a
 notification, and never echoed into one.
 
+A prompt that can be answered from the notification reads both surfaces while it
+blocks, from the first moment — the notification itself only shows up after
+`grace_seconds`, so waiting for it to appear before listening would block on the
+terminal alone. Typing at the terminal always wins; a readline-only convenience
+(Tab completion on `ask_user_line`) is what a question gives up in exchange.
+
 ## Desktop channel
 
 The desktop channel needs the optional extra:
