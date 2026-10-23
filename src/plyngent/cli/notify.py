@@ -234,6 +234,7 @@ def load_desktop_channel() -> DesktopChannel | None:
 # --------------------------------------------------------------------------- #
 
 _OSC9 = "\x1b]9;{title}: {message}\x07"
+_OSC9_TITLE_ONLY = "\x1b]9;{title}\x07"
 _OSC777 = "\x1b]777;notify;{title};{message}\x07"
 _BELL = "\a"
 #: VTE (GNOME Terminal, Tilix, Terminator, …) speaks OSC 777 from this version on.
@@ -284,7 +285,9 @@ def terminal_sequence(protocol: str, title: str, message: str, *, multiplexer: s
     safe_title = _clean(title, _MAX_TITLE)
     safe_message = _clean(message, _MAX_MESSAGE)
     if protocol == "osc9":
-        seq = _OSC9.format(title=safe_title, message=safe_message)
+        # OSC 9 joins the two with a colon, which would dangle on a body-less one.
+        template = _OSC9 if safe_message else _OSC9_TITLE_ONLY
+        seq = template.format(title=safe_title, message=safe_message)
     else:
         seq = _OSC777.format(title=safe_title, message=safe_message)
     if multiplexer == "tmux":
@@ -478,10 +481,14 @@ class WaitNotifier:
         return True
 
     def _message(self, wait: PromptWait) -> str:
-        title = _clean(wait.title, _MAX_TITLE)
+        """The body: the reason line, when the config allows it, else nothing.
+
+        Both channels show the title as their own field, so repeating it in the
+        body only makes the notification say the same thing twice.
+        """
         if self._config.include_reason and wait.detail:
-            return f"{title}\n{_clean(wait.detail, _MAX_MESSAGE)}"
-        return title
+            return _clean(wait.detail, _MAX_MESSAGE)
+        return ""
 
     def _buttons(self, wait: PromptWait) -> tuple[tuple[str, str], ...]:
         """The answers *wait* accepts, and always a way back to the terminal."""
