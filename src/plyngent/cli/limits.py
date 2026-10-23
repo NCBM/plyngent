@@ -236,22 +236,7 @@ async def prompt_continue_limit_async(reason: str) -> bool:
 
 def _confirm_with(wait: PromptAnswerSource | None, prompt: str, *, default: bool) -> bool:
     """Yes/no, also taking an answer that arrived through a notification."""
-    source = _answer_source(wait)
-    if source is None:
-        return confirm(prompt, default=default)
-    suffix = "[Y/n]" if default else "[y/N]"
-    with contextlib.suppress(OSError):
-        _ = sys.stderr.write(f"{prompt} {suffix}: ")
-        _ = sys.stderr.flush()
-    try:
-        raw = _read_answer(None, wait)
-    except (KeyboardInterrupt, EOFError) as exc:
-        msg = "prompt cancelled"
-        raise NonInteractiveError(msg) from exc
-    token = (raw or "").strip().lower()
-    if not token:
-        return default
-    return token in {"y", "yes"}
+    return confirm(prompt, default=default, source=_answer_source(wait))
 
 
 def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | str:

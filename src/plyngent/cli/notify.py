@@ -4,7 +4,9 @@ A prompt blocks the turn, so someone who switched to another window learns about
 it only when they come back. The notifier announces a prompt once it has waited
 ``grace_seconds`` — answering at the terminal stays silent — and, where the
 platform allows it, offers the answer itself: allow / deny / review buttons for
-a confirmation, a reply field for a question.
+a confirmation, a reply field for a question. A prompt that can be answered from
+the notification reads from both surfaces from its first poll, since the
+announcement only appears once the grace period is over.
 
 Two channels. The desktop one is the optional ``desktop-notifier`` extra
 (``pip install plyngent[notify]``); the terminal one writes an OSC escape
@@ -38,8 +40,16 @@ ALLOW = "allow"
 DENY = "deny"
 REVIEW = "review"
 
-#: Kinds whose notification carries answer buttons (``ask`` gets a reply field).
-_ANSWER_KINDS = frozenset({"confirm", "batch", "policy", "access", "skills"})
+#: Kinds whose notification carries an answer, and the capability it needs: a
+#: confirmation gets buttons, a question gets a reply field.
+_ANSWER_CAPABILITY: dict[str, str] = {
+    "confirm": "buttons",
+    "batch": "buttons",
+    "policy": "buttons",
+    "access": "buttons",
+    "skills": "buttons",
+    "ask": "reply",
+}
 
 _BUTTONS: tuple[tuple[str, str], ...] = (
     (ALLOW, "Allow once"),
@@ -312,14 +322,16 @@ class WaitHandle:
     notifier: WaitNotifier
     wait: PromptWait
     identifier: str | None
-    #: Whether the notification offered answers, so a read may poll for them.
+    #: Whether an answer may arrive from the notification, so a read polls for
+    #: one from the first moment it blocks — the notification itself is only
+    #: shown after the grace period.
     supports_actions: bool
 
     def __init__(self, notifier: WaitNotifier, wait: PromptWait) -> None:
         self.notifier = notifier
         self.wait = wait
         self.identifier = None
-        self.supports_actions = False
+        self.supports_actions = notifier.answer_capability(wait.kind) is not None
         self._answers: SimpleQueue[str] = SimpleQueue()
         self._timer: threading.Timer | None = None
         self._closed: bool = False
@@ -377,6 +389,7 @@ class WaitNotifier:
     _config: NotifyConfig
     _resolve_desktop: bool
     _desktop: DesktopChannel | None
+    _resolve_lock: threading.Lock
     _write: Callable[[str], None]
     _env: Mapping[str, str]
     _clock: Callable[[], float]
@@ -398,6 +411,7 @@ class WaitNotifier:
         else:
             self._resolve_desktop = False
             self._desktop = desktop
+        self._resolve_lock = threading.Lock()
         self._write = write or write_terminal
         self._env = os.environ if env is None else env
         self._clock = clock
@@ -435,9 +449,38 @@ class WaitNotifier:
     def desktop_channel(self) -> DesktopChannel | None:
         """The desktop surface, resolved once (importing the extra on demand)."""
         if self._resolve_desktop:
-            self._desktop = load_desktop_channel()
-            self._resolve_desktop = False
+            with self._resolve_lock:
+                if self._resolve_desktop:
+                    self._desktop = load_desktop_channel()
+                    self._resolve_desktop = False
         return self._desktop
+
+    def answer_capability(self, kind: str) -> str | None:
+        """The capability *kind*'s answer needs (``buttons`` / ``reply``), or None.
+
+        Answered before the notification is shown, so a prompt knows from the
+        start of its wait whether an answer may arrive.
+        """
+        needed = _ANSWER_CAPABILITY.get(kind)
+        if needed is None or not self._config.actions or not self._wants("desktop"):
+            return None
+        channel = self.desktop_channel()
+        if channel is None or needed not in channel.capabilities():
+            return None
+        return needed
+
+    def warm(self) -> None:
+        """Resolve the desktop channel off the caller's thread.
+
+        Probing the platform's capabilities costs a round trip to the
+        notification server, so the first prompt of a run must not pay for it
+        while the human is already waiting.
+        """
+        if not self._resolve_desktop or not self._config.actions or not self._wants("desktop"):
+            return
+        if importlib.util.find_spec("desktop_notifier") is None:
+            return  # no extra: the terminal channel is all there is
+        threading.Thread(target=self.desktop_channel, name="plyngent-notify-warm", daemon=True).start()
 
     def notify_desktop(self, handle: WaitHandle) -> bool:
         """Show the desktop notification; False when it could not be shown."""
@@ -447,25 +490,20 @@ class WaitNotifier:
         if channel is None:
             return False
         wait = handle.wait
-        capabilities = channel.capabilities()
-        buttons: tuple[tuple[str, str], ...] = ()
-        if self._config.actions and wait.kind in _ANSWER_KINDS and "buttons" in capabilities:
-            buttons = _BUTTONS
-        reply = self._config.actions and wait.kind == "ask" and "reply" in capabilities
+        capability = self.answer_capability(wait.kind)
         try:
             handle.identifier = channel.send(
                 DesktopRequest(
                     title=_clean(wait.title, _MAX_TITLE),
                     message=self._message(wait),
-                    buttons=buttons,
-                    reply_field=reply,
+                    buttons=_BUTTONS if capability == "buttons" else (),
+                    reply_field=capability == "reply",
                     on_answer=handle.answer,
                     on_reply=handle.answer,
                 )
             )
         except Exception:  # noqa: BLE001 - a notification never breaks a prompt
             return False
-        handle.supports_actions = bool(buttons) or reply
         return True
 
     def notify_terminal(self, wait: PromptWait) -> None:
@@ -497,5 +535,6 @@ def install_notifier(config: NotifyConfig) -> WaitNotifier | None:
         set_prompt_wait_hook(None)
         return None
     notifier = WaitNotifier(config)
+    notifier.warm()
     set_prompt_wait_hook(notifier)
     return notifier

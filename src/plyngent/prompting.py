@@ -140,7 +140,12 @@ class PromptAnswerSource(Protocol):
 
     @property
     def supports_actions(self) -> bool:
-        """Whether :meth:`take` can answer this prompt at all."""
+        """Whether an answer may arrive while the prompt waits.
+
+        A surface that will offer the answer says so before it has offered it —
+        the notification is only shown after the host's grace period — so a read
+        polls :meth:`take` from its first moment instead of deciding once.
+        """
         ...
 
     def take(self) -> str | None:
@@ -619,8 +624,26 @@ def choose(
         backend.echo("Invalid choice; pick a listed option.")
 
 
-def confirm(prompt: str, *, default: bool = False) -> bool:
-    """Yes/no confirm via the active backend.
+#: Answers a surface spells out on top of the ``y`` a confirm already accepts.
+_YES = frozenset({"allow", "y", "yes"})
+
+
+def _confirm_from_source(prompt: str, source: PromptAnswerSource, *, default: bool) -> bool:
+    """Yes/no for a prompt a surface may answer, reading the terminal as well."""
+    hint = "[Y/n]" if default else "[y/N]"
+    try:
+        answer = _read_with_source(f"{prompt} {hint}", source, default="")
+    except (KeyboardInterrupt, EOFError) as exc:
+        msg = "prompt cancelled"
+        raise NonInteractiveError(msg) from exc
+    token = answer.strip().lower()
+    if not token:
+        return default
+    return token in _YES
+
+
+def confirm(prompt: str, *, default: bool = False, source: PromptAnswerSource | None = None) -> bool:
+    """Yes/no confirm via the active backend, or from *source* when given.
 
     Non-interactive backends return ``default`` without blocking.
     Cancel (Ctrl+C / EOF) raises :class:`NonInteractiveError`.
@@ -628,8 +651,13 @@ def confirm(prompt: str, *, default: bool = False) -> bool:
     backend = get_prompt_backend()
     if not backend.is_interactive():
         return default
+    if source is not None:
+        return _confirm_from_source(prompt, source, default=default)
     backend.echo()
-    with prompt_wait("confirm", prompt):
+    with prompt_wait("confirm", prompt) as wait:
+        offered = wait if wait is not None and wait.supports_actions else None
+        if offered is not None:
+            return _confirm_from_source(prompt, offered, default=default)
         return backend.confirm(prompt, default=default)
 
 
