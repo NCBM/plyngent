@@ -806,13 +806,13 @@ async def test_pretty_pty_write_and_keys(capsys: pytest.CaptureFixture[str]) -> 
     await render_events(
         _aiter(
             [
-                _pretty_call("write_pty_keys", '{"session_id": 3, "data": "ctrl+c"}'),
-                _result("session_id=3\nalive=true\nexit_code=\nwrote=1"),
+                _pretty_call("write_pty_keys", '{"session_id": 3, "data": "<c-c><enter>"}'),
+                _result("session_id=3\nalive=true\nexit_code=\nwrote=2"),
             ]
         )
     )
     out = capsys.readouterr().out
-    assert "* PTY Keys 3 (1 char)" in out
+    assert "* PTY Keys 3 '<c-c><enter>' (2 chars)" in out
 
 
 async def test_pretty_ask_into_pty_never_shows_the_answer(capsys: pytest.CaptureFixture[str]) -> None:

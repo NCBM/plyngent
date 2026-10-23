@@ -4,6 +4,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 from plyngent.tools.process import (
     ask_into_pty,
     close_pty,
@@ -514,13 +516,37 @@ def test_decode_write_data_escapes() -> None:
     from plyngent.tools.process.pty_terminal import decode_write_data
 
     assert decode_write_data(r"\x0f") == "\x0f"
-    assert decode_write_data("ctrl+x") == "\x18"
-    assert decode_write_data("CTRL+O") == "\x0f"
     assert decode_write_data(r"\e") == "\x1b"
-    assert decode_write_data("key=esc") == "\x1b"
-    assert decode_write_data("key=enter") == "\r"
     assert decode_write_data(r"a\nb") == "a\nb"
     assert decode_write_data("plain") == "plain"
+    # Markers: names, modifiers, repeats, and a literal `<`.
+    assert decode_write_data("<esc>") == "\x1b"
+    assert decode_write_data("<ESC>") == "\x1b"
+    assert decode_write_data("<enter>") == "\r"
+    assert decode_write_data("<s-tab>") == "\x1b[Z"
+    assert decode_write_data("<c-x>") == "\x18"
+    assert decode_write_data("<C-O>") == "\x0f"
+    assert decode_write_data("<c-[>") == "\x1b"
+    assert decode_write_data("<m-b>") == "\x1bb"
+    assert decode_write_data("<m-up>") == "\x1b\x1b[A"
+    assert decode_write_data("<up*3>") == "\x1b[A" * 3
+    assert decode_write_data("<<value>") == "<value>"
+    assert decode_write_data("<home>") == "\x1b[H"
+    assert decode_write_data("<bs>") == "\x7f"
+    assert decode_write_data("<pgup>") == "\x1b[5~"
+    assert decode_write_data("<f5>") == "\x1b[15~"
+    # A `<` that does not open a marker stays literal, spaces included.
+    assert decode_write_data("sort < file") == "sort < file"
+    assert decode_write_data("a < b > c") == "a < b > c"
+
+
+def test_decode_write_data_refuses_an_unknown_key() -> None:
+    """A typo must be an error, not text typed into the terminal."""
+    from plyngent.tools.process.pty_terminal import KeySyntaxError, decode_write_data
+
+    for data in ("<hme>", "<s-up>", "<c-1>", "<up*x>", "<up*0>", "<c->"):
+        with pytest.raises(KeySyntaxError):
+            _ = decode_write_data(data)
 
 
 def test_sanitize_pty_output_escapes_csi() -> None:
@@ -567,10 +593,23 @@ async def test_write_pty_keys_ctrl_escape(workspace: object) -> None:
             ),
         )
         session_id = _session_id(opened)
-        written = await call_async(write_pty_keys, session_id, "ctrl+c")
+        written = await call_async(write_pty_keys, session_id, "<c-c>")
         assert "wrote=1" in written
         text = await call_async(read_pty, session_id, timeout=2.0)
         assert "error" not in text.lower() or "alive=" in text
+        _ = await call_async(close_pty, session_id)
+    finally:
+        PtyManager.close_all()
+
+
+async def test_write_pty_keys_refuses_an_unknown_marker(workspace: object) -> None:
+    """The typo comes back as an error and never reaches the session."""
+    del workspace
+    try:
+        opened = await call_async(open_pty, _py("print('up')"))
+        session_id = _session_id(opened)
+        result = await call_async(write_pty_keys, session_id, "<hme>")
+        assert result.startswith("error: unknown key <hme>")
         _ = await call_async(close_pty, session_id)
     finally:
         PtyManager.close_all()
@@ -582,7 +621,7 @@ def test_write_pty_is_literal() -> None:
 
     from plyngent.tools.process.pty_terminal import decode_write_data
 
-    assert decode_write_data("press ctrl+c to cancel") == "press " + chr(3) + " to cancel"
+    assert decode_write_data("press <c-c> to cancel") == "press " + chr(3) + " to cancel"
     src = inspect.getsource(write_pty.handler)
     assert "decode_write_data" not in src
     doc = write_pty.description or write_pty.handler.__doc__ or ""
