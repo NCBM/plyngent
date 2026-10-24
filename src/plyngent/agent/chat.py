@@ -56,10 +56,20 @@ if TYPE_CHECKING:
 
 # Per-conversation tracking of lines read with ``with_lineno=True``, keyed by
 # resolved file path, with the file's mtime at read time (so stale line numbers
-# after external/process mutations are detected). Set to a fresh ``dict`` at the
-# start of each user turn via :func:`reset_lineno_tracker`; cleared after the
-# assistant finishes. Tool handlers read/write via :func:`get_lineno_read_files` /
-# :func:`lineno_read_lines` / :func:`lineno_read_mtime` / :func:`mark_lineno_read`.
+# after external/process mutations are detected). The dict itself is owned by
+# the :class:`ChatAgent` (a fresh one per user turn) and bound into the
+# consuming task's context via :func:`reset_lineno_tracker` /
+# :func:`bind_lineno_tracker`; tool handlers read/write it via
+# :func:`get_lineno_read_files` / :func:`lineno_read_lines` /
+# :func:`lineno_read_mtime` / :func:`mark_lineno_read`.
+#
+# The binding lives in the *consuming task's* context: the host wraps each turn
+# attempt in its own task (auto-retry, Ctrl+C then ``/retry``), and
+# ``asyncio.create_task`` copies the context of the caller — not of the previous
+# attempt. Retrying therefore re-binds the *same* turn-scoped dict; without
+# that, ``mark_lineno_read`` would silently drop every numbered read (the
+# variable is unset in the new task) and ``edit_lineno`` would reject all edits
+# even after the model re-reads the file as its own error message instructs.
 _lineno_read_files: ContextVar[dict[str, tuple[set[int], int]] | None] = ContextVar(
     "_lineno_read_files",
     default=None,
@@ -67,12 +77,24 @@ _lineno_read_files: ContextVar[dict[str, tuple[set[int], int]] | None] = Context
 
 
 def reset_lineno_tracker() -> Token[dict[str, tuple[set[int], int]] | None]:
-    """Replace the tracker with a fresh empty mapping; return the previous token.
+    """Bind a fresh empty tracker; return the previous token.
 
     Call at the start of a new user turn. Restore with
     ``_lineno_read_files.reset(token)`` when the turn completes.
     """
     return _lineno_read_files.set({})
+
+
+def bind_lineno_tracker(
+    tracker: dict[str, tuple[set[int], int]],
+) -> Token[dict[str, tuple[set[int], int]] | None]:
+    """Bind an agent-owned tracker dict; return the previous token.
+
+    ``retry`` uses this to re-bind the current turn's dict in a new attempt
+    task, so numbered reads from before the failure stay valid for edits after
+    it (the turn did not end, so its reads should not either).
+    """
+    return _lineno_read_files.set(tracker)
 
 
 def get_lineno_read_files() -> set[str]:
@@ -350,6 +372,9 @@ class ChatAgent:
         reminder_last_band: int = 0,
         provider_tools: Sequence[dict[str, object]] | None = None,
     ) -> None:
+        # Lines read with_lineno this turn (shared dict bound into each attempt
+        # task's context; see the module note above _lineno_read_files).
+        self._lineno_tracker: dict[str, tuple[set[int], int]] = {}
         self.client = client
         self.model = model
         self.tools = tools
@@ -676,14 +701,20 @@ class ChatAgent:
         *images* ride along with the text as content parts, which is the shape
         the model sees an attachment in (see ``agent.images``).
         """
-        _ = reset_lineno_tracker()
-        self._ensure_system_prompt()
-        user_msg = UserChatMessage(content=user_content(user_text, images))
-        self.messages.append(user_msg)
-        await self._persist(user_msg)
-        self._persist_from = len(self.messages)
-        async for event in self._run_from_user_message(user_msg):
-            yield event
+        # A new user turn gets a fresh tracker; the dict is owned by the agent
+        # so a retry (new task, fresh context copy) can re-bind the same dict.
+        self._lineno_tracker = {}
+        token = bind_lineno_tracker(self._lineno_tracker)
+        try:
+            self._ensure_system_prompt()
+            user_msg = UserChatMessage(content=user_content(user_text, images))
+            self.messages.append(user_msg)
+            await self._persist(user_msg)
+            self._persist_from = len(self.messages)
+            async for event in self._run_from_user_message(user_msg):
+                yield event
+        finally:
+            _lineno_read_files.reset(token)
 
     def _resolve_aside_tools(
         self,
@@ -803,8 +834,16 @@ class ChatAgent:
         user_msg = self.messages[user_index]
         assert isinstance(user_msg, UserChatMessage)
         self._ensure_system_prompt()
-        # Already-committed rows stay; write any the failed rollback could not.
-        if self._persist_from < len(self.messages):
-            await self._persist_range(self._persist_from, len(self.messages))
-        async for event in self._run_from_user_message(user_msg):
-            yield event
+        # This attempt runs in a new task whose context copy has no tracker
+        # bound; re-bind the turn's dict so numbered reads before the failure
+        # stay valid for edits after it, and reads during the retry land in the
+        # same dict the next tool call sees.
+        token = bind_lineno_tracker(self._lineno_tracker)
+        try:
+            # Already-committed rows stay; write any the failed rollback could not.
+            if self._persist_from < len(self.messages):
+                await self._persist_range(self._persist_from, len(self.messages))
+            async for event in self._run_from_user_message(user_msg):
+                yield event
+        finally:
+            _lineno_read_files.reset(token)
