@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, overload
+import asyncio
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import pytest
 from msgspec import UNSET
@@ -926,6 +927,128 @@ async def test_retry_keeps_committed_tools_after_second_round_fails() -> None:
     assert calls == ["ran"]  # tool not re-executed
     assert agent.pending_retry_text is None
     await store.close()
+
+
+async def test_retry_keeps_lineno_reads_across_attempt_tasks(tmp_path: object) -> None:
+    """A numbered read before a failed round still enables edits after retry.
+
+    Each turn attempt runs in its own task (the host wraps turns in
+    ``asyncio.create_task``), so the retry attempt's context does not carry the
+    first attempt's ContextVar binding. Without ``retry`` re-binding the lineno
+    tracker, ``read_file(with_lineno=true)`` silently records nothing and
+    ``edit_lineno`` rejects every line edit — even after re-reading the file as
+    its own error message instructs.
+    """
+    from pathlib import Path
+
+    from plyngent.tools.context import InstanceState
+    from plyngent.tools.file import edit_lineno, read_file
+    from plyngent.tools.workspace import (
+        clear_workspace_allowlist,
+        clear_workspace_root,
+        set_workspace_root,
+    )
+
+    root = cast("Path", tmp_path).resolve()
+    (root / "f.txt").write_text("alpha\nbravo\ncharlie\n", encoding="utf-8")
+    instance = InstanceState(workspace_root=root)
+    from plyngent.tools.context import bind_instance
+
+    with bind_instance(instance):
+        clear_workspace_allowlist()
+        _ = set_workspace_root(root)
+        try:
+            registry = ToolRegistry([read_file, edit_lineno], instance_state=instance)
+
+            class ReadThenBoom:
+                """Round 1 reads with line numbers; round 2's model call fails."""
+
+                n: int
+
+                def __init__(self) -> None:
+                    self.n = 0
+
+                @overload
+                async def chat_completions(
+                    self, param: ChatCompletionsParam, *, stream: Literal[False] = False
+                ) -> ChatCompletionResponse: ...
+
+                @overload
+                async def chat_completions(
+                    self, param: ChatCompletionsParam, *, stream: Literal[True]
+                ) -> AsyncIterator[ChatCompletionChunk]: ...
+
+                async def chat_completions(
+                    self, param: ChatCompletionsParam, *, stream: bool = False
+                ) -> ChatCompletionResponse | AsyncIterator[ChatCompletionChunk]:
+                    del stream
+                    self.n += 1
+                    if self.n == 1:
+                        return _response(
+                            AssistantChatMessage(
+                                content="",
+                                tool_calls=[
+                                    AssistantFunctionToolCall(
+                                        id="c1",
+                                        function=AssistantFunctionTool(
+                                            name="read_file",
+                                            arguments='{"path": "f.txt", "with_lineno": true}',
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    if self.n == 2:
+                        msg = "api down after read"
+                        raise RuntimeError(msg)
+                    if self.n == 3:
+                        edit_args = '{"path": "f.txt", "start_line": 2, "end_line": 2, "new_content": "BRAVO\\n"}'
+                        return _response(
+                            AssistantChatMessage(
+                                content="",
+                                tool_calls=[
+                                    AssistantFunctionToolCall(
+                                        id="c2",
+                                        function=AssistantFunctionTool(
+                                            name="edit_lineno",
+                                            arguments=edit_args,
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    return _response(AssistantChatMessage(content="done"))
+
+            client = ReadThenBoom()
+            agent = ChatAgent(
+                client,
+                model="m",
+                tools=registry,
+                stream=False,
+            )
+
+            async def run_attempt() -> list[object]:
+                return [e async for e in agent.run("edit line 2")]
+
+            # First attempt in its own task (mirrors run_cancellable): commits
+            # the read, then the next model round fails.
+            with pytest.raises(RuntimeError, match="api down after read"):
+                await asyncio.create_task(run_attempt())
+            assert isinstance(agent.messages[-1], ToolChatMessage)
+
+            # Retry in a *fresh* task: its context copy has no tracker bound.
+            async def run_retry() -> list[object]:
+                return [e async for e in agent.retry()]
+
+            events = await asyncio.create_task(run_retry())
+            results = [e for e in events if isinstance(e, ToolResultEvent)]
+            assert results, "retry must run the edit_lineno call"
+            assert "replaced lines 2-2" in results[0].message.content
+            assert (root / "f.txt").read_text(encoding="utf-8") == "alpha\nBRAVO\ncharlie\n"
+            assert agent.pending_retry_text is None
+        finally:
+            clear_workspace_allowlist()
+            clear_workspace_root()
 
 
 async def test_chat_agent_system_prompt_prepended() -> None:
