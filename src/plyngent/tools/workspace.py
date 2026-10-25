@@ -445,9 +445,17 @@ def resolve_path(path: str | Path, *, required: AccessMode = AccessMode.WRITE) -
         candidate = root / candidate
     resolved = candidate.expanduser().resolve()
     if not _under_any_root(resolved, instance, policy) and not _path_grant_covers(resolved, required):
+        # A refused *write* is often a scratch file the model meant to keep in
+        # the workspace: name that way out too, next to asking the human.
+        scratch = (
+            "; if the file is only scratch, call new_temporary_workspace and write under the absolute path it returns"
+            if required is AccessMode.WRITE
+            else ""
+        )
         msg = (
             f"path escapes workspace root ({root}): {path}; "
             f"call request_directory_access with mode={required.name.lower()!r} to request access outside the workspace"
+            f"{scratch}"
         )
         raise WorkspaceError(msg)
     # Normalize separators so denylist entries like ``/secrets/`` match on Windows.
