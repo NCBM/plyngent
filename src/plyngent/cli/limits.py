@@ -232,6 +232,11 @@ def _decide_continue_limit(reason: str) -> bool:
         else:
             # Same read as the timed confirms: stdin or the notification,
             # whichever answers first, with the terminal's default on silence.
+            # The prompt line still goes to the terminal: the buttons elsewhere
+            # do not say what typing here would do.
+            with contextlib.suppress(OSError):
+                _ = sys.stderr.write(_CONTINUE_PROMPT)
+                _ = sys.stderr.flush()
             token = (_read_answer(None, wait) or "").strip().lower()
             if not token:
                 token = "y"
