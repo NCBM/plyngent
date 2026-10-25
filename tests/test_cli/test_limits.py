@@ -396,6 +396,15 @@ def test_a_limit_prompt_can_stop_the_turn_from_the_notification() -> None:
         assert limits.prompt_continue_limit("hit a wall") is False
 
 
+def test_a_limit_prompt_still_names_its_answers_at_the_terminal(capsys: pytest.CaptureFixture[str]) -> None:
+    """Buttons elsewhere do not say what typing here would do."""
+    from plyngent.cli import limits
+
+    with temporary_backend(ScriptedBackend([])), _answered("y"):
+        assert limits.prompt_continue_limit("hit a wall") is True
+    assert "[Y/n/yyy]" in capsys.readouterr().err
+
+
 def test_a_skill_write_can_be_allowed_for_the_chat_from_the_notification() -> None:
     """``s`` (this chat) is a button, not only a terminal token."""
     from pathlib import Path
