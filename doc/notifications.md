@@ -84,7 +84,9 @@ back through a surface that outlives it.
 A prompt that can be answered from the notification reads both surfaces while it
 blocks, from the first moment — the notification itself only shows up after
 `grace_seconds`, so waiting for it to appear before listening would block on the
-terminal alone. Typing at the terminal always wins; a readline-only convenience
+terminal alone. The terminal keeps its own prompt line with the keys it accepts —
+a button elsewhere does not say what typing here would do. Typing at the terminal
+always wins; a readline-only convenience
 (Tab completion on `ask_user_line`) is what a question gives up in exchange.
 
 A prompt that *follows* an answer given on the notification — the "why denied"
