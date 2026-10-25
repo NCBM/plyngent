@@ -50,6 +50,21 @@ def test_escape_error_names_the_mode_to_request(workspace: object, required: Acc
         _ = resolve_path("../outside", required=required)
 
 
+def test_escape_error_offers_a_temporary_workspace_for_a_write(workspace: object) -> None:
+    """A refused write is often scratch, which never needs a grant."""
+    del workspace
+    with pytest.raises(WorkspaceError, match="new_temporary_workspace"):
+        _ = resolve_path("../scratch.txt", required=AccessMode.WRITE)
+
+
+@pytest.mark.parametrize("required", [AccessMode.READ, AccessMode.EXEC])
+def test_escape_error_hides_the_scratch_hint_from_other_modes(workspace: object, required: AccessMode) -> None:
+    del workspace
+    with pytest.raises(WorkspaceError) as refusal:
+        _ = resolve_path("../scratch.txt", required=required)
+    assert "new_temporary_workspace" not in str(refusal.value)
+
+
 def test_access_mode_parse_and_covers() -> None:
     assert parse_access_mode(" Read ") is AccessMode.READ
     assert parse_access_mode("EXEC") is AccessMode.EXEC
