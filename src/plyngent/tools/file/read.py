@@ -11,7 +11,7 @@ from plyngent.tools.workspace import AccessMode, resolve_path
 _LINENO_WIDTH = 6
 
 
-def _format_with_lineno(lines: list[str], *, start_lineno: int) -> str:
+def format_with_lineno(lines: list[str], *, start_lineno: int) -> str:
     """Prefix each line with a 1-based absolute line number (``edit_lineno`` style)."""
     out: list[str] = []
     for index, line in enumerate(lines):
@@ -94,7 +94,7 @@ async def read_file(
     if start >= len(lines):
         return ""
     slice_lines = lines[start:end]
-    body = _format_with_lineno(slice_lines, start_lineno=start + 1) if with_lineno else "".join(slice_lines)
+    body = format_with_lineno(slice_lines, start_lineno=start + 1) if with_lineno else "".join(slice_lines)
     char_start = len("".join(lines[:start]))
     if max_chars >= 1:
         body, token = truncate_with_token(

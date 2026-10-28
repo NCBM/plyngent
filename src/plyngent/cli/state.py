@@ -228,6 +228,18 @@ class ReplState:
         if hasattr(self, "agent") and self.agent.tools is not None:
             self.agent.tools.set_session_state(self.session_state)
             self.agent.tools.set_instance_state(self.instance_state)
+        self._bind_document_store()
+
+    def _bind_document_store(self) -> None:
+        """Expose this session's tool results to the document tools.
+
+        The store resolves a ``document_id`` against the agent's live history,
+        which reads whole (uncapped) tool results and re-reads whatever a resume
+        loaded from the durable store.
+        """
+        from plyngent.tools.documents import DocumentStore
+
+        self.instance_state.extras["documents"] = DocumentStore(lambda: self.agent.messages)
 
     async def persist_todo_stack(self) -> None:
         """Write the in-memory todo stack to the active session row."""

@@ -808,6 +808,66 @@ def _resume_detail(_args_json: str, result: str) -> str:
     return _range_detail(result) or _pretty_segments(("(done)", "green"))
 
 
+def _doc_read_prefix(args_json: str) -> str:
+    document_id = _json_str_arg(args_json, "document_id") or "?"
+    return _pretty_prefix(f"* Doc Read '{document_id}' ")
+
+
+def _doc_read_detail(_args_json: str, result: str) -> str:
+    """``read_document`` outcome: the line range read, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    return _range_detail(result) or _pretty_segments(("(done)", "green"))
+
+
+def _doc_search_prefix(args_json: str) -> str:
+    pattern = _json_str_arg(args_json, "pattern") or "?"
+    document_id = _json_str_arg(args_json, "document_id") or "?"
+    return _pretty_prefix(f"* Doc Search '{_preview(pattern, _ASK_SUBJECT_PREVIEW)}' in '{document_id}' ")
+
+
+def _doc_search_detail(_args_json: str, result: str) -> str:
+    """``search_document`` outcome: the match count, none, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if result == "(no matches)":
+        return _pretty_segments(("(no matches)", "dim"))
+    matches = [line for line in result.splitlines() if line and not line.startswith("...[truncated")]
+    unit = "match" if len(matches) == 1 else "matches"
+    return _pretty_segments((f"({len(matches)} {unit})", None))
+
+
+def _doc_info_prefix(args_json: str) -> str:
+    document_id = _json_str_arg(args_json, "document_id") or "?"
+    return _pretty_prefix(f"* Doc Info '{document_id}' ")
+
+
+def _doc_info_detail(_args_json: str, result: str) -> str:
+    """``document_info`` outcome: the described size, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    fields = _status_fields(result)
+    lines = fields.get("lines", "")
+    chars = fields.get("chars", "")
+    text = f"{lines} lines, {chars} chars" if lines and chars else "done"
+    return _pretty_segments((f"({text})", None))
+
+
+def _doc_list_prefix(_args_json: str) -> str:
+    return _pretty_prefix("* Doc List ")
+
+
+def _doc_list_detail(_args_json: str, result: str) -> str:
+    """``list_documents`` outcome: the document count, none, or an error."""
+    if result.startswith("error:"):
+        return _pretty_segments((f"({result})", "red"))
+    if result == "(no documents)":
+        return _pretty_segments(("(no documents)", "dim"))
+    count = len(result.splitlines())
+    unit = "document" if count == 1 else "documents"
+    return _pretty_segments((f"({count} {unit})", None))
+
+
 def _vcs_kind_detail(_args_json: str, result: str) -> str:
     """``vcs_kind`` outcome: the detected kind, or an error."""
     if result.startswith("error:"):
@@ -952,6 +1012,10 @@ _PRETTY_LINES: dict[str, PrettyLine] = {
     "glob_paths": PrettyLine(prefix=_glob_prefix, detail=_glob_detail),
     "regex_files": PrettyLine(prefix=_regex_prefix, detail=_regex_detail),
     "get_truncated": PrettyLine(prefix=_resume_prefix, detail=_resume_detail),
+    "read_document": PrettyLine(prefix=_doc_read_prefix, detail=_doc_read_detail),
+    "search_document": PrettyLine(prefix=_doc_search_prefix, detail=_doc_search_detail),
+    "document_info": PrettyLine(prefix=_doc_info_prefix, detail=_doc_info_detail),
+    "list_documents": PrettyLine(prefix=_doc_list_prefix, detail=_doc_list_detail),
     "run_argv": PrettyLine(prefix=_run_argv_prefix, detail=_run_argv_detail),
     "run_argv_batch": PrettyLine(prefix=_run_argv_batch_prefix, detail=_run_argv_batch_detail),
     "fetch": PrettyLine(prefix=_fetch_prefix, detail=_fetch_detail),

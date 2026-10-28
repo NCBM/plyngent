@@ -1,5 +1,9 @@
 from plyngent.tools.temp_workspace import new_temporary_workspace as new_temporary_workspace
 
+from .document import document_info as document_info
+from .document import list_documents as list_documents
+from .document import read_document as read_document
+from .document import search_document as search_document
 from .edit_lineno import edit_lineno as edit_lineno
 from .edit_replace import edit_replace as edit_replace
 from .fs_ops import copy_path as copy_path
@@ -29,4 +33,8 @@ FILE_TOOLS = [
     delete_path,
     new_temporary_workspace,
     get_truncated,
+    read_document,
+    search_document,
+    document_info,
+    list_documents,
 ]
