@@ -1069,9 +1069,21 @@ def _pretty_line_for(name: str) -> PrettyLine | None:
     return _PRETTY_LINES.get(name) or _mcp_line(name)
 
 
+_APPROVAL_LINE = re.compile(r"\A\[approval\] [^\n]*\n")
+
+
+def _without_approval_line(result: str) -> str:
+    """The tool's own text, without the leading ``[approval]`` line.
+
+    That line is for the model (the human already saw the prompt); a pretty
+    detail reads the result it knows, not a header in front of it.
+    """
+    return _APPROVAL_LINE.sub("", result, count=1)
+
+
 def _pretty_parts(line: PrettyLine, args_json: str, result: str) -> tuple[str, str]:
     """Prefix + detail for a resolved pretty tool call."""
-    return line.prefix(args_json), line.detail(args_json, result)
+    return line.prefix(args_json), line.detail(args_json, _without_approval_line(result))
 
 
 def _echo_stream(text: str) -> None:
