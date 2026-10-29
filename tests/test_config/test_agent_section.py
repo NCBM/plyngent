@@ -23,6 +23,7 @@ def test_agent_section_defaults(tmp_path: Path) -> None:
     assert "professional coding agent" in store.agent_config.system_prompt
     assert "### Workspace" in store.agent_config.tool_directives
     assert store.agent_config.max_tool_result_chars == 32_000
+    assert store.agent_config.hard_max_tool_result_chars == 2_000_000
     assert store.agent_config.parallel_tools is True
     assert store.agent_config.confirm_destructive is True
     assert store.agent_config.path_denylist == []
