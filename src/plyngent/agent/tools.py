@@ -6,7 +6,7 @@ import types
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from enum import Flag, auto
+from enum import Flag, StrEnum, auto
 from pathlib import Path
 from typing import Any, cast, get_args, get_origin, get_type_hints, overload
 
@@ -30,10 +30,63 @@ class DangerReason:
     yolo_skip: bool = True
 
 
+class DenialKind(StrEnum):
+    """Why a confirmation answered no — the model should not be told it declined."""
+
+    DECLINED = "declined"  # the human said no
+    TIMEOUT = "timeout"  # nobody answered before the deadline
+    CANCELLED = "cancelled"  # the prompt was interrupted (Ctrl+C / EOF)
+    NO_PROMPT = "no_prompt"  # nobody could be asked (no hook, non-interactive)
+
+
+# How each kind reads inside a denial message.
+_DENIAL_CLAUSES: dict[DenialKind, str] = {
+    DenialKind.DECLINED: "user declined",
+    DenialKind.CANCELLED: "prompt cancelled",
+    DenialKind.NO_PROMPT: "no confirm hook or non-interactive (denied)",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Denial:
+    """A "no" that says which no it was: the human's, or the clock's.
+
+    ``seconds`` is the deadline that expired (a timeout), ``comment`` what the
+    human typed when they declined. A prompt returns this instead of a bare
+    ``False`` so the message it produces can be specific.
+    """
+
+    kind: DenialKind = DenialKind.DECLINED
+    seconds: float | None = None
+    comment: str | None = None
+
+    @classmethod
+    def from_answer(cls, answer: object) -> Denial:
+        """Normalize a hook's refusal: a bare comment means the human declined."""
+        if isinstance(answer, Denial):
+            return answer
+        if isinstance(answer, str) and answer.strip():
+            return cls(comment=answer)
+        return cls()
+
+    @property
+    def user_comment(self) -> str | None:
+        """The comment that belongs in a message, or ``None``."""
+        return (self.comment or "").strip() or None
+
+    def clause(self) -> str:
+        """The words a denial message carries after the reason."""
+        if self.kind is DenialKind.TIMEOUT:
+            if self.seconds is not None:
+                return f"no answer within {self.seconds:g}s — denied by default"
+            return "no answer — denied by default"
+        return _DENIAL_CLAUSES[self.kind]
+
+
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
 type DangerClassifier = Callable[[str, Mapping[str, object]], str | DangerReason | None]
-# Returns True to allow, False to deny, or a non-empty str as denial reason for the model.
-type ToolConfirmResult = bool | str
+# Returns True to allow, or a Denial (or a bare str comment) to deny.
+type ToolConfirmResult = bool | str | Denial
 type ToolConfirmHook = Callable[
     [str, Mapping[str, object], str],
     ToolConfirmResult | Awaitable[ToolConfirmResult],
@@ -100,6 +153,8 @@ class BatchConfirmDecision:
     allowed: bool
     comment: str | None = None
     each: bool = False
+    # Why the answer was no (declined vs no prompt at all); ``None`` means declined.
+    denial: Denial | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,11 +454,17 @@ def _decode_tool_args(arguments_json: str) -> dict[str, object] | str:
     return {str(key): value for key, value in cast("dict[object, object]", raw_args).items()}
 
 
-def _denied_error(name: str, reason: str, comment: str | None) -> str:
-    """Model-facing text for a denied soft confirm (carries a user comment if one was given)."""
-    if comment is not None and comment.strip():
-        return f"error: tool {name!r} denied by user confirm ({reason}); user comment: {comment.strip()}"
-    return f"error: tool {name!r} denied by user confirm ({reason})"
+def _denied_error(name: str, reason: str, denial: Denial | None) -> str:
+    """Model-facing text for a denied soft confirm.
+
+    The answer that refused the call is named: a human's no carries their
+    comment, a silence carries its deadline, and neither is reported as the
+    other.
+    """
+    denial = denial if denial is not None else Denial()
+    text = f"error: tool {name!r} denied ({reason}; {denial.clause()})"
+    comment = denial.user_comment
+    return f"{text}; user comment: {comment}" if comment else text
 
 
 def _as_danger_reason(raw: str | DangerReason | None) -> DangerReason | None:
@@ -631,15 +692,14 @@ class ToolRegistry:
         tags: ToolTag,
     ) -> _Gate:
         if self._on_confirm is None:
-            return _Gate(denied=f"error: tool {name!r} denied by policy ({reason}; no confirm hook)")
+            return _Gate(denied=_denied_error(name, reason, Denial(DenialKind.NO_PROMPT)))
         decision = self._on_confirm(name, args, reason)
         if inspect.isawaitable(decision):
             decision = await decision
         if decision is True:
             await self._record_grant(name, tags=tags)
             return _Gate(approval=Approval("user", "once"))
-        comment = decision if isinstance(decision, str) else None
-        return _Gate(denied=_denied_error(name, reason, comment))
+        return _Gate(denied=_denied_error(name, reason, Denial.from_answer(decision)))
 
     async def _apply_batch_decision(
         self,
@@ -652,7 +712,8 @@ class ToolRegistry:
         if decision.allowed:
             await self._record_grant(name, tags=tags)
             return _Gate(approval=Approval("user", "round"))
-        return _Gate(denied=_denied_error(name, reason, decision.comment))
+        denial = decision.denial if decision.denial is not None else Denial(comment=decision.comment)
+        return _Gate(denied=_denied_error(name, reason, denial))
 
     def _prepare_confirm(self, name: str, arguments_json: str) -> ToolConfirmRequest | None:
         """Soft-confirm request for one call, or ``None`` when it needs none.

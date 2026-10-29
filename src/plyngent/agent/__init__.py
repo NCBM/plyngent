@@ -32,6 +32,8 @@ from .tools import Approval as Approval
 from .tools import BatchConfirmDecision as BatchConfirmDecision
 from .tools import DangerClassifier as DangerClassifier
 from .tools import DangerReason as DangerReason
+from .tools import Denial as Denial
+from .tools import DenialKind as DenialKind
 from .tools import ToolBatchConfirmHook as ToolBatchConfirmHook
 from .tools import ToolConfirmHook as ToolConfirmHook
 from .tools import ToolConfirmRequest as ToolConfirmRequest
