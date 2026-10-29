@@ -13,10 +13,13 @@ def test_cap_hard_tool_text_short_untouched() -> None:
     assert cap_hard_tool_text("hello", 100) == "hello"
 
 
-def test_cap_hard_tool_text_cuts_with_ceiling_marker() -> None:
+def test_cap_hard_tool_text_cuts_with_the_notice_up_front() -> None:
+    """The notice leads: the wire cap sends the head, so a trailing one is lost."""
     out = cap_hard_tool_text("a" * 50, 20)
-    assert out.startswith("a" * 20)
-    assert "[Stored at the 20-char ceiling: 30 chars beyond it]" in out
+    head, _, body = out.partition("\n")
+    assert "20-char ceiling" in head
+    assert "30 chars beyond it were dropped and cannot be read back" in head
+    assert body == "a" * 20
 
 
 def test_cap_tool_message_names_the_document() -> None:
@@ -26,8 +29,17 @@ def test_cap_tool_message_names_the_document() -> None:
     assert capped.tool_call_id == "call-7"
     assert "document_id=call-7" in capped.content
     assert capped.content.startswith("a")
+    assert "storage ceiling" not in capped.content
     # The stored message keeps its body whole.
     assert message.content == "a" * 50
+
+
+def test_cap_tool_message_flags_a_body_the_ceiling_cut() -> None:
+    """A cut body is not the whole output, so the marker must not imply it is."""
+    stored = cap_hard_tool_text("a" * 500, 100)
+    capped = cap_tool_message(ToolChatMessage(content=stored, tool_call_id="call-9"), 60)
+    assert "document_id=call-9" in capped.content
+    assert "cut at the storage ceiling" in capped.content
 
 
 def test_cap_tool_message_short_untouched() -> None:
