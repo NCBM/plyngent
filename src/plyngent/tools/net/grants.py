@@ -10,10 +10,11 @@ from plyngent.tools.workspace import WorkspaceError, require_bound_instance
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from plyngent.agent.tools import Denial
     from plyngent.tools.context import InstanceState
 
 # (host, port, url, timeout_seconds) -> True to allow for this process/instance.
-type FetchPolicyConfirmHook = Callable[[str, int, str, float], bool]
+type FetchPolicyConfirmHook = Callable[[str, int, str, float], bool | Denial]
 
 
 def get_private_grants(instance: InstanceState | None = None) -> set[str]:
@@ -48,8 +49,14 @@ def get_fetch_policy_confirm_hook(instance: InstanceState | None = None) -> Fetc
     if hook is None or not callable(hook):
         return None
 
-    def _as_hook(host: str, port: int, url: str, timeout_seconds: float) -> bool:
-        return bool(hook(host, port, url, timeout_seconds))
+    def _as_hook(host: str, port: int, url: str, timeout_seconds: float) -> bool | Denial:
+        from plyngent.agent import Denial as DenialAnswer
+
+        answer: object = hook(host, port, url, timeout_seconds)
+        # Pass the reason through: only an explicit True allows.
+        if answer is True or isinstance(answer, DenialAnswer):
+            return answer
+        return False
 
     return _as_hook
 
@@ -89,7 +96,7 @@ async def ensure_host_allowed(
         raise FetchPolicyError(msg)
 
     # PRIVATE
-    from plyngent.agent import Approval
+    from plyngent.agent import Approval, Denial
     from plyngent.tools.context import record_approval
 
     if has_private_grant(parsed.host, parsed.port, instance=inst):
@@ -109,14 +116,15 @@ async def ensure_host_allowed(
         )
         raise FetchPolicyError(msg)
     try:
-        allowed = bool(hook(parsed.host, parsed.port, parsed.url, timeout))
+        answer = hook(parsed.host, parsed.port, parsed.url, timeout)
     except Exception as exc:
         msg = f"fetch_local blocked private/loopback host {parsed.host}:{parsed.port} (confirm failed: {exc})"
         raise FetchPolicyError(msg) from exc
-    if not allowed:
+    if answer is not True:
+        denial = Denial.from_answer(answer)
         msg = (
             f"fetch_local blocked private/loopback host {parsed.host}:{parsed.port} "
-            f"(user declined or timed out after {timeout:g}s; not skipped by YOLO)"
+            f"({assessment.reason}; {denial.clause()}; not skipped by YOLO)"
         )
         raise FetchPolicyError(msg)
     _ = grant_private_host(parsed.host, parsed.port, instance=inst)

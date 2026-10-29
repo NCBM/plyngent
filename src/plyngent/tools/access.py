@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import Denial, ToolTag, tool
 from plyngent.tools.context import get_session, require_session
 from plyngent.tools.workspace import (
     AccessMode,
@@ -52,7 +52,7 @@ class AccessDecision(NamedTuple):
     persist: bool = True
 
 
-type DirectoryAccessConfirmHook = Callable[[Path, AccessMode, str, float], AccessDecision | str | None]
+type DirectoryAccessConfirmHook = Callable[[Path, AccessMode, str, float], AccessDecision | str | Denial | None]
 
 
 def get_directory_access_confirm_hook(instance: InstanceState | None = None) -> DirectoryAccessConfirmHook | None:
@@ -62,9 +62,9 @@ def get_directory_access_confirm_hook(instance: InstanceState | None = None) -> 
     if hook is None or not callable(hook):
         return None
 
-    def _as_hook(path: Path, mode: AccessMode, reason: str, timeout: float) -> AccessDecision | str | None:
+    def _as_hook(path: Path, mode: AccessMode, reason: str, timeout: float) -> AccessDecision | str | Denial | None:
         result: object = hook(path, mode, reason, timeout)
-        if isinstance(result, AccessDecision | str):
+        if isinstance(result, AccessDecision | str | Denial):
             return result
         return None
 
@@ -232,8 +232,12 @@ def _precheck_target(target: Path, requested: AccessMode) -> str | None:
     return None
 
 
-def _apply_decision(target: Path, decision: AccessDecision | str | None, timeout: float) -> str:
-    """Record an approved grant or format the denial for the model."""
+def _apply_decision(target: Path, decision: AccessDecision | str | Denial | None) -> str:
+    """Record an approved grant or format the denial for the model.
+
+    The prompt says whether the human declined or the clock ran out, so a timeout
+    is never reported as a decision.
+    """
     if isinstance(decision, AccessDecision):
         if decision.persist and get_session() is not None:
             _ = grant_session_access(target, decision.mode)
@@ -245,9 +249,10 @@ def _apply_decision(target: Path, decision: AccessDecision | str | None, timeout
             f"access granted: {target} ({decision.mode.name.lower()}, {scope})\n"
             "note: the path denylist still applies; the human can revoke with /grants"
         )
-    if isinstance(decision, str) and decision.strip():
-        return f"error: access to {target} denied by user; user comment: {decision.strip()}"
-    return f"error: access to {target} denied (declined or timed out after {timeout:g}s)"
+    denial = Denial.from_answer(decision)
+    text = f"error: access to {target} denied ({denial.clause()})"
+    comment = denial.user_comment
+    return f"{text}; user comment: {comment}" if comment else text
 
 
 @tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.SESSION_STATE)
@@ -281,7 +286,7 @@ async def request_directory_access(path: str, reason: str = "", mode: str = "rea
         decision = hook(target, requested, reason, timeout)
     except Exception as exc:  # noqa: BLE001 — surface confirm failures to the model
         return f"error: access confirm for {target} failed: {exc}"
-    return _apply_decision(target, decision, timeout)
+    return _apply_decision(target, decision)
 
 
 ACCESS_TOOLS = [

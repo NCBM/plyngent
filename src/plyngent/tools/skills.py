@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from plyngent.agent import Approval, ToolTag, tool
+from plyngent.agent import Approval, Denial, ToolTag, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.skills import (
     SKILL_FILE,
@@ -261,9 +261,11 @@ class SkillWriteDecision:
     # True keeps the grant for the rest of this chat session (the standing
     # alternative is ``[skills].allow_write`` in the config).
     session: bool = False
+    # Why a denial: declined, timed out, cancelled, or nobody could be asked.
+    denial: Denial | None = None
 
 
-type SkillWriteConfirmHook = Callable[[Path, str, str, float], SkillWriteDecision | bool | None]
+type SkillWriteConfirmHook = Callable[[Path, str, str, float], SkillWriteDecision | Denial | bool | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,7 +331,8 @@ def _prompt_write(
         return f"error: skill write confirm failed: {exc}"
     allowed = decision is True or (isinstance(decision, SkillWriteDecision) and decision.allow)
     if not allowed:
-        return f"error: skill write to {skill_dir} denied (declined or timed out after {policy.timeout:g}s)"
+        denial = decision.denial if isinstance(decision, SkillWriteDecision) else None
+        return f"error: skill write to {skill_dir} denied ({(denial or Denial.from_answer(decision)).clause()})"
     keys_session = isinstance(decision, SkillWriteDecision) and decision.session
     if keys_session and session is not None:
         session.skill_write_roots.add(skill_dir)

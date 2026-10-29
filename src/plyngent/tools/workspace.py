@@ -10,6 +10,7 @@ from plyngent.tools.command_scan import basename, unwrap_command
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
+    from plyngent.agent.tools import Denial
     from plyngent.tools.context import InstanceState, SessionState
 
 DEFAULT_COMMAND_DENYLIST: frozenset[str] = frozenset(
@@ -89,7 +90,7 @@ def mode_covers(granted: AccessMode, required: AccessMode) -> bool:
 
 
 # Hook: (basename, argv, timeout_seconds) -> True allow for this session basename.
-type PolicyConfirmHook = Callable[[str, Sequence[str], float], bool]
+type PolicyConfirmHook = Callable[[str, Sequence[str], float], bool | Denial]
 
 
 class WorkspaceError(ValueError):
@@ -571,7 +572,7 @@ def check_command_allowed(argv: list[str]) -> None:
     says it: ``user (process)`` for this call's answer, ``grant (process)`` when
     an earlier one already covers this program.
     """
-    from plyngent.agent import Approval
+    from plyngent.agent import Approval, Denial
     from plyngent.tools.context import record_approval
 
     shape_error = argv_shape_error(argv)
@@ -590,19 +591,17 @@ def check_command_allowed(argv: list[str]) -> None:
         why = f": {hit.keyword!r}" if hit.keyword else ""
         hook = policy.policy_confirm_hook
         if hook is None:
-            msg = f"command denied by policy (basename {binary!r} is blocked{why})"
+            msg = f"command denied by policy (basename {binary!r} is blocked{why}; no policy confirm hook)"
             raise WorkspaceError(msg)
         timeout = policy.policy_confirm_timeout_seconds
         try:
-            allowed = bool(hook(binary, list(argv), timeout))
+            answer = hook(binary, list(argv), timeout)
         except Exception as exc:
             msg = f"command denied by policy (basename {binary!r}; confirm failed: {exc})"
             raise WorkspaceError(msg) from exc
-        if not allowed:
-            msg = (
-                f"command denied by policy (basename {binary!r} is blocked{why}; "
-                f"user declined or timed out after {timeout:g}s)"
-            )
+        if answer is not True:
+            denial = Denial.from_answer(answer)
+            msg = f"command denied by policy (basename {binary!r} is blocked{why}; {denial.clause()})"
             raise WorkspaceError(msg)
         policy.policy_allowed_commands.add(binary)
         record_approval(Approval("user", "process"))
