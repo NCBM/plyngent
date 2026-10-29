@@ -114,8 +114,9 @@
 # tool_directives = ""     # playbook off (set both "" to disable system entirely)
 max_tool_result_chars = 32000
 # Storage ceiling for one tool result kept whole in its message. The wire cap
-# above trims a result on the request copy and names a document for the rest
-# (read_document / search_document); a result above this ceiling is cut on store.
+# above trims a result on the request copy and names a document for the stored
+# remainder (read_document / search_document); a result above this ceiling keeps
+# its head and a leading notice saying how much was dropped.
 # hard_max_tool_result_chars = 2000000
 parallel_tools = true
 confirm_destructive = true
