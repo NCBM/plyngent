@@ -23,9 +23,14 @@ if TYPE_CHECKING:
 DEFAULT_TOOL_RESULT_MAX_CHARS = 32_000
 # Storage ceiling for one tool result kept whole in its message. A result at or
 # below this is stored in full (the request-prep cap trims it on the wire); one
-# above it is cut here and carries no document, since its remainder is past what
-# a message keeps.
+# above it keeps its head and says at that head how much was dropped, since the
+# dropped tail is past what a message keeps and no document can serve it.
 DEFAULT_HARD_MAX_TOOL_RESULT_CHARS = 2_000_000
+# Leading notice of a body the storage ceiling cut. It leads rather than trails
+# because the wire cap sends the head only: a notice at the end of a 2 MB body
+# would be readable only by fetching the whole thing back through its document.
+_CEILING_NOTICE_HEAD = "[Stored at the {max_chars}-char ceiling: {omitted} "
+_CEILING_NOTICE_TAIL = "chars beyond it were dropped and cannot be read back]"
 # Soft context budget in tokens (API-calibrated when possible; else ~4 chars/token).
 DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
@@ -41,18 +46,26 @@ IMAGE_CHARS = 4_096
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
 
 
+def cut_at_storage_ceiling(text: str) -> bool:
+    """Whether a stored tool body was cut by :func:`cap_hard_tool_text`."""
+    head, _, _ = text.partition("\n")
+    return head.startswith("[Stored at the ") and head.endswith(_CEILING_NOTICE_TAIL)
+
+
 def cap_hard_tool_text(text: str, max_chars: int = DEFAULT_HARD_MAX_TOOL_RESULT_CHARS) -> str:
     """Bound what one tool message stores (the storage ceiling).
 
     The request-prep pass trims a result on the wire and names a document for the
-    remainder; this ceiling bounds the stored body itself. A result above it is
-    cut here and carries no document, since its remainder is past what a message
-    keeps. ``max_chars < 1`` stores the result whole.
+    stored remainder; this ceiling bounds the stored body itself. A result above
+    it keeps its head behind a leading notice that says how much was dropped: the
+    dropped tail is past what a message keeps, so no document holds it and a
+    reader has to be told that up front. ``max_chars < 1`` stores the result whole.
     """
     if max_chars < 1 or len(text) <= max_chars:
         return text
     omitted = len(text) - max_chars
-    return f"{text[:max_chars]}\n[Stored at the {max_chars}-char ceiling: {omitted} chars beyond it]"
+    notice = _CEILING_NOTICE_HEAD.format(max_chars=max_chars, omitted=omitted) + _CEILING_NOTICE_TAIL
+    return f"{notice}\n{text[:max_chars]}"
 
 
 def cap_tool_message(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
@@ -61,15 +74,18 @@ def cap_tool_message(message: ToolChatMessage, max_chars: int) -> ToolChatMessag
     The fixed rule of the request-prep pass: a result over ``max_chars`` keeps its
     head and gains a marker whose ``document_id`` (the message's ``tool_call_id``)
     lets the model read the rest with ``read_document`` / ``search_document``. The
-    stored message stays whole; only the returned copy is trimmed.
+    stored message stays whole; only the returned copy is trimmed. A body the
+    storage ceiling already cut says so in the marker too, so the document is not
+    mistaken for the complete output.
     """
     if max_chars < 1 or len(message.content) <= max_chars:
         return message
     from plyngent.tools.documents import document_marker
 
     total = len(message.content)
-    head_len = max(1, max_chars - len(document_marker(message.tool_call_id, max_chars, total)))
-    marker = document_marker(message.tool_call_id, head_len, total)
+    cut = cut_at_storage_ceiling(message.content)
+    head_len = max(1, max_chars - len(document_marker(message.tool_call_id, max_chars, total, stored_cut=cut)))
+    marker = document_marker(message.tool_call_id, head_len, total, stored_cut=cut)
     return msgspec.structs.replace(message, content=message.content[:head_len] + marker)
 
 

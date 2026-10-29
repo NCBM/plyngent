@@ -40,10 +40,20 @@ class Document:
         return len(self.text.splitlines())
 
 
-def document_marker(document_id: str, shown: int, total: int) -> str:
-    """The request-prep cap hint naming the document that holds the remainder."""
+def document_marker(document_id: str, shown: int, total: int, *, stored_cut: bool = False) -> str:
+    """The request-prep cap hint naming the document that holds the remainder.
+
+    *total* counts what the stored message holds, so it is the end of what the
+    document can serve. ``stored_cut`` says the storage ceiling already dropped a
+    tail, which the document cannot serve either.
+    """
+    cut = (
+        " The stored body was itself cut at the storage ceiling, so part of the output is not in the document."
+        if stored_cut
+        else ""
+    )
     return (
-        f"\n[Truncated: {shown} of {total} chars shown. document_id={document_id}. "
+        f"\n[Truncated: {shown} of {total} chars shown.{cut} document_id={document_id}. "
         f"Continue with read_document(document_id, offset=...) or "
         f"search_document(document_id, pattern=...).]"
     )

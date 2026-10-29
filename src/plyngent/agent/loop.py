@@ -555,8 +555,9 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     over ``max_context_tokens``, then every tool result is trimmed to
     ``max_tool_result_chars`` with a marker naming its document (``read_document``
     / ``search_document`` read the rest). A tool result is stored whole in its
-    message, up to ``hard_max_tool_result_chars``; a result above that ceiling is
-    cut on store and has no document.
+    message, up to ``hard_max_tool_result_chars``; a result above that ceiling
+    keeps its head and says at that head how much was dropped, and its document
+    cannot serve the dropped tail.
 
     *reasoning_effort* is the resolved thinking strength (``""`` = send nothing,
     the provider's own default); each API surface maps it onto its own wire field

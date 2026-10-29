@@ -153,8 +153,9 @@ class AgentConfig(Struct, omit_defaults=True):
     mcp_instructions: bool = True
     max_tool_result_chars: int = 32_000
     # Storage ceiling for one tool result kept whole in its message. The wire cap
-    # above trims a result on the request copy and names a document for the rest;
-    # a result above this ceiling is cut on store and has no document.
+    # above trims a result on the request copy and names a document for the stored
+    # remainder; a result above this ceiling keeps its head behind a notice saying
+    # how much was dropped (the document cannot serve that tail).
     hard_max_tool_result_chars: int = 2_000_000
     parallel_tools: bool = True
     confirm_destructive: bool = True
