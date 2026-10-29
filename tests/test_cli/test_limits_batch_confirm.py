@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from plyngent.agent import BatchConfirmDecision, ToolConfirmRequest
+from plyngent.agent import BatchConfirmDecision, Denial, DenialKind, ToolConfirmRequest
 from plyngent.cli.limits import (
     _prompt_confirm_batch_sync,
     format_batch_confirm_box,
@@ -69,13 +69,13 @@ def test_batch_prompt_denies_with_a_comment() -> None:
 def test_batch_prompt_defaults_to_deny() -> None:
     with temporary_backend(ScriptedBackend([])):
         decision = _prompt_confirm_batch_sync(_requests())
-    assert decision == BatchConfirmDecision(allowed=False)
+    assert decision == BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.DECLINED))
 
 
 def test_batch_prompt_denies_when_not_interactive() -> None:
     with temporary_backend(NonInteractiveBackend()):
         decision = _prompt_confirm_batch_sync(_requests())
-    assert decision == BatchConfirmDecision(allowed=False)
+    assert decision == BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.NO_PROMPT))
 
 
 async def test_batch_prompt_async_allows() -> None:

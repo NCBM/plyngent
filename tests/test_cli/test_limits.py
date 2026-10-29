@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from plyngent.agent import Denial, DenialKind
 from plyngent.cli.display import close_open_pretty_line
 from plyngent.cli.limits import (
     auto_continue_enabled,
@@ -130,7 +131,8 @@ def test_pty_offer_raise_uses_auto_continue(clean_auto_continue: None) -> None:
 def test_prompt_confirm_tool_default_deny() -> None:
     backend = ScriptedBackend([], confirms=[False])
     with temporary_backend(backend):
-        assert prompt_confirm_tool("delete_path", {"path": "x"}, "delete path 'x'") is False
+        answer = prompt_confirm_tool("delete_path", {"path": "x"}, "delete path 'x'")
+    assert answer == Denial(DenialKind.DECLINED)
 
 
 def test_format_tool_confirm_box_multiline() -> None:
@@ -159,7 +161,7 @@ def test_policy_confirm_noninteractive_denies() -> None:
     from plyngent.prompting import NonInteractiveBackend
 
     with temporary_backend(NonInteractiveBackend()):
-        assert prompt_policy_command_confirm("sudo", ["sudo", "id"], 1.0) is False
+        assert prompt_policy_command_confirm("sudo", ["sudo", "id"], 1.0) == Denial(DenialKind.NO_PROMPT)
 
 
 def test_directory_access_prompt_noninteractive_denies() -> None:
@@ -170,7 +172,9 @@ def test_directory_access_prompt_noninteractive_denies() -> None:
     from plyngent.tools.workspace import AccessMode
 
     with temporary_backend(NonInteractiveBackend()):
-        assert prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 1.0) is None
+        assert prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 1.0) == Denial(
+            DenialKind.NO_PROMPT
+        )
 
 
 def test_directory_access_prompt_yes_and_level(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -191,9 +195,14 @@ def test_directory_access_prompt_yes_and_level(monkeypatch: pytest.MonkeyPatch) 
             AccessMode.EXEC
         )
         monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "n\n")
-        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == Denial(
+            DenialKind.DECLINED
+        )
+        # Silence is its own answer: the deadline is named, not the human.
         monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: None)
-        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) is None
+        assert limits.prompt_directory_access_confirm(target, AccessMode.READ, "why", 30.0) == Denial(
+            DenialKind.TIMEOUT, seconds=30.0
+        )
 
 
 class _AnswerSource:
@@ -243,7 +252,9 @@ def test_directory_access_denied_by_the_notification() -> None:
     from plyngent.tools.workspace import AccessMode
 
     with temporary_backend(ScriptedBackend([])), _answered("deny"):
-        assert limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0) is None
+        assert limits.prompt_directory_access_confirm(Path("/tmp"), AccessMode.READ, "why", 30.0) == Denial(
+            DenialKind.DECLINED
+        )
 
 
 def test_tool_confirm_takes_a_notification_answer() -> None:
@@ -253,7 +264,7 @@ def test_tool_confirm_takes_a_notification_answer() -> None:
 
 def test_tool_confirm_denied_by_the_notification() -> None:
     with temporary_backend(ScriptedBackend([""])), _answered("deny"):
-        assert prompt_confirm_tool("run_argv", {}, "runs a command") is False
+        assert prompt_confirm_tool("run_argv", {}, "runs a command") == Denial(DenialKind.DECLINED)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a pty is POSIX-only")

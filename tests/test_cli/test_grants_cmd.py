@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
+from plyngent.agent import Denial, DenialKind
 from plyngent.cli.slash import handle_slash
 from plyngent.cli.state import ReplState
 from plyngent.config.models import DatabaseConfig, OpenAIProvider
@@ -154,7 +155,8 @@ def test_yolo_denies_the_directory_access_prompt_when_nobody_answers(
 ) -> None:
     state.set_yolo("on")
     with temporary_backend(NonInteractiveBackend()):
-        assert state.directory_access_confirm_hook(tmp_path, AccessMode.READ, "", 1.0) is None
+        answer = state.directory_access_confirm_hook(tmp_path, AccessMode.READ, "", 1.0)
+    assert answer == Denial(DenialKind.NO_PROMPT)
 
 
 async def test_config_allow_paths_installed(

@@ -280,11 +280,28 @@ def test_command_denylist_policy_confirm_deny(workspace: object) -> None:
     set_policy_confirm_hook(lambda *_a: False)
     clear_policy_allowed_commands()
     try:
-        with pytest.raises(WorkspaceError, match="declined or timed out"):
+        with pytest.raises(WorkspaceError, match="user declined"):
             check_command_allowed(["sudo", "echo", "x"])
     finally:
         set_policy_confirm_hook(None)
         clear_policy_allowed_commands()
+
+
+def test_command_denylist_policy_timeout_names_the_deadline(workspace: object) -> None:
+    """Silence is reported as the clock, never as the human's decision."""
+    del workspace
+    from plyngent.agent import Denial, DenialKind
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(lambda *_a: Denial(DenialKind.TIMEOUT, seconds=3.0))
+    clear_policy_allowed_commands()
+    try:
+        with pytest.raises(WorkspaceError, match="no answer within 3s") as refusal:
+            check_command_allowed(["sudo", "echo", "x"])
+    finally:
+        set_policy_confirm_hook(None)
+        clear_policy_allowed_commands()
+    assert "declined" not in str(refusal.value)
 
 
 def test_command_denylist_policy_confirm_timeout_value(workspace: object) -> None:

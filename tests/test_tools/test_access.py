@@ -123,7 +123,24 @@ async def test_deny_none(
     outside = tmp_path_factory.mktemp("timeout").resolve()
     set_directory_access_confirm_hook(lambda *_a: None)
     out = await call_async(request_directory_access, str(outside))
-    assert "denied (declined or timed out" in out
+    assert "denied (user declined)" in out
+    assert session.access_grants == {}
+
+
+async def test_a_prompt_timeout_is_not_reported_as_a_decision(
+    workspace: object,
+    session: SessionState,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The deadline the prompt waited out is what the model reads."""
+    from plyngent.agent import Denial, DenialKind
+
+    del workspace
+    outside = tmp_path_factory.mktemp("silence").resolve()
+    set_directory_access_confirm_hook(lambda *_a: Denial(DenialKind.TIMEOUT, seconds=12.0))
+    out = await call_async(request_directory_access, str(outside))
+    assert "denied (no answer within 12s — denied by default)" in out
+    assert "user" not in out
     assert session.access_grants == {}
 
 

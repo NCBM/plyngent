@@ -222,7 +222,8 @@ async def test_batch_deny_reaches_every_call_with_one_comment() -> None:
     results = [
         await reg.execute(name, arguments, decision=decisions[index]) for index, (name, arguments) in enumerate(calls)
     ]
-    assert all(result.startswith("error: tool 'stamp' denied by user confirm") for result in results)
+    assert all(result.startswith("error: tool 'stamp' denied (") for result in results)
+    assert all("user declined" in result for result in results)
     assert all("user comment: not these two" in result for result in results)
     assert ran == []
 

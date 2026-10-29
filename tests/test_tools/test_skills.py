@@ -309,8 +309,24 @@ async def test_skill_write_prompt_denial_is_reported(tmp_path: Path) -> None:
     with _bound(tmp_path, root, policy=SkillWritePolicy(confirm=_deny, timeout=3.0)):
         out = await skill_edit.handler("acme", old_string="Before.", new_string="After.")
     assert out.startswith("error: skill write to ")
-    assert out.endswith("denied (declined or timed out after 3s)")
+    assert out.endswith("denied (user declined)")
     assert "After." not in (root / "acme" / SKILL_FILE).read_text(encoding="utf-8")
+
+
+async def test_a_skill_write_timeout_names_the_deadline(tmp_path: Path) -> None:
+    """Nobody answering is not the same message as a human saying no."""
+    from plyngent.agent import Denial, DenialKind
+
+    root = _write_root(tmp_path)
+    _ = _write_skill(root, "acme", body="Before.")
+
+    def silent(*_args: object) -> SkillWriteDecision:
+        return SkillWriteDecision(allow=False, denial=Denial(DenialKind.TIMEOUT, seconds=3.0))
+
+    with _bound(tmp_path, root, policy=SkillWritePolicy(confirm=silent, timeout=3.0)):
+        out = await skill_edit.handler("acme", old_string="Before.", new_string="After.")
+    assert out.endswith("denied (no answer within 3s — denied by default)")
+    assert "user" not in out
 
 
 async def test_skill_write_confirm_sees_the_action_and_the_skill(tmp_path: Path) -> None:

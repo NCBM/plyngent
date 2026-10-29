@@ -204,6 +204,21 @@ async def test_a_private_host_answer_is_recorded_as_a_user_process_approval(work
     assert recorded == [Approval("user", "process")]
 
 
+async def test_a_private_host_timeout_names_the_deadline(workspace: Path) -> None:
+    """A prompt that nobody answered says the clock, not a human's no."""
+    del workspace
+    from plyngent.agent import Denial, DenialKind
+    from plyngent.tools.net.grants import ensure_host_allowed, set_fetch_policy_confirm_hook
+    from plyngent.tools.net.policy import FetchPolicyError
+
+    set_fetch_policy_confirm_hook(lambda *_args: Denial(DenialKind.TIMEOUT, seconds=7.0))
+    try:
+        with pytest.raises(FetchPolicyError, match="no answer within 7s"):
+            await ensure_host_allowed("http://127.0.0.1:9/")
+    finally:
+        set_fetch_policy_confirm_hook(None)
+
+
 async def test_a_private_host_grant_is_recorded_as_a_process_grant(workspace: Path) -> None:
     """A second fetch to the granted host asks nobody, and says so."""
     del workspace
