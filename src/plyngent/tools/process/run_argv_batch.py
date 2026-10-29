@@ -9,13 +9,14 @@ from plyngent.tools.workspace import WorkspaceError
 
 from .command_exec import (
     DEFAULT_MAX_BATCH_STEPS,
-    DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_TIMEOUT_SECONDS,
     CommandStepResult,
     execute_argv,
-    truncate_output,
 )
 
+# Execution budget: stop the batch once accumulated output crosses this factor
+# of the base budget, so a runaway batch cannot keep spawning huge-output steps.
+BATCH_OUTPUT_BUDGET_CHARS = 32_000
 BATCH_OUTPUT_SOFT_CAP_FACTOR = 4
 
 
@@ -102,9 +103,9 @@ def _format_step(index: int, result: CommandStepResult, *, pipe_out: bool) -> st
             f"pipe_out={'true' if pipe_out else 'false'}",
             f"mix_stderr={'true' if result.mix_stderr else 'false'}",
             "--- stdout ---",
-            truncate_output(result.stdout, "stdout"),
+            result.stdout,
             "--- stderr ---",
-            truncate_output(result.stderr, "stderr"),
+            result.stderr,
         ]
     )
 
@@ -147,7 +148,7 @@ async def _run_batch_steps(
         effective_stop = stop_on_error if step["stop_on_error"] is None else bool(step["stop_on_error"])
         if failed and effective_stop:
             return results, True
-        if total_chars > DEFAULT_MAX_OUTPUT_CHARS * BATCH_OUTPUT_SOFT_CAP_FACTOR:
+        if total_chars > BATCH_OUTPUT_BUDGET_CHARS * BATCH_OUTPUT_SOFT_CAP_FACTOR:
             return results, True
         del index  # used for clarity in loop only
 
@@ -178,7 +179,9 @@ async def run_argv_batch(
         }
 
     ``pipe_out`` is set on the **provider** step. Last-step ``pipe_out`` is an error.
-    Default ``stop_on_error`` is true. Max 20 steps; total output budget 32k chars.
+    Default ``stop_on_error`` is true. Max 20 steps; the batch stops early once
+    accumulated output passes the run budget (128k chars). Each step's output is
+    kept whole for the model; a long result carries a ``document_id`` to read on.
     """
     try:
         raw_steps = _normalize_steps(steps)
@@ -195,8 +198,6 @@ async def run_argv_batch(
         body = "\n".join(
             _format_step(i, result, pipe_out=bool(step["pipe_out"])) for i, (step, result) in enumerate(results)
         )
-        if len(body) > DEFAULT_MAX_OUTPUT_CHARS:
-            body = truncate_output(body, "batch")
         last_exit = results[-1][1].exit_code if results else ""
         return "\n".join(
             [

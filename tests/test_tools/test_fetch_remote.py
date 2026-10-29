@@ -24,8 +24,8 @@ class _Client:
         return self.page
 
 
-def _tool(client: _Client, *, max_chars: int = 32_000):
-    return build_fetch_tool(client, default_max_chars=max_chars)
+def _tool(client: _Client):
+    return build_fetch_tool(client)
 
 
 def test_definition_shape() -> None:
@@ -33,7 +33,7 @@ def test_definition_shape() -> None:
     assert definition.name == FETCH_TOOL_NAME == "fetch"
     assert definition.tags == ToolTag.LOCAL | ToolTag.READ_ONLY
     properties = definition.parameters["properties"]
-    assert set(properties) == {"url", "offset", "max_chars"}
+    assert set(properties) == {"url", "offset"}
     assert definition.parameters["required"] == ["url"]
     assert "fetch_local" in definition.description
 
@@ -48,7 +48,6 @@ async def test_handler_renders_title_url_and_content() -> None:
         "title=Example article",
         "url=https://example.com/article",
         "chars=16",
-        "truncated=false",
         "--- content ---",
         "# Heading",
         "",
@@ -57,14 +56,13 @@ async def test_handler_renders_title_url_and_content() -> None:
 
 
 @pytest.mark.asyncio
-async def test_offset_and_truncation_keep_the_remainder_resumable() -> None:
+async def test_offset_skips_leading_content() -> None:
     client = _Client(page=FetchResponse(title="", content="0123456789"))
-    result = await _tool(client, max_chars=3).handler(url="https://example.com/", offset=5)
+    result = await _tool(client).handler(url="https://example.com/", offset=5)
 
     assert "title=(untitled)" in result
-    assert "--- content ---\n567" in result
-    assert "truncated=true" in result
-    assert "truncate_token=" in result
+    assert "--- content ---\n56789" in result
+    assert "truncate_token=" not in result
 
 
 @pytest.mark.asyncio

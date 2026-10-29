@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_MAX_OUTPUT_CHARS = 64_000
 
 
 def is_git_repo(root: Path) -> bool:
@@ -32,13 +31,6 @@ class _GitResult:
         self.returncode = returncode
 
 
-def _truncate(text: str) -> str:
-    if len(text) <= DEFAULT_MAX_OUTPUT_CHARS:
-        return text
-    omitted = len(text) - DEFAULT_MAX_OUTPUT_CHARS
-    return f"{text[:DEFAULT_MAX_OUTPUT_CHARS]}\n...[truncated {omitted} characters]"
-
-
 def _run_git(root: Path, args: list[str], *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> _GitResult:
     argv = ["git", "-c", "color.ui=false", *args]
     try:
@@ -57,12 +49,12 @@ def _run_git(root: Path, args: list[str], *, timeout: float = DEFAULT_TIMEOUT_SE
     except OSError as exc:
         return _GitResult(ok=False, stdout="", stderr=str(exc), returncode=1)
 
-    stdout = _truncate(completed.stdout or "")
-    stderr = _truncate(completed.stderr or "")
+    # Output is kept whole; the request-prep pass trims it on the wire and names
+    # its document, so a long log/diff reads on rather than re-running git.
     return _GitResult(
         ok=completed.returncode == 0,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
         returncode=completed.returncode,
     )
 

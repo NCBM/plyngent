@@ -9,7 +9,6 @@ from plyngent.tools.net.client import FetchResult, http_fetch
 from plyngent.tools.net.policy import (
     DEFAULT_MAX_BODY_CHARS_IN,
     DEFAULT_MAX_BYTES,
-    DEFAULT_MAX_CHARS,
     DEFAULT_MAX_REDIRECTS,
     DEFAULT_TIMEOUT_SECONDS,
     FetchPolicyError,
@@ -18,7 +17,6 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
-from plyngent.tools.truncate_token import truncate_to_memory
 from plyngent.tools.workspace import image_input_refusal
 
 
@@ -35,15 +33,13 @@ def format_fetch_result(
     security: str,
     warnings: list[str],
     body_kind: str,
-    max_chars: int,
     offset: int = 0,
 ) -> str:
     start = max(0, offset)
-    # The body is already in hand, so the remainder is kept in memory rather than
-    # re-requested: resuming a fetch must not cost another round trip (latency)
-    # nor re-hit the remote (rate limits / risk control).
-    body, token = truncate_to_memory(body_text[start:], max_chars)
-    char_truncated = token is not None
+    # The body is kept whole in the tool message (the request-prep pass trims it
+    # on the wire and names its document), so resuming reads the message rather
+    # than re-hitting the remote.
+    body = body_text[start:]
     warn_line = "; ".join(warnings) if warnings else ""
     parts = [
         f"status={status}",
@@ -52,7 +48,7 @@ def format_fetch_result(
         f"content_type={content_type}",
         f"body_kind={body_kind}",
         f"bytes={body_bytes}",
-        f"truncated={'true' if truncated or char_truncated else 'false'}",
+        f"truncated={'true' if truncated else 'false'}",
         f"redirects={redirects}",
         f"security={security}",
     ]
@@ -73,19 +69,18 @@ async def fetch_local(
     user_agent: str | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_BYTES,
-    max_chars: int = DEFAULT_MAX_CHARS,
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     follow_redirects: bool = True,
     allow_http_downgrade: bool = False,
     offset: int = 0,
 ) -> str | ToolOutput:
-    """HTTP request (GET/POST/PUT/DELETE); return status, metadata, and truncated body.
+    """HTTP request (GET/POST/PUT/DELETE); return status, metadata, and the body.
 
     Use for public docs/APIs or (after human policy allow) local/LAN servers.
     ``offset`` skips that many leading characters of the body (0-based), for
-    paging through a body larger than ``max_chars``; a body truncated by
-    ``max_chars`` keeps its remainder in memory instead, resumable via its
-    ``truncate_token`` without another request.
+    paging through a body the wire cap trimmed; a trimmed body keeps its
+    remainder in the tool message, so its ``document_id`` reads the rest with no
+    new request.
     ``user_agent`` sets User-Agent when provided and takes precedence over a
     User-Agent entry in ``headers``. A headers-only User-Agent is kept as-is.
     When both omit UA, a small default is used.
@@ -138,7 +133,6 @@ async def fetch_local(
         security=result.security,
         warnings=result.warnings,
         body_kind=result.body_kind,
-        max_chars=max_chars,
         offset=offset,
     )
     return _attach_image(text, result)

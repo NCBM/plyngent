@@ -23,7 +23,6 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
-from plyngent.tools.truncate_token import decode_truncate_token
 from tests.test_tools.helpers import call_async
 
 if TYPE_CHECKING:
@@ -299,34 +298,27 @@ async def test_fetch_truncation_and_binary(workspace: Path, http_server: str) ->
     assert "binary body omitted" in out_bin
 
 
-async def test_fetch_char_truncation_embeds_token(workspace: Path, http_server: str) -> None:
-    del workspace
-    port = int(http_server.rsplit(":", 1)[1])
-    grant_private_host("127.0.0.1", port)
-
-    out = await call_async(fetch_local, f"{http_server}/big", max_chars=1000)
-    assert "truncated=true" in out
-    body = out.split("--- body ---", 1)[-1]
-    assert "truncate_token=" in body
-    token_line = next(ln for ln in body.splitlines() if "truncate_token=" in ln)
-    token_str = token_line.split("truncate_token=", 1)[1].rstrip("]")
-    token = decode_truncate_token(token_str)
-    assert token is not None
-    # The body is kept in memory, so resuming never repeats the request.
-    assert token.kind == "memory"
-    assert token.limit == 1000
-    assert 0 < token.offset < 1000
-
-
 async def test_fetch_offset_skips_body(workspace: Path, http_server: str) -> None:
     del workspace
     port = int(http_server.rsplit(":", 1)[1])
     grant_private_host("127.0.0.1", port)
 
-    # /big body is 5000 chars; offset 4900 leaves 100 chars, no token needed.
-    out = await call_async(fetch_local, f"{http_server}/big", max_chars=200, offset=4900)
+    # /big body is 5000 chars; offset 4900 leaves the last 100 chars.
+    out = await call_async(fetch_local, f"{http_server}/big", offset=4900)
     body = out.split("--- body ---", 1)[-1]
     assert body.strip() == "x" * 100
+    assert "truncate_token=" not in out
+
+
+async def test_fetch_keeps_the_body_whole(workspace: Path, http_server: str) -> None:
+    """The body is stored whole (the request-prep pass caps it on the wire)."""
+    del workspace
+    port = int(http_server.rsplit(":", 1)[1])
+    grant_private_host("127.0.0.1", port)
+
+    out = await call_async(fetch_local, f"{http_server}/big")
+    body = out.split("--- body ---", 1)[-1].strip()
+    assert body == "x" * 5000
     assert "truncate_token=" not in out
 
 

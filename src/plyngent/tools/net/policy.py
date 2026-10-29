@@ -36,7 +36,6 @@ DEFAULT_USER_AGENT = "plyngent-fetch/0.2"
 DEFAULT_MAX_REDIRECTS = 5
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_BYTES = 1_000_000
-DEFAULT_MAX_CHARS = 32_000
 DEFAULT_MAX_BODY_CHARS_IN = 256_000  # request body size limit (tool arg)
 
 # Cloud / link-local style targets never granted via policy UI.

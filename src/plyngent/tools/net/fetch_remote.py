@@ -13,8 +13,6 @@ import inspect
 from typing import TYPE_CHECKING
 
 from plyngent.agent.tools import ToolDefinition, ToolTag, schema_from_callable
-from plyngent.tools.net.policy import DEFAULT_MAX_CHARS
-from plyngent.tools.truncate_token import truncate_to_memory
 
 if TYPE_CHECKING:
     from plyngent.lmproto.deepseek.webtools import DeepseekWebToolsClient
@@ -27,31 +25,28 @@ def format_page_result(
     title: str,
     url: str,
     content: str,
-    max_chars: int,
     offset: int = 0,
 ) -> str:
     """Render a fetched page the way the other structured tool results read."""
     start = max(0, offset)
-    body, token = truncate_to_memory(content[start:], max_chars)
+    # The page is kept whole in the tool message (the request-prep pass trims it
+    # on the wire and names its document), so neither a re-fetch nor a charge
+    # follows a read of the rest.
+    body = content[start:]
     parts = [
         f"title={' '.join(title.split()) or '(untitled)'}",
         f"url={url}",
         f"chars={len(content)}",
-        f"truncated={'true' if token is not None else 'false'}",
         "--- content ---",
         body,
     ]
     return "\n".join(parts)
 
 
-def build_fetch_tool(
-    client: DeepseekWebToolsClient,
-    *,
-    default_max_chars: int = DEFAULT_MAX_CHARS,
-) -> ToolDefinition:
+def build_fetch_tool(client: DeepseekWebToolsClient) -> ToolDefinition:
     """A ``fetch`` definition backed by DeepSeek's Fetch API."""
 
-    async def fetch(url: str, offset: int = 0, max_chars: int = default_max_chars) -> str:
+    async def fetch(url: str, offset: int = 0) -> str:
         """Read a public web page as Markdown through DeepSeek's Fetch API.
 
         Use for public articles and docs when clean Markdown is enough. The page
@@ -60,9 +55,9 @@ def build_fetch_tool(
         when you need the raw HTTP status/headers. A successful fetch is billed
         per request (failures are not).
 
-        ``offset`` (0-based) skips leading characters of the content. A body cut
-        by ``max_chars`` keeps its remainder in memory, resumable via its
-        ``truncate_token`` without another request (and without another charge).
+        ``offset`` (0-based) skips leading characters of the content. The page is
+        kept whole in the tool message, so a trimmed ``document_id`` reads the
+        rest with no new request (and no new charge).
         """
         try:
             page = await client.fetch(url)
@@ -72,7 +67,6 @@ def build_fetch_tool(
             title=page.title,
             url=url,
             content=page.content,
-            max_chars=max_chars,
             offset=offset,
         )
 
