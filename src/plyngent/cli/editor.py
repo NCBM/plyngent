@@ -33,6 +33,7 @@ _MINIMAL_CONFIG = """\
 # # system_prompt = "" / tool_directives = "" disable each part; both "" → no system.
 # # Or multi-line '''...''' to override.
 # max_tool_result_chars = 32000
+# hard_max_tool_result_chars = 2000000
 # parallel_tools = true
 # confirm_destructive = true
 # path_denylist = ["/secrets/", ".ssh/"]

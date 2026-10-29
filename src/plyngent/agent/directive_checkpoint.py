@@ -25,7 +25,8 @@ use `run_argv_batch` for ordered pipelines.
 `skill_read` slices a skill file the same way).
 - `regex_files`: `pattern` is a Python `re` regex (not a glob, so `*.py` fails) and \
 `path` is a literal file/dir (no glob expansion).
-- Truncated results carry a `truncate_token=...`; continue with `get_truncated`.
+- A long tool result carries a `document_id=...`; read the rest with `read_document` \
+(line window) or `search_document` (regex).
 - Prefer `fetch` for public pages (clean Markdown); `fetch_local` for localhost/LAN, \
 non-GET methods, headers, or raw status; `offset` (0-based) skips leading body characters.
 - PTY secrets only via `ask_into_pty`; denylists and confirms still apply.

@@ -1065,7 +1065,7 @@ async def test_chat_agent_system_prompt_prepended() -> None:
 async def test_tool_result_char_budget() -> None:
     @tool(register=False)
     def big() -> str:
-        return "x" * 100
+        return "x" * 2000
 
     registry = ToolRegistry([big])
     client = ScriptedClient(
@@ -1093,16 +1093,21 @@ async def test_tool_result_char_budget() -> None:
             model="m",
             tools=registry,
             stream=False,
-            max_tool_result_chars=20,
+            max_tool_result_chars=200,
             parallel_tools=False,
         )
     ]
     from plyngent.lmproto.openai_compatible.model import ToolChatMessage
 
-    tool_msgs = [m for m in messages if isinstance(m, ToolChatMessage)]
-    assert len(tool_msgs) == 1
-    assert tool_msgs[0].content.startswith("x" * 20)
-    assert "Truncated" in tool_msgs[0].content
+    # The stored result stays whole; only the wire copy is capped, and it names
+    # the document that reads the rest.
+    stored = [m for m in messages if isinstance(m, ToolChatMessage)]
+    assert len(stored) == 1
+    assert stored[0].content == "x" * 2000
+    wire = next(m for m in client.calls[-1].messages if isinstance(m, ToolChatMessage))
+    assert wire.content.startswith("x")
+    assert "document_id=1" in wire.content
+    assert len(wire.content) < 2000
 
 
 async def test_empty_completion_raises() -> None:

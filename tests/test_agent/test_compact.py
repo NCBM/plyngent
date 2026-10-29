@@ -8,7 +8,6 @@ from plyngent.agent.budget import (
     compact_messages_for_request,
     estimate_messages_tokens,
     measure_messages_tokens,
-    truncate_tool_result,
 )
 from plyngent.agent.loop import run_chat_loop
 from plyngent.lmproto.openai_compatible.model import (
@@ -31,27 +30,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from plyngent.lmproto.openai_compatible.model import AnyChatMessage
-
-
-def test_truncate_tool_result_short() -> None:
-    assert truncate_tool_result("hello", 100) == "hello"
-
-
-def test_truncate_tool_result_long() -> None:
-    text = "a" * 50
-    out = truncate_tool_result(text, 20)
-    assert "Truncated" in out
-    assert "20" in out
-    assert "30" in out
-    # Generic tool results now embed a memory token too (resumable via get_truncated).
-    assert "truncate_token=" in out
-
-
-def test_truncate_tool_result_no_hint() -> None:
-    text = "a" * 50
-    out = truncate_tool_result(text, 20)
-    assert "Truncated" in out
-    assert "truncate_token=" in out
 
 
 def test_compact_shrinks_old_tool_results() -> None:
@@ -92,8 +70,8 @@ def test_compact_shrinks_old_tool_results() -> None:
     assert isinstance(compacted[2], ToolChatMessage)
     assert len(compacted[2].content) < original_len
     assert "Truncated" in compacted[2].content
-    # Compact shrinks carry a token too (resumable via get_truncated).
-    assert "truncate_token=" in compacted[2].content
+    # A shrunk result names its document (read_document / search_document).
+    assert "document_id=1" in compacted[2].content
     # Full history unchanged
     assert isinstance(messages[2], ToolChatMessage)
     assert len(messages[2].content) == original_len

@@ -25,10 +25,12 @@ from plyngent.typedef import Unset  # noqa: TC001
 
 from .budget import (
     DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_HARD_MAX_TOOL_RESULT_CHARS,
     DEFAULT_TOOL_RESULT_MAX_CHARS,
+    cap_hard_tool_text,
     compact_messages_for_request,
     estimate_messages_tokens,
-    truncate_tool_result,
+    truncate_for_request,
 )
 from .directive_checkpoint import (
     DEFAULT_DIRECTIVE_REMINDER_TOKENS,
@@ -88,7 +90,7 @@ async def _run_one_tool(
     tools: ToolRegistry,
     call: AnyAssistantToolCall,
     *,
-    max_result_chars: int,
+    hard_max_chars: int,
     decision: BatchConfirmDecision | None = None,
 ) -> tuple[ToolChatMessage, ErrorEvent | None]:
     if isinstance(call, AssistantFunctionToolCall):
@@ -99,13 +101,13 @@ async def _run_one_tool(
         except Exception as exc:  # noqa: BLE001
             result_text = f"error: tool {call.function.name!r} failed: {exc}"
             err = ErrorEvent(message=result_text, retryable=True, source="tool")
-            truncated = truncate_tool_result(result_text, max_result_chars)
-            return ToolChatMessage(content=truncated, tool_call_id=call.id), err
-        # Only the text is capped; an image the tool returned rides along whole.
-        truncated = truncate_tool_result(output.text, max_result_chars)
+            return ToolChatMessage(content=cap_hard_tool_text(result_text, hard_max_chars), tool_call_id=call.id), err
+        # The result is stored whole (up to the storage ceiling); the
+        # request-prep pass trims it on the wire and names its document. An image
+        # the tool returned rides along whole.
         return (
             ToolChatMessage(
-                content=truncated,
+                content=cap_hard_tool_text(output.text, hard_max_chars),
                 tool_call_id=call.id,
                 images=output.images or UNSET,
             ),
@@ -127,7 +129,7 @@ async def _execute_tool_calls(
     tool_calls: Sequence[AnyAssistantToolCall],
     messages: list[AnyChatMessage],
     *,
-    max_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+    hard_max_chars: int = DEFAULT_HARD_MAX_TOOL_RESULT_CHARS,
     parallel: bool = True,
 ) -> AsyncIterator[AgentEvent]:
     for call in tool_calls:
@@ -149,13 +151,13 @@ async def _execute_tool_calls(
     if parallel and len(tool_calls) > 1:
         results = await asyncio.gather(
             *[
-                _run_one_tool(tools, call, max_result_chars=max_result_chars, decision=decision)
+                _run_one_tool(tools, call, hard_max_chars=hard_max_chars, decision=decision)
                 for call, decision in zip(tool_calls, decisions, strict=True)
             ]
         )
     else:
         results = [
-            await _run_one_tool(tools, call, max_result_chars=max_result_chars, decision=decision)
+            await _run_one_tool(tools, call, hard_max_chars=hard_max_chars, decision=decision)
             for call, decision in zip(tool_calls, decisions, strict=True)
         ]
 
@@ -532,6 +534,7 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     on_limit: LimitContinueHook | None = None,
     stream: bool = True,
     max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+    hard_max_tool_result_chars: int = DEFAULT_HARD_MAX_TOOL_RESULT_CHARS,
     parallel_tools: bool = True,
     max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     todo_stack: TodoStack | None = None,
@@ -547,7 +550,13 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     When ``stream=True``, uses ``chat_completions(..., stream=True)`` and yields
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
-    Request payloads may shrink older tool results when over ``max_context_tokens``.
+
+    Each round builds a request copy: soft compact shrinks older tool dumps when
+    over ``max_context_tokens``, then every tool result is trimmed to
+    ``max_tool_result_chars`` with a marker naming its document (``read_document``
+    / ``search_document`` read the rest). A tool result is stored whole in its
+    message, up to ``hard_max_tool_result_chars``; a result above that ceiling is
+    cut on store and has no document.
 
     *reasoning_effort* is the resolved thinking strength (``""`` = send nothing,
     the provider's own default); each API surface maps it onto its own wire field
@@ -588,13 +597,17 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     while True:
         while rounds_used < allowance:
             rounds_used += 1
-            # Request copy: shrink old tool dumps, then rewrite forged todo nags
-            # so cleaned stacks do not re-appear with stale OPEN WORK text.
-            request_messages = compact_messages_for_request(
-                messages,
-                max_tokens=max_context_tokens,
-                prompt_tokens_hint=prompt_tokens_hint,
-                sent_estimate_tokens=sent_estimate_tokens,
+            # Request copy: soft-compact old tool dumps, then trim every result to
+            # the fixed wire cap (each names its document), then rewrite forged
+            # todo nags so cleaned stacks do not re-appear with stale OPEN WORK text.
+            request_messages = truncate_for_request(
+                compact_messages_for_request(
+                    messages,
+                    max_tokens=max_context_tokens,
+                    prompt_tokens_hint=prompt_tokens_hint,
+                    sent_estimate_tokens=sent_estimate_tokens,
+                ),
+                max_tool_result_chars=max_tool_result_chars,
             )
             if todo_stack is not None:
                 _ = refresh_synthetic_todo_nags(request_messages, todo_stack)
@@ -651,7 +664,7 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
                     tools,
                     tool_calls,
                     messages,
-                    max_result_chars=max_tool_result_chars,
+                    hard_max_chars=hard_max_tool_result_chars,
                     parallel=parallel_tools,
                 ):
                     yield event

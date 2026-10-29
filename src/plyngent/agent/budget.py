@@ -21,6 +21,11 @@ if TYPE_CHECKING:
     type TokenMeasure = Callable[[Sequence[AnyChatMessage]], int]
 
 DEFAULT_TOOL_RESULT_MAX_CHARS = 32_000
+# Storage ceiling for one tool result kept whole in its message. A result at or
+# below this is stored in full (the request-prep cap trims it on the wire); one
+# above it is cut here and carries no document, since its remainder is past what
+# a message keeps.
+DEFAULT_HARD_MAX_TOOL_RESULT_CHARS = 2_000_000
 # Soft context budget in tokens (API-calibrated when possible; else ~4 chars/token).
 DEFAULT_CONTEXT_MAX_TOKENS = 200_000
 DEFAULT_OLD_TOOL_RESULT_CHARS = 800
@@ -36,26 +41,53 @@ IMAGE_CHARS = 4_096
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
 
 
-def truncate_tool_result(
-    text: str,
-    max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
-) -> str:
-    """Cap tool output so huge dumps do not flood model context.
+def cap_hard_tool_text(text: str, max_chars: int = DEFAULT_HARD_MAX_TOOL_RESULT_CHARS) -> str:
+    """Bound what one tool message stores (the storage ceiling).
 
-    This is the generic agent-loop cap for arbitrary tool results. It embeds a
-    memory truncate token via :func:`truncate_generic` so the model can always
-    resume the remainder with ``get_truncated`` — resumable or not (remainders
-    live in the in-memory store for the process lifetime). The compact marker
-    ``[Truncated (N chars max.; M omitted). truncate_token=...]`` is emitted
-    only when output is actually cut.
+    The request-prep pass trims a result on the wire and names a document for the
+    remainder; this ceiling bounds the stored body itself. A result above it is
+    cut here and carries no document, since its remainder is past what a message
+    keeps. ``max_chars < 1`` stores the result whole.
     """
-    if max_chars < 1:
+    if max_chars < 1 or len(text) <= max_chars:
         return text
-    if len(text) <= max_chars:
-        return text
-    from plyngent.tools.truncate_token import truncate_generic
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]}\n[Stored at the {max_chars}-char ceiling: {omitted} chars beyond it]"
 
-    return truncate_generic(text, max_chars)
+
+def cap_tool_message(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
+    """Trim one tool result for the wire, naming the document that holds the rest.
+
+    The fixed rule of the request-prep pass: a result over ``max_chars`` keeps its
+    head and gains a marker whose ``document_id`` (the message's ``tool_call_id``)
+    lets the model read the rest with ``read_document`` / ``search_document``. The
+    stored message stays whole; only the returned copy is trimmed.
+    """
+    if max_chars < 1 or len(message.content) <= max_chars:
+        return message
+    from plyngent.tools.documents import document_marker
+
+    total = len(message.content)
+    head_len = max(1, max_chars - len(document_marker(message.tool_call_id, max_chars, total)))
+    marker = document_marker(message.tool_call_id, head_len, total)
+    return msgspec.structs.replace(message, content=message.content[:head_len] + marker)
+
+
+def truncate_for_request(
+    messages: Sequence[AnyChatMessage],
+    *,
+    max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+) -> list[AnyChatMessage]:
+    """The request copy with every tool result trimmed to the fixed wire cap.
+
+    Runs in the request-prep pass, after soft compact. Each trimmed result names
+    its document, so the model reads the rest on demand instead of carrying it in
+    every request.
+    """
+    return [
+        cap_tool_message(message, max_tool_result_chars) if isinstance(message, ToolChatMessage) else message
+        for message in messages
+    ]
 
 
 def _content_chars(content: str | list[ChatTextPart | ChatImagePart]) -> int:
@@ -131,12 +163,7 @@ def measure_messages_tokens(
 
 
 def _shrink_tool(message: ToolChatMessage, max_chars: int) -> ToolChatMessage:
-    if len(message.content) <= max_chars:
-        return message
-    return msgspec.structs.replace(
-        message,
-        content=truncate_tool_result(message.content, max_chars),
-    )
+    return cap_tool_message(message, max_chars)
 
 
 def _tool_indices(messages: Sequence[AnyChatMessage]) -> list[int]:

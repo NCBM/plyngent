@@ -71,7 +71,7 @@ async def test_an_unknown_tool_is_error_text_without_images() -> None:
 
 
 async def test_the_loop_keeps_tool_images_on_the_tool_message() -> None:
-    message, err = await _run_one_tool(_registry(), _call("shot"), max_result_chars=32_000)
+    message, err = await _run_one_tool(_registry(), _call("shot"), hard_max_chars=32_000)
 
     assert err is None
     assert isinstance(message, ToolChatMessage)
@@ -80,16 +80,16 @@ async def test_the_loop_keeps_tool_images_on_the_tool_message() -> None:
 
 
 async def test_the_loop_leaves_the_images_field_unset_for_text_tools() -> None:
-    message, err = await _run_one_tool(_registry(), _call("plain"), max_result_chars=32_000)
+    message, err = await _run_one_tool(_registry(), _call("plain"), hard_max_chars=32_000)
 
     assert err is None
     assert message.images is UNSET
 
 
-async def test_a_truncated_tool_result_keeps_its_images() -> None:
-    message, _ = await _run_one_tool(_registry(), _call("shot"), max_result_chars=1)
+async def test_a_tool_result_above_the_storage_ceiling_keeps_its_images() -> None:
+    message, _ = await _run_one_tool(_registry(), _call("shot"), hard_max_chars=1)
 
-    assert "[Truncated" in message.content
+    assert "[Stored at the 1-char ceiling" in message.content
     assert message.images == [_image()]
 
 

@@ -20,6 +20,7 @@ from plyngent.lmproto.openai_compatible.model import (
 
 from .budget import (
     DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_HARD_MAX_TOOL_RESULT_CHARS,
     DEFAULT_TOOL_RESULT_MAX_CHARS,
     estimate_messages_tokens,
 )
@@ -328,6 +329,7 @@ class ChatAgent:
     stream: bool
     system_prompt: str | None
     max_tool_result_chars: int
+    hard_max_tool_result_chars: int
     parallel_tools: bool
     max_context_tokens: int
     todo_stack: TodoStack | None
@@ -362,6 +364,7 @@ class ChatAgent:
         stream: bool = True,
         system_prompt: str | None = None,
         max_tool_result_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS,
+        hard_max_tool_result_chars: int = DEFAULT_HARD_MAX_TOOL_RESULT_CHARS,
         parallel_tools: bool = True,
         max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
         todo_stack: TodoStack | None = None,
@@ -388,6 +391,7 @@ class ChatAgent:
         self.stream = stream
         self.system_prompt = system_prompt
         self.max_tool_result_chars = max_tool_result_chars
+        self.hard_max_tool_result_chars = hard_max_tool_result_chars
         self.parallel_tools = parallel_tools
         self.max_context_tokens = max_context_tokens
         self.todo_stack = todo_stack
@@ -648,6 +652,7 @@ class ChatAgent:
                 on_limit=self.on_limit,
                 stream=self.stream,
                 max_tool_result_chars=self.max_tool_result_chars,
+                hard_max_tool_result_chars=self.hard_max_tool_result_chars,
                 parallel_tools=self.parallel_tools,
                 max_context_tokens=self.max_context_tokens,
                 todo_stack=self.todo_stack,
@@ -809,6 +814,7 @@ class ChatAgent:
             stream=self.stream,
             system_prompt=self.system_prompt if system_prompt is None else system_prompt,
             max_tool_result_chars=self.max_tool_result_chars,
+            hard_max_tool_result_chars=self.hard_max_tool_result_chars,
             parallel_tools=self.parallel_tools,
             max_context_tokens=self.max_context_tokens,
             todo_stack=None,

@@ -64,8 +64,9 @@ skill file the same way.
 (`*.py` / `**/*.py` fail with `invalid regex`), and a literal file/dir `path` \
 (no glob expansion, so `src/**/*.py` fails with `path does not exist`); there is \
 no file-type filter, so narrow with `path` and filter hits yourself.
-- Truncated results (any tool) carry a `truncate_token=...`; use `get_truncated` \
-with it to keep reading (chains through truncations).
+- A long tool result is stored whole and trimmed on each request with a \
+`document_id=...` marker; read the rest with `read_document` (line window) or \
+`search_document` (regex), no re-run.
 
 ### Commands
 - Prefer `run_argv` / `run_argv_batch` (argv lists, no shell) over `bash -c` or similar.
@@ -84,7 +85,7 @@ for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
 (GET/POST/PUT/DELETE) from this host for localhost/LAN, APIs, custom headers, and \
 status/redirect inspection.
 - `offset` (0-based) skips leading body characters to page through a large body; \
-truncated bodies resume with `get_truncated` and are not re-requested.
+a long body is stored whole, so its `document_id` reads the rest with no new request.
 - Set `user_agent` (or a User-Agent header) on `fetch_local` when the remote expects a \
 specific client; otherwise a small default is used. Never rely on shell to spoof identity.
 - Private/loopback/LAN hosts need an explicit human policy allow (not skipped by YOLO); \
@@ -151,6 +152,10 @@ class AgentConfig(Struct, omit_defaults=True):
     # into the agent system prompt when tools are on. false = ignore server text.
     mcp_instructions: bool = True
     max_tool_result_chars: int = 32_000
+    # Storage ceiling for one tool result kept whole in its message. The wire cap
+    # above trims a result on the request copy and names a document for the rest;
+    # a result above this ceiling is cut on store and has no document.
+    hard_max_tool_result_chars: int = 2_000_000
     parallel_tools: bool = True
     confirm_destructive: bool = True
     path_denylist: list[str] = field(default_factory=list)

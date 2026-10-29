@@ -499,6 +499,7 @@ class ReplState:
             stream=self.stream_enabled,
             system_prompt=system_prompt,
             max_tool_result_chars=agent_cfg.max_tool_result_chars,
+            hard_max_tool_result_chars=agent_cfg.hard_max_tool_result_chars,
             parallel_tools=agent_cfg.parallel_tools,
             max_context_tokens=agent_cfg.max_context_tokens,
             todo_stack=self.todo_stack,
