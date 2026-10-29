@@ -4,7 +4,8 @@ A grant is one ``path → mode`` pair; its *source* is structural:
 
 - :attr:`WorkspacePolicy.config_allow` — static TOML pre-allow (never prompts),
 - :attr:`SessionState.access_grants` — human-approved for this session,
-- :attr:`WorkspacePolicy.yolo_allow` — ``--yes`` / YOLO auto-approval, process only.
+- :attr:`WorkspacePolicy.yolo_allow` — process only: a host that approved
+  without keeping the grant (``--yes`` does **not** answer this prompt).
 
 ``resolve_path`` consults all three. Grants are a policy gate for path-resolving
 tools, **not** a sandbox: an ``exec`` grant (or any command) can reach the rest
@@ -257,8 +258,10 @@ async def request_directory_access(path: str, reason: str = "", mode: str = "rea
     workspace root``, passing the ``mode`` that error names. ``mode`` is ``read``
     (inspect files), ``write`` (also modify files) or ``exec`` (also use it as
     ``run_argv`` / PTY cwd); the human may approve a different level. Approval
-    lasts for the session (or for this process when ``--yes`` auto-approves).
-    Paths matching the configured denylist can never be granted.
+    lasts for the session (or for this process when the host answers without
+    persisting); ``--yes`` / YOLO mode does not answer this prompt, and a
+    non-interactive run denies. Paths matching the configured denylist can never
+    be granted.
     """
     requested = parse_access_mode(mode)
     if requested is None:

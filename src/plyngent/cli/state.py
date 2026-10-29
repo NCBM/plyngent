@@ -297,12 +297,15 @@ class ReplState:
         reason: str,
         timeout_seconds: float,
     ) -> AccessDecision | str | None:
-        """Directory-access confirm: YOLO/``--yes`` auto-approves, else ask."""
-        from plyngent.cli.limits import prompt_directory_access_confirm
-        from plyngent.tools.access import AccessDecision as Decision
+        """Directory-access confirm: always ask, whatever YOLO mode says.
 
-        if self.effective_yolo() != "off":
-            return Decision(mode, persist=False)
+        An out-of-workspace path is a grant on the filesystem rather than one
+        risky call, so ``--yes`` / ``/yolo`` do not answer it — the command
+        denylist and a skill write are not skipped either. A non-interactive run
+        denies.
+        """
+        from plyngent.cli.limits import prompt_directory_access_confirm
+
         return prompt_directory_access_confirm(path, mode, reason, timeout_seconds)
 
     def _install_config_access(self) -> None:

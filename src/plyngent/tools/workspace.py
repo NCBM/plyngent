@@ -114,7 +114,8 @@ class WorkspacePolicy:
     policy_confirm_timeout_seconds: float = DEFAULT_POLICY_CONFIRM_TIMEOUT_SECONDS
     # Static TOML pre-allow (resolved path → mode); never prompts.
     config_allow: dict[Path, AccessMode] = field(default_factory=dict)
-    # Process-scoped YOLO / --yes grants (resolved path → mode); never persisted.
+    # Process-scoped grants (resolved path → mode): a host answer kept only for
+    # this process. YOLO mode never fills it; nothing is auto-approved here.
     yolo_allow: dict[Path, AccessMode] = field(default_factory=dict)
     # Host-contributed read-only roots (skill directories): every path tool may
     # read them, nothing may write them. Not a grant, so they stay out of
