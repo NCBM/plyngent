@@ -339,7 +339,7 @@ Ctrl+C cancels the in-flight turn, and during the auto-retry countdown it cancel
 
 - **Workspace** = root for file/process/VCS tools (default cwd).
 - **Session** = SQLite chat bound to a workspace path.
-- Paths outside the workspace need a **directory-access grant**: the model calls `request_directory_access` (`read` / `write` / `exec`), the human approves at the requested level or another one (timed y/N, default deny; `--yes`/`/yolo` auto-approve as a process-only grant), and approval lasts for the session (`/grants` lists/revokes). Static pre-allow lives under `[agent].allow_paths`. The path denylist always wins, and grants gate path-resolving tools only — they are **not** a sandbox (`run_argv`/PTY reach the whole filesystem).
+- Paths outside the workspace need a **directory-access grant**: the model calls `request_directory_access` (`read` / `write` / `exec`), the human approves at the requested level or another one (timed y/N, default deny — `--yes`/`/yolo` do **not** answer it, and a non-interactive run denies), and approval lasts for the session (`/grants` lists/revokes). Static pre-allow lives under `[agent].allow_paths`. The path denylist always wins, and grants gate path-resolving tools only — they are **not** a sandbox (`run_argv`/PTY reach the whole filesystem).
 - Resuming a session from another directory prompts: keep session workspace, rebind to current, or abort.
 
 ## Tools (when enabled)
@@ -354,7 +354,7 @@ Safety defaults:
 
 - Paths stay under the workspace unless granted (`request_directory_access` / `[agent].allow_paths`); the refusal names the `mode` that would cover the call; optional `path_denylist` substrings always apply (`tree` also skips denylisted children by default).
 - Command basename denylist (e.g. dangerous shells/utilities).
-- Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists still apply).
+- Destructive tools (delete/move/overwrite) can require confirm (`confirm_destructive`; default deny in non-TTY). Override for the session with `/yolo on|off|once` or startup `--yes` (path/command denylists and a directory-access request still ask).
 - `write_file` refuses to replace an existing file unless `overwrite=true`; the confirm asks about that replacement.
 - PTY sessions: caps, idle TTL, output budget; master FD is non-inheritable; sessions closed on chat exit.
   Prefer file tools over full-screen editors (`vim`/`nano`) for edits. `read_pty` sanitizes CSI/controls
