@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from plyngent.agent import ToolTag, tool
+from plyngent.agent import Approval, ToolTag, tool
 from plyngent.agent.budget import DEFAULT_TOOL_RESULT_MAX_CHARS
 from plyngent.skills import (
     SKILL_FILE,
@@ -30,6 +30,7 @@ from plyngent.skills import (
     resolve_skill_file,
     validate_skill_name,
 )
+from plyngent.tools.context import record_approval
 from plyngent.tools.file.read import read_file as _read_file
 from plyngent.tools.file.regex_files import DEFAULT_MAX_MATCHES
 from plyngent.tools.file.regex_files import regex_files as _regex_files
@@ -329,8 +330,10 @@ def _prompt_write(
     allowed = decision is True or (isinstance(decision, SkillWriteDecision) and decision.allow)
     if not allowed:
         return f"error: skill write to {skill_dir} denied (declined or timed out after {policy.timeout:g}s)"
-    if isinstance(decision, SkillWriteDecision) and decision.session and session is not None:
+    keys_session = isinstance(decision, SkillWriteDecision) and decision.session
+    if keys_session and session is not None:
         session.skill_write_roots.add(skill_dir)
+    record_approval(Approval("user", "session" if keys_session else "once"))
     return None
 
 
@@ -342,6 +345,9 @@ def _authorize_write(skill_dir: Path, target: Path, *, action: str, detail: str)
     checked first and always wins; then a session grant, then
     ``[skills].allow_write``, then the host's confirm hook. Without a hook the
     write is denied rather than silently allowed.
+
+    Each allow that skipped the prompt is recorded too, so the result says why
+    nobody was asked: ``grant (session)`` or ``config (policy)``.
     """
     denied = _denied_by_policy(target, skill_dir)
     if denied is not None:
@@ -350,6 +356,7 @@ def _authorize_write(skill_dir: Path, target: Path, *, action: str, detail: str)
 
     session = get_session()
     if session is not None and skill_dir in session.skill_write_roots:
+        record_approval(Approval("grant", "session"))
         return None
     policy = get_skill_write_policy()
     if policy is None or (policy.confirm is None and not policy.allow_all):
@@ -358,6 +365,7 @@ def _authorize_write(skill_dir: Path, target: Path, *, action: str, detail: str)
             "set [skills].allow_write = true to allow skill writes"
         )
     if policy.allow_all:
+        record_approval(Approval("config", "policy"))
         return None
     return _prompt_write(skill_dir, action=action, detail=detail, policy=policy, session=session)
 

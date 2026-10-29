@@ -89,7 +89,11 @@ async def ensure_host_allowed(
         raise FetchPolicyError(msg)
 
     # PRIVATE
+    from plyngent.agent import Approval
+    from plyngent.tools.context import record_approval
+
     if has_private_grant(parsed.host, parsed.port, instance=inst):
+        record_approval(Approval("grant", "process"))
         return
 
     from plyngent.tools.workspace import get_policy_confirm_timeout
@@ -116,6 +120,7 @@ async def ensure_host_allowed(
         )
         raise FetchPolicyError(msg)
     _ = grant_private_host(parsed.host, parsed.port, instance=inst)
+    record_approval(Approval("user", "process"))
 
 
 def format_grant_preview(host: str, port: int, url: str) -> Sequence[str]:

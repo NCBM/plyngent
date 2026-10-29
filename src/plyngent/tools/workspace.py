@@ -565,7 +565,14 @@ def check_command_allowed(argv: list[str]) -> None:
     Denylisted programs are not hard-rejected when a policy confirm hook is
     installed: the human is asked (with a timeout; default deny). Session grants
     skip re-prompting for the same program. Independent of YOLO soft-confirm.
+
+    Either way the call records how it got past the denylist, so the tool result
+    says it: ``user (process)`` for this call's answer, ``grant (process)`` when
+    an earlier one already covers this program.
     """
+    from plyngent.agent import Approval
+    from plyngent.tools.context import record_approval
+
     shape_error = argv_shape_error(argv)
     if shape_error is not None:
         msg = f"command {shape_error}"
@@ -577,6 +584,7 @@ def check_command_allowed(argv: list[str]) -> None:
     for hit in match_command_denylist(argv, policy.command_denylist):
         binary = hit.program
         if binary in policy.policy_allowed_commands:
+            record_approval(Approval("grant", "process"))
             continue
         why = f": {hit.keyword!r}" if hit.keyword else ""
         hook = policy.policy_confirm_hook
@@ -596,3 +604,4 @@ def check_command_allowed(argv: list[str]) -> None:
             )
             raise WorkspaceError(msg)
         policy.policy_allowed_commands.add(binary)
+        record_approval(Approval("user", "process"))
