@@ -1,24 +1,21 @@
-"""Truncate-token cursors for resuming truncated tool results.
+"""Truncate-token cursors for resuming truncated reads.
 
-Every truncation site (the agent loop's generic tool-result cap,
-``run_argv`` / ``run_argv_batch`` per-stream caps, ``read_file``,
-``fetch`` / ``fetch_local``, and request-time compact shrinks) appends the same
-compact marker when output is cut short::
+Two sources use a truncate token:
 
-    [Truncated (32000 chars max.; 500 omitted). truncate_token=...]
+- ``read_file`` caps a slice with a ``file`` token; the remainder is re-read from
+  disk by ``location`` + ``offset``, so it survives for as long as the file does
+  (and ``numbered`` resumes the ``N|`` view for ``edit_lineno``).
+- A user ``@path`` mention inlines a file with a ``memory`` token. The mention
+  carries text into a user turn rather than a tool message, so the remainder
+  lives in a short-lived in-memory store that is cleared when the agent process
+  exits.
 
-The model passes the token to ``get_truncated`` to read the next chunk without
-re-requesting the whole source or raising limits. Tokens chain: each truncated
-chunk carries a fresh token, so ``get_truncated`` keeps resuming until the
-source is exhausted (then no marker is emitted).
+Tool results no longer use this module. A result is stored whole in its own
+message, and the request-prep pass trims the request copy with a marker naming a
+document (``read_document`` / ``search_document``; see ``tools/documents.py``).
 
-A ``file`` remainder is re-read from disk by ``location`` + ``offset``, so it
-survives for as long as the file does. Everything else — arbitrary tool output
-(run_argv stdout, todo renders, …) and ``fetch`` / ``fetch_local`` bodies — have
-no source worth re-running (a re-fetch costs a round trip and re-hits the remote),
-so its remainder lives in a short-lived in-memory store (``kind="memory"``) that is
-forgotten when the agent process exits; the model must re-run the tool after
-that.
+Either way the model passes the token to ``get_truncated`` to read the next
+chunk without re-requesting the whole source.
 """
 
 from __future__ import annotations
@@ -141,7 +138,9 @@ def truncate_to_memory(text: str, max_chars: int) -> tuple[str, TruncateToken | 
 
     Nothing is stored when the text fits, so a caller that only needs the
     bounded text does not pay for a remainder. Returns ``(bounded_text, token)``
-    where ``token`` is ``None`` when the source is exhausted.
+    where ``token`` is ``None`` when the source is exhausted. A user ``@path``
+    mention is the caller: its inlined text has no re-readable source, so the
+    remainder waits in memory until the process exits.
     """
     if max_chars < 1 or len(text) <= max_chars:
         return text, None
@@ -155,14 +154,3 @@ def truncate_to_memory(text: str, max_chars: int) -> tuple[str, TruncateToken | 
         limit=max_chars,
         total_len=len(text),
     )
-
-
-def truncate_generic(text: str, max_chars: int) -> str:
-    """Cap arbitrary tool output; embed a memory truncate token (chainable).
-
-    The full remainder is kept in the in-memory store so ``get_truncated`` can
-    resume it. Returns ``text`` unchanged (no marker) when it fits within
-    ``max_chars``.
-    """
-    bounded, _ = truncate_to_memory(text, max_chars)
-    return bounded

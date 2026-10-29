@@ -5,7 +5,7 @@ from plyngent.tools.truncate_token import (
     decode_truncate_token,
     encode_truncate_token,
     get_remainder,
-    truncate_generic,
+    truncate_to_memory,
     truncate_with_token,
     truncation_marker,
 )
@@ -125,26 +125,26 @@ def test_truncate_with_token_nonzero_start() -> None:
     assert len(out) <= 200
 
 
-def test_truncate_generic_short_untouched() -> None:
-    assert truncate_generic("tiny", 200) == "tiny"
+def test_truncate_to_memory_short_untouched() -> None:
+    out, token = truncate_to_memory("tiny", 200)
+    assert out == "tiny"
+    assert token is None
 
 
-def test_truncate_generic_embeds_memory_token() -> None:
+def test_truncate_to_memory_embeds_memory_token() -> None:
     text = "a" * 500
-    out = truncate_generic(text, 200)
+    out, token = truncate_to_memory(text, 200)
+    assert token is not None
     assert len(out) <= 200
     assert "[Truncated (200 chars max." in out
-    token_str = out.split("truncate_token=", 1)[1].rstrip("]")
-    token = decode_truncate_token(token_str)
-    assert token is not None
     assert token.kind == "memory"
     # Remainder is the full original text; token offset points into it.
-    remainder = get_remainder(token.location)
-    assert remainder == text
+    assert get_remainder(token.location) == text
     assert token.offset < len(text)
 
 
-def test_truncate_generic_no_marker_when_fits() -> None:
-    out = truncate_generic("a" * 50, 200)
+def test_truncate_to_memory_no_marker_when_fits() -> None:
+    out, token = truncate_to_memory("a" * 50, 200)
     assert out == "a" * 50
     assert "Truncated" not in out
+    assert token is None

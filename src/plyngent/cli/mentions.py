@@ -15,8 +15,9 @@ the file:
   ``[providers.*.models.*].image_in`` skips it with a note instead of letting
   the provider answer 400.
 - any other file is read as text and appended to the message under a
-  ``--- @path ---`` header, capped like a tool result; the remainder stays
-  resumable through the ``truncate_token`` in the marker.
+  ``--- @path ---`` header, capped at the tool-result size; the remainder waits
+  in memory and the marker's ``truncate_token`` resumes it through
+  ``get_truncated``.
 
 Images and text both keep the typed ``@path`` in the message, so the model can
 tell which attachment is which.

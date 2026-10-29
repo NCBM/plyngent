@@ -85,15 +85,15 @@ async def test_get_truncated_file_missing(workspace: Path) -> None:
 
 
 async def test_get_truncated_memory_chains() -> None:
-    from plyngent.tools.truncate_token import truncate_generic
+    from plyngent.tools.truncate_token import truncate_to_memory
 
-    bounded = truncate_generic("m" * 1000, 200)
+    bounded, _token = truncate_to_memory("m" * 1000, 200)
     assert "truncate_token=" in bounded
     token = bounded.split("truncate_token=", 1)[1].rstrip("]")
     parsed = decode_truncate_token(token)
     assert parsed is not None
     assert parsed.kind == "memory"
-    cursor = parsed.offset  # chars already delivered by truncate_generic
+    cursor = parsed.offset  # chars already delivered by truncate_to_memory
     delivered = cursor
     for _ in range(20):
         out = await call_async(get_truncated, token, max_chars=200)
