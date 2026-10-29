@@ -344,6 +344,30 @@ async def test_skill_write_session_grant_is_asked_once(tmp_path: Path) -> None:
     assert (root / "acme" / "notes.md").read_text(encoding="utf-8") == "note\n"
 
 
+async def test_a_skill_write_says_which_answer_let_it_through(tmp_path: Path) -> None:
+    """Once, this chat, and the standing config each read differently."""
+    from plyngent.agent import Approval
+    from plyngent.tools.context import collect_approvals
+
+    root = _write_root(tmp_path)
+    with _bound(tmp_path, root, policy=SkillWritePolicy(confirm=lambda *_args: True)), collect_approvals() as once:
+        created = await skill_create.handler("once-skill", "d", "b")
+
+    def for_the_chat(*_args: object) -> SkillWriteDecision:
+        return SkillWriteDecision(allow=True, session=True)
+
+    with _bound(tmp_path, root, policy=SkillWritePolicy(confirm=for_the_chat)), collect_approvals() as chat:
+        _ = await skill_create.handler("chat-skill", "d", "b")
+        _ = await skill_edit.handler("chat-skill", append="\nMore.\n")
+
+    with _bound(tmp_path, root, policy=SkillWritePolicy(allow_all=True)), collect_approvals() as config:
+        _ = await skill_create.handler("config-skill", "d", "b")
+
+    assert once == [Approval("user", "once")], created
+    assert chat == [Approval("user", "session"), Approval("grant", "session")]
+    assert config == [Approval("config", "policy")]
+
+
 async def test_skill_write_denylist_wins_over_a_grant(tmp_path: Path) -> None:
     root = _write_root(tmp_path)
     with _bound(tmp_path, root, policy=SkillWritePolicy(allow_all=True)):

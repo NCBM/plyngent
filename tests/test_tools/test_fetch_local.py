@@ -188,6 +188,35 @@ def test_classify_danger_fetch() -> None:
     assert isinstance(reason2, str) and "DELETE" in reason2
 
 
+async def test_a_private_host_answer_is_recorded_as_a_user_process_approval(workspace: Path) -> None:
+    """The prompt that opened loopback for this process is what the result says."""
+    del workspace
+    from plyngent.agent import Approval
+    from plyngent.tools.context import collect_approvals
+    from plyngent.tools.net.grants import ensure_host_allowed, set_fetch_policy_confirm_hook
+
+    set_fetch_policy_confirm_hook(lambda *_args: True)
+    try:
+        with collect_approvals() as recorded:
+            await ensure_host_allowed("http://127.0.0.1:9/")
+    finally:
+        set_fetch_policy_confirm_hook(None)
+    assert recorded == [Approval("user", "process")]
+
+
+async def test_a_private_host_grant_is_recorded_as_a_process_grant(workspace: Path) -> None:
+    """A second fetch to the granted host asks nobody, and says so."""
+    del workspace
+    from plyngent.agent import Approval
+    from plyngent.tools.context import collect_approvals
+    from plyngent.tools.net.grants import ensure_host_allowed
+
+    grant_private_host("127.0.0.1", 9)
+    with collect_approvals() as recorded:
+        await ensure_host_allowed("http://127.0.0.1:9/")
+    assert recorded == [Approval("grant", "process")]
+
+
 async def test_fetch_get_post_put_delete(workspace: Path, http_server: str) -> None:
     del workspace
     base = http_server

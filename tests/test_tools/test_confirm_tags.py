@@ -33,9 +33,9 @@ async def test_yolo_only_skips_yolo_tagged_tools() -> None:
         on_confirm=confirm,
         yolo=True,
     )
-    assert await reg.execute("yolo_ok", "{}") == "y"
+    assert await reg.execute("yolo_ok", "{}") == "[approval] yolo (auto)\ny"
     assert calls == []
-    assert await reg.execute("no_yolo", "{}") == "n"
+    assert await reg.execute("no_yolo", "{}") == "[approval] user (once)\nn"
     assert calls == ["no_yolo"]
 
 
@@ -55,7 +55,7 @@ async def test_yolo_off_keeps_the_yolo_tagged_prompt() -> None:
         return True
 
     reg = ToolRegistry([yolo_ok], danger=danger, on_confirm=confirm, yolo=False)
-    assert await reg.execute("yolo_ok", "{}") == "y"
+    assert await reg.execute("yolo_ok", "{}") == "[approval] user (once)\ny"
     assert calls == ["yolo_ok"]
 
 
@@ -75,7 +75,7 @@ async def test_yolo_keeps_a_reason_that_refuses_the_skip() -> None:
         return True
 
     reg = ToolRegistry([escalated], danger=danger, on_confirm=confirm, yolo=True)
-    assert await reg.execute("escalated", "{}") == "x"
+    assert await reg.execute("escalated", "{}") == "[approval] user (once)\nx"
     assert seen == ["interpreter 'python' + privilege escalation sudo"]
 
 
@@ -103,8 +103,10 @@ async def test_trustable_grant_once() -> None:
         session_state=session,
     )
     with bind_tool_context(session=session):
-        assert await reg.execute("trust_me", "{}") == "ok"
-        assert await reg.execute("trust_me", "{}") == "ok"
+        assert await reg.execute("trust_me", "{}") == "[approval] user (once)\nok"
+        # The TRUSTABLE grant answers from here on: nobody is asked, and the
+        # result says so.
+        assert await reg.execute("trust_me", "{}") == "[approval] grant (session)\nok"
     assert calls == ["trust_me"]
 
 
@@ -123,8 +125,8 @@ async def test_untagged_trustable_prompts_every_time() -> None:
         return True
 
     reg = ToolRegistry([always_ask], danger=danger, on_confirm=confirm, yolo=False)
-    assert await reg.execute("always_ask", "{}") == "ok"
-    assert await reg.execute("always_ask", "{}") == "ok"
+    assert await reg.execute("always_ask", "{}") == "[approval] user (once)\nok"
+    assert await reg.execute("always_ask", "{}") == "[approval] user (once)\nok"
     assert calls == ["always_ask", "always_ask"]
 
 
@@ -151,7 +153,7 @@ async def test_trustable_grant_persists_to_session_data() -> None:
         yolo=False,
         session_state=session,
     )
-    assert await reg.execute("trust_me", "{}") == "ok"
+    assert await reg.execute("trust_me", "{}") == "[approval] user (once)\nok"
     assert has_grant(session, "trust_me")
     loaded = await store.load()
     assert isinstance(loaded, dict)
@@ -170,7 +172,7 @@ async def test_trustable_grant_persists_to_session_data() -> None:
         yolo=False,
         session_state=session2,
     )
-    assert await reg2.execute("trust_me", "{}") == "ok"
+    assert await reg2.execute("trust_me", "{}") == "[approval] grant (session)\nok"
     assert calls == ["trust_me"]
 
 

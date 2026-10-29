@@ -33,7 +33,7 @@ async def test_confirm_allow() -> None:
         danger=classify_danger,
         on_confirm=on_confirm,
     )
-    assert await registry.execute("delete_path", '{"path": "a.txt"}') == "deleted a.txt"
+    assert await registry.execute("delete_path", '{"path": "a.txt"}') == "[approval] user (once)\ndeleted a.txt"
     assert len(decisions) == 1
     assert await registry.execute("read_file", '{"path": "a.txt"}') == "read a.txt"
     assert len(decisions) == 1

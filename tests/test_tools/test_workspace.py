@@ -235,6 +235,41 @@ def test_command_denylist_policy_confirm_allow(workspace: object) -> None:
         clear_policy_allowed_commands()
 
 
+def test_a_denylist_answer_is_recorded_as_a_user_process_approval(workspace: object) -> None:
+    """The answer that let the call through is what the result has to say."""
+    del workspace
+    from plyngent.agent import Approval
+    from plyngent.tools.context import collect_approvals
+    from plyngent.tools.workspace import clear_policy_allowed_commands, set_policy_confirm_hook
+
+    set_policy_confirm_hook(lambda *_args: True)
+    clear_policy_allowed_commands()
+    try:
+        with collect_approvals() as recorded:
+            check_command_allowed(["sudo", "id"])
+    finally:
+        set_policy_confirm_hook(None)
+        clear_policy_allowed_commands()
+    assert recorded == [Approval("user", "process")]
+
+
+def test_a_matching_denylist_grant_is_recorded_as_a_process_grant(workspace: object) -> None:
+    """Nobody is asked the second time, and the result says so."""
+    del workspace
+    from plyngent.agent import Approval
+    from plyngent.tools.context import collect_approvals
+    from plyngent.tools.workspace import clear_policy_allowed_commands, grant_policy_command
+
+    clear_policy_allowed_commands()
+    grant_policy_command("sudo")
+    try:
+        with collect_approvals() as recorded:
+            check_command_allowed(["sudo", "id"])
+    finally:
+        clear_policy_allowed_commands()
+    assert recorded == [Approval("grant", "process")]
+
+
 def test_command_denylist_policy_confirm_deny(workspace: object) -> None:
     del workspace
     from plyngent.tools.workspace import (

@@ -253,5 +253,5 @@ async def test_a_write_holds_its_file_across_the_confirm() -> None:
     await asyncio.sleep(0)  # the second write waits for the file, not for the human
     assert order == ["confirm write_a"]
     answered.set()
-    assert await asyncio.gather(first, second) == ["a", "b"]
+    assert await asyncio.gather(first, second) == ["[approval] user (once)\na", "b"]
     assert order == ["confirm write_a", "a", "b"]

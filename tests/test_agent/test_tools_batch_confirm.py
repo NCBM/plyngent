@@ -26,6 +26,11 @@ def _danger(name: str, _args: Mapping[str, object]) -> str | None:
     return f"mutate {name}"
 
 
+def _approved(scope: str, text: str) -> str:
+    """A result as the model reads it once a confirmation let the call run."""
+    return f"[approval] {scope}\n{text}"
+
+
 async def test_loop_round_prompts_once_before_running_its_calls() -> None:
     """The loop aggregates a round's confirms and applies one answer to each call."""
     batch_prompts: list[int] = []
@@ -54,7 +59,10 @@ async def test_loop_round_prompts_once_before_running_its_calls() -> None:
 
     assert batch_prompts == [2]
     assert single_prompts == []
-    assert [getattr(message, "content", None) for message in messages] == ["stamped a", "stamped b"]
+    assert [getattr(message, "content", None) for message in messages] == [
+        _approved("user (round)", "stamped a"),
+        _approved("user (round)", "stamped b"),
+    ]
     assert len(events) == len(tool_calls) * 2  # call event + result event per call
 
 
@@ -88,7 +96,11 @@ async def test_round_asks_once_for_many_mutating_calls() -> None:
     results = [
         await reg.execute(name, arguments, decision=decisions[index]) for index, (name, arguments) in enumerate(calls)
     ]
-    assert results == ["stamped a", "stamped b", "stamped c"]
+    assert results == [
+        _approved("user (round)", "stamped a"),
+        _approved("user (round)", "stamped b"),
+        _approved("user (round)", "stamped c"),
+    ]
     assert ran == ["a", "b", "c"]
     assert single_prompts == []
 
@@ -129,7 +141,11 @@ async def test_yolo_calls_are_left_out_of_the_prompt() -> None:
     results = [
         await reg.execute(name, arguments, decision=decisions[index]) for index, (name, arguments) in enumerate(calls)
     ]
-    assert results == ["stamped a", "stamped b", "stamped c"]
+    assert results == [
+        _approved("yolo (auto)", "stamped a"),
+        _approved("user (round)", "stamped b"),
+        _approved("user (round)", "stamped c"),
+    ]
     assert single_prompts == []
 
 
@@ -153,7 +169,7 @@ async def test_single_request_keeps_the_one_call_prompt() -> None:
     reg = ToolRegistry([stamp], danger=_danger, on_confirm=on_single, on_confirm_batch=on_batch)
     assert await reg.prepare_batch_confirm([("stamp", '{"path": "a"}')]) == [None]
     assert batch_prompts == []
-    assert await reg.execute("stamp", '{"path": "a"}') == "stamped a"
+    assert await reg.execute("stamp", '{"path": "a"}') == _approved("user (once)", "stamped a")
     assert single_prompts == ["stamp"]
 
 
@@ -254,7 +270,10 @@ async def test_manual_hands_the_round_back_to_the_per_call_prompt() -> None:
     decisions = await reg.prepare_batch_confirm(calls)
 
     assert decisions == [None, None]
-    assert [await reg.execute(name, arguments) for name, arguments in calls] == ["stamped a", "stamped b"]
+    assert [await reg.execute(name, arguments) for name, arguments in calls] == [
+        _approved("user (once)", "stamped a"),
+        _approved("user (once)", "stamped b"),
+    ]
     assert batch_prompts == [2]
     assert single_prompts == ["stamp", "stamp"]
 
@@ -274,7 +293,10 @@ async def test_without_a_batch_hook_every_call_prompts_on_its_own() -> None:
     reg = ToolRegistry([stamp], danger=_danger, on_confirm=on_single)
     calls = [("stamp", '{"path": "a"}'), ("stamp", '{"path": "b"}')]
     assert await reg.prepare_batch_confirm(calls) == [None, None]
-    assert [await reg.execute(name, arguments) for name, arguments in calls] == ["stamped a", "stamped b"]
+    assert [await reg.execute(name, arguments) for name, arguments in calls] == [
+        _approved("user (once)", "stamped a"),
+        _approved("user (once)", "stamped b"),
+    ]
     assert single_prompts == ["stamp", "stamp"]
 
 
@@ -306,8 +328,9 @@ async def test_batch_allow_records_the_trustable_grant() -> None:
         calls = [("trust_me", '{"path": "a"}'), ("trust_me", '{"path": "b"}')]
         decisions = await reg.prepare_batch_confirm(calls)
         for path, decision in zip(("a", "b"), decisions, strict=True):
-            assert await reg.execute("trust_me", f'{{"path": "{path}"}}', decision=decision) == f"done {path}"
+            approve = _approved("user (round)", f"done {path}")
+            assert await reg.execute("trust_me", f'{{"path": "{path}"}}', decision=decision) == approve
         assert has_grant(session, "trust_me")
         # The TRUSTABLE grant, not the batch answer, keeps later calls unchecked.
-        assert await reg.execute("trust_me", '{"path": "c"}') == "done c"
+        assert await reg.execute("trust_me", '{"path": "c"}') == _approved("grant (session)", "done c")
     assert single_prompts == []

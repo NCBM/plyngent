@@ -1018,6 +1018,17 @@ def test_every_builtin_tool_has_a_pretty_line() -> None:
     assert missing == []
 
 
+def test_a_confirmed_result_keeps_its_pretty_detail() -> None:
+    """The approval line leads the model's text; a pretty detail reads past it."""
+    from plyngent.cli.display import _pretty_line_for, _pretty_parts
+
+    line = _pretty_line_for("write_file")
+    assert line is not None
+    approved = "[approval] user (once)\nwrote 120 characters to a.txt"
+    _prefix, detail = _pretty_parts(line, '{"path": "a.txt", "overwrite": true}', approved)
+    assert "(120 chars)" in detail
+
+
 async def test_pretty_skill_tools(capsys: pytest.CaptureFixture[str]) -> None:
     await render_events(
         _aiter(
