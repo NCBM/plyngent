@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from plyngent.agent import BatchConfirmDecision, ToolConfirmRequest
+from plyngent.agent import BatchConfirmDecision, Denial, DenialKind, ToolConfirmRequest
 from plyngent.cli.display import close_open_pretty_line
 from plyngent.cli.interrupt import off_loop_prompt, pause_task_cancel_for_prompt
 from plyngent.prompting import (
@@ -293,8 +293,11 @@ def _tool_facts(args: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(facts)
 
 
-def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | str:
-    """True allow; False deny; non-empty str = deny with comment for the model."""
+def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str) -> bool | Denial:
+    """True allow; a :class:`Denial` otherwise (declined, cancelled, no prompt)."""
+    backend = get_prompt_backend()
+    if not backend.is_interactive():
+        return Denial(DenialKind.NO_PROMPT)
     try:
         with prompt_wait(
             "confirm",
@@ -305,7 +308,7 @@ def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str
             _echo_tool_confirm(name, reason)
             allowed = _confirm_with(wait, "Allow this tool call?", default=False)
     except NonInteractiveError:
-        return False
+        return Denial(DenialKind.CANCELLED)
     if allowed:
         return True
     try:
@@ -314,11 +317,11 @@ def _prompt_confirm_tool_sync(name: str, args: Mapping[str, object], reason: str
             default="",
         ).strip()
     except NonInteractiveError:
-        return False
-    return comment or False
+        return Denial(DenialKind.CANCELLED)
+    return Denial(comment=comment or None)
 
 
-def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> bool | str:
+def prompt_confirm_tool(name: str, args: Mapping[str, object], reason: str) -> bool | Denial:
     """Ask whether to allow a dangerous tool call (TTY). Default is deny.
 
     Prints a multi-line boxed summary, then a short y/N prompt. On deny,
@@ -399,11 +402,12 @@ def prompt_policy_command_confirm(
     basename: str,
     argv: Sequence[str],
     timeout_seconds: float,
-) -> bool:
+) -> bool | Denial:
     """Ask whether to allow a denylisted command for this session (timed).
 
-    Independent of YOLO: always prompts when interactive. Default is **deny**.
-    Timeout, cancel, or non-interactive → False.
+    Independent of YOLO: always prompts when interactive. Default is **deny**,
+    and the answer says which denial it was: declined, timed out, cancelled, or
+    not asked at all.
     """
     argv_preview = " ".join(str(part) for part in argv)
     reason = (
@@ -419,7 +423,7 @@ def prompt_policy_command_confirm(
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
-                return False
+                return Denial(DenialKind.NO_PROMPT)
             backend.echo()
             backend.secho(format_tool_confirm_box("policy", reason), fg="yellow")
             backend.echo()
@@ -435,10 +439,12 @@ def prompt_policy_command_confirm(
                         fg="red",
                         err=True,
                     )
-                return False
-            return raw.strip().lower() in {"y", "yes"}
+                return Denial(DenialKind.TIMEOUT, seconds=timeout_seconds)
+            if raw.strip().lower() in {"y", "yes"}:
+                return True
+            return Denial(DenialKind.DECLINED)
     except NonInteractiveError, KeyboardInterrupt, EOFError:
-        return False
+        return Denial(DenialKind.CANCELLED)
 
 
 def prompt_policy_fetch_confirm(
@@ -446,12 +452,12 @@ def prompt_policy_fetch_confirm(
     port: int,
     url: str,
     timeout_seconds: float,
-) -> bool:
+) -> bool | Denial:
     """Ask whether to allow fetch_local to a private/loopback host (timed).
 
-    Independent of YOLO: always prompts when interactive. Default is **deny**.
-    Timeout, cancel, or non-interactive → False. On approve, the host:port is
-    granted for the rest of this process (see net grants).
+    Independent of YOLO: always prompts when interactive. Default is **deny**,
+    and the answer says which denial it was (see the command policy prompt).
+    On approve, the host:port is granted for the rest of this process.
     """
     reason = (
         f"fetch_local targets private/loopback host {host!r} port {port}\n"
@@ -466,7 +472,7 @@ def prompt_policy_fetch_confirm(
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
-                return False
+                return Denial(DenialKind.NO_PROMPT)
             backend.echo()
             backend.secho(format_tool_confirm_box("policy", reason), fg="yellow")
             backend.echo()
@@ -483,10 +489,12 @@ def prompt_policy_fetch_confirm(
                         fg="red",
                         err=True,
                     )
-                return False
-            return raw.strip().lower() in {"y", "yes"}
+                return Denial(DenialKind.TIMEOUT, seconds=timeout_seconds)
+            if raw.strip().lower() in {"y", "yes"}:
+                return True
+            return Denial(DenialKind.DECLINED)
     except NonInteractiveError, KeyboardInterrupt, EOFError:
-        return False
+        return Denial(DenialKind.CANCELLED)
 
 
 def prompt_skill_write_confirm(
@@ -499,8 +507,9 @@ def prompt_skill_write_confirm(
 
     ``o``/``y`` allows this write; ``s`` allows this skill directory for the rest
     of the chat; anything else (or a timeout, cancel, or non-interactive stdin)
-    denies. Independent of YOLO: a skill directory is not a path grant, so the
-    human is asked even with ``--yes`` unless ``[skills].allow_write`` is set.
+    denies, and the answer says which denial it was. Independent of YOLO: a skill
+    directory is not a path grant, so the human is asked even with ``--yes``
+    unless ``[skills].allow_write`` is set.
     """
     lines = [
         f"action: {action} skill {skill_dir.name!r}",
@@ -522,7 +531,7 @@ def prompt_skill_write_confirm(
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
-                return SkillWriteDecision(allow=False)
+                return SkillWriteDecision(allow=False, denial=Denial(DenialKind.NO_PROMPT))
             backend.echo()
             backend.secho(format_tool_confirm_box(f"skills {action}", "\n".join(lines)), fg="yellow")
             backend.echo()
@@ -536,15 +545,15 @@ def prompt_skill_write_confirm(
             if raw is None:
                 with contextlib.suppress(OSError, NonInteractiveError):
                     backend.secho(f"[skills] timed out after {timeout_seconds:g}s — denied", fg="red", err=True)
-                return SkillWriteDecision(allow=False)
+                return SkillWriteDecision(allow=False, denial=Denial(DenialKind.TIMEOUT, seconds=timeout_seconds))
             token = raw.strip().lower()
             if token in {"s", "session"}:
                 return SkillWriteDecision(allow=True, session=True)
             if token in {"o", "once", "y", "yes"}:
                 return SkillWriteDecision(allow=True)
-            return SkillWriteDecision(allow=False)
+            return SkillWriteDecision(allow=False, denial=Denial(DenialKind.DECLINED))
     except NonInteractiveError, KeyboardInterrupt, EOFError:
-        return SkillWriteDecision(allow=False)
+        return SkillWriteDecision(allow=False, denial=Denial(DenialKind.CANCELLED))
 
 
 def prompt_directory_access_confirm(
@@ -552,12 +561,12 @@ def prompt_directory_access_confirm(
     mode: AccessMode,
     reason: str,
     timeout_seconds: float,
-) -> AccessDecision | str | None:
+) -> AccessDecision | str | Denial:
     """Ask whether to grant access to *path* at *mode* (timed; default deny).
 
     ``y`` approves the requested level; ``read`` / ``write`` / ``exec`` approve
-    that level instead. The host's hook decides YOLO/``--yes`` before calling
-    this. Timeout, cancel, or non-interactive → ``None`` (deny).
+    that level instead. Nothing answers this prompt for the human, and a denial
+    says which one it was: declined, timed out, cancelled, or not asked at all.
     """
     kind = "directory" if path.is_dir() else "file"
     lines = [
@@ -580,7 +589,7 @@ def prompt_directory_access_confirm(
         ):
             backend = get_prompt_backend()
             if not backend.is_interactive():
-                return None
+                return Denial(DenialKind.NO_PROMPT)
             backend.echo()
             backend.secho(
                 format_tool_confirm_box("request_directory_access", "\n".join(lines)),
@@ -601,20 +610,23 @@ def prompt_directory_access_confirm(
                         fg="red",
                         err=True,
                     )
-                return None
+                return Denial(DenialKind.TIMEOUT, seconds=timeout_seconds)
             token = raw.strip().lower()
             if token in {"y", "yes"}:
                 return AccessDecision(mode)
             level = parse_access_mode(token)
             if level is not None:
                 return AccessDecision(level)
-            return None
+            return Denial(DenialKind.DECLINED)
     except NonInteractiveError, KeyboardInterrupt, EOFError:
-        return None
+        return Denial(DenialKind.CANCELLED)
 
 
-async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | str:
-    """Async confirm: True allow, False deny, str = deny with user comment."""
+async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reason: str) -> bool | Denial:
+    """Async confirm: True allows; a :class:`Denial` says why it did not."""
+    backend = get_prompt_backend()
+    if not backend.is_interactive():
+        return Denial(DenialKind.NO_PROMPT)
     facts = _tool_facts(args)
     try:
         # Box is printed inside the worker thread via confirm's backend.
@@ -627,7 +639,7 @@ async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reaso
 
         allowed = await run_prompt_async(_run)
     except NonInteractiveError:
-        return False
+        return Denial(DenialKind.CANCELLED)
     if allowed:
         return True
     try:
@@ -638,8 +650,8 @@ async def prompt_confirm_tool_async(name: str, args: Mapping[str, object], reaso
             )
         ).strip()
     except NonInteractiveError:
-        return False
-    return comment or False
+        return Denial(DenialKind.CANCELLED)
+    return Denial(comment=comment or None)
 
 
 async def prompt_confirm_batch_async(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
@@ -654,14 +666,14 @@ async def prompt_confirm_batch_async(requests: Sequence[ToolConfirmRequest]) -> 
 
         return await run_prompt_async(lambda: _prompt_confirm_batch_sync(requests))
     except NonInteractiveError:
-        return BatchConfirmDecision(allowed=False)
+        return BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.CANCELLED))
 
 
 def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
     backend = get_prompt_backend()
     if not backend.is_interactive():
         # Non-interactive: deny, like the default of the single prompt.
-        return BatchConfirmDecision(allowed=False)
+        return BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.NO_PROMPT))
     tools = tuple(dict.fromkeys(request.name for request in requests))
     with prompt_wait(
         "batch",
@@ -690,7 +702,7 @@ def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchC
                     _ = sys.stderr.flush()
                 token = (_read_answer(None, wait) or "n").strip().lower()
         except NonInteractiveError:
-            return BatchConfirmDecision(allowed=False)
+            return BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.CANCELLED))
     if token in _BATCH_MANUAL_TOKENS:
         return BatchConfirmDecision(allowed=False, each=True)
     if token in _BATCH_YES_TOKENS:
@@ -701,8 +713,8 @@ def _prompt_confirm_batch_sync(requests: Sequence[ToolConfirmRequest]) -> BatchC
             default="",
         ).strip()
     except NonInteractiveError:
-        comment = ""
-    return BatchConfirmDecision(allowed=False, comment=comment or None)
+        return BatchConfirmDecision(allowed=False, denial=Denial(DenialKind.CANCELLED))
+    return BatchConfirmDecision(allowed=False, comment=comment or None, denial=Denial(DenialKind.DECLINED))
 
 
 def format_batch_confirm_box(requests: Sequence[ToolConfirmRequest]) -> str:

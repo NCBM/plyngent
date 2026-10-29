@@ -33,6 +33,7 @@ from plyngent.tools.view import MemoryViewStore, session_data_view
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from plyngent.agent import Denial
     from plyngent.config.models import Provider
     from plyngent.config.store import ConfigStore
     from plyngent.memory import MemoryStore
@@ -296,7 +297,7 @@ class ReplState:
         mode: AccessMode,
         reason: str,
         timeout_seconds: float,
-    ) -> AccessDecision | str | None:
+    ) -> AccessDecision | str | Denial:
         """Directory-access confirm: always ask, whatever YOLO mode says.
 
         An out-of-workspace path is a grant on the filesystem rather than one
