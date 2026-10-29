@@ -16,6 +16,7 @@ from plyngent.memory import MemoryStore
 from plyngent.prompting import NonInteractiveBackend, temporary_backend
 from plyngent.tools import AccessMode, grant_session_access
 from plyngent.tools.access import AccessDecision
+from tests.test_prompting import ScriptedBackend
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -131,13 +132,27 @@ async def test_persist_and_load_roundtrip(state: ReplState, tmp_path: Path) -> N
     assert state.session_state.access_grants == {outside: AccessMode.WRITE}
 
 
-def test_yolo_hook_auto_approves_as_process_grant(state: ReplState, tmp_path: Path) -> None:
+def test_yolo_does_not_answer_the_directory_access_prompt(
+    state: ReplState,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An out-of-workspace grant is ask-only, whatever YOLO mode says."""
+    from plyngent.cli import limits
+
     state.set_yolo("on")
-    decision = state.directory_access_confirm_hook(tmp_path, AccessMode.EXEC, "", 30.0)
-    assert decision == AccessDecision(AccessMode.EXEC, persist=False)
+    monkeypatch.setattr(limits, "_read_yes_no_line_with_timeout", lambda _timeout, **_kwargs: "y\n")
+    with temporary_backend(ScriptedBackend([])):
+        decision = state.directory_access_confirm_hook(tmp_path, AccessMode.EXEC, "", 30.0)
+    # Answered as a human prompt, so it is a session grant — not a process grant.
+    assert decision == AccessDecision(AccessMode.EXEC, persist=True)
 
 
-def test_default_hook_denies_noninteractive(state: ReplState, tmp_path: Path) -> None:
+def test_yolo_denies_the_directory_access_prompt_when_nobody_answers(
+    state: ReplState,
+    tmp_path: Path,
+) -> None:
+    state.set_yolo("on")
     with temporary_backend(NonInteractiveBackend()):
         assert state.directory_access_confirm_hook(tmp_path, AccessMode.READ, "", 1.0) is None
 
