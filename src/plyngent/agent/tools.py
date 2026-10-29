@@ -102,6 +102,64 @@ class BatchConfirmDecision:
     each: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class Approval:
+    """How one call got past a confirmation, as the model reads it back.
+
+    ``source`` names who answered — ``user`` (a human at a prompt), ``grant``
+    (trust recorded earlier, so nobody was asked *this* time), ``yolo`` (YOLO
+    mode dropped the soft confirm) or ``config`` (a configured allow, e.g.
+    ``[agent].allow_paths`` or ``[skills].allow_write``) — and ``scope`` how far
+    that answer reaches: ``once``, ``round`` (a batch allow), ``session``,
+    ``process`` or ``auto`` (mode-driven, not a grant).
+    """
+
+    source: str
+    scope: str
+
+    @property
+    def label(self) -> str:
+        """``user (once)`` — the words the result's first line carries."""
+        return f"{self.source} ({self.scope})"
+
+
+# Who answered first when one call carries several records: a human prompt is the
+# closest answer, an earlier grant sits second, a config allow third, and YOLO
+# mode says the least about why the call was allowed.
+_APPROVAL_PRIORITY = {"user": 0, "grant": 1, "config": 2, "yolo": 3}
+
+
+def format_approval(approval: Approval) -> str:
+    """The model-facing line naming how a call was approved."""
+    return f"[approval] {approval.label}"
+
+
+def most_specific_approval(approvals: Sequence[Approval]) -> Approval | None:
+    """The one record a result carries (ties keep the first recorded)."""
+    if not approvals:
+        return None
+    return min(approvals, key=lambda a: _APPROVAL_PRIORITY.get(a.source, len(_APPROVAL_PRIORITY)))
+
+
+@dataclass(frozen=True, slots=True)
+class _Gate:
+    """What the soft gate decided for one call: a denial, else how it was allowed."""
+
+    denied: str | None = None
+    approval: Approval | None = None
+
+
+def _with_approval(output: ToolOutput, approval: Approval | None) -> ToolOutput:
+    """Lead *output* with its approval line (nothing to add: unchanged).
+
+    An ``error:`` result carries no line: the call did not finish, so the answer
+    that let it start is not what the model has to read first.
+    """
+    if approval is None or output.text.startswith("error: "):
+        return output
+    return msgspec.structs.replace(output, text=f"{format_approval(approval)}\n{output.text}")
+
+
 # One prompt for a round's requests; a single request keeps ``ToolConfirmHook``.
 type ToolBatchConfirmHook = Callable[
     [Sequence[ToolConfirmRequest]],
@@ -571,17 +629,17 @@ class ToolRegistry:
         reason: str,
         *,
         tags: ToolTag,
-    ) -> str | None:
+    ) -> _Gate:
         if self._on_confirm is None:
-            return f"error: tool {name!r} denied by policy ({reason}; no confirm hook)"
+            return _Gate(denied=f"error: tool {name!r} denied by policy ({reason}; no confirm hook)")
         decision = self._on_confirm(name, args, reason)
         if inspect.isawaitable(decision):
             decision = await decision
         if decision is True:
             await self._record_grant(name, tags=tags)
-            return None
+            return _Gate(approval=Approval("user", "once"))
         comment = decision if isinstance(decision, str) else None
-        return _denied_error(name, reason, comment)
+        return _Gate(denied=_denied_error(name, reason, comment))
 
     async def _apply_batch_decision(
         self,
@@ -590,11 +648,11 @@ class ToolRegistry:
         decision: BatchConfirmDecision,
         *,
         tags: ToolTag,
-    ) -> str | None:
+    ) -> _Gate:
         if decision.allowed:
             await self._record_grant(name, tags=tags)
-            return None
-        return _denied_error(name, reason, decision.comment)
+            return _Gate(approval=Approval("user", "round"))
+        return _Gate(denied=_denied_error(name, reason, decision.comment))
 
     def _prepare_confirm(self, name: str, arguments_json: str) -> ToolConfirmRequest | None:
         """Soft-confirm request for one call, or ``None`` when it needs none.
@@ -678,7 +736,7 @@ class ToolRegistry:
         *,
         tags: ToolTag,
         decision: BatchConfirmDecision | None = None,
-    ) -> str | None:
+    ) -> _Gate:
         """Soft-confirm gate driven by danger reason + tags + grants + YOLO.
 
         Pipeline (soft gate only; hard denylists stay in tool handlers)::
@@ -690,20 +748,23 @@ class ToolRegistry:
             else → on_confirm (a tool without the YOLO tag, or a reason YOLO
                    may not drop — a privilege escalation — still prompts
                    under YOLO mode)
+
+        Every allow names how it happened, so the result can say it; a call that
+        needed no confirmation carries no approval.
         """
         if self._danger is None:
-            return None
+            return _Gate()
         reason = _as_danger_reason(self._danger(name, args))
         if reason is None:
-            return None
+            return _Gate()
         if self._yolo and (tags & ToolTag.YOLO) and reason.yolo_skip:
-            return None
+            return _Gate(approval=Approval("yolo", "auto"))
 
         async with self._confirm_lock:
             if decision is not None:
                 return await self._apply_batch_decision(name, reason.text, decision, tags=tags)
             if self._grant_allows(name, tags=tags):
-                return None
+                return _Gate(approval=Approval("grant", "session"))
             return await self._prompt_soft_confirm(name, args, reason.text, tags=tags)
 
     async def execute(
@@ -746,6 +807,8 @@ class ToolRegistry:
             return ToolOutput(text=missing_error)
 
         async def _run() -> ToolOutput:
+            from plyngent.tools.context import collect_approvals
+
             missing = self._check_state_tags(definition)
             if missing is not None:
                 return ToolOutput(text=missing)
@@ -754,11 +817,16 @@ class ToolRegistry:
             async with AsyncExitStack() as held:
                 for lock in self._write_locks_for(definition, args):
                     await held.enter_async_context(lock)
-                denied = await self._maybe_confirm(name, args, tags=definition.tags, decision=decision)
-                if denied is not None:
-                    return ToolOutput(text=denied)
-                result = await self._invoke(definition, args)
-                return _without_refused_images(result if isinstance(result, ToolOutput) else ToolOutput(text=result))
+                with collect_approvals() as recorded:
+                    gate = await self._maybe_confirm(name, args, tags=definition.tags, decision=decision)
+                    if gate.denied is not None:
+                        return ToolOutput(text=gate.denied)
+                    result = await self._invoke(definition, args)
+                output = _without_refused_images(result if isinstance(result, ToolOutput) else ToolOutput(text=result))
+                # The gate's answer and whatever the handler asked on its own;
+                # the result carries the one closest to a human (see Approval).
+                approvals = [*([gate.approval] if gate.approval is not None else []), *recorded]
+                return _with_approval(output, most_specific_approval(approvals))
 
         # Bind host-provided state for tools that read contextvars (todo, workspace).
         # Tag enforcement remains gated by ``auto_bind_state``; binding is always useful

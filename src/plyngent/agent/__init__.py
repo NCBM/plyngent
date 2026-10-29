@@ -28,6 +28,7 @@ from .notices import has_notice as has_notice
 from .notices import resume_notice as resume_notice
 from .notices import skill_tools_notice as skill_tools_notice
 from .notices import truncated_turn_notice as truncated_turn_notice
+from .tools import Approval as Approval
 from .tools import BatchConfirmDecision as BatchConfirmDecision
 from .tools import DangerClassifier as DangerClassifier
 from .tools import DangerReason as DangerReason
@@ -38,6 +39,8 @@ from .tools import ToolDefinition as ToolDefinition
 from .tools import ToolOutput as ToolOutput
 from .tools import ToolRegistry as ToolRegistry
 from .tools import ToolTag as ToolTag
+from .tools import format_approval as format_approval
+from .tools import most_specific_approval as most_specific_approval
 from .tools import schema_from_callable as schema_from_callable
 from .tools import tool as tool
 from .usage import TokenUsage as TokenUsage

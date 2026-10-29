@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.agent.todo_stack import TodoStack
+    from plyngent.agent.tools import Approval
     from plyngent.skills import SkillStore
     from plyngent.tools.workspace import AccessMode, WorkspacePolicy
 
@@ -149,6 +150,34 @@ def bind_session(state: SessionState | None) -> Generator[SessionState | None]:
 
 
 _read_only: ContextVar[bool] = ContextVar("plyngent_read_only_context", default=False)
+
+# Approvals a handler records for the call it is answering. The registry binds a
+# fresh list around one call and drains it into the result's first line.
+_approvals: ContextVar[list[Approval] | None] = ContextVar("plyngent_tool_approvals", default=None)
+
+
+@contextmanager
+def collect_approvals() -> Generator[list[Approval]]:
+    """Collect what the running tool call records about how it was approved."""
+    sink: list[Approval] = []
+    token = _approvals.set(sink)
+    try:
+        yield sink
+    finally:
+        _approvals.reset(token)
+
+
+def record_approval(approval: Approval) -> None:
+    """Record how the running call was approved (no-op outside a tool call).
+
+    A handler that asks the human for something policy-level — a denylisted
+    command, a skill write, a private host — says so here, so the model reads the
+    answer in the result it is about to see. The registry turns the records into
+    the single ``[approval]`` line that leads the tool result.
+    """
+    sink = _approvals.get()
+    if sink is not None:
+        sink.append(approval)
 
 
 @contextmanager
