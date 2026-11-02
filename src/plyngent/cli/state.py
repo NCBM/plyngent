@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
 from dataclasses import dataclass, field
@@ -1007,16 +1008,29 @@ class ReplState:
             hint = self.agent.last_request_usage.prompt_tokens
             # Approximate: calibrate against current full history char-est.
             sent_est = estimate_messages_tokens(messages)
-        summary = await summarize_messages(
-            self.client,
-            messages,
-            model=self.model,
-            max_context_tokens=self.agent.max_context_tokens,
-            prompt_tokens_hint=hint,
-            sent_estimate_tokens=sent_est,
-            system_prompt=self.config.agent_config.compact_system_prompt or None,
-            user_prefix=self.config.agent_config.compact_user_prefix or None,
-        )
+        # The summary is the only long wait in here, and nothing has been
+        # created yet, so it is the safe place to be interrupted: Ctrl+C drops
+        # the request and reports back (see the CancelledError below). Everything
+        # after it is a couple of DB writes that build the new session, and a
+        # cancel that landed there would leave it half-seeded.
+        from plyngent.cli.retry import run_cancellable
+
+        try:
+            summary = await run_cancellable(
+                summarize_messages(
+                    self.client,
+                    messages,
+                    model=self.model,
+                    max_context_tokens=self.agent.max_context_tokens,
+                    prompt_tokens_hint=hint,
+                    sent_estimate_tokens=sent_est,
+                    system_prompt=self.config.agent_config.compact_system_prompt or None,
+                    user_prefix=self.config.agent_config.compact_user_prefix or None,
+                )
+            )
+        except asyncio.CancelledError:
+            msg = "compaction cancelled (nothing changed)"
+            raise ValueError(msg) from None
         carried_todos = self.todo_stack.to_raw()
         session_name = name or f"compact-from-{old_id}"
         await self.new_session(name=session_name)

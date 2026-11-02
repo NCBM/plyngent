@@ -315,7 +315,7 @@ Type `/help` in the REPL for the live list. Common ones:
 | `/sessions` | Sessions for this workspace |
 | `/new` `/resume` `/rename` `/delete` | Session lifecycle (`/delete` confirms) |
 | `/export [md\|json] [path]` | Transcript from DB (no secrets) |
-| `/compact` | Soft-compact + model summary into a **new** session |
+| `/compact` | Soft-compact + model summary into a **new** session (Ctrl+C drops the summary request, and no session is created) |
 | `/stream` `/verbose` `/markdown` `/tools` `/rounds` | Toggles and limits |
 | `/yolo [on\|off\|once]` | Soft destructive confirms: sticky skip, off, or next turn only |
 
