@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import pytest
 import tomlkit
@@ -28,7 +29,7 @@ from plyngent.tools import image_input_refusal
 from plyngent.tools.context import bind_instance
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
     from pathlib import Path
 
 
@@ -108,6 +109,21 @@ async def state(tmp_path: Path) -> AsyncIterator[ReplState]:
 
 async def test_help(state: ReplState) -> None:
     assert await handle_slash(state, "/help") is True
+
+
+async def test_a_cancelled_slash_command_keeps_the_repl(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A command's own work being cancelled must not cancel the REPL's task."""
+    from plyngent.cli import slash as slash_module
+
+    def cancelled(_args: Sequence[str], _state: object) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(slash_module, "_run_slash_argv", cancelled)
+    assert await slash_module.handle_slash(cast("ReplState", cast("object", None)), "/btw hello") is True
+    assert "cancelled" in capsys.readouterr().out
 
 
 async def test_auto_continue_limits_installs_on_limit(tmp_path: Path) -> None:

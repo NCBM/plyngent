@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 from typing import TYPE_CHECKING, Any, Literal, cast, override
@@ -1639,6 +1640,11 @@ async def handle_slash(state: ReplState, line: str) -> bool:
     args[0] = args[0].lower()
     try:
         await awaitlet.async_def(_run_slash_argv, args, state)
+    except asyncio.CancelledError:
+        # A command's own cancellable work was stopped (``/btw``'s side turn, a
+        # prompt): the interrupt belongs to that command. Letting it through
+        # would cancel this REPL task and end the session instead.
+        click.secho("cancelled", fg="yellow")
     except ReplExitError:
         return False
     except click.ClickException as exc:
