@@ -254,12 +254,14 @@ class _Runner:
         depth: int,
         branch: str | None = None,
         parent: int | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         via = (branch, parent) if branch is not None and parent is not None else None
         for node in nodes:
             if self.stopped:
                 return
-            _ = await self.run_node(node, depth=depth, via=via)
+            _ = await self.run_node(node, depth=depth, via=via, cwd=cwd, env=env)
 
     async def run_node(
         self,
@@ -270,11 +272,17 @@ class _Runner:
         stdin: str | None = None,
         also_feeds: bool = False,
         stage_only: bool = False,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> _Stage:
+        # A continuation runs where its parent ran, unless it names its own
+        # directory or environment; the batch's cwd/env are the outermost default.
+        node_cwd = node["cwd"] if node["cwd"] is not None else (self.cwd if cwd is None else cwd)
+        node_env = _merge_env(self.env if env is None else env, node["env"])
         result = await execute_argv(
             node["argv"],
-            cwd=node["cwd"] if node["cwd"] is not None else self.cwd,
-            env=_merge_env(self.env, node["env"]),
+            cwd=node_cwd,
+            env=node_env,
             stdin=stdin if stdin is not None else node["stdin"],
             timeout_seconds=node["timeout_seconds"],
             mix_stderr=node["mix_stderr"],
@@ -296,6 +304,8 @@ class _Runner:
                 stdin=piped,
                 also_feeds=position + 1 < len(chain),
                 stage_only=True,
+                cwd=node_cwd,
+                env=node_env,
             )
             piped = stage.captured
 
@@ -308,12 +318,26 @@ class _Runner:
             return stage
         if stage.failed:
             if node["else"]:
-                await self.run_list(node["else"], depth=depth + 1, branch="else", parent=index)
+                await self.run_list(
+                    node["else"],
+                    depth=depth + 1,
+                    branch="else",
+                    parent=index,
+                    cwd=node_cwd,
+                    env=node_env,
+                )
             elif self._effective_stop(node):
                 self.stopped = True
             return stage
         if node["then"]:
-            await self.run_list(node["then"], depth=depth + 1, branch="then", parent=index)
+            await self.run_list(
+                node["then"],
+                depth=depth + 1,
+                branch="then",
+                parent=index,
+                cwd=node_cwd,
+                env=node_env,
+            )
         return stage
 
     def _effective_stop(self, node: dict[str, Any]) -> bool:
@@ -349,13 +373,22 @@ async def run_argv_batch(
         }
 
     ``steps`` is a list of nodes, and ``then`` / ``else`` / ``pipe`` each take one
-    node or a list of them, so the tree nests. A failure with no ``else`` stops
-    the batch, unless that node sets ``stop_on_error: false``: it then skips its
-    own continuations and the next sibling runs. A ``pipe`` step takes no
-    ``then`` / ``else`` — branch on the node that owns the pipe. Max 20 nodes and
-    4 nesting levels; the batch stops early once accumulated output passes the
-    run budget (128k chars). Each command's output is kept whole for the model; a
-    long result carries a ``document_id`` to read on.
+    node or a list of them, so the tree nests. A continuation runs where its
+    parent ran: it inherits the parent's ``cwd`` and ``env`` (its own win, and
+    the batch's are the outermost default). A ``pipe`` chain runs to its last
+    command whatever the earlier ones did, and only that last exit code decides
+    the branch; a pipe step takes no ``then`` / ``else`` — branch on the node
+    that owns the pipe. A failure with no ``else`` stops the batch, unless that
+    node sets ``stop_on_error: false``: it then skips its own continuations and
+    the next sibling runs. A failure inside a continuation is nobody's to
+    answer, so it stops the batch the same way.
+
+    Max 20 nodes and 4 nesting levels; the batch stops early once accumulated
+    output passes the run budget (128k chars). Each command's output is kept
+    whole for the model (a long result carries a ``document_id`` to read on), in
+    a ``--- step N ---`` block that also says how it got there: ``depth=`` when
+    nested, ``via=then of step N`` (or ``else`` / ``pipe``) and ``pipe=true``
+    when its stdout fed another command.
     """
     try:
         nodes, count = _read_batch(steps)

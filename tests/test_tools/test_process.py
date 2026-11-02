@@ -306,6 +306,52 @@ async def test_run_argv_batch_names_the_node_grammar(workspace: object) -> None:
     assert "then, else, pipe" in out
 
 
+async def test_run_argv_batch_a_continuation_runs_where_its_parent_ran(workspace: Path) -> None:
+    """``then`` inherits the parent's ``cwd`` and ``env`` unless it names its own."""
+    (workspace / "sub").mkdir()
+    (workspace / "own").mkdir()
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("import os; print('parent', os.path.basename(os.getcwd()), os.environ['FOO'])"),
+                "cwd": "sub",
+                "env": {"FOO": "inherited"},
+                "then": [
+                    {"argv": _py("import os; print('then', os.path.basename(os.getcwd()), os.environ['FOO'])")},
+                    {
+                        "argv": _py("import os; print('own', os.path.basename(os.getcwd()), os.environ['FOO'])"),
+                        "cwd": "own",
+                        "env": {"FOO": "own"},
+                    },
+                ],
+            }
+        ],
+    )
+    assert "parent sub inherited" in out
+    assert "then sub inherited" in out
+    assert "own own own" in out
+
+
+async def test_run_argv_batch_a_pipe_runs_to_its_end(workspace: object) -> None:
+    """A failing pipe stage does not skip the rest; the last command decides."""
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("import sys; sys.exit(3)"),
+                "pipe": {"argv": _py("import sys; print('second-stage-ran'); sys.exit(0)")},
+                "else": {"argv": _py("print('branch-on-pipe-end')")},
+            },
+            {"argv": _py("print('batch-continues')")},
+        ],
+    )
+    assert "second-stage-ran" in out
+    assert "branch-on-pipe-end" not in out  # the chain's last exit code was 0
+    assert "batch-continues" in out
+
+
 def _asking_registry(*definitions: ToolDefinition) -> tuple[ToolRegistry, list[str]]:
     """A registry whose confirm hook records the calls it was asked about."""
     asked: list[str] = []
