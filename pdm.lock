@@ -499,13 +499,13 @@ files = [
 
 [[package]]
 name = "platformdirs"
-version = "4.14.0"
+version = "4.14.3"
 requires_python = ">=3.11"
 summary = "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
 groups = ["default"]
 files = [
-    {file = "platformdirs-4.14.0-py3-none-any.whl", hash = "sha256:1dadfc59a8a5d7565b3d9270ae8fa71c065595352c4277b41c11ee6c222c4b91"},
-    {file = "platformdirs-4.14.0.tar.gz", hash = "sha256:83f009c1e8c5fc36869b5171755b291887bd2cade7965233cdfabd23d754720b"},
+    {file = "platformdirs-4.14.3-py3-none-any.whl", hash = "sha256:cba2d05fe5e18b26b1fa6f376b8e6234c012abe1f8696c486fface7d0054e931"},
+    {file = "platformdirs-4.14.3.tar.gz", hash = "sha256:021add1ab113483edbcd4694f5fbb2d688b893ea30d35e1155bb371cf4be0be8"},
 ]
 
 [[package]]
@@ -552,18 +552,18 @@ files = [
 
 [[package]]
 name = "pytest-asyncio"
-version = "1.4.1"
+version = "1.4.1.post1"
 requires_python = ">=3.10"
 summary = "Pytest support for asyncio"
 groups = ["dev"]
 dependencies = [
     "backports-asyncio-runner<2,>=1.1; python_version < \"3.11\"",
-    "pytest<10,>=8.4",
+    "pytest>=8.4",
     "typing-extensions>=4.12; python_version < \"3.13\"",
 ]
 files = [
-    {file = "pytest_asyncio-1.4.1-py3-none-any.whl", hash = "sha256:507afa78ec77c6661164ef1a2368bc7820383fd1a14b2a7f813de8b5a92949cc"},
-    {file = "pytest_asyncio-1.4.1.tar.gz", hash = "sha256:e8266eb094e5ee9ffdb2068c9836f33e209ea77a970eb846933d416b5602669b"},
+    {file = "pytest_asyncio-1.4.1.post1-py3-none-any.whl", hash = "sha256:0755e488cc0a2b9bd2eab7292cc6390d4cbb8390f1020745647bae5a708e0165"},
+    {file = "pytest_asyncio-1.4.1.post1.tar.gz", hash = "sha256:f582d9ea4a1c082195abe8bd29a1fe106aeb1cd435e3dad2d3bc2749935c36a2"},
 ]
 
 [[package]]
@@ -818,7 +818,7 @@ files = [
 
 [[package]]
 name = "winrt-runtime"
-version = "4.0.3"
+version = "4.1.0"
 requires_python = ">=3.11"
 summary = "The runtime that every PyWinRT projection package runs on"
 groups = ["notify"]
@@ -827,118 +827,118 @@ dependencies = [
     "typing-extensions>=4.12.2",
 ]
 files = [
-    {file = "winrt_runtime-4.0.3-cp314-cp314-win32.whl", hash = "sha256:fee35995e7dfb083b5024d7a11d63ad2d2c74e7a9fc6a58dcdede52c1f0a321d"},
-    {file = "winrt_runtime-4.0.3-cp314-cp314-win_amd64.whl", hash = "sha256:03d76d06172b6f5bb6312aa24f0d25761b1e45fe2b7c3c0b4ad0cd73a06bb293"},
-    {file = "winrt_runtime-4.0.3-cp314-cp314-win_arm64.whl", hash = "sha256:9731462174346a2ede57660b9d521e41a16cd7e59890dc292c4250c42d1642a9"},
-    {file = "winrt_runtime-4.0.3-cp314-cp314t-win32.whl", hash = "sha256:dc545f834a3dd2bcc69512193677f0918788ccce4871ca24937aa6f171ea7112"},
-    {file = "winrt_runtime-4.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:b0b06be21eb17248ce32d43a4a027ba22651065f9af5b42c3454575766879e1e"},
-    {file = "winrt_runtime-4.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:2b8d6a55d695e54a25e262a6d1134c510a1e291cf2c3d141990a8c209f87dc40"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315-win32.whl", hash = "sha256:ff7920a2d42734c545984ef671376713ce09f8e59fc9a5b420395406e2c1eea7"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315-win_amd64.whl", hash = "sha256:403a80372f33635851814760d1acd6d8bbdb0dedff7812203d0dd4cfba809e8b"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315-win_arm64.whl", hash = "sha256:52eb937ab71e39ddf798f16dfe47d572a8c097ac6d1eb2ddb700fc7977591241"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315t-win32.whl", hash = "sha256:325a701c70e32b31139bf650c31fa352f4eae108fb0488aad074fb7026b1e650"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315t-win_amd64.whl", hash = "sha256:f0e5ce8fc5e6453fbad7ed3197010586337a9a4d42fce29847d8a5573f29d8e9"},
-    {file = "winrt_runtime-4.0.3-cp315-cp315t-win_arm64.whl", hash = "sha256:9580aaf167a9e1d9d790b57e9dfaa5499c8a625bd85f3872a5097915d25f1c24"},
-    {file = "winrt_runtime-4.0.3.tar.gz", hash = "sha256:b04877a5b1f2ca67084d62731546f7b512c8291e2b70b95def82a1c4d0bfe993"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314-win32.whl", hash = "sha256:c51f2d9c0835e3628b3281eac1d5ef2f7cc772302d6a038f5d2bce9e5591d179"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314-win_amd64.whl", hash = "sha256:af422bbcffa7249770ab118bc5b9aa1f8fcd401566abca478f91cf7bd9a8b7dd"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314-win_arm64.whl", hash = "sha256:453b6d6f8568d639038fe313b37661acf372a8173040f41a36305be95dbf14f0"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314t-win32.whl", hash = "sha256:d8c4654ec0f214a29354b22039d8bd9728968f3195c4cafcded8bfe57cb6fd36"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:77b79a83e8af56ea98ae8644d1e9e753376c8d97586986eb05068d49d653389f"},
+    {file = "winrt_runtime-4.1.0-cp314-cp314t-win_arm64.whl", hash = "sha256:4fd0f5779c793235aa10d09dfe851c2e7830739b4f41766cc865d4218d2a403f"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315-win32.whl", hash = "sha256:a1418ed9c3592c48fa74f30004abf10d7e96df33f84e782aa61387af16013375"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315-win_amd64.whl", hash = "sha256:281a6085d07dd941873ef16b7bc236f37ad45bd166435e8cabdeff00c67d2830"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315-win_arm64.whl", hash = "sha256:a2bd0d3018f3c2add91f961305e000e56ef9ec222359d069f91cc2e0d4078ace"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315t-win32.whl", hash = "sha256:db36eeae93d36d41e6e7e67b529de122b2798ad687d661e63b287169624f6d44"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315t-win_amd64.whl", hash = "sha256:cf9f050cc3565163ec512eda2f834d7c201a2ece54232d7dda770bd9d232d352"},
+    {file = "winrt_runtime-4.1.0-cp315-cp315t-win_arm64.whl", hash = "sha256:c299e9b991b623413c5c8773dfaa3f72d039128bdce6ff0b9815c3cb07ba793e"},
+    {file = "winrt_runtime-4.1.0.tar.gz", hash = "sha256:d345452652ce7243ce3d97ebf63067f848717a8328cca8c4e851c2d0a53ef577"},
 ]
 
 [[package]]
 name = "winrt-windows-applicationmodel-core"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.ApplicationModel.Core namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
     "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation-collections>=4!10.0.28000.2705",
-    "winrt-windows-foundation>=4!10.0.28000.2705",
+    "winrt-windows-foundation-collections>=4!10.0.28000.2957",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_applicationmodel_core-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:c6c0a854e8ab3620899ae83671bb30853183cc43d7b7ab9d2cb11fe60f2e1138"},
-    {file = "winrt_windows_applicationmodel_core-4!10.0.28000.2705.tar.gz", hash = "sha256:f06920b88d030266cd2c0ef270dbcf3dec1f438e95e458933cba18103d35902b"},
+    {file = "winrt_windows_applicationmodel_core-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:55762c64133a38b3c1b50303030f440657bf37b3905f46929b5c5b445799fff1"},
+    {file = "winrt_windows_applicationmodel_core-4!10.0.28000.2957.tar.gz", hash = "sha256:eb1dd1d047a8aec26593956d52ed8204d9f3def71bf64a0fc6f676c0ba1b5663"},
 ]
 
 [[package]]
 name = "winrt-windows-data-xml-dom"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.Data.Xml.Dom namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
     "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation-collections>=4!10.0.28000.2705",
-    "winrt-windows-foundation>=4!10.0.28000.2705",
-    "winrt-windows-storage-streams>=4!10.0.28000.2705",
+    "winrt-windows-foundation-collections>=4!10.0.28000.2957",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
+    "winrt-windows-storage-streams>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_data_xml_dom-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:5784183aca5a7f0f297e21789de34312702207e767954dc96d4197588c714a5a"},
-    {file = "winrt_windows_data_xml_dom-4!10.0.28000.2705.tar.gz", hash = "sha256:9dade5d5e6768077009babc965c56e0d39be53c329e81ad06867bfb2b82516dd"},
+    {file = "winrt_windows_data_xml_dom-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:26a516c6484744260cfb15ec44510d5bf020ee29a946f87f38ef7eac7df3673e"},
+    {file = "winrt_windows_data_xml_dom-4!10.0.28000.2957.tar.gz", hash = "sha256:03643378e9123c85448c57965a056a7f76ebb63f67b00610bd4cf3095d2e9387"},
 ]
 
 [[package]]
 name = "winrt-windows-foundation"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.Foundation namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
     "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation-collections>=4!10.0.28000.2705",
+    "winrt-windows-foundation-collections>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_foundation-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:b409530668b101cb17b3a6ce02061b9839665c92b64b0563c106186d87562571"},
-    {file = "winrt_windows_foundation-4!10.0.28000.2705.tar.gz", hash = "sha256:eb33cc2fdf0d8c5358cb7a731563118de0f16ddc75e256b8fd83c8117a6405a0"},
+    {file = "winrt_windows_foundation-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:0669de7ce480806a0f9a46d005837799e37f1738911b54c4bc04788b37974e69"},
+    {file = "winrt_windows_foundation-4!10.0.28000.2957.tar.gz", hash = "sha256:6f7d8e932e283991cd931741f84dc7c2e8bc595b4df09de73d16c1d580fc678a"},
 ]
 
 [[package]]
 name = "winrt-windows-foundation-collections"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.Foundation.Collections namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
     "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation>=4!10.0.28000.2705",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_foundation_collections-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:f2169228644b86d752dca6f4ba0bb55ee27c5cc1062f3a3f0fbb375f48894bd7"},
-    {file = "winrt_windows_foundation_collections-4!10.0.28000.2705.tar.gz", hash = "sha256:8d396ea352d3e57a534223314aa935c2fe3e3edaa6b38439b13d5ddfeb5a12ea"},
+    {file = "winrt_windows_foundation_collections-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:0401c1b6ed512d1fdad8ba1571698e9000ebee6a69781db9a01994ffcc54a503"},
+    {file = "winrt_windows_foundation_collections-4!10.0.28000.2957.tar.gz", hash = "sha256:38989873bbdace2346d24168ceb66359800b7429128ea2ef1a36da55b255af1e"},
 ]
 
 [[package]]
 name = "winrt-windows-storage-streams"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.Storage.Streams namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
-    "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation-collections>=4!10.0.28000.2705",
-    "winrt-windows-foundation>=4!10.0.28000.2705",
+    "winrt-runtime<5,>=4.1.0",
+    "winrt-windows-foundation-collections>=4!10.0.28000.2957",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_storage_streams-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:2824e516e328c9ba76ffc7926431255b124b4a9f52c656f0b1e0056a7f8ca7b8"},
-    {file = "winrt_windows_storage_streams-4!10.0.28000.2705.tar.gz", hash = "sha256:9511b19e9cc588dcc81969b2871e465385f2ab37a62a9019f90dc37e03a5dd16"},
+    {file = "winrt_windows_storage_streams-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:e113832320f2e7f8b09cedfb400cb7eaf0ac769ad1f2038ddbe88801497916c4"},
+    {file = "winrt_windows_storage_streams-4!10.0.28000.2957.tar.gz", hash = "sha256:6284341b4b01ab872007def0b8d29bf30d84d46f6922f6e42be1d738d6bf2ff7"},
 ]
 
 [[package]]
 name = "winrt-windows-ui-notifications"
-version = "4!10.0.28000.2705"
+version = "4!10.0.28000.2957"
 requires_python = ">=3.11"
 summary = "PyWinRT projection of the Windows.UI.Notifications namespace"
 groups = ["notify"]
 marker = "sys_platform == \"win32\""
 dependencies = [
     "winrt-runtime<5,>=4.0.0",
-    "winrt-windows-foundation-collections>=4!10.0.28000.2705",
-    "winrt-windows-foundation>=4!10.0.28000.2705",
+    "winrt-windows-foundation-collections>=4!10.0.28000.2957",
+    "winrt-windows-foundation>=4!10.0.28000.2957",
 ]
 files = [
-    {file = "winrt_windows_ui_notifications-4!10.0.28000.2705-py3-none-any.whl", hash = "sha256:909fdfe7dc7418adc59029fa723f24db5b28836bc017d791b03e4e7cda02117c"},
-    {file = "winrt_windows_ui_notifications-4!10.0.28000.2705.tar.gz", hash = "sha256:8fd5a28f81ef4b422b444b2889e2dec6a316692b7c2351a6daff39ccaf591bba"},
+    {file = "winrt_windows_ui_notifications-4!10.0.28000.2957-py3-none-any.whl", hash = "sha256:2d4e78018df29bb107d0490926ae0a7254be68b6b9c1bd81547d0df569682ea7"},
+    {file = "winrt_windows_ui_notifications-4!10.0.28000.2957.tar.gz", hash = "sha256:5ab89819245c7a90db2d5fe2a0d0cc88158d50bf6fbba12c96145b25bc04a9d3"},
 ]
