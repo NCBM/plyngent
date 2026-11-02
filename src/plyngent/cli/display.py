@@ -36,7 +36,8 @@ _TOOL_ARGS_PREVIEW = 80
 _ASK_SUBJECT_PREVIEW = 60
 _PTY_PAYLOAD_PREVIEW = 40
 # ``run_argv_batch`` lists the commands it runs above its ``* Run batch `` row — one
-# line per command, a ``pipe_out`` chain joined into one — elided past this width.
+# line per command, a pipe chain joined into one, a ``then`` / ``else`` body
+# indented under the node it follows — elided past this width.
 _RUN_BATCH_CMD_LIMIT = 80
 _MCP_TOOL_PREFIX = "mcp__"
 _SKILL_MAIN_FILE = "SKILL.md"
@@ -417,32 +418,54 @@ def _batch_steps(args_json: str) -> list[dict[str, object]]:
             value = json.loads(value)
         except ValueError:
             return []
+    return _batch_nodes(value)
+
+
+def _batch_nodes(value: object) -> list[dict[str, object]]:
+    """Nodes of one continuation: a single node, or a list of them."""
+    if isinstance(value, dict):
+        return [cast("dict[str, object]", value)]
     if not isinstance(value, list):
         return []
-    raw_steps = cast("list[object]", value)
-    return [cast("dict[str, object]", step) for step in raw_steps if isinstance(step, dict)]
+    return [cast("dict[str, object]", item) for item in cast("list[object]", value) if isinstance(item, dict)]
 
 
-def _batch_command_lines(args_json: str) -> list[str]:
-    """One command per line, a ``pipe_out`` chain joined into one line with ``|``."""
-    lines: list[str] = []
-    piped_from_previous = False
-    for step in _batch_steps(args_json):
-        argv = _str_list(step.get("argv"))
-        command = shlex.join(argv) if argv else "?"
-        if piped_from_previous and lines:
-            lines[-1] = f"{lines[-1]} | {command}"
-        else:
-            lines.append(command)
-        # Same flag spellings the tool itself accepts (bool, or "true"/"1"/…).
-        piped_from_previous = str(step.get("pipe_out") or "").strip().lower() in {"1", "true", "yes", "on"}
+def _batch_chain(node: dict[str, object]) -> str:
+    """``a | b | c`` for a node and the commands its pipe feeds."""
+    argv = _str_list(node.get("argv"))
+    parts = [shlex.join(argv) if argv else "?"]
+    parts.extend(_batch_chain(child) for child in _batch_nodes(node.get("pipe")))
+    return " | ".join(parts)
+
+
+def _batch_node_lines(
+    nodes: list[dict[str, object]],
+    depth: int,
+    prefix: str = "",
+) -> list[tuple[str, bool]]:
+    """One line per command, and whether it is a command (``$``) or a branch."""
+    lines: list[tuple[str, bool]] = []
+    for node in nodes:
+        lines.append((f"{'  ' * depth}{prefix}{_batch_chain(node)}", not prefix))
+        for branch in ("then", "else"):
+            children = _batch_nodes(node.get(branch))
+            if children:
+                lines.extend(_batch_node_lines(children, depth + 1, f"{branch} "))
     return lines
+
+
+def _batch_command_lines(args_json: str) -> list[tuple[str, bool]]:
+    """One line per command, a pipe chain joined into one line with ``|``."""
+    return _batch_node_lines(_batch_steps(args_json), 0)
 
 
 def _run_argv_batch_prefix(args_json: str) -> str:
     """``* Run batch `` with the commands it runs listed above it."""
-    commands = _batch_command_lines(args_json)
-    body = "\n".join(_pretty_prefix(f"$ {_preview(command, _RUN_BATCH_CMD_LIMIT)}") for command in commands)
+    lines = [
+        _pretty_prefix(f"$ {_preview(text, _RUN_BATCH_CMD_LIMIT)}" if is_command else f"{text}")
+        for text, is_command in _batch_command_lines(args_json)
+    ]
+    body = "\n".join(lines)
     header = _pretty_prefix("* Run batch ")
     return f"{body}\n{header}" if body else header
 

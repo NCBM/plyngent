@@ -456,9 +456,9 @@ async def test_pretty_run_argv_batch_stopped(capsys: pytest.CaptureFixture[str])
     result = (
         "steps=3 ran=2 stop_on_error=true stopped_early=true\n"
         "--- step 1 ---\nexit_code=1\ntimed_out=false\ncwd=.\ncmd=git status\n"
-        "pipe_out=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
+        "pipe=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
         "--- step 2 ---\nexit_code=0\ntimed_out=false\ncwd=.\ncmd=git diff\n"
-        "pipe_out=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
+        "pipe=false\nmix_stderr=false\n--- stdout ---\n--- stderr ---\n"
         "--- summary ---\nlast_exit=1\n"
     )
     await render_events(_aiter([_pretty_call("run_argv_batch", '{"steps": []}'), _result(result)]))
@@ -495,14 +495,25 @@ async def test_pretty_run_argv_batch_lists_commands(capsys: pytest.CaptureFixtur
 
 
 async def test_pretty_run_argv_batch_joins_pipe_chain(capsys: pytest.CaptureFixture[str]) -> None:
-    """``pipe_out`` steps share one line; a step they do not feed keeps its own."""
+    """A pipe chain shares one line; a node it does not feed keeps its own."""
     args = (
-        '{"steps": [{"argv": ["grep", "-n", "foo", "a.py"], "pipe_out": true},'
-        ' {"argv": ["wc", "-l"]}, {"argv": ["git", "status"]}]}'
+        '{"steps": [{"argv": ["grep", "-n", "foo", "a.py"], "pipe": {"argv": ["wc", "-l"]}},'
+        ' {"argv": ["git", "status"]}]}'
     )
     await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
     out = capsys.readouterr().out
     assert "$ grep -n foo a.py | wc -l\n$ git status\n* Run batch (done)" in out
+
+
+async def test_pretty_run_argv_batch_indents_branches(capsys: pytest.CaptureFixture[str]) -> None:
+    """A ``then`` / ``else`` body sits below the node it follows."""
+    args = (
+        '{"steps": [{"argv": ["pytest", "-q"], "then": {"argv": ["ruff", "format", "."]},'
+        ' "else": [{"argv": ["git", "status"]}]}]}'
+    )
+    await render_events(_aiter([_pretty_call("run_argv_batch", args), _result(_BATCH_DONE_RESULT)]))
+    out = capsys.readouterr().out
+    assert "$ pytest -q\n  then ruff format .\n  else git status\n* Run batch (done)" in out
 
 
 async def test_pretty_run_argv_batch_elides_a_long_command(capsys: pytest.CaptureFixture[str]) -> None:

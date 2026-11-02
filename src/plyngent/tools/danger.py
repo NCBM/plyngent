@@ -10,7 +10,7 @@ from plyngent.tools.trash import under_system_temp
 from plyngent.tools.workspace import AccessMode, WorkspaceError, get_trash_enabled, resolve_path
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
 
 def _as_argv(args: Mapping[str, object], *, key: str = "command") -> list[str] | None:
@@ -188,6 +188,32 @@ def _batch_step_argv(item: object) -> list[str] | None:
     return parts or None
 
 
+def _batch_nodes(value: object) -> list[dict[str, object]]:
+    """Nodes of one continuation: a single node, or a list of them."""
+    if isinstance(value, dict):
+        return [cast("dict[str, object]", value)]
+    if not isinstance(value, list):
+        return []
+    return [cast("dict[str, object]", item) for item in cast("list[object]", value) if isinstance(item, dict)]
+
+
+def _walk_batch_argv(value: object, where: str) -> Iterator[tuple[str, list[str]]]:
+    """Every command of a batch tree, in the order it can run, with its path.
+
+    ``then`` / ``else`` / ``pipe`` hold the continuations, so a command hiding in
+    one is reviewed exactly like a top-level step.
+    """
+    for index, node in enumerate(_batch_nodes(value)):
+        label = f"{where}[{index}]"
+        argv = _batch_step_argv(node)
+        if argv is not None:
+            yield label, argv
+        for branch in ("then", "else", "pipe"):
+            child = node.get(branch)
+            if child is not None:
+                yield from _walk_batch_argv(child, f"{label}.{branch}")
+
+
 def _run_argv_batch_reason(args: Mapping[str, object]) -> DangerReason | None:
     """One confirm for the whole batch if any step runs code or detaches.
 
@@ -203,12 +229,11 @@ def _run_argv_batch_reason(args: Mapping[str, object]) -> DangerReason | None:
         raw = loaded
     if not isinstance(raw, list):
         return None
-    risky = [
-        reason
-        for index, item in enumerate(cast("list[object]", raw))
-        if (argv := _batch_step_argv(item)) is not None
-        and (reason := _command_reason(argv, via=f"run_argv_batch[{index}]")) is not None
-    ]
+    risky: list[DangerReason] = []
+    for label, argv in _walk_batch_argv(cast("list[object]", raw), "run_argv_batch"):
+        reason = _command_reason(argv, via=label)
+        if reason is not None:
+            risky.append(reason)
     if not risky:
         return None
     header = f"run_argv_batch: {len(risky)} risky step(s) (review before allow)"

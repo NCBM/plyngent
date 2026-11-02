@@ -19,6 +19,8 @@ from plyngent.tools.workspace import (
 
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_MAX_BATCH_STEPS = 20
+# A batch node's continuations nest, so the tree needs its own ceiling.
+MAX_BATCH_DEPTH = 4
 
 
 def format_command_result(
@@ -65,7 +67,7 @@ class CommandStepResult:
     stdout: str
     stderr: str
     mix_stderr: bool
-    captured: str  # piped to the next step when provider sets pipe_out
+    captured: str  # stdout, fed to the next command of a pipe
 
 
 async def execute_argv(

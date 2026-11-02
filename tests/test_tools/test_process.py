@@ -112,33 +112,31 @@ async def test_run_argv_batch_stop_on_error(workspace: object) -> None:
     assert "should-not-run" not in out
 
 
-async def test_run_argv_batch_pipe_out(workspace: object) -> None:
+async def test_run_argv_batch_pipe(workspace: object) -> None:
     del workspace
     out = await call_async(
         run_argv_batch,
         [
             {
                 "argv": _py("print('piped-payload', end='')"),
-                "pipe_out": True,
-            },
-            {
-                "argv": _py("import sys; print(sys.stdin.read())"),
+                "pipe": {"argv": _py("import sys; print(sys.stdin.read())")},
             },
         ],
     )
     assert "ran=2" in out
     assert "piped-payload" in out
-    assert "pipe_out=true" in out
+    assert "pipe=true" in out
 
 
-async def test_run_argv_batch_last_pipe_out_error(workspace: object) -> None:
+async def test_run_argv_batch_pipe_out_is_gone(workspace: object) -> None:
+    """The old provider-side flag is refused, pointing at the pipe node."""
     del workspace
     out = await call_async(
         run_argv_batch,
         [{"argv": _py("print(1)"), "pipe_out": True}],
     )
     assert "error:" in out
-    assert "pipe_out" in out
+    assert '{"pipe": [...]}' in out
 
 
 async def test_run_argv_batch_mix_stderr(workspace: object) -> None:
@@ -149,14 +147,156 @@ async def test_run_argv_batch_mix_stderr(workspace: object) -> None:
             {
                 "argv": _py("import sys; sys.stdout.write('out'); sys.stderr.write('err')"),
                 "mix_stderr": True,
-                "pipe_out": True,
+                "pipe": {"argv": _py("import sys; print(repr(sys.stdin.read()))")},
             },
-            {"argv": _py("import sys; print(repr(sys.stdin.read()))")},
         ],
     )
     assert "ran=2" in out
     # Merged capture should include both (order depends on OS scheduling).
     assert "out" in out and "err" in out
+
+
+async def test_run_argv_batch_then_runs_on_success(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [{"argv": _py("print('first')"), "then": {"argv": _py("print('then-body')")}}],
+    )
+    assert "then-body" in out
+    assert "ran=2" in out
+    assert "depth=1" in out
+    assert "via=then of step 0" in out
+
+
+async def test_run_argv_batch_else_handles_the_failure(workspace: object) -> None:
+    """A failure with an ``else`` is answered, so the batch keeps going."""
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("import sys; sys.exit(2)"),
+                "else": {"argv": _py("print('else-body')")},
+            },
+            {"argv": _py("print('sibling-ran')")},
+        ],
+    )
+    assert "else-body" in out
+    assert "sibling-ran" in out
+    assert "via=else of step 0" in out
+    assert "stopped_early=false" in out
+
+
+async def test_run_argv_batch_runs_a_then_list_in_order(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("print('first')"),
+                "then": [{"argv": _py("print('second')")}, {"argv": _py("print('third')")}],
+            }
+        ],
+    )
+    assert "ran=3" in out
+    assert out.index("first") < out.index("second") < out.index("third")
+
+
+async def test_run_argv_batch_a_failing_branch_stops_the_batch(workspace: object) -> None:
+    """Nobody answered a failure inside a continuation, so the batch stops."""
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {"argv": _py("print('first')"), "then": {"argv": _py("import sys; sys.exit(4)")}},
+            {"argv": _py("print('sibling-ran')")},
+        ],
+    )
+    assert "stopped_early=true" in out
+    assert "sibling-ran" not in out
+
+
+async def test_run_argv_batch_stop_on_error_false_skips_only_its_continuations(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("import sys; sys.exit(2)"),
+                "stop_on_error": False,
+                "then": {"argv": _py("print('then-ran')")},
+            },
+            {"argv": _py("print('sibling-ran')")},
+        ],
+    )
+    assert "then-ran" not in out
+    assert "sibling-ran" in out
+    assert "stopped_early=false" in out
+
+
+async def test_run_argv_batch_branches_on_the_pipe_result(workspace: object) -> None:
+    """A piped node branches on the last command of its chain."""
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [
+            {
+                "argv": _py("print('payload', end='')"),
+                "pipe": {"argv": _py("import sys; sys.stdin.read(); sys.exit(3)")},
+                "then": {"argv": _py("print('pipe-ok')")},
+                "else": {"argv": _py("print('pipe-failed')")},
+            }
+        ],
+    )
+    assert "pipe-failed" in out
+    assert "pipe-ok" not in out
+    assert "ran=3" in out
+
+
+async def test_run_argv_batch_pipe_step_takes_no_branch(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [{"argv": _py("print(1)"), "pipe": {"argv": _py("print(2)"), "then": {"argv": _py("print(3)")}}}],
+    )
+    assert "error:" in out
+    assert "pipe step takes no then/else" in out
+
+
+async def test_run_argv_batch_pipe_step_takes_no_stdin(workspace: object) -> None:
+    del workspace
+    out = await call_async(
+        run_argv_batch,
+        [{"argv": _py("print(1)"), "pipe": {"argv": _py("print(2)"), "stdin": "own"}}],
+    )
+    assert "error:" in out
+    assert "stdin comes from the pipe" in out
+
+
+async def test_run_argv_batch_rejects_a_deep_tree(workspace: object) -> None:
+    del workspace
+    node: dict[str, object] = {"argv": _py("print(1)")}
+    for _ in range(6):
+        node = {"argv": _py("print(1)"), "then": node}
+    out = await call_async(run_argv_batch, [node])
+    assert "error:" in out
+    assert "nest at most 4 levels deep" in out
+
+
+async def test_run_argv_batch_counts_nested_nodes(workspace: object) -> None:
+    """Every node of the tree costs one, so a nested tree hits the same cap."""
+    del workspace
+    out = await call_async(run_argv_batch, [{"argv": _py("print(1)")} for _ in range(21)])
+    assert "error:" in out
+    assert "more than 20 nodes" in out
+
+
+async def test_run_argv_batch_names_the_node_grammar(workspace: object) -> None:
+    del workspace
+    out = await call_async(run_argv_batch, [{"argv": _py("print(1)"), "when": "always"}])
+    assert "error:" in out
+    assert "unknown key(s) when" in out
+    assert "then, else, pipe" in out
 
 
 async def test_run_argv_denied(workspace: object) -> None:

@@ -76,7 +76,7 @@ confirm blocks the turn, so it costs time. Invoke the target command directly (a
 of wrapping it in `bash -c` / `python -c` / `node`, and reach for a dedicated tool \
 (`read_file` / `edit_*` / `vcs_*` / `fetch` / `fetch_local` / …) when one already does the job.
 - Several `run_argv` calls in one step may run in parallel; use `run_argv_batch` \
-for ordered pipelines (`pipe_out` / `mix_stderr` as needed).
+for ordered commands, with `then` / `else` / `pipe` continuations as needed.
 - Prefer `vcs_*` for status/diff/log/branch when enough.
 
 ### Network

@@ -108,6 +108,34 @@ def test_classify_run_argv_batch_risky() -> None:
     )
 
 
+def test_classify_run_argv_batch_sees_nested_steps() -> None:
+    """A command hiding in a continuation is reviewed like a top-level step."""
+    reason = _danger(
+        "run_argv_batch",
+        {
+            "steps": [
+                {
+                    "argv": ["echo", "ok"],
+                    "then": {"argv": ["bash", "-c", "echo risky"]},
+                    "else": [{"argv": ["sh", "-c", "echo risky"]}],
+                }
+            ]
+        },
+    )
+    assert "run_argv_batch[0].then[0]" in reason.text
+    assert "run_argv_batch[0].else[0]" in reason.text
+    # A plain interpreter run is YOLO mode's to drop, wherever it sits.
+    assert reason.yolo_skip is True
+
+
+def test_a_nested_step_that_escalates_keeps_the_batch_prompt() -> None:
+    reason = _danger(
+        "run_argv_batch",
+        {"steps": [{"argv": ["echo", "ok"], "then": {"argv": ["sudo", "python", "-c", "print(1)"]}}]},
+    )
+    assert reason.yolo_skip is False
+
+
 def test_classify_shell_and_dash_c() -> None:
     r = _reason("run_argv", {"argv": ["bash", "-c", "rm -rf /"]})
     assert r is not None
