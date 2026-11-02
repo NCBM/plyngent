@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from plyngent.agent import ToolOutput, ToolTag, tool
 from plyngent.agent.images import image_part_from_bytes
 from plyngent.tools.context import is_read_only_context
@@ -17,7 +19,35 @@ from plyngent.tools.net.policy import (
     parse_fetch_url,
     soft_confirm_reason,
 )
+from plyngent.tools.shape import shape_of, timeout_shape_error
 from plyngent.tools.workspace import image_input_refusal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+def fetch_local_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a request that cannot be built, before anyone is asked about it.
+
+    The verb and the URL are checked here (both are the request itself, and
+    ``parse_fetch_url`` touches nothing but the string); a host that needs a
+    human grant still asks in the handler, once the call can actually run.
+    """
+    url = args.get("url")
+    if not isinstance(url, str):
+        return f"error: `fetch_local` expects `url` as a string, got {shape_of(url)}"
+    method = args.get("method", "GET")
+    if not isinstance(method, str):
+        return f"error: `fetch_local` expects `method` as a string, got {shape_of(method)}"
+    timeout_error = timeout_shape_error(args.get("timeout_seconds"))
+    if timeout_error is not None:
+        return f"error: `fetch_local` {timeout_error}"
+    try:
+        _ = normalize_method(method)
+        _ = parse_fetch_url(url)
+    except FetchPolicyError as exc:
+        return f"error: {exc}"
+    return None
 
 
 def format_fetch_result(
@@ -59,7 +89,10 @@ def format_fetch_result(
     return "\n".join(parts)
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO | ToolTag.TRUSTABLE | ToolTag.READ_ONLY)
+@tool(
+    tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO | ToolTag.TRUSTABLE | ToolTag.READ_ONLY,
+    validate=fetch_local_shape,
+)
 async def fetch_local(
     url: str,
     *,

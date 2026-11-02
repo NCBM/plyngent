@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.shape import timeout_shape_error
 from plyngent.tools.workspace import WorkspaceError, argv_shape_error
 
 from .command_exec import (
     DEFAULT_TIMEOUT_SECONDS,
     execute_argv,
     format_command_result,
-    timeout_shape_error,
 )
 
 if TYPE_CHECKING:

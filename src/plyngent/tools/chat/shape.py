@@ -14,20 +14,9 @@ tools themselves stay free of unnecessary-isinstance warnings.
 
 from __future__ import annotations
 
-_SHAPES: dict[type, str] = {
-    str: "a string",
-    list: "an array",
-    dict: "an object",
-    bool: "a boolean",
-    int: "a number",
-    float: "a number",
-    type(None): "null",
-}
+from plyngent.tools.shape import shape_of
 
-
-def shape_of(value: object) -> str:
-    """Model-facing name for a decoded JSON value (``a string``, ``an array``…)."""
-    return _SHAPES.get(type(value), type(value).__name__)
+__all__ = ["first_error", "list_error", "number_arg", "shape_of", "string_error"]
 
 
 def first_error(*errors: str | None) -> str | None:

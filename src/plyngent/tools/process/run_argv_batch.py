@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.shape import timeout_shape_error
 from plyngent.tools.workspace import WorkspaceError
 
 if TYPE_CHECKING:
@@ -17,7 +18,6 @@ from .command_exec import (
     MAX_BATCH_DEPTH,
     CommandStepResult,
     execute_argv,
-    timeout_shape_error,
 )
 
 # Execution budget: stop the batch once accumulated output crosses this factor

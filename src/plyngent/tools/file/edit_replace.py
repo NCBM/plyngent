@@ -1,7 +1,26 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.shape import shape_of
 from plyngent.tools.workspace import AccessMode, resolve_path
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+def edit_replace_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a replacement that cannot apply, before anyone is asked about it."""
+    old_string = args.get("old_string")
+    if isinstance(old_string, str) and not old_string:
+        return "error: old_string must not be empty"
+    if not isinstance(old_string, str) and old_string is not None:
+        return f"error: `edit_replace` expects `old_string` as a string, got {shape_of(old_string)}"
+    limit = args.get("max_replaces")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit < 1:
+        return "error: max_replaces must be >= 1"
+    return None
 
 
 def _count_non_overlapping(text: str, needle: str) -> int:
@@ -48,7 +67,7 @@ def _success_message(
     )
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",), validate=edit_replace_shape)
 async def edit_replace(path: str, old_string: str, new_string: str, max_replaces: int = 1) -> str:
     """Replace occurrences of ``old_string`` with ``new_string`` in a file.
 

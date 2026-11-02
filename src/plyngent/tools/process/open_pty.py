@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import shlex
+from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, tool
-from plyngent.tools.workspace import WorkspaceError
+from plyngent.tools.workspace import WorkspaceError, argv_shape_error
 
 from .pty_session import active_pty_manager
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+
+def open_pty_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a session that cannot start, before anyone is asked about it."""
+    shape_error = argv_shape_error(args.get("command"))
+    if shape_error is not None:
+        return f"error: `open_pty` {shape_error}"
+    return None
+
+
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, validate=open_pty_shape)
 async def open_pty(command: list[str], *, cwd: str = ".") -> str:
     """Open a PTY session running ``command`` (argv) under the workspace.
 

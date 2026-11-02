@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.agent import ToolTag, lineno_read_lines, lineno_read_mtime, tool
+from plyngent.tools.shape import shape_of
 from plyngent.tools.workspace import AccessMode, resolve_path
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 # How many unread line numbers to preview in the error message.
@@ -13,6 +15,28 @@ _UNREAD_PREVIEW = 8
 
 # Lines of context a suggested read covers on each side of the edit range.
 _READ_HINT_MARGIN = 3
+
+
+def _range_shape_error(start_line: object, end_line: object) -> str | None:
+    """The two range checks that need nothing but the two numbers."""
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        return None  # the schema declares integers; a bad pair stays the handler's to answer
+    if start_line < 1:
+        return "error: start_line must be >= 1"
+    if end_line < start_line:
+        return "error: end_line must be >= start_line"
+    return None
+
+
+def edit_lineno_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a range that cannot be applied, before anyone is asked about it."""
+    shape_error = _range_shape_error(args.get("start_line"), args.get("end_line"))
+    if shape_error is not None:
+        return shape_error
+    content = args.get("new_content")
+    if content is not None and not isinstance(content, str):
+        return f"error: `edit_lineno` expects `new_content` as a string, got {shape_of(content)}"
+    return None
 
 
 def _detect_newline(lines: list[str]) -> str:
@@ -43,10 +67,9 @@ def _to_keepends(new_content: str, newline: str, *, force_trailing: bool) -> lis
 
 
 def _validate_range(start_line: int, end_line: int, n: int) -> str | None:
-    if start_line < 1:
-        return "error: start_line must be >= 1"
-    if end_line < start_line:
-        return "error: end_line must be >= start_line"
+    shape_error = _range_shape_error(start_line, end_line)
+    if shape_error is not None:
+        return shape_error
     if start_line > n + 1:
         return f"error: start_line {start_line} past end of file ({n} lines)"
     if start_line == n + 1 and end_line != start_line:
@@ -124,7 +147,7 @@ def _replace_range(
     )
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",))
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, writes=("path",), validate=edit_lineno_shape)
 async def edit_lineno(path: str, start_line: int, end_line: int, new_content: str) -> str:
     """Replace lines ``start_line``..``end_line`` (1-based, inclusive) in a file.
 

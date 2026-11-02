@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from plyngent.agent import ToolTag, tool
+from plyngent.tools.shape import shape_of
 from plyngent.tools.workspace import WorkspaceError
 
 from .pty_terminal import KeySyntaxError, decode_write_data
 from .write_pty import write_pty_payload
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+
+def write_pty_keys_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a bad marker list, before anyone is asked about the call."""
+    data = args.get("data")
+    if not isinstance(data, str):
+        return f"error: `write_pty_keys` expects `data` as a string, got {shape_of(data)}"
+    try:
+        _ = decode_write_data(data)
+    except KeySyntaxError as exc:
+        return f"error: {exc}"
+    return None
+
+
+@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO, validate=write_pty_keys_shape)
 async def write_pty_keys(session_id: int, data: str) -> str:
     """Write to a PTY after expanding ``<key>`` markers (never for normal typing).
 
