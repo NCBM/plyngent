@@ -326,3 +326,33 @@ async def test_sleep_cancellable_cancelled_by_sigint(router: None) -> None:
     await asyncio.sleep(0)
     os.kill(os.getpid(), signal.SIGINT)
     assert await asyncio.wait_for(waiter, timeout=5) is False
+
+
+def test_a_second_loop_rebinds_the_router() -> None:
+    """The installed flag is process-wide, so a new loop needs its own handler.
+
+    asyncio drops a loop's signal handlers with the loop, so believing the flag
+    alone left the next loop unrouted: a stray Ctrl+C then became a
+    KeyboardInterrupt out of the loop's own frame instead of cancelling work.
+    """
+
+    class Counter:
+        hits = 0
+
+        def cancel(self) -> None:
+            self.hits += 1
+
+    async def routed_once() -> int:
+        assert install_sigint_router()
+        target = Counter()
+        with sigint_cancels(target):
+            os.kill(os.getpid(), signal.SIGINT)
+            await asyncio.sleep(0.05)
+        return target.hits
+
+    install_keyboard_interrupt_sigint()
+    try:
+        assert asyncio.run(routed_once()) == 1
+        assert asyncio.run(routed_once()) == 1
+    finally:
+        uninstall_sigint_router()

@@ -67,6 +67,10 @@ class _RouterState:
     # Cancel targets, innermost last: a SIGINT cancels the innermost one.
     targets: list[InterruptTarget] = field(default_factory=list)
     installed: bool = False
+    # The loop that owns the handler. The flag alone is process-wide, so a later
+    # loop (a new session, another test) must rebind instead of believing the
+    # handler still follows it — asyncio detaches handlers with their loop.
+    loop: asyncio.AbstractEventLoop | None = None
     # Nesting depth of main-thread blocking reads. A plain counter (not a
     # ContextVar): asyncio.add_signal_handler freezes the ContextVar snapshot at
     # install time, so a ContextVar reset after reinstall would leave SIGINT
@@ -78,8 +82,14 @@ _router = _RouterState()
 
 
 def sigint_routed() -> bool:
-    """Whether the session SIGINT router currently owns SIGINT."""
-    return _router.installed
+    """Whether the session SIGINT router owns SIGINT on the running loop."""
+    if not _router.installed:
+        return False
+    try:
+        loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    return loop is None or _router.loop is loop
 
 
 def install_sigint_router() -> bool:
@@ -95,13 +105,19 @@ def install_sigint_router() -> bool:
     Blocking main-thread reads suspend the router via
     :func:`pause_task_cancel_for_prompt`. Platforms without asyncio signal
     handlers (Windows proactor) return False and keep the plain
-    KeyboardInterrupt behaviour. Idempotent.
+    KeyboardInterrupt behaviour. Idempotent for the loop that owns it, and a
+    different running loop rebinds the handler to itself.
     """
-    if _router.installed:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    if _router.installed and _router.loop is loop:
         return True
-    if not _add_router_handler():
+    if not _add_router_handler(loop):
         return False
     _router.installed = True
+    _router.loop = loop
     return True
 
 
@@ -111,21 +127,32 @@ def uninstall_sigint_router() -> None:
         return
     _router.installed = False
     _remove_router_handler()
+    _router.loop = None
     _router.targets.clear()
     install_keyboard_interrupt_sigint()
 
 
-def _add_router_handler() -> bool:
+def _add_router_handler(loop: asyncio.AbstractEventLoop | None = None) -> bool:
+    """Route SIGINT to the router on *loop* (the running one when omitted)."""
+    target = loop
+    if target is None:
+        try:
+            target = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
     try:
-        asyncio.get_running_loop().add_signal_handler(signal.SIGINT, _route_sigint)
+        target.add_signal_handler(signal.SIGINT, _route_sigint)
     except RuntimeError, NotImplementedError, ValueError:
         return False
     return True
 
 
 def _remove_router_handler() -> None:
+    loop = _router.loop
+    if loop is None:
+        return
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
-        _ = asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)
+        _ = loop.remove_signal_handler(signal.SIGINT)
 
 
 def _route_sigint() -> None:
