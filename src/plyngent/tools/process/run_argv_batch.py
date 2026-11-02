@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from plyngent.agent import ToolTag, tool
 from plyngent.tools.workspace import WorkspaceError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from .command_exec import (
     DEFAULT_MAX_BATCH_STEPS,
@@ -14,6 +17,7 @@ from .command_exec import (
     MAX_BATCH_DEPTH,
     CommandStepResult,
     execute_argv,
+    timeout_shape_error,
 )
 
 # Execution budget: stop the batch once accumulated output crosses this factor
@@ -118,6 +122,10 @@ def _parse_node(raw: object, *, where: str, depth: int, budget: _Budget, fed: bo
     if fed and stdin is not None:
         msg = f"{where}: stdin comes from the pipe; drop stdin or split the command"
         raise WorkspaceError(msg)
+    timeout_error = timeout_shape_error(data.get("timeout_seconds"))
+    if timeout_error is not None:
+        msg = f"{where}.{timeout_error}"
+        raise WorkspaceError(msg)
     cwd = data.get("cwd")
     stop = data.get("stop_on_error", None)
     node: dict[str, Any] = {
@@ -141,7 +149,7 @@ def _parse_node(raw: object, *, where: str, depth: int, budget: _Budget, fed: bo
     return node
 
 
-def _normalize_steps(steps: list[dict[str, object]] | str) -> list[object]:
+def _normalize_steps(steps: object) -> list[object]:
     if isinstance(steps, str):
         try:
             loaded: object = json.loads(steps)
@@ -152,7 +160,31 @@ def _normalize_steps(steps: list[dict[str, object]] | str) -> list[object]:
             msg = "steps must be a JSON array of step objects"
             raise WorkspaceError(msg)
         return cast("list[object]", loaded)
+    if not isinstance(steps, list):
+        msg = "steps must be a JSON array of step objects"
+        raise WorkspaceError(msg)
     return cast("list[object]", steps)
+
+
+def _read_batch(steps: object) -> tuple[list[dict[str, Any]], int]:
+    """Parse a batch tree and count its nodes; raises when it cannot run."""
+    raw_steps = _normalize_steps(steps)
+    if not raw_steps:
+        msg = "steps must not be empty"
+        raise WorkspaceError(msg)
+    budget = _Budget()
+    return _parse_nodes(raw_steps, where="steps", depth=0, budget=budget, fed=False), budget.nodes
+
+
+def run_argv_batch_shape(args: Mapping[str, object]) -> str | None:
+    """Answer a batch that cannot run, before it reaches the human."""
+    try:
+        _ = _read_batch(args.get("steps"))
+    except WorkspaceError as exc:
+        return f"error: {exc}"
+    except (TypeError, ValueError) as exc:
+        return f"error: invalid batch arguments: {exc}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -288,7 +320,10 @@ class _Runner:
         return self.stop_on_error if node["stop_on_error"] is None else bool(node["stop_on_error"])
 
 
-@tool(tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO)
+@tool(
+    tags=ToolTag.LOCAL | ToolTag.INSTANCE_STATE | ToolTag.YOLO,
+    validate=run_argv_batch_shape,
+)
 async def run_argv_batch(
     steps: list[dict[str, object]] | str,
     *,
@@ -323,28 +358,24 @@ async def run_argv_batch(
     long result carries a ``document_id`` to read on.
     """
     try:
-        raw_steps = _normalize_steps(steps)
-        if not raw_steps:
-            return "error: steps must not be empty"
-
-        budget = _Budget()
-        nodes = _parse_nodes(raw_steps, where="steps", depth=0, budget=budget, fed=False)
-        runner = _Runner(cwd=cwd, env=env, stop_on_error=stop_on_error)
-        await runner.run_list(nodes, depth=0)
-
-        body = "\n".join(_format_step(i, step) for i, step in enumerate(runner.steps))
-        last_exit = runner.steps[-1].result.exit_code if runner.steps else ""
-        return "\n".join(
-            [
-                f"steps={budget.nodes} ran={len(runner.steps)} "
-                f"stop_on_error={'true' if stop_on_error else 'false'} "
-                f"stopped_early={'true' if runner.stopped else 'false'}",
-                body,
-                "--- summary ---",
-                f"last_exit={last_exit if last_exit is not None else ''}",
-            ]
-        )
+        nodes, count = _read_batch(steps)
     except WorkspaceError as exc:
         return f"error: {exc}"
     except (TypeError, ValueError) as exc:
         return f"error: invalid batch arguments: {exc}"
+
+    runner = _Runner(cwd=cwd, env=env, stop_on_error=stop_on_error)
+    await runner.run_list(nodes, depth=0)
+
+    body = "\n".join(_format_step(i, step) for i, step in enumerate(runner.steps))
+    last_exit = runner.steps[-1].result.exit_code if runner.steps else ""
+    return "\n".join(
+        [
+            f"steps={count} ran={len(runner.steps)} "
+            f"stop_on_error={'true' if stop_on_error else 'false'} "
+            f"stopped_early={'true' if runner.stopped else 'false'}",
+            body,
+            "--- summary ---",
+            f"last_exit={last_exit if last_exit is not None else ''}",
+        ]
+    )

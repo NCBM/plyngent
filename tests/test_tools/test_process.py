@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from plyngent.agent import ToolDefinition, ToolRegistry
+from plyngent.tools.danger import classify_danger
 from plyngent.tools.process import (
     ask_into_pty,
     close_pty,
@@ -19,6 +23,9 @@ from plyngent.tools.process import (
 from plyngent.tools.process.pty_session import PtyManager
 from plyngent.tools.workspace import set_command_denylist
 from tests.test_tools.helpers import call_async, call_sync
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def _session_id(opened: str) -> int:
@@ -297,6 +304,49 @@ async def test_run_argv_batch_names_the_node_grammar(workspace: object) -> None:
     assert "error:" in out
     assert "unknown key(s) when" in out
     assert "then, else, pipe" in out
+
+
+def _asking_registry(*definitions: ToolDefinition) -> tuple[ToolRegistry, list[str]]:
+    """A registry whose confirm hook records the calls it was asked about."""
+    asked: list[str] = []
+
+    def on_confirm(name: str, args: Mapping[str, object], reason: str) -> bool:
+        del args, reason
+        asked.append(name)
+        return True
+
+    return ToolRegistry(list(definitions), danger=classify_danger, on_confirm=on_confirm), asked
+
+
+async def test_a_bad_timeout_is_answered_before_the_prompt(workspace: object) -> None:
+    """A call that cannot run is answered, never put in front of the human."""
+    del workspace
+    registry, asked = _asking_registry(run_argv)
+    out = await registry.execute(
+        "run_argv",
+        json.dumps({"argv": ["bash", "-c", "echo hi"], "timeout_seconds": "soon"}),
+    )
+    assert asked == []
+    assert "timeout_seconds" in out
+    assert "error:" in out
+
+
+async def test_a_broken_batch_is_answered_before_the_prompt(workspace: object) -> None:
+    del workspace
+    registry, asked = _asking_registry(run_argv_batch)
+    out = await registry.execute(
+        "run_argv_batch",
+        json.dumps(
+            {
+                "steps": [
+                    {"argv": ["bash", "-c", "echo hi"]},
+                    {"argv": ["echo", "x"], "pipe": {"argv": ["echo", "y"], "stdin": "own"}},
+                ]
+            }
+        ),
+    )
+    assert asked == []
+    assert "stdin comes from the pipe" in out
 
 
 async def test_run_argv_denied(workspace: object) -> None:

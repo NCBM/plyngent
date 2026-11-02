@@ -84,6 +84,8 @@ class Denial:
 
 
 type ToolHandler = Callable[..., Any | Awaitable[Any]]
+type ToolValidator = Callable[[Mapping[str, object]], str | None]
+"""A tool's pre-prompt shape check: the error to answer with, or ``None``."""
 type DangerClassifier = Callable[[str, Mapping[str, object]], str | DangerReason | None]
 # Returns True to allow, or a Denial (or a bare str comment) to deny.
 type ToolConfirmResult = bool | str | Denial
@@ -254,6 +256,11 @@ class ToolDefinition:
     ``writes`` names the arguments whose values name files the handler writes.
     Calls of one batch that name the same file apply one at a time, in call
     order, so the later one sees what the earlier one wrote.
+
+    ``validate`` answers an argument-shape problem the tool can see without
+    running anything (a value that is not the type it needs, a tree that cannot
+    be built). The registry asks it before any confirm prompt, so the human is
+    never shown a call that could only fail.
     """
 
     name: str
@@ -262,6 +269,7 @@ class ToolDefinition:
     handler: ToolHandler
     tags: ToolTag
     writes: tuple[str, ...]
+    validate: ToolValidator | None
 
     def __init__(
         self,
@@ -272,6 +280,7 @@ class ToolDefinition:
         *,
         tags: ToolTag = ToolTag.LOCAL,
         writes: tuple[str, ...] = (),
+        validate: ToolValidator | None = None,
     ) -> None:
         if not (tags & (ToolTag.LOCAL | ToolTag.PUBLIC)):
             msg = f"tool {name!r} tags must include LOCAL and/or PUBLIC"
@@ -282,6 +291,7 @@ class ToolDefinition:
         self.handler = handler
         self.tags = tags
         self.writes = writes
+        self.validate = validate
 
     def to_tool_item(self) -> ToolFunctionItem:
         return ToolFunctionItem(
@@ -342,6 +352,7 @@ def _build_definition(
     description: str | None,
     tags: ToolTag,
     writes: tuple[str, ...] = (),
+    validate: ToolValidator | None = None,
 ) -> ToolDefinition:
     tool_name = name or func.__name__
     tool_description = description if description is not None else (inspect.getdoc(func) or "")
@@ -352,6 +363,7 @@ def _build_definition(
         handler=func,
         tags=tags,
         writes=writes,
+        validate=validate,
     )
 
 
@@ -376,6 +388,7 @@ def tool[**PS, R](
     description: str | None = None,
     tags: ToolTag = ToolTag.LOCAL,
     writes: tuple[str, ...] = (),
+    validate: ToolValidator | None = None,
     register: bool = True,
 ) -> Callable[[Callable[PS, R]], ToolDefinition]: ...
 
@@ -388,6 +401,7 @@ def tool[**PS, R](
     description: str | None = None,
     tags: ToolTag = ToolTag.LOCAL,
     writes: tuple[str, ...] = (),
+    validate: ToolValidator | None = None,
     register: bool = True,
 ) -> ToolDefinition | Callable[[Callable[PS, R]], ToolDefinition]:
     """Define (and by default catalog-register) a function as an agent tool.
@@ -395,6 +409,8 @@ def tool[**PS, R](
     Schema is inferred from type hints; description defaults to the docstring.
     Default ``tags`` is :attr:`ToolTag.LOCAL`. ``writes`` names the arguments
     that carry the files the handler writes (:attr:`ToolDefinition.writes`).
+    ``validate`` answers an argument-shape problem **before** the call is put in
+    front of the human (:attr:`ToolDefinition.validate`).
     When ``register`` is true, the definition is added to the process
     :class:`~plyngent.tools.catalog.ToolCatalog` with the current registration
     source (builtin unless a plugin context is set). Catalog registration does
@@ -409,6 +425,7 @@ def tool[**PS, R](
             description=description,
             tags=tags,
             writes=writes,
+            validate=validate,
         )
         if register:
             _register_definition(definition)
@@ -441,6 +458,18 @@ def _missing_required_error(definition: ToolDefinition, args: Mapping[str, objec
         accepted = sorted(str(key) for key in cast("dict[object, object]", properties))
     hint = f"; it accepts: {', '.join(accepted)}" if accepted else ""
     return f"error: `{definition.name}` is missing required argument(s): {', '.join(missing)}{hint}"
+
+
+def _shape_error(definition: ToolDefinition, args: Mapping[str, object]) -> str | None:
+    """Model-facing error when the tool's own pre-prompt check refuses the call.
+
+    Shape mistakes inside a *present* argument used to surface in the handler,
+    i.e. after the confirm prompt, so the human could be asked about a call that
+    could only fail. A tool that declares ``validate`` is answered first.
+    """
+    if definition.validate is None:
+        return None
+    return definition.validate(args)
 
 
 def _decode_tool_args(arguments_json: str) -> dict[str, object] | str:
@@ -730,6 +759,8 @@ class ToolRegistry:
         args = _decode_tool_args(arguments_json)
         if isinstance(args, str) or _missing_required_error(definition, args) is not None:
             return None
+        if _shape_error(definition, args) is not None:
+            return None
         reason = _as_danger_reason(self._danger(name, args))
         if reason is None or (self._yolo and (definition.tags & ToolTag.YOLO) and reason.yolo_skip):
             return None
@@ -866,6 +897,9 @@ class ToolRegistry:
         missing_error = _missing_required_error(definition, args)
         if missing_error is not None:
             return ToolOutput(text=missing_error)
+        check_error = _shape_error(definition, args)
+        if check_error is not None:
+            return ToolOutput(text=check_error)
 
         async def _run() -> ToolOutput:
             from plyngent.tools.context import collect_approvals

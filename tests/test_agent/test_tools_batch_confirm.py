@@ -105,6 +105,42 @@ async def test_round_asks_once_for_many_mutating_calls() -> None:
     assert single_prompts == []
 
 
+async def test_a_call_that_cannot_run_is_left_out_of_the_round_prompt() -> None:
+    """A tool's own shape check answers first, so the round prompt omits the call."""
+    batch_prompts: list[list[ToolConfirmRequest]] = []
+
+    def positive(args: Mapping[str, object]) -> str | None:
+        count = args.get("count")
+        if isinstance(count, int) and count <= 0:
+            return "error: count must be positive"
+        return None
+
+    @tool(tags=ToolTag.LOCAL, register=False, validate=positive)
+    async def scale(count: int = 1) -> str:
+        return f"scaled {count}"
+
+    def on_batch(requests: Sequence[ToolConfirmRequest]) -> BatchConfirmDecision:
+        batch_prompts.append(list(requests))
+        return BatchConfirmDecision(allowed=True)
+
+    reg = ToolRegistry([scale], danger=_danger, on_confirm_batch=on_batch)
+    calls = [("scale", '{"count": 2}'), ("scale", '{"count": 0}'), ("scale", '{"count": 3}')]
+    decisions = await reg.prepare_batch_confirm(calls)
+
+    assert len(batch_prompts) == 1
+    assert [request.args["count"] for request in batch_prompts[0]] == [2, 3]
+    assert decisions[1] is None
+
+    results = [
+        await reg.execute(name, arguments, decision=decisions[index]) for index, (name, arguments) in enumerate(calls)
+    ]
+    assert results == [
+        _approved("user (round)", "scaled 2"),
+        "error: count must be positive",
+        _approved("user (round)", "scaled 3"),
+    ]
+
+
 async def test_yolo_calls_are_left_out_of_the_prompt() -> None:
     """Under YOLO mode a YOLO-tagged call runs unprompted, batch prompt included."""
     batch_prompts: list[list[str]] = []

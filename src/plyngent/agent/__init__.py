@@ -41,6 +41,7 @@ from .tools import ToolDefinition as ToolDefinition
 from .tools import ToolOutput as ToolOutput
 from .tools import ToolRegistry as ToolRegistry
 from .tools import ToolTag as ToolTag
+from .tools import ToolValidator as ToolValidator
 from .tools import format_approval as format_approval
 from .tools import most_specific_approval as most_specific_approval
 from .tools import schema_from_callable as schema_from_callable

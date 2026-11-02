@@ -45,6 +45,26 @@ def format_command_result(
     return "\n".join(parts)
 
 
+def timeout_shape_error(value: object) -> str | None:
+    """Model-facing error when ``timeout_seconds`` is not a positive number.
+
+    Numeric strings are accepted (models send them), anything else is answered
+    before the call can start: a value that only fails inside ``wait_for`` has
+    already spawned the process, so nothing would stop it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return f"timeout_seconds must be a number, not {type(value).__name__}"
+    try:
+        seconds = float(value)
+    except ValueError:
+        return f"timeout_seconds must be a number, not {value!r}"
+    if seconds <= 0:
+        return f"timeout_seconds must be greater than 0 (got {value!r})"
+    return None
+
+
 def resolve_workdir(cwd: str) -> tuple["Path", str]:
     """Return (absolute workdir, display path relative to workspace when possible)."""
     workdir = resolve_path(cwd, required=AccessMode.EXEC)
