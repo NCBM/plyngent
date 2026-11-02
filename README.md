@@ -362,7 +362,7 @@ Safety defaults:
   `write_pty` is literal text only; use `write_pty_keys` for keys and bytes: `<c-c>` `<esc>` `<enter>` `<s-tab>` `<up>` … `<f12>`, `<c-up>` `<s-home>` `<c-s-f5>` for modifier combinations, `<up*3>` to repeat, `<m-x>` for Alt, and `\xHH` / `\uHHHH` for raw bytes. An unknown `<…>` is an error, never text typed into the terminal.
   For passwords/sudo/ssh prompts use `ask_into_pty` (human types locally; answer never returns to the model).
 
-- Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`), a call that omits a required argument, or a non-numeric `wait` duration (numeric strings are accepted) returns an error showing the shape/names to send — the human never sees a garbage prompt, and no confirm prompt fires for a call that cannot run.
+- Mis-typed tool arguments are answered, never guessed: a string where an array is expected (`run_argv` `argv`, `ask_user_choice` `options`, `ask_user_form` `fields`), a call that omits a required argument, a non-numeric `wait` duration (numeric strings are accepted), or a `timeout_seconds` that is not a positive number returns an error showing the shape/names to send — the human never sees a garbage prompt, and no confirm prompt fires for a call that cannot run (a tool declares that pre-prompt check with `@tool(validate=…)`; `run_argv` / `run_argv_batch` do, the batch also for a tree it cannot build).
 
 ## Usage / context (CLI)
 
