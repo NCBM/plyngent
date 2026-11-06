@@ -11,38 +11,33 @@ default_stages = ["pre-commit"]
 default_language_version = { python = "python3.14" }
 
 # Match CI / local pdm env (see pdm.lock).
-repos = [
-  {
-    repo = "local",
-    hooks = [
-      {
-        id = "ruff-check",
-        name = "ruff check",
-        entry = "ruff check",
-        language = "python",
-        types_or = ["python", "pyi"],
-        args = [],
-        require_serial = true,
-        additional_dependencies = ["ruff==0.17.2"],
-      },
-      {
-        id = "ruff-format",
-        name = "ruff format",
-        entry = "ruff format --check --force-exclude",
-        language = "python",
-        types_or = ["python", "pyi"],
-        require_serial = true,
-        additional_dependencies = ["ruff==0.17.2"],
-      },
-      {
-        id = "basedpyright",
-        name = "basedpyright",
-        entry = "basedpyright",
-        language = "python",
-        pass_filenames = false,
-        require_serial = true,
-        additional_dependencies = ["basedpyright==1.40.2"],
-      },
-    ],
-  },
-]
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+entry = "ruff check"
+language = "python"
+types_or = ["python", "pyi"]
+args = ["--fix"]
+require_serial = true
+additional_dependencies = ["ruff==0.17.4"]
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "ruff format --force-exclude"
+language = "python"
+types_or = ["python", "pyi"]
+require_serial = true
+additional_dependencies = ["ruff==0.17.4"]
+
+[[repos.hooks]]
+id = "basedpyright"
+name = "basedpyright"
+entry = "basedpyright"
+language = "python"
+pass_filenames = false
+require_serial = true
+additional_dependencies = ["basedpyright==1.40.2"]

@@ -1,52 +1,50 @@
 [project]
 name = "plyngent"
-version = "0.16.0"
+version = "1.0.0a1"
 description = "LLM chat and agent toolkit"
 authors = [
-  { name = "HivertMoZara", email = "worldmozara@163.com" },
+    {name = "HivertMoZara",email = "worldmozara@163.com"},
 ]
 dependencies = [
+  "composat>=1.0.2",
+  "click>=8.4.2",
+  "rich>=13",
+  "prompt_toolkit>=3.0",
   "msgspec>=0.21.1",
   "niquests>=3.20",
-  "typing-extensions>=4.15.0",
-  "platformdirs>=4.10.0",
-  "tomlkit>=0.15.0",
   "sqlalchemy>=2.0.51",
   "aiosqlite>=0.22.1",
-  "click>=8.4.2",
-  "awaitlet>=0.0.1",
+  "platformdirs>=4.10.0",
+  "tomlkit>=0.15.0",
+  "send2trash>=2.1.0",
   "pywinpty>=2.0.0; sys_platform == \"win32\"",
-  "rich>=13",
-  "send2trash>=2.1.0"
 ]
 requires-python = ">=3.14,<4"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 
 [project.optional-dependencies]
-# Desktop notifications while a prompt waits on the human (see `[notify]`).
 notify = ["desktop-notifier>=6.2.0"]
-
-[project.scripts]
-plyngent = "plyngent.cli:main"
-
-[dependency-groups]
-dev = [
-    "basedpyright==1.40.2",
-    "ruff==0.17.2",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
-]
 
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
+
+[tool.pdm]
+distribution = true
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "ruff>=0.17.4",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.0",
+]
+
 [tool.basedpyright]
 typeCheckingMode = "recommended"
 strictGenericNarrowing = true
-# winpty is Windows-only (pywinpty); stubs live under typings/ (pyright default stubPath).
-reportMissingModuleSource = "hint"
 reportAny = "hint"
 reportExplicitAny = "hint"
 reportImplicitStringConcatenation = "hint"
@@ -71,17 +69,10 @@ reportMissingTypeStubs = "none"
 reportArgumentType = "none"
 reportAttributeAccessIssue = "none"
 
-[[tool.basedpyright.executionEnvironments]]
-root = "scripts"
-reportUnusedCallResult = "none"
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-
-[tool.pdm]
-distribution = true
 
 [tool.ruff]
 line-length = 120
@@ -125,7 +116,6 @@ select = [
   "TC",  # flake8-type-checking
   "ARG",  # flake8-unused-arguments
   "PTH",  # flake8-use-pathlib
-  # "ERA",   # eradicate
   "FAST",  # FastAPI
   "PERF",  # Perflint
   "PGH",  # pygrep-hooks
@@ -135,17 +125,14 @@ select = [
 ]
 ignore = [
   "UP037",  # quoted-annotation
-  # "ANN201",  # missing-return-type-undocumented-public-function
   "ANN202",  # missing-return-type-private-function
   "ANN401",  # any-type
   "COM812",  # missing-trailing-comma
   "PLC0415",  # import-outside-top-level
   "TID252",
-  # Same axis as C901 (conditional branches per function) but a looser default,
-  # and C901 flags every function it does — keep the one gate (see AGENTS.md).
   "PLR0912",  # too-many-branches
-  "PLR0913",  # too-many-arguments (common on constructors/composed functions)
-  "PLR0917",  # too-many-positional-arguments (same family as PLR0913 above)
+  "PLR0913",  # too-many-arguments
+  "PLR0917",  # too-many-positional-arguments
 ]
 allowed-confusables = [
   "，",
@@ -169,20 +156,16 @@ allowed-confusables = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
-  "ANN",      # type annotations often noisy in tests
-  "ARG",      # unused fixtures/args are common
-  "ASYNC240", # pathlib in async tests is fine
-  "PLR2004",  # magic values in asserts
-  "PLR0911",  # many returns in fixtures/helpers
-  "PLR0912",  # branching in scripted clients
-  "PLR0915",  # long test functions
-  "C901",     # complexity in scripted fakes
-  "S101",     # assert is the point of tests
-  "TC",       # TYPE_CHECKING import churn
-  "TRY003",   # long exception messages in tests
-  "FBT",      # boolean positional args in helpers
-]
-"scripts/**" = [
-  "T201",     # CLI scripts print status
-  "PLR0911",  # command dispatch returns
+  "ANN",
+  "ARG",
+  "ASYNC240",
+  "PLR2004",
+  "PLR0911",
+  "PLR0912",
+  "PLR0915",
+  "C901",
+  "S101",
+  "TC",
+  "TRY003",
+  "FBT",
 ]
