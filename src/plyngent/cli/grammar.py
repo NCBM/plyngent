@@ -1,0 +1,424 @@
+"""What a typed line means: plain text is a message, and a slash word is a command.
+
+The command table is not written here. The kernel's manifest already carries each command's tag, its
+one-line help and the JSON Schema of its own arguments, so this module *derives* the parser, the help
+text and the completion candidates from that one document — three things that cannot drift apart
+because there is only one source (R2.4 C5). A command whose arguments cannot be spelled on a line is
+withheld with a reason instead of being offered half-way.
+
+Two halves, both terminal business:
+
+* a slash word is the command's own tag, plus a short alias table (:data:`ALIASES`) for the words a
+  person reaches for first. The alias table is the adapter's: a kernel command may be named anything,
+  and ``/new`` is a terminal convenience rather than a second command (R2.4 C4);
+* text without a slash is a message — ``Submit`` — because "say something" is the one thing a person
+  does all day and should never have to spell.
+
+``/submit`` is the exception that proves the rule: it exists so a message can be composed in the
+human's editor, which is the one thing a single line cannot do. It takes no arguments; the text comes
+from the editor and the session is the one in focus.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast, get_args, override
+
+import click
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+
+from plyngent.wire.command import AnyCommand, Command, Submit
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from prompt_toolkit.document import Document
+
+    from plyngent.wire.manifest import CommandSpec, KernelManifest
+
+#: The words a person reaches for first, and the tags they mean. Every alias must name a tag that
+#: exists, and every tag must be reachable — by itself, through an alias, or by being withheld with a
+#: reason; ``tests/test_structure.py`` holds those rules together.
+ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": "set-route"}
+
+#: The one word whose text is written in an editor rather than on the line.
+COMPOSED = "submit"
+
+#: What that word does, said in its own terms: the wire's summary describes a ``submit`` whose text is
+#: an argument, and this client withholds that argument in favour of an editor.
+COMPOSE_NOTE = "Write the message in your editor, then send it"
+
+#: How a slash line is spelled.
+SLASH = "/"
+
+#: How many entries an option that stands for a tuple takes, when the schema fixes its length.
+PAIR_LENGTH = 2
+
+#: The plain JSON Schema types this client can put on a line.
+_BY_TYPE: dict[str, type] = {"string": str, "integer": int}
+
+#: One object out of a JSON Schema: read by shape, never trusted to be there.
+type _Object = dict[str, object]
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One slash word: what to send, how to argue with it, and what to say about it."""
+
+    tag: str
+    command: click.Command
+    #: Options that must be given zero or twice — a tuple the wire carries as a fixed-length pair.
+    pairs: list[str] = field(default_factory=list)
+    #: Whether this word opens an editor instead of taking arguments from the line.
+    composes: bool = False
+
+    @property
+    def summary(self) -> str:
+        """The one line a help listing shows."""
+        return self.command.help or ""
+
+
+@dataclass(frozen=True)
+class Catalog:
+    """The words this client can spell, and the ones it honestly cannot.
+
+    ``withheld`` is not a list of bugs: a command may carry an argument shape a line cannot express,
+    and saying "not from here" beats a parser that silently drops a field.
+    """
+
+    offers: dict[str, Entry] = field(default_factory=dict)
+    withheld: dict[str, str] = field(default_factory=dict)
+    aliases: dict[str, str] = field(default_factory=lambda: dict(ALIASES))
+
+    def word(self, said: str) -> str | None:
+        """The tag a word or alias names, or ``None`` when this client cannot spell it."""
+        tag = self.aliases.get(said, said)
+        return tag if tag in self.offers else None
+
+
+@dataclass(frozen=True)
+class Runs:
+    """A command ready to send, spelled out in full."""
+
+    command: AnyCommand
+
+
+@dataclass(frozen=True)
+class Composes:
+    """A message to write in an editor and then send as a ``Submit`` to this session."""
+
+    session: str
+
+
+@dataclass(frozen=True)
+class Help:
+    """What to show instead of doing anything."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class Wrong:
+    """A line this client cannot make sense of, and what to say about it."""
+
+    text: str
+
+
+#: What one line came to. Four outcomes, four different things for the loop to do.
+type Intent = Runs | Composes | Help | Wrong
+
+
+def build(manifest: KernelManifest, *, session: str) -> Catalog:
+    """Derive the slash vocabulary from the manifest, once per connection.
+
+    ``session`` is the session in focus, so ``--session`` can default to it instead of making every
+    command say which conversation it means.
+    """
+    classes = {cls.__struct_config__.tag: cls for cls in get_args(AnyCommand.__value__)}
+    offers: dict[str, Entry] = {}
+    withheld: dict[str, str] = {}
+    for spec in manifest.commands:
+        tag = spec.name
+        if tag not in classes:
+            withheld[tag] = "the manifest names a command this client has no value for"
+            continue
+        if tag == COMPOSED:
+            offers[tag] = Entry(tag=tag, command=_bare(spec), composes=True)
+            continue
+        options, pairs, missing = _options(spec, session=session)
+        if missing:
+            withheld[tag] = missing
+            continue
+        offers[tag] = Entry(tag=tag, command=_command(spec, options), pairs=pairs)
+    return Catalog(offers=offers, withheld=withheld)
+
+
+def decode(line: str, catalog: Catalog, *, session: str) -> Intent:
+    """What this line came to: a command to send, an editor to open, or something to say."""
+    if not line.startswith(SLASH):
+        return Runs(command=Submit(session=session, text=line))
+    return _slash(line[len(SLASH) :], catalog, session=session)
+
+
+def help_text(catalog: Catalog, word: str | None = None) -> str:
+    """The listing, or one command's own help, from the same table the parser is built from."""
+    if word is not None:
+        tag = catalog.word(word)
+        return f"no command {SLASH}{word} here" if tag is None else _help_of(catalog.offers[tag])
+    spelled = [
+        (f"{SLASH}{tag}" + (" <editor>" if entry.composes else _usage(entry)), entry.summary)
+        for tag, entry in catalog.offers.items()
+    ]
+    width = max((len(usage) for usage, _ in spelled), default=0) + 2
+    lines = ["commands:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
+    lines.append("aliases: " + ", ".join(f"{SLASH}{word} = {SLASH}{tag}" for word, tag in catalog.aliases.items()))
+    if catalog.withheld:
+        refused = ", ".join(f"{SLASH}{tag} ({why})" for tag, why in catalog.withheld.items())
+        lines.append(f"not from here: {refused}")
+    lines.append("anything else you type is a message")
+    return "\n".join(lines)
+
+
+def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
+    """A line that begins with the slash: a word, then whatever it was given."""
+    said, _, rest = text.partition(" ")
+    if not said:
+        return Help(text=help_text(catalog))
+    if said == "help":
+        return Help(text=help_text(catalog, rest.strip() or None))
+    tag = catalog.word(said)
+    if tag is None:
+        return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
+    return _known(tag, catalog.offers[tag], rest.split(), session=session)
+
+
+def _known(tag: str, entry: Entry, args: list[str], *, session: str) -> Intent:
+    """A word this client can spell: either it wants an editor, or click does the parsing."""
+    if entry.composes:
+        if args:
+            return Wrong(text=f"{SLASH}{tag} takes no argument: it opens an editor for the text")
+        return Composes(session=session)
+    if "--help" in args or "-h" in args:
+        return Help(text=_help_of(entry))
+    return _parsed(tag, entry, args)
+
+
+def _parsed(tag: str, entry: Entry, args: list[str]) -> Intent:
+    """Let click parse the arguments, then make the value the wire expects."""
+    try:
+        parsed = entry.command.make_context(tag, list(args), parent=None)
+    except click.UsageError as exc:
+        return Wrong(text=exc.format_message())
+    except click.exceptions.Exit:
+        return Wrong(text=f"{SLASH}{tag} did not understand that line; try {SLASH}help {tag}")
+    values = _pairs(parsed.params, entry)
+    if isinstance(values, str):
+        return Wrong(text=values)
+    return Runs(command=_command_value(tag, values))
+
+
+# -- deriving the parser -----------------------------------------------------------
+
+
+def _command(spec: CommandSpec, options: list[click.Parameter]) -> click.Command:
+    """One click command: the tag is its name, the wire's summary is its help, the options its fields.
+
+    Its callback is never run — this client builds a value and sends it — but click still does the
+    parsing, the validation and the usage message, which is the point of deriving it rather than
+    writing a second tokenizer.
+    """
+    return click.Command(name=spec.name, params=options, help=spec.summary, callback=_ignored, add_help_option=False)
+
+
+def _bare(spec: CommandSpec) -> click.Command:
+    """A command that takes nothing: its one input is an editor."""
+    return click.Command(name=spec.name, params=[], help=COMPOSE_NOTE, callback=_ignored, add_help_option=False)
+
+
+def _ignored(**_values: object) -> None:
+    """Click insists on a callback; sending happens in the loop, not here."""
+
+
+def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter], list[str], str]:
+    """The options of one command, the ones that are pairs, and why it cannot be spelled (if so).
+
+    Every command carries ``session`` — the contract gives each one a target — so it is an option here
+    too, defaulting to the session in focus rather than to the empty string the wire allows.
+    """
+    document = _object(json.loads(spec.args))
+    name = _text(document.get("$ref")).rpartition("/")[2]
+    defs = _object(document.get("$defs"))
+    properties = _object(_object(defs.get(name)).get("properties"))
+    options: list[click.Parameter] = []
+    pairs: list[str] = []
+    for field_name, schema in properties.items():
+        if field_name in {"cmd", "session"}:
+            continue
+        option, pair, why = _option(field_name, _object(schema), defs)
+        if why:
+            return [], [], why
+        if pair:
+            pairs.append(option.name or field_name)
+        options.append(option)
+    options.append(click.Option(["--session"], type=str, default=session, show_default=True, help="which session"))
+    return options, pairs, ""
+
+
+def _option(name: str, schema: _Object, defs: _Object) -> tuple[click.Option, bool, str]:
+    """One field as a click option: its type, whether it is a pair, and why it cannot be spoken."""
+    # A default belongs to the property rather than to the type it refers to, so it is read before the
+    # reference is followed — otherwise an enum with a default would silently lose it.
+    offered = schema.get("default")
+    branches = [_object(branch) for branch in _objects(schema.get("anyOf"))]
+    nullable = any(branch.get("type") == "null" for branch in branches)
+    option, pair, why = _shaped(name, _unwrap(schema, defs), offered=offered, nullable=nullable)
+    if why:
+        return click.Option([""]), False, why
+    return option, pair, ""
+
+
+def _unwrap(schema: _Object, defs: _Object) -> _Object:
+    """The real shape behind a nullable or referenced schema; empty when there is more than one."""
+    branches = [_object(branch) for branch in _objects(schema.get("anyOf")) if _object(branch).get("type") != "null"]
+    if "anyOf" in schema:
+        if len(branches) != 1:
+            return {}
+        schema = branches[0]
+    if "$ref" in schema:
+        return _object(defs.get(_text(schema["$ref"]).rpartition("/")[2]))
+    return schema
+
+
+def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> tuple[click.Option, bool, str]:
+    """The option for one field, by the shape its schema has."""
+    choices = [str(choice) for choice in _objects(schema.get("enum"))]
+    if choices:
+        default = None if nullable else offered if offered is not None else ""
+        option = click.Option([_flag(name)], type=click.Choice(choices), default=default, help="/".join(choices))
+        return option, False, ""
+    kind = schema.get("type")
+    if isinstance(kind, str) and kind in _BY_TYPE:
+        default = None if nullable else offered if offered is not None else ""
+        return click.Option([_flag(name)], type=_BY_TYPE[kind], default=default), False, ""
+    if kind == "array":
+        return _listed(name, schema)
+    return click.Option([""]), False, "has a shape this client cannot put on a line"
+
+
+def _listed(name: str, schema: _Object) -> tuple[click.Option, bool, str]:
+    """An array field: either a list of strings, or a pair whose length the schema fixes."""
+    fixed = schema.get("minItems") == PAIR_LENGTH and schema.get("maxItems") == PAIR_LENGTH
+    parts = [_object(part) for part in _objects(schema.get("prefixItems") or schema.get("items"))]
+    if any(part.get("type") != "string" for part in parts):
+        return click.Option([""]), False, "is a list this client cannot put on a line"
+    help_note = "give it twice" if fixed else "may be given more than once"
+    return click.Option([_flag(name)], type=str, multiple=True, default=(), help=help_note), fixed, ""
+
+
+def _pairs(params: dict[str, object], entry: Entry) -> dict[str, object] | str:
+    """Settle the pairs: nothing given is ``None``, two given is a tuple, anything else is a problem."""
+    values = dict(params)
+    for name in entry.pairs:
+        given = values.get(name)
+        if not isinstance(given, tuple):
+            continue
+        entered = cast("tuple[object, ...]", given)
+        if not entered:
+            values[name] = None
+        elif len(entered) == PAIR_LENGTH:
+            values[name] = entered
+        else:
+            return f"{_flag(name)} takes exactly {PAIR_LENGTH} entries, and got {len(entered)}"
+    return values
+
+
+def _command_value(tag: str, values: dict[str, object]) -> AnyCommand:
+    """The value to send: the struct the manifest's schema was taken from, built from parsed fields.
+
+    The cast is honest rather than clever: the keys are that struct's own schema's, and no signature
+    can say so for a class chosen by tag at runtime.
+    """
+    fields = cast("dict[str, Any]", values)
+    return cast("AnyCommand", _class_of(tag)(**fields))
+
+
+def _class_of(tag: str) -> type[Command]:
+    """The wire class a tag names."""
+    for cls in get_args(AnyCommand.__value__):
+        if cls.__struct_config__.tag == tag:
+            return cls
+    msg = f"no command carries the tag {tag!r}"
+    raise KeyError(msg)
+
+
+def _flag(name: str) -> str:
+    """A field name as the option a person types."""
+    return f"--{name.replace('_', '-')}"
+
+
+def _object(value: object) -> _Object:
+    """One JSON object, or an empty one: a schema is read by shape, and a missing part refuses."""
+    return cast("_Object", value) if isinstance(value, dict) else {}
+
+
+def _objects(value: object) -> list[object]:
+    """One JSON array, or an empty one."""
+    return cast("list[object]", value) if isinstance(value, list) else []
+
+
+def _text(value: object) -> str:
+    """One JSON string, or the empty one."""
+    return value if isinstance(value, str) else ""
+
+
+def _usage(entry: Entry) -> str:
+    """The options of one command, as the listing shows them: names only, since ``/help <word>`` has the rest."""
+    names = [
+        param.opts[0]
+        for param in entry.command.get_params(click.Context(entry.command))
+        if isinstance(param, click.Option)
+    ]
+    return "".join(f" [{name}]" for name in names)
+
+
+def _help_of(entry: Entry) -> str:
+    """One command's own help, generated by click from the same options the parser uses."""
+    return entry.command.get_help(click.Context(entry.command, info_name=entry.tag))
+
+
+class SlashCompleter(Completer):
+    """Completion of slash words and their options, from the same table that parses them.
+
+    Derived rather than maintained: a command that gains an option gains a completion, because both
+    read the catalog. A word this client cannot spell is not offered, which is the answer the parser
+    gives too.
+    """
+
+    _catalog: Catalog
+
+    def __init__(self, catalog: Catalog) -> None:
+        super().__init__()
+        self._catalog = catalog
+
+    @override
+    def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
+        """Complete the word being typed, or the option of the command it names."""
+        del complete_event
+        text = document.text_before_cursor
+        if not text.startswith(SLASH):
+            return
+        head, _, tail = text.partition(" ")
+        if not tail:
+            word = head[len(SLASH) :]
+            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers}):
+                if candidate.startswith(word):
+                    yield Completion(f"{SLASH}{candidate}", start_position=-len(text))
+            return
+        tag = self._catalog.word(head[len(SLASH) :])
+        if tag is None or not tail.startswith("--"):
+            return
+        entry = self._catalog.offers[tag]
+        for param in entry.command.get_params(click.Context(entry.command)):
+            if isinstance(param, click.Option) and param.opts[0].startswith(tail):
+                yield Completion(param.opts[0], start_position=-len(tail))

@@ -26,6 +26,9 @@ license = "MIT"
 [project.optional-dependencies]
 notify = ["desktop-notifier>=6.2.0"]
 
+[project.scripts]
+plyngent = "plyngent.__main__:main"
+
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
