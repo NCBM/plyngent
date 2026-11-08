@@ -319,6 +319,8 @@ async def test_chat_agent_turn_usage_sums_tool_rounds() -> None:
     # Context size is last request prompt, not billed sum
     assert agent.context_tokens == 200
     assert agent.context_tokens_source == "api"
+    # The estimate that pairs with that sample describes the same payload.
+    assert agent.last_request_estimate_tokens > 0
 
 
 async def test_context_tokens_falls_back_to_message_estimate() -> None:
@@ -329,6 +331,8 @@ async def test_context_tokens_falls_back_to_message_estimate() -> None:
         messages=[UserChatMessage(content="12345678")],
     )
     assert agent.last_request_usage.is_zero()
+    # Nothing was sent, so there is no estimate to pair with a sample either.
+    assert agent.last_request_estimate_tokens == 0
     assert agent.context_tokens_source == "estimate"
     assert agent.context_tokens >= 1
 

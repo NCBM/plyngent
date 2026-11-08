@@ -10,6 +10,7 @@ from plyngent.agent.budget import (
     measure_messages_tokens,
     reasoning_trim_policy,
 )
+from plyngent.agent.events import UsageEvent
 from plyngent.agent.loop import run_chat_loop
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -232,7 +233,7 @@ async def test_loop_sends_compacted_request_not_history() -> None:
         UserChatMessage(content="next"),
     ]
     client = CaptureClient([_response(AssistantChatMessage(content="ok"))])
-    _ = [
+    events = [
         e
         async for e in run_chat_loop(
             client,
@@ -250,6 +251,11 @@ async def test_loop_sends_compacted_request_not_history() -> None:
     # In-memory history still full for the old tool result
     assert isinstance(history[2], ToolChatMessage)
     assert history[2].content == big
+    # The usage sample carries the estimate of the payload it describes, so a
+    # calibration can divide the two instead of pairing them with the history.
+    usage_events = [e for e in events if isinstance(e, UsageEvent)]
+    assert usage_events
+    assert usage_events[0].request_estimate_tokens == estimate_messages_tokens(sent)
 
 
 def test_estimation_counts_chain_of_thought() -> None:
