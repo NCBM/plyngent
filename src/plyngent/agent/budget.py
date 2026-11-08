@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import msgspec
-from msgspec import UNSET
+from msgspec import UNSET, Struct
 
 from plyngent.lmproto.openai_compatible.model import (
     AssistantChatMessage,
@@ -44,6 +44,73 @@ IMAGE_CHARS = 4_096
 
 # Backward-compat alias (older code/docs may still import this name).
 DEFAULT_CONTEXT_MAX_CHARS = DEFAULT_CONTEXT_MAX_TOKENS * 4
+
+# Soft-compact: leave this many most-recent assistant rounds' chain-of-thought at
+# full size. Counted in assistant rounds that carry one, so the round being
+# continued is always inside the window.
+DEFAULT_RECENT_REASONING_ROUNDS = 4
+# What an older round keeps of its chain-of-thought when the surface takes a
+# rewritten text (the same order of size as an old tool dump).
+DEFAULT_OLD_REASONING_CHARS = 800
+_REASONING_TRIM_MARKER = "\n… [reasoning trimmed: {omitted} chars omitted]"
+# Assistant blocks a provider verifies itself: a ``thinking`` block carries a
+# signature and a ``redacted_thinking`` block is opaque ciphertext, so neither can
+# be rewritten on the way back (see ``agent.messages_bridge``).
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+type ReasoningTrimMode = Literal["none", "trim_text", "blank", "drop_blocks"]
+
+
+class ReasoningTrimPolicy(Struct, frozen=True):
+    """What the request-prep pass may do to an older round's chain-of-thought.
+
+    Every wire surface takes a different shape back, so the rule travels with the
+    client's ``kind`` (see :func:`reasoning_trim_policy`) instead of being one
+    fixed rule:
+
+    * ``trim_text`` — chat completions only require the field to be *present*, so
+      an older round keeps its head plus a marker;
+    * ``blank`` — a Responses round's ``reasoning`` item needs non-empty text and
+      a blank line is what a round that kept no chain-of-thought already sends, so
+      the text is dropped rather than rewritten;
+    * ``drop_blocks`` — an Anthropic ``thinking`` block cannot be rewritten, so an
+      older round loses the block and keeps everything else;
+    * ``none`` — never touch it.
+
+    ``keep_recent`` counts assistant rounds (the last N carrying a
+    chain-of-thought), and a value ``<= 0`` leaves none of them protected.
+    """
+
+    mode: ReasoningTrimMode = "none"
+    keep_recent: int = DEFAULT_RECENT_REASONING_ROUNDS
+    max_chars: int = DEFAULT_OLD_REASONING_CHARS
+
+
+# Off by default: a caller that says nothing about its surface keeps the history
+# as it is (``/compact`` renders no chain-of-thought anyway).
+NO_REASONING_TRIM = ReasoningTrimPolicy(mode="none", keep_recent=0)
+
+
+def reasoning_trim_policy(
+    kind: str,
+    *,
+    keep_recent: int = DEFAULT_RECENT_REASONING_ROUNDS,
+    max_chars: int = DEFAULT_OLD_REASONING_CHARS,
+) -> ReasoningTrimPolicy:
+    """The chain-of-thought policy for one surface, by client ``kind``.
+
+    An unknown surface gets :data:`NO_REASONING_TRIM`: trimming it would be a
+    guess about what the provider accepts back.
+    """
+    if kind == "chat_completions":
+        mode: ReasoningTrimMode = "trim_text"
+    elif kind == "responses":
+        mode = "blank"
+    elif kind == "messages":
+        mode = "drop_blocks"
+    else:
+        return NO_REASONING_TRIM
+    return ReasoningTrimPolicy(mode=mode, keep_recent=keep_recent, max_chars=max_chars)
 
 
 def cut_at_storage_ceiling(text: str) -> bool:
@@ -112,6 +179,29 @@ def _content_chars(content: str | list[ChatTextPart | ChatImagePart]) -> int:
     return sum(len(part.text) if isinstance(part, ChatTextPart) else IMAGE_CHARS for part in content)
 
 
+def _json_text_chars(value: object) -> int:
+    """Characters of text a raw JSON-ish value carries (keys, types and braces ignored)."""
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, dict):
+        return sum(_json_text_chars(item) for item in cast("dict[object, object]", value).values())
+    if isinstance(value, list | tuple):
+        return sum(_json_text_chars(item) for item in cast("list[object]", value))
+    return 0
+
+
+def _reasoning_chars(message: AssistantChatMessage) -> int:
+    """What one round's chain-of-thought costs when the round is re-sent."""
+    total = 0
+    reasoning = message.reasoning_content
+    if isinstance(reasoning, str):
+        total += len(reasoning)
+    blocks = message.provider_blocks
+    if blocks is not UNSET and blocks:
+        total += _json_text_chars(blocks)
+    return total
+
+
 def estimate_message_chars(message: AnyChatMessage) -> int:
     """Rough character estimate for soft context budgeting (not tokenizer-accurate)."""
     total = 0
@@ -122,6 +212,9 @@ def estimate_message_chars(message: AnyChatMessage) -> int:
         if isinstance(content, str):
             total += len(content)
     if isinstance(message, AssistantChatMessage):
+        # Chain-of-thought is re-sent every round like the rest of the history, so
+        # it counts toward the budget (and the surfaces below may shrink it).
+        total += _reasoning_chars(message)
         tool_calls = message.tool_calls
         if tool_calls is not UNSET and tool_calls:
             for call in tool_calls:
@@ -186,10 +279,10 @@ def _tool_indices(messages: Sequence[AnyChatMessage]) -> list[int]:
     return [i for i, m in enumerate(messages) if isinstance(m, ToolChatMessage)]
 
 
-def _protect_indices(tool_indices: Sequence[int], keep_recent: int) -> set[int]:
+def _protect_indices(indices: Sequence[int], keep_recent: int) -> set[int]:
     if keep_recent <= 0:
         return set()
-    return set(tool_indices[-keep_recent:])
+    return set(indices[-keep_recent:])
 
 
 def _shrink_except(
@@ -204,6 +297,63 @@ def _shrink_except(
         tool_msg = messages[idx]
         if isinstance(tool_msg, ToolChatMessage):
             messages[idx] = _shrink_tool(tool_msg, max_chars)
+
+
+def _has_reasoning_text(message: AssistantChatMessage) -> bool:
+    reasoning = message.reasoning_content
+    return isinstance(reasoning, str) and bool(reasoning)
+
+
+def _thinking_blocks(message: AssistantChatMessage) -> list[dict[str, Any]]:
+    blocks = message.provider_blocks
+    if blocks is UNSET or not blocks:
+        return []
+    return [block for block in blocks if block.get("type") in _THINKING_BLOCK_TYPES]
+
+
+def _shrink_reasoning_message(
+    message: AssistantChatMessage,
+    policy: ReasoningTrimPolicy,
+) -> AssistantChatMessage:
+    """One assistant round's chain-of-thought shortened the way its surface takes it."""
+    if policy.mode == "trim_text":
+        reasoning = message.reasoning_content
+        if not isinstance(reasoning, str) or len(reasoning) <= policy.max_chars:
+            return message
+        omitted = len(reasoning) - policy.max_chars
+        return msgspec.structs.replace(
+            message,
+            reasoning_content=reasoning[: policy.max_chars] + _REASONING_TRIM_MARKER.format(omitted=omitted),
+        )
+    if policy.mode == "blank":
+        # The bridge sends a blank reasoning item for an unset text.
+        return msgspec.structs.replace(message, reasoning_content=UNSET)
+    blocks = message.provider_blocks
+    if blocks is UNSET or not blocks:
+        return message
+    kept = [block for block in blocks if block.get("type") not in _THINKING_BLOCK_TYPES]
+    if len(kept) == len(blocks):
+        return message
+    # Blocks go back verbatim, so a dropped thinking block is simply absent; a
+    # round that held only those keeps the field unset.
+    return msgspec.structs.replace(message, provider_blocks=kept or UNSET)
+
+
+def _shrink_reasoning(messages: list[AnyChatMessage], policy: ReasoningTrimPolicy) -> None:
+    """Trim every round's chain-of-thought outside the protected window."""
+    if policy.mode == "none":
+        return
+    if policy.mode == "drop_blocks":
+        indices = [i for i, m in enumerate(messages) if isinstance(m, AssistantChatMessage) and _thinking_blocks(m)]
+    else:
+        indices = [i for i, m in enumerate(messages) if isinstance(m, AssistantChatMessage) and _has_reasoning_text(m)]
+    protect = _protect_indices(indices, policy.keep_recent)
+    for idx in indices:
+        if idx in protect:
+            continue
+        message = messages[idx]
+        if isinstance(message, AssistantChatMessage):
+            messages[idx] = _shrink_reasoning_message(message, policy)
 
 
 def _shrink_largest(
@@ -232,17 +382,23 @@ def compact_messages_for_request(
     max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     old_tool_result_chars: int = DEFAULT_OLD_TOOL_RESULT_CHARS,
     keep_recent_tool_results: int = DEFAULT_RECENT_TOOL_RESULTS,
+    reasoning_policy: ReasoningTrimPolicy = NO_REASONING_TRIM,
     prompt_tokens_hint: int | None = None,
     sent_estimate_tokens: int | None = None,
     # Deprecated alias: treated as token budget.
     max_chars: int | None = None,
 ) -> list[AnyChatMessage]:
-    """Return a request-time copy with older tool dumps shrunk if over budget.
+    """Return a request-time copy with older bulk shrunk if over budget.
 
     Budget is in tokens. Prefer API-calibrated measurement via
     ``prompt_tokens_hint`` / ``sent_estimate_tokens`` (last request); otherwise
     fall back to char/4. Does not mutate the original history.
     ``max_tokens < 1`` disables compacting.
+
+    Shrinking runs cheapest first and stops as soon as the copy fits: older tool
+    dumps, then older rounds' chain-of-thought (as *reasoning_policy* allows — a
+    surface that would refuse the rewrite keeps it; see
+    :class:`ReasoningTrimPolicy`), then the largest remaining dumps.
     """
     budget = max_tokens if max_chars is None else max_chars
 
@@ -258,12 +414,14 @@ def compact_messages_for_request(
         return out
 
     indices = _tool_indices(out)
-    if not indices:
-        return out
+    if indices:
+        protect = _protect_indices(indices, keep_recent_tool_results)
+        _shrink_except(out, indices, protect, old_tool_result_chars)
+        if measure(out) <= budget:
+            return out
 
-    protect = _protect_indices(indices, keep_recent_tool_results)
-    _shrink_except(out, indices, protect, old_tool_result_chars)
-    if measure(out) <= budget:
+    _shrink_reasoning(out, reasoning_policy)
+    if measure(out) <= budget or not indices:
         return out
 
     _shrink_largest(

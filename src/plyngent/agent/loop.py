@@ -30,6 +30,7 @@ from .budget import (
     cap_hard_tool_text,
     compact_messages_for_request,
     estimate_messages_tokens,
+    reasoning_trim_policy,
     truncate_for_request,
 )
 from .directive_checkpoint import (
@@ -551,7 +552,8 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     text deltas as chunks arrive; tool calls are merged from stream deltas.
     Multiple tool calls in one round run in parallel when ``parallel_tools``.
 
-    Each round builds a request copy: soft compact shrinks older tool dumps when
+    Each round builds a request copy: soft compact shrinks older tool dumps (and
+    older rounds' chain-of-thought, as far as the surface's own kind allows) when
     over ``max_context_tokens``, then every tool result is trimmed to
     ``max_tool_result_chars`` with a marker naming its document (``read_document``
     / ``search_document`` read the rest). A tool result is stored whole in its
@@ -585,6 +587,10 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     tool_items: Sequence[AnyToolItem] | None = None
     if tools is not None and len(tools) > 0:
         tool_items = tools.tool_items()
+    # Older rounds' chain-of-thought is dropped as far as this surface takes it
+    # back (a chat-completions field may be rewritten, a Responses item needs
+    # non-empty text, an Anthropic thinking block cannot be edited).
+    reasoning_policy = reasoning_trim_policy(getattr(client, "kind", "chat_completions"))
 
     rounds_used = 0
     allowance = max_rounds
@@ -598,13 +604,15 @@ async def run_chat_loop(  # noqa: C901, PLR0915 — multi-phase tool loop
     while True:
         while rounds_used < allowance:
             rounds_used += 1
-            # Request copy: soft-compact old tool dumps, then trim every result to
-            # the fixed wire cap (each names its document), then rewrite forged
-            # todo nags so cleaned stacks do not re-appear with stale OPEN WORK text.
+            # Request copy: soft-compact old tool dumps and older chain-of-thought,
+            # then trim every result to the fixed wire cap (each names its
+            # document), then rewrite forged todo nags so cleaned stacks do not
+            # re-appear with stale OPEN WORK text.
             request_messages = truncate_for_request(
                 compact_messages_for_request(
                     messages,
                     max_tokens=max_context_tokens,
+                    reasoning_policy=reasoning_policy,
                     prompt_tokens_hint=prompt_tokens_hint,
                     sent_estimate_tokens=sent_estimate_tokens,
                 ),
