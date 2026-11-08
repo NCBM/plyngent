@@ -12,9 +12,11 @@ from plyngent.lmproto.openai_compatible.model import (
     DeveloperChatMessage,
     SystemChatMessage,
     UserChatMessage,
+    content_to_text,
 )
 
 from .budget import DEFAULT_CONTEXT_MAX_TOKENS, compact_messages_for_request
+from .usage import DEFAULT_CHARS_PER_TOKEN
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,31 +50,94 @@ _SEED_MESSAGE_TEMPLATE = (
 )
 
 
-def format_transcript(messages: Sequence[AnyChatMessage]) -> str:
-    """Render messages as plain text for a summarization prompt."""
+# A transcript is read by the summarizer, never continued, so one row only has to
+# say what happened: a long answer, a file written through a tool call, or a huge
+# user paste collapses to its head with a count of what went. The whole transcript
+# is bounded as well — shrinking tool dumps is not enough on a long session, since
+# answers, user turns and per-row overhead are untouched by it (a live report asked
+# for 1.88M tokens against a 1M window, the transcript being the whole session).
+DEFAULT_TRANSCRIPT_ROW_CHARS = 4_000
+_ROW_OMITTED = " … (+{omitted} chars)"
+_DROPPED_NOTICE = "[… {count} earlier rows dropped to fit the summarizer's context]"
+
+
+def _clip(text: str, limit: int) -> str:
+    """Head of *text* plus a count of what was cut (``limit < 1`` keeps it whole)."""
+    if limit < 1 or len(text) <= limit:
+        return text
+    return text[:limit] + _ROW_OMITTED.format(omitted=len(text) - limit)
+
+
+def _transcript_rows(messages: Sequence[AnyChatMessage], *, row_chars: int) -> list[str]:
+    """One or more clipped text rows per message, in order."""
     lines: list[str] = []
     for msg in messages:
         if isinstance(msg, SystemChatMessage):
-            lines.append(f"[system] {msg.content}")
+            lines.append(f"[system] {_clip(msg.content, row_chars)}")
         elif isinstance(msg, DeveloperChatMessage):
-            lines.append(f"[developer] {msg.content}")
+            lines.append(f"[developer] {_clip(msg.content, row_chars)}")
         elif isinstance(msg, UserChatMessage):
-            lines.append(f"[user] {msg.content}")
+            # A part array (text + images) becomes its prose, not its repr: the repr
+            # carries base64 data URLs.
+            lines.append(f"[user] {_clip(content_to_text(msg.content), row_chars)}")
         elif isinstance(msg, AssistantChatMessage):
             content = msg.content if isinstance(msg.content, str) else ""
             if content:
-                lines.append(f"[assistant] {content}")
+                lines.append(f"[assistant] {_clip(content, row_chars)}")
             tool_calls = msg.tool_calls
             if tool_calls is not UNSET and tool_calls:
                 for call in tool_calls:
                     if isinstance(call, AssistantFunctionToolCall):
-                        lines.append(f"[assistant tool_call] {call.function.name}({call.function.arguments})")
+                        arguments = _clip(call.function.arguments, row_chars)
+                        lines.append(f"[assistant tool_call] {call.function.name}({arguments})")
                     else:
                         lines.append(f"[assistant tool_call] custom id={call.id}")
         else:
             # ToolChatMessage (remaining AnyChatMessage arm)
-            lines.append(f"[tool {msg.tool_call_id}] {msg.content}")
-    return "\n".join(lines)
+            lines.append(f"[tool {msg.tool_call_id}] {_clip(msg.content, row_chars)}")
+    return lines
+
+
+def fit_transcript(rows: Sequence[str], *, max_chars: int) -> str:
+    """Join rows, dropping the oldest ones when the whole transcript is too long.
+
+    The first row is kept when it fits: it is usually the task statement the
+    summary has to preserve, while the tail is the work that is still live. Rows
+    in the middle are what goes, and a notice says how many. ``max_chars < 1``
+    keeps every row.
+    """
+    if max_chars < 1 or not rows:
+        return "\n".join(rows)
+    if sum(len(row) + 1 for row in rows) <= max_chars:
+        return "\n".join(rows)
+
+    budget = max_chars - len(_DROPPED_NOTICE.format(count=len(rows)))
+    head = rows[0] if len(rows) > 1 and len(rows[0]) + 1 <= budget else None
+    body = rows[1:] if head is not None else list(rows)
+    used = len(head) + 1 if head is not None else 0
+    kept: list[str] = []
+    for row in reversed(body):
+        cost = len(row) + 1
+        if used + cost > budget:
+            break
+        kept.append(row)
+        used += cost
+    if not kept and head is None:
+        # Nothing fits: say so with the newest row's head rather than an empty body.
+        kept = [_clip(rows[-1], max(1, budget))]
+    else:
+        kept.reverse()
+    dropped = len(rows) - (1 if head is not None else 0) - len(kept)
+    parts = [_DROPPED_NOTICE.format(count=dropped)]
+    if head is not None:
+        parts.append(head)
+    parts.extend(kept)
+    return "\n".join(parts)
+
+
+def format_transcript(messages: Sequence[AnyChatMessage], *, row_chars: int = DEFAULT_TRANSCRIPT_ROW_CHARS) -> str:
+    """Render messages as plain text for a summarization prompt."""
+    return "\n".join(_transcript_rows(messages, row_chars=row_chars))
 
 
 def soft_compact_transcript(
@@ -81,15 +146,25 @@ def soft_compact_transcript(
     max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
     prompt_tokens_hint: int | None = None,
     sent_estimate_tokens: int | None = None,
+    max_chars: int | None = None,
+    row_chars: int = DEFAULT_TRANSCRIPT_ROW_CHARS,
 ) -> str:
-    """Soft-compact tool dumps then format as transcript text."""
+    """Soft-compact the history, then render a transcript that fits *max_tokens*.
+
+    The shrinking pass only reaches tool dumps, so the rendered transcript is
+    bounded on its own as well (``max_chars`` overrides the ``max_tokens``
+    conversion): each row to *row_chars*, the whole thing to about
+    ``max_tokens`` tokens, oldest rows dropped first. What the summarizer reads
+    no longer depends on how well that pass goes.
+    """
     compacted = compact_messages_for_request(
         messages,
         max_tokens=max_tokens,
         prompt_tokens_hint=prompt_tokens_hint,
         sent_estimate_tokens=sent_estimate_tokens,
     )
-    return format_transcript(compacted)
+    budget = int(max_tokens * DEFAULT_CHARS_PER_TOKEN) if max_chars is None else max_chars
+    return fit_transcript(_transcript_rows(compacted, row_chars=row_chars), max_chars=budget)
 
 
 async def summarize_messages(
