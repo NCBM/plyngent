@@ -8,6 +8,7 @@ from plyngent.agent.budget import (
     compact_messages_for_request,
     estimate_messages_tokens,
     measure_messages_tokens,
+    reasoning_trim_policy,
 )
 from plyngent.agent.loop import run_chat_loop
 from plyngent.lmproto.openai_compatible.model import (
@@ -249,3 +250,143 @@ async def test_loop_sends_compacted_request_not_history() -> None:
     # In-memory history still full for the old tool result
     assert isinstance(history[2], ToolChatMessage)
     assert history[2].content == big
+
+
+def test_estimation_counts_chain_of_thought() -> None:
+    plain = [AssistantChatMessage(content="answer")]
+    reasoning = [AssistantChatMessage(content="answer", reasoning_content="R" * 400)]
+    blocks = [
+        AssistantChatMessage(
+            content="answer",
+            provider_blocks=[{"type": "thinking", "thinking": "T" * 400, "signature": "sig"}],
+        )
+    ]
+    assert estimate_messages_tokens(reasoning) > estimate_messages_tokens(plain)
+    assert estimate_messages_tokens(blocks) > estimate_messages_tokens(plain)
+
+
+def test_compact_rewrites_older_reasoning_for_chat_completions() -> None:
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="start"),
+        AssistantChatMessage(content="first", reasoning_content="A" * 4000),
+        UserChatMessage(content="again"),
+        AssistantChatMessage(content="second", reasoning_content="B" * 400),
+    ]
+    compacted = compact_messages_for_request(
+        messages,
+        max_tokens=1,
+        reasoning_policy=reasoning_trim_policy("chat_completions", keep_recent=1, max_chars=50),
+    )
+    old = compacted[1]
+    assert isinstance(old, AssistantChatMessage)
+    assert isinstance(old.reasoning_content, str)
+    assert old.reasoning_content.startswith("A" * 50)
+    assert "reasoning trimmed: 3950 chars omitted" in old.reasoning_content
+    # The most recent round is protected, and the history is untouched.
+    recent = compacted[3]
+    assert isinstance(recent, AssistantChatMessage)
+    assert recent.reasoning_content == "B" * 400
+    stored = messages[1]
+    assert isinstance(stored, AssistantChatMessage)
+    assert stored.reasoning_content == "A" * 4000
+
+
+def test_compact_blanks_older_reasoning_for_responses() -> None:
+    """A Responses reasoning item needs non-empty text, so the text is dropped, not rewritten."""
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="start"),
+        AssistantChatMessage(content="first", reasoning_content="A" * 4000),
+        UserChatMessage(content="again"),
+        AssistantChatMessage(content="second", reasoning_content="B" * 400),
+    ]
+    compacted = compact_messages_for_request(
+        messages,
+        max_tokens=1,
+        reasoning_policy=reasoning_trim_policy("responses", keep_recent=1),
+    )
+    old = compacted[1]
+    assert isinstance(old, AssistantChatMessage)
+    assert old.reasoning_content is UNSET
+    recent = compacted[3]
+    assert isinstance(recent, AssistantChatMessage)
+    assert recent.reasoning_content == "B" * 400
+
+
+def test_compact_drops_older_thinking_blocks_for_messages() -> None:
+    """A thinking block's signature cannot be edited, so the block goes and the rest stays."""
+    search_block = {
+        "type": "web_search_tool_result",
+        "content": [{"type": "web_search_result", "encrypted_content": "opaque"}],
+    }
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="start"),
+        AssistantChatMessage(
+            content="",
+            provider_blocks=[{"type": "thinking", "thinking": "T" * 4000, "signature": "sig"}, search_block],
+        ),
+        ToolChatMessage(content="result", tool_call_id="1"),
+        UserChatMessage(content="again"),
+        AssistantChatMessage(
+            content="second",
+            provider_blocks=[{"type": "thinking", "thinking": "U" * 400, "signature": "sig2"}],
+        ),
+    ]
+    compacted = compact_messages_for_request(
+        messages,
+        max_tokens=1,
+        reasoning_policy=reasoning_trim_policy("messages", keep_recent=1),
+    )
+    old = compacted[1]
+    assert isinstance(old, AssistantChatMessage)
+    assert old.provider_blocks == [search_block]
+    # The round keeps its text and calls; only the verified block went.
+    assert old.content == ""
+    recent = compacted[4]
+    assert isinstance(recent, AssistantChatMessage)
+    assert recent.provider_blocks is not UNSET
+    assert recent.provider_blocks == [{"type": "thinking", "thinking": "U" * 400, "signature": "sig2"}]
+
+
+def test_compact_leaves_reasoning_alone_without_a_policy() -> None:
+    """Without a surface policy (the default) chain-of-thought is never rewritten."""
+    messages: list[AnyChatMessage] = [
+        UserChatMessage(content="start"),
+        AssistantChatMessage(content="first", reasoning_content="A" * 4000),
+    ]
+    compacted = compact_messages_for_request(messages, max_tokens=1)
+    kept = compacted[1]
+    assert isinstance(kept, AssistantChatMessage)
+    assert kept.reasoning_content == "A" * 4000
+
+
+def test_reasoning_policy_follows_the_client_kind() -> None:
+    assert reasoning_trim_policy("chat_completions").mode == "trim_text"
+    assert reasoning_trim_policy("responses").mode == "blank"
+    assert reasoning_trim_policy("messages").mode == "drop_blocks"
+    # An unknown surface would be a guess about what the provider accepts back.
+    assert reasoning_trim_policy("something-else").mode == "none"
+
+
+async def test_loop_trims_old_reasoning_in_request_only() -> None:
+    history: list[AnyChatMessage] = [UserChatMessage(content="start")]
+    for i in range(6):
+        history.append(AssistantChatMessage(content=f"a{i}", reasoning_content="R" * 4000))
+        history.append(UserChatMessage(content=f"u{i}"))
+    client = CaptureClient([_response(AssistantChatMessage(content="ok"))])
+    rounds = [m for m in history if isinstance(m, AssistantChatMessage)]
+    _ = [e async for e in run_chat_loop(client, history, model="m", stream=False, max_context_tokens=1000)]
+    sent = client.calls[0].messages
+    trimmed = [
+        m
+        for m in sent
+        if isinstance(m, AssistantChatMessage)
+        and isinstance(m.reasoning_content, str)
+        and "reasoning trimmed" in m.reasoning_content
+    ]
+    # Six rounds, the four most recent protected.
+    assert len(trimmed) == 2
+    assert isinstance(trimmed[0].reasoning_content, str)
+    assert len(trimmed[0].reasoning_content) < 4000
+    # In-memory history keeps every round's chain-of-thought.
+    assert len(rounds) == 6
+    assert all(message.reasoning_content == "R" * 4000 for message in rounds)
