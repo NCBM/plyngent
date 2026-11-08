@@ -368,7 +368,7 @@ Safety defaults:
 
 - **Context size** prefers API `prompt_tokens` from the last model call; otherwise a char-based estimate (~4 chars/token).
 - **Turn/session usage** sum billed completion usage across tool rounds (history is re-sent each round).
-- Soft compact can calibrate from reported `prompt_tokens`. See `/status`.
+- Soft compact can calibrate from reported `prompt_tokens`, divided by the estimate of that same request payload (a resumed session has no such pair, so no calibration is applied). See `/status`.
 - Soft compact shrinks older tool dumps first, then older rounds' chain-of-thought — rewritten on chat completions, dropped on Responses (whose reasoning item must stay non-empty), and dropped whole on Anthropic Messages (a `thinking` block's signature cannot be edited); the most recent **4** rounds always keep theirs.
 - `/compact` bounds its own synthesis request: each transcript row is clipped (a huge answer, a file written through a tool call, or a user paste becomes its head plus a count), a user turn's image parts render as `[image]` rather than a base64 repr, and the whole transcript is capped at `max_context_tokens`, oldest rows dropped first while the task statement and the live tail survive.
 
