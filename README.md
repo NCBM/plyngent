@@ -369,6 +369,7 @@ Safety defaults:
 - **Context size** prefers API `prompt_tokens` from the last model call; otherwise a char-based estimate (~4 chars/token).
 - **Turn/session usage** sum billed completion usage across tool rounds (history is re-sent each round).
 - Soft compact can calibrate from reported `prompt_tokens`. See `/status`.
+- Soft compact shrinks older tool dumps first, then older rounds' chain-of-thought — rewritten on chat completions, dropped on Responses (whose reasoning item must stay non-empty), and dropped whole on Anthropic Messages (a `thinking` block's signature cannot be edited); the most recent **4** rounds always keep theirs.
 
 ## Other commands
 
