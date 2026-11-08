@@ -488,10 +488,12 @@ class ReplState:
         peak = 0
         band = 0
         last_req = None
+        last_req_estimate = 0
         if hasattr(self, "agent"):
             peak = self.agent.peak_prompt_tokens
             band = self.agent.reminder_last_band
             last_req = self.agent.last_request_usage
+            last_req_estimate = self.agent.last_request_estimate_tokens
         agent = ChatAgent(
             self.client,
             model=self.model,
@@ -517,6 +519,7 @@ class ReplState:
         )
         if last_req is not None and not last_req.is_zero():
             agent.last_request_usage = last_req
+            agent.last_request_estimate_tokens = last_req_estimate
         return agent
 
     def rebuild_client(self) -> None:
@@ -999,15 +1002,16 @@ class ReplState:
             msg = "nothing to compact (empty history)"
             raise ValueError(msg)
 
-        # Prefer last API prompt_tokens to drive soft-compact toward real size.
+        # Prefer the last API prompt_tokens to drive soft-compact toward real size —
+        # but only against the estimate of the *same* payload. Pairing it with an
+        # estimate of the whole history understates the size by whatever the last
+        # request trimmed away, which once skipped the shrink pass entirely and sent
+        # a 1.66M-token transcript to the summarizer.
         hint: int | None = None
         sent_est: int | None = None
-        if not self.agent.last_request_usage.is_zero():
-            from plyngent.agent.budget import estimate_messages_tokens
-
+        if not self.agent.last_request_usage.is_zero() and self.agent.last_request_estimate_tokens > 0:
             hint = self.agent.last_request_usage.prompt_tokens
-            # Approximate: calibrate against current full history char-est.
-            sent_est = estimate_messages_tokens(messages)
+            sent_est = self.agent.last_request_estimate_tokens
         # The summary is the only long wait in here, and nothing has been
         # created yet, so it is the safe place to be interrupted: Ctrl+C drops
         # the request and reports back (see the CancelledError below). Everything
