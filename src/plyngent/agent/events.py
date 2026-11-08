@@ -61,9 +61,14 @@ class UsageEvent(Struct, tag_field="type", tag="usage"):
     """Token usage for one model completion (one tool-loop round).
 
     ``source`` is mirrored from ``usage.source`` (``api`` / ``estimate``).
+    ``request_estimate_tokens`` is the char-based estimate of the very payload this
+    sample describes (0 when there is none): a later calibration that pairs
+    ``usage.prompt_tokens`` with an estimate has to divide by *this* number, not by
+    an estimate of the whole history (see ``budget.measure_messages_tokens``).
     """
 
     usage: TokenUsage
+    request_estimate_tokens: int = 0
 
 
 type AgentEvent = (

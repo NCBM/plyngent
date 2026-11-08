@@ -341,6 +341,7 @@ class ChatAgent:
     session_usage: TokenUsage
     last_turn_usage: TokenUsage
     last_request_usage: TokenUsage
+    last_request_estimate_tokens: int
     last_turn_rounds: int
     peak_prompt_tokens: int
     reminder_last_band: int
@@ -404,6 +405,10 @@ class ChatAgent:
         self.session_usage = TokenUsage()
         self.last_turn_usage = TokenUsage()
         self.last_request_usage = TokenUsage()
+        # Char estimate of the payload ``last_request_usage`` describes (0 when
+        # unknown): the denominator a calibration has to divide by, so it must not
+        # be confused with an estimate of the whole history.
+        self.last_request_estimate_tokens = 0
         self.last_turn_rounds = 0
         self.peak_prompt_tokens = max(0, int(peak_prompt_tokens))
         self.reminder_last_band = max(0, int(reminder_last_band))
@@ -473,6 +478,9 @@ class ChatAgent:
                 total_tokens=int(last_prompt_tokens) + int(last_completion_tokens or 0),
                 source=source,
             )
+            # A stored sample says nothing about the payload it described, so the
+            # estimate that pairs with it is unknown until this process runs a round.
+            self.last_request_estimate_tokens = 0
             self.peak_prompt_tokens = max(self.peak_prompt_tokens, int(last_prompt_tokens))
         self._sync_reminder_band_from_messages()
 
@@ -637,6 +645,7 @@ class ChatAgent:
         turn_usage = TokenUsage()
         turn_rounds = 0
         last_request = TokenUsage()
+        last_request_estimate = 0
         try:
             _turn_nag_strategy: TodoNagStrategy = self.todo_nag_strategy
 
@@ -666,9 +675,11 @@ class ChatAgent:
                 if isinstance(event, UsageEvent):
                     turn_rounds += 1
                     last_request = event.usage
+                    last_request_estimate = event.request_estimate_tokens
                     turn_usage = turn_usage.add(event.usage)
                     self.session_usage = self.session_usage.add(event.usage)
                     self.last_request_usage = event.usage
+                    self.last_request_estimate_tokens = event.request_estimate_tokens
                     self.peak_prompt_tokens = max(
                         self.peak_prompt_tokens,
                         event.usage.prompt_tokens,
@@ -690,6 +701,7 @@ class ChatAgent:
 
         self.last_turn_usage = turn_usage
         self.last_request_usage = last_request
+        self.last_request_estimate_tokens = last_request_estimate
         self.last_turn_rounds = turn_rounds
         if self._persist_from < len(self.messages):
             await self._persist_range(self._persist_from, len(self.messages))

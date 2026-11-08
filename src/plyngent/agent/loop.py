@@ -313,6 +313,7 @@ async def _non_stream_round(
         yield TruncatedEvent(kept_chars=_kept_chars(assistant))
     yield UsageEvent(
         usage=resolve_round_usage(response.usage, param.messages, assistant),
+        request_estimate_tokens=estimate_messages_tokens(param.messages),
     )
 
 
@@ -437,6 +438,7 @@ async def _stream_round(
         yield TruncatedEvent(kept_chars=_kept_chars(assistant))
     yield UsageEvent(
         usage=resolve_round_usage(last_api_usage, param.messages, assistant),
+        request_estimate_tokens=estimate_messages_tokens(param.messages),
     )
 
 
