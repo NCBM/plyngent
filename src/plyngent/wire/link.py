@@ -1,0 +1,120 @@
+"""The connection, as the two parties to it see it.
+
+One object, two faces, and the difference between them is which verbs it has. A client writes
+commands, reads events, answers questions and says how far it has rendered; the kernel emits events,
+reads commands, and asks a person something. Neither face can be used for the other's purpose, and
+that is not enforced by a runtime check but by the type: whoever holds a :class:`KernelLink` cannot
+call ``emit``, and whoever holds a :class:`KernelSide` cannot call ``submit``.
+
+Why two protocols and not one object with a ``flip()``: a direction read from the wrong end is a bug
+that still works in one process. ``rx`` / ``tx`` are names relative to a viewpoint, so a value shared
+by both sides would need a second value derived from it — and a ``flip()`` written backwards still
+sends and receives inside one process, so no test would go red. Here the direction lives in the type
+of the variable each side holds, which nothing can get wrong silently.
+
+One process satisfies both at once (that is what an in-process transport *is*), so ``isinstance``
+tells you nothing: every reader of a connection can tick both boxes. The check that matters is the
+static type of the value in hand.
+
+What is deliberately *not* here: the read methods (``trajectory`` / ``artifact`` / ``pty`` /
+``status``). They belong on the link rather than in the command union — a command changes the world,
+a link method reads it — but each waits for the store behind it (the forest, the artifact store, the
+PTY broker, the session projection). A protocol carrying a method nobody implements is a lie no type
+checker can catch.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from plyngent.wire.ask import AnyAnswer, AnyAsk
+    from plyngent.wire.command import AnyCommand
+    from plyngent.wire.event import AnyEvent
+    from plyngent.wire.flow import Ack
+    from plyngent.wire.manifest import KernelManifest
+
+
+class KernelLink(Protocol):
+    """What a client holds: one connection, and no way to speak as the kernel.
+
+    ``manifest`` is filled before the value is handed over, so there is no handshake call to forget:
+    whichever transport knows how to ask for it (a socket, a pipe) does so once, at connect, and the
+    client reads the same field either way (R2.1 D7).
+    """
+
+    manifest: KernelManifest
+
+    def submit(self, command: AnyCommand) -> bool:
+        """Hand a command over; ``False`` when this connection is already gone.
+
+        Not a receipt: the return says whether the connection took it, never whether the kernel
+        agreed. What the kernel makes of it arrives as an event (R2.1 D5).
+        """
+        ...
+
+    def ack(self, ack: Ack) -> None:
+        """Say how far this client has rendered: the resume point and the heartbeat, in one number."""
+
+    def answer(self, answer: AnyAnswer) -> bool:
+        """Deliver an answer; ``False`` when nobody was waiting for that id, or the kind is wrong.
+
+        An answer of another kind than the question admits is not an answer and does not end the
+        wait: the question is still outstanding, and its deadline still applies.
+        """
+        ...
+
+    def events(self) -> AsyncIterator[AnyEvent]:
+        """Read what the kernel says, in emission order, until it closes the lane."""
+        ...
+
+    def questions(self) -> AsyncIterator[AnyAsk]:
+        """Read what the kernel is waiting on, oldest first — the lane that is never folded."""
+        ...
+
+    def close(self) -> None:
+        """End this end of the connection. Idempotent, and what is queued stays readable.
+
+        A client says goodbye before closing by sending a ``Cancel`` with
+        :attr:`~plyngent.wire.scope.CancelReason.CLIENT_GONE`, because the kernel cannot tell
+        "left" from "slow" (R2.1 D15).
+        """
+
+
+class KernelSide(Protocol):
+    """What the kernel holds: the same connection, with the verbs the kernel is allowed.
+
+    The kernel cannot read the client's events or write its commands, which is the whole point: the
+    only way to be a client is to be given a client's value.
+    """
+
+    def emit(self, event: AnyEvent) -> None:
+        """Say something outward without waiting for anyone to see it."""
+
+    async def ask(self, ask: AnyAsk) -> AnyAnswer:
+        """Ask somebody outside, and wait for that one answer — or for the deadline.
+
+        An ``id`` of ``0`` means "name this one for me": only the connection can promise uniqueness
+        within its own life (R2.1 D18). The answer is of the kind the question admits
+        (:func:`plyngent.wire.ask.answer_kind`); a question nobody answered answers as
+        :func:`plyngent.wire.ask.unanswered` says.
+        """
+        ...
+
+    def commands(self) -> AsyncIterator[AnyCommand]:
+        """Read what the client asked for, oldest first, until the connection ends."""
+        ...
+
+    def close(self) -> None:
+        """End this end of the connection: the lanes stop, and questions in flight are refused."""
+
+    @property
+    def dead(self) -> bool:
+        """Whether this connection was dropped because the client fell silent while behind.
+
+        Only the kernel decides this (it owns the clock and the watermarks); a client learns the
+        same fact by its event lane ending.
+        """
+        ...

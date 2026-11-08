@@ -1,0 +1,128 @@
+"""What a client asks the kernel to do.
+
+A command is an *intent*, never a query: everything a client wants to read is a method on the link
+(``describe`` / ``trajectory`` / ``artifact``), so there is no command that answers a question and
+therefore no request ids to correlate. ``submit`` returns ``None``; whether a turn began is reported
+back as an event.
+
+Every command names a ``session`` except the ones about the set of sessions. Nothing here is a
+callback and nothing here carries a callable: the kernel owns the time, so a client may only say what
+it wants, not when or how.
+
+:class:`Open` is the one place a trajectory can start somewhere else: ``seed_from`` copies the chain
+ending at another entry (possibly in another session) into this one. That copy is what "compact into
+a fresh session" is — ``Compact`` itself never knows a session exists.
+"""
+
+from __future__ import annotations
+
+from msgspec import Struct
+
+from plyngent.wire.event import TurnKind
+from plyngent.wire.scope import CancelReason
+
+
+class Command(Struct, frozen=True, kw_only=True, tag_field="cmd"):
+    """What a client sends, and the one field nearly all of them share."""
+
+    session: str = ""
+
+
+class Open(Command, tag="open", frozen=True, kw_only=True):
+    """Start serving a session, optionally seeded from the tail of another chain.
+
+    ``seed_from`` is ``(session, entry)`` where ``entry`` is the **last** entry of the chain to copy.
+    Only the projected text travels: no pointer, no grants, no todo, no route, no name. A new session
+    inheriting another's approvals would be a privilege escalation dressed as convenience.
+    """
+
+    seed_from: tuple[str, str] | None = None
+
+
+class Close(Command, tag="close", frozen=True, kw_only=True):
+    """Stop serving a session; its PTYs go back to the host, its entries stay on disk."""
+
+
+class Submit(Command, tag="submit", frozen=True, kw_only=True):
+    """Say something, continuing the chain that ends at ``begin_after``.
+
+    ``begin_after=None`` starts a new root. The kernel validates that the named entry exists in this
+    session and does nothing else with it — which branch a frontend is "on" is the frontend's view
+    state, not the kernel's.
+    """
+
+    begin_after: str | None = None
+    kind: TurnKind = TurnKind.CHAT
+    text: str = ""
+
+
+class Cancel(Command, tag="cancel", frozen=True, kw_only=True):
+    """Stop one scope, or the whole session when ``scope`` is ``None``.
+
+    ``scope`` is a :class:`~plyngent.wire.scope.CancelScope` in its spelled form, so a scope a client
+    has never seen the object for can still be named.
+    """
+
+    scope: str | None = None
+    reason: CancelReason = CancelReason.USER
+    detail: str = ""
+
+
+class SetRoute(Command, tag="set-route", frozen=True, kw_only=True):
+    """Change which model serves this session.
+
+    It takes effect at each live turn's **next request**, not immediately: a turn that is mid-flight
+    keeps the route it started the request with, and the attempt records which epoch it used. That is
+    why a route change never has to refuse anybody.
+    """
+
+    route: str = ""
+
+
+class Compact(Command, tag="compact", frozen=True, kw_only=True):
+    """Append a summary entry that continues at ``begin_after``.
+
+    There is no rule tying ``begin_after`` to ``replaces``: the summary attaches where its author
+    says. ``replaces`` is bookkeeping for the UI and for an audit ("this text stands for X..Y"), and
+    the projection never reads it — which is why changing it cannot change what a model sees.
+    """
+
+    begin_after: str | None = None
+    replaces: tuple[str, str] | None = None
+    text: str = ""
+
+
+class Prune(Command, tag="prune", frozen=True, kw_only=True):
+    """Stop showing these entries to the model. The content stays where it is.
+
+    Reversible by design: a pruned entry is still in the forest, so a later ``begin_after`` or a
+    ``travel`` can lead back to it. Deleting is a separate, explicit act.
+    """
+
+    targets: tuple[str, ...] = ()
+    reason: str = ""
+
+
+class Resume(Command, tag="resume", frozen=True, kw_only=True):
+    """Reattach this session to a stored trajectory.
+
+    The only command that has to be refused whenever a turn is live: replacing what a session reads
+    from invalidates the history basis of everything already running.
+    """
+
+    store: str = ""
+
+
+class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
+    """Ask for the set of sessions. The answer is a ``SessionsListed`` event, not a receipt."""
+
+
+class Export(Command, tag="export", frozen=True, kw_only=True):
+    """Write one chain out as a document. A projection, so it changes nothing."""
+
+    begin_after: str | None = None
+    path: str = ""
+
+
+#: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
+type AnyCommand = Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export
