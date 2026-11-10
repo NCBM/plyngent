@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
     from typing import Any
 
-    from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.env import Env
     from plyngent.kernel.toolresult import ToolResult
 
 #: How much room a call gets to say why it was made: a sentence, not a place to think out loud.
@@ -80,6 +80,11 @@ class Role(StrEnum):
     CWD = "cwd"
     ARGV = "argv"
     COMMAND = "command"
+
+
+#: The roles that name a path: a tool with one of these resolves something through the workspace, so it
+#: has to declare :attr:`Res.PATHS` or its handler could not be honoured in the first place.
+_PATH_ROLES: frozenset[Role] = frozenset({Role.READ, Role.WRITE, Role.CWD})
 
 
 class Group(StrEnum):
@@ -214,7 +219,7 @@ class ToolSpec:
     name: str
     group: Group | str
     args: type[ToolArgs] | ExternalArgs
-    run: Callable[[TurnCtx, Any], Awaitable[ToolResult]]
+    run: Callable[[Env, Any], Awaitable[ToolResult]]
     uses: Res
     mutates: Mutation = Mutation.NONE
     roles: Mapping[str, Role] | None = None
@@ -233,6 +238,10 @@ class ToolSpec:
                 raise ValueError(msg)
         if self.intention is None:
             object.__setattr__(self, "intention", _asked_for(self.uses, self.mutates))
+        named = {name for name, role in roles.items() if role in _PATH_ROLES}
+        if named and not self.uses & Res.PATHS:
+            msg = f"{self.name}: {', '.join(sorted(named))} is a path, so the tool has to declare Res.PATHS"
+            raise ValueError(msg)
         if self.intention is Intention.REQUIRED and "intention" not in declared:
             msg = f"{self.name}: needs every call to say why, but its own schema declares no 'intention'"
             raise ValueError(msg)
@@ -279,7 +288,7 @@ class ToolSpec:
         if self.posture is not None:
             posture = self.posture
         for name, value in (self.escalates or {}).items():
-            if _argument(args, name) == value:
+            if argument(args, name) == value:
                 return Posture.ALWAYS, None
         remember = self.remember if self.remember is not None else remembers
         return posture, remember if posture is Posture.ONCE else None
@@ -360,8 +369,13 @@ def _baseline(uses: Res, mutates: Mutation) -> tuple[Posture, Remember | None]:
     return outcome
 
 
-def _argument(args: Any, name: str) -> Any:
-    """One argument of a package, whichever of the two kinds it is."""
+def argument(args: Any, name: str) -> Any:
+    """One argument of a package, whichever of the two kinds it is.
+
+    Public because more than one reader needs the *same* answer: approval escalations, the "did it say
+    why" check, and the announcement of a call all look a named field up in a package that is either a
+    tree-internal ``Struct`` or an external JSON object.
+    """
     if isinstance(args, dict):
         return cast("dict[str, Any]", args).get(name)
     return getattr(args, name, None)
@@ -369,7 +383,7 @@ def _argument(args: Any, name: str) -> Any:
 
 def _said(args: Any) -> bool:
     """Whether the package carries a reason that is not whitespace."""
-    return bool(str(_argument(args, "intention") or "").strip())
+    return bool(str(argument(args, "intention") or "").strip())
 
 
 @cache

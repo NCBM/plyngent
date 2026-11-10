@@ -57,7 +57,10 @@ from plyngent.wire.event import Batch as Batch
 from plyngent.wire.event import Entry as Entry
 from plyngent.wire.event import Event as Event
 from plyngent.wire.event import KernelLeaving as KernelLeaving
+from plyngent.wire.event import ListedSession as ListedSession
 from plyngent.wire.event import SessionsListed as SessionsListed
+from plyngent.wire.event import ToolCalled as ToolCalled
+from plyngent.wire.event import ToolReturned as ToolReturned
 from plyngent.wire.event import TurnFinished as TurnFinished
 from plyngent.wire.event import TurnKind as TurnKind
 from plyngent.wire.event import TurnRefused as TurnRefused

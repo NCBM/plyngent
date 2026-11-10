@@ -117,7 +117,7 @@ class SessionStatus:
     """What one session is doing, answered in a single read.
 
     ``heads`` and ``roots`` are entry ids: the entries nothing continues from, and the entries with no
-    parent. Both are empty until the trajectory exists, and that is the truth rather than a
+    parent. Both are empty for a session whose journal holds nothing, which is the truth rather than a
     placeholder — a session with no entries has neither. ``seq`` is not here either: it is the
     transport's watermark and belongs to the link that stamped it.
     """
@@ -142,17 +142,15 @@ class Session(Component):
     host: Host = require()
     session_id: str
     _turns: dict[int, TurnCtx]
-    _next_turn: int
 
     def __init__(self, session_id: str) -> None:
         super().__init__()
         self.session_id = session_id
         self._turns = {}
-        self._next_turn = 1
 
     # -- turns ---------------------------------------------------------------------
 
-    def begin_turn(self, *, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT) -> TurnCtx:
+    async def begin_turn(self, *, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT) -> TurnCtx:
         """Address a new turn and record it as live.
 
         Reading ``self.host`` here is the one place the session touches its host for a turn: a
@@ -161,27 +159,26 @@ class Session(Component):
 
         ``begin_after`` is the entry the turn continues, and the only rule is that such an entry must
         exist — the turn is otherwise free to grow from anywhere, which is what makes branching a
-        frontend's decision rather than a command. There are no entries to name yet, so a continuation
-        point is refused; the day the trajectory is written this check starts answering instead.
+        frontend's decision rather than a command. The id itself is the journal's to allocate, because
+        a stored log has to resume the count where the last process left it (D17).
         """
-        if begin_after is not None:
+        host = self.host
+        if begin_after is not None and (await host.trail.entry(self.session_id, begin_after)) is None:
             msg = (
                 f"no entry {begin_after!r} in session {self.session_id}: a turn can only continue an entry that exists"
             )
             raise ValueError(msg)
-        turn_id = self._next_turn
-        self._next_turn += 1
         turn = TurnCtx(
             session=self,
-            host=self.host,
-            turn_id=turn_id,
+            host=host,
+            turn_id=await host.trail.next_turn(self.session_id),
             round_id=0,
             cancel=CancelToken(),
             kind=kind,
             begin_after=begin_after,
             since=time.monotonic(),
         )
-        self._turns[turn_id] = turn
+        self._turns[turn.turn_id] = turn
         return turn
 
     def end_turn(self, turn: TurnCtx) -> None:
@@ -192,21 +189,22 @@ class Session(Component):
         """The turns still live, oldest first."""
         return tuple(self._turns[key] for key in sorted(self._turns))
 
-    def status(self) -> SessionStatus:
-        """What this session is doing, in one read: its live turns and where they started.
+    async def status(self) -> SessionStatus:
+        """What this session is doing, in one read: its live turns and where its history stands.
 
         This is the answer a frontend used to assemble from its own "compacting", "waiting for
         approval", "a turn is running" flags — and the reason those flags can go: one read either says
-        a turn is live or does not.
+        a turn is live or does not, and the journal says where the conversation can be continued.
         """
+        shape = await self.host.trail.shape(self.session_id)
         return SessionStatus(
             session=self.session_id,
             turns=tuple(
                 TurnClaim(turn=turn.turn_id, kind=turn.kind, begin_after=turn.begin_after, since=turn.since)
                 for turn in self.turns()
             ),
-            heads=(),
-            roots=(),
+            heads=shape.heads,
+            roots=shape.roots,
         )
 
     # -- cancellation --------------------------------------------------------------

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
-import warnings
 
 import pytest
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
@@ -14,6 +13,8 @@ from composat.std.root import ancestors, answering_from_the_root
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
+from plyngent.kernel.journal import Journal, SqliteTrail
+from plyngent.kernel.model import ModelChannel
 from plyngent.kernel.pty.registry import PtyError, PtyRegistry
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fork PTY")
@@ -38,7 +39,11 @@ def _two_hosts(tmp_path, *, max_sessions: int = 8) -> Assembly:
         Declaration(PtyRegistry, instance="ws-a", kwargs={"max_sessions": max_sessions}),
         Declaration(PtyRegistry, instance="ws-b", kwargs={"max_sessions": max_sessions}),
         Declaration(HumanChannel, instance="ws-a"),
+        Declaration(ModelChannel, instance="ws-a"),
         Declaration(HumanChannel, instance="ws-b"),
+        Declaration(ModelChannel, instance="ws-b"),
+        Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
+        Declaration(Journal, instance="ws-b", args=(SqliteTrail(":memory:"),)),
         Declaration(Host, instance="ws-a", args=(tmp_path / "a",)),
         Declaration(Host, instance="ws-b", args=(tmp_path / "b",)),
     )
@@ -48,6 +53,8 @@ def _one_host(tmp_path, **kwargs: object) -> Assembly:
     return _assembly(
         Declaration(PtyRegistry, instance="ws-a", kwargs=kwargs),
         Declaration(HumanChannel, instance="ws-a"),
+        Declaration(ModelChannel, instance="ws-a"),
+        Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
         Declaration(Host, instance="ws-a", args=(tmp_path,)),
     )
 
@@ -142,11 +149,14 @@ async def test_bytes_go_through_and_are_raw(tmp_path) -> None:
     assert done.ok, done.failed
 
 
-async def test_a_read_waits_on_the_fd_so_the_next_fork_is_quiet(tmp_path) -> None:
-    """R1 验收 4: a read parks the loop on the master fd, not on a thread.
+async def test_a_read_does_not_leave_a_thread_behind(tmp_path) -> None:
+    """R1 验收 4: a read parks the loop on the master fd, not on a thread of its own.
 
-    Forking a process that already has threads is what ``DeprecationWarning`` (and, in the child,
-    a possible deadlock) is about — so a read must not leave one behind.
+    The count is a *difference*, because the kernel already owns threads that have nothing to do with the
+    read: the journal's connection runs on one for as long as the journal is up, and the PTY backend's own
+    work may too. What this asks is that reading a terminal adds none — a thread per read would leak one
+    per keystroke. It also means the process is multi-threaded whatever this test does, so an ``os.fork()``
+    is already the hazardous kind and one more thread is not the thing to blame.
     """
     assembly = _two_hosts(tmp_path)
     host_a = _key(Host, "ws-a")
@@ -156,15 +166,11 @@ async def test_a_read_waits_on_the_fd_so_the_next_fork_is_quiet(tmp_path) -> Non
     assert isinstance(a, Host)
 
     first = a.pty.open(_SHELL, cwd=tmp_path)
+    before = threading.active_count()
     read = await a.pty.read(first.session_id, wait_seconds=5.0, until="ready")
     assert read.matched
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _ = a.pty.open(["/bin/sh", "-c", "sleep 300"], cwd=tmp_path)
-
-    fork_warnings = [str(entry.message) for entry in caught if "multi-threaded" in str(entry.message)]
-    assert not fork_warnings, fork_warnings
+    assert threading.active_count() == before, "the read waited on the fd, and left no thread watching it"
 
     done = await assembly.stop(*assembly.keys())
     assert done.ok, done.failed

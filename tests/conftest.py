@@ -7,11 +7,15 @@ adding one adds the runs instead of adding a suite (R2.1 D29).
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from tests.stories.driver import TRANSPORTS, Story
+from tests.stories.model import ScriptedModel
+
+if TYPE_CHECKING:
+    from tests.stories.model import Step
 
 
 @pytest.fixture(params=TRANSPORTS)
@@ -28,9 +32,39 @@ async def story(tmp_path, transport):
     fixture supplies is the terminal, which is the one thing a test cannot have. Everything the story
     asserts about is outside the program: the lines it wrote, the questions it asked, the code it
     returned.
+
+    Nothing is installed as the model, so this kernel refuses turns — which is its own story. A story
+    about a turn says what the model answers, through :func:`story_with`.
+
+    The journal is a file beside the workspace, because the kernel keeps one conversation per workspace
+    by default and a test may not write into the person's data directory.
     """
-    started = await Story.start(tmp_path / "workspace", transport=transport)
+    started = await Story.start(tmp_path / "workspace", transport=transport, journal=tmp_path / "journal.db")
     try:
         yield started
     finally:
         await started.close()
+
+
+@pytest.fixture
+async def story_with(tmp_path, transport):
+    """A person in front of a kernel that asks a scripted model: one step per request, in order.
+
+    A story names its replies, so what the model answers is part of the story rather than a default
+    somewhere: ``story = await story_with(text("hello"))``. Every kernel a test starts this way is closed
+    with the fixture, whether or not the story got as far as stopping it.
+    """
+    started: list[Story] = []
+
+    async def start(*script: Step) -> Story:
+        root = tmp_path / f"workspace{len(started)}"
+        journal = tmp_path / f"journal{len(started)}.db"
+        story = await Story.start(root, transport=transport, model=ScriptedModel(script), journal=journal)
+        started.append(story)
+        return story
+
+    try:
+        yield start
+    finally:
+        for opened in started:
+            await opened.close()

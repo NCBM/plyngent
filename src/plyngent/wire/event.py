@@ -64,12 +64,16 @@ class TurnStarted(Event, tag="turn-started", frozen=True, kw_only=True):
 class TurnFinished(Event, tag="turn-finished", frozen=True, kw_only=True):
     """A turn is over, and why.
 
-    ``reason`` is the cancel reason that ended it, empty when it ran to its own end.
+    ``reason`` is the cancel reason that ended it, empty when it ran to its own end. ``ends_at`` is the
+    entry the turn left behind — the last one it wrote, or the one it started from when it wrote
+    nothing — which is what a frontend continues from: the kernel keeps no cursor of its own, so this
+    is how a client learns where the conversation now stands without reading the history back.
     """
 
     session: str = ""
     turn: int = 0
     reason: str = ""
+    ends_at: str | None = None
 
 
 class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
@@ -84,10 +88,23 @@ class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
     holder: int = 0
 
 
+class ListedSession(Struct, frozen=True, kw_only=True):
+    """One session a kernel serves, and where its conversation ends.
+
+    ``head`` is the id of the entry nothing continues from yet — the place a turn may grow — and it is
+    empty for a session whose journal holds nothing, which is the truth rather than a placeholder. It is
+    the id and not a transcript: a client that wants the conversation says which entry it continues, and
+    the kernel answers with the history up to there (D5).
+    """
+
+    session: str = ""
+    head: str = ""
+
+
 class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
     """The sessions this kernel serves — the answer to ``ListSessions``, not a receipt."""
 
-    sessions: tuple[str, ...] = ()
+    sessions: tuple[ListedSession, ...] = ()
 
 
 class ArtifactStored(Event, tag="artifact-stored", frozen=True, kw_only=True):
@@ -116,6 +133,43 @@ class AssistantText(Event, tag="assistant-text", frozen=True, kw_only=True):
     session: str = ""
     turn: int = 0
     text: str = ""
+
+
+class ToolCalled(Event, tag="tool-called", frozen=True, kw_only=True):
+    """The model asked for a tool, and the call is about to be made.
+
+    ``call`` names this one call within its turn, so an answer is paired with its question by identity
+    rather than by tool name: a turn may call the same tool twice, and two calls may be in flight at
+    once. ``intention`` is the model's own account of why it is calling, and is empty for a tool that
+    does not ask for one; it is shown as the model's words and nothing reads it as permission.
+
+    The arguments are deliberately absent. They can be large, and what a person needs while a call is
+    running is which tool and — where there is one — the sentence saying why. What came of it is
+    :class:`ToolReturned`.
+    """
+
+    session: str = ""
+    turn: int = 0
+    call: str = ""
+    tool: str = ""
+    intention: str = ""
+
+
+class ToolReturned(Event, tag="tool-returned", frozen=True, kw_only=True):
+    """A tool call came back, with the one line that stands for what it did.
+
+    ``status`` is one of the four outcomes the kernel names (``ok`` / ``refused`` / ``failed`` /
+    ``partial``), and ``summary`` is the same sentence the model is given: the person watching and the
+    model reading want that one line, and it is made once. The body is not here — it belongs to the
+    history the model is sent, and a second copy would be a second version of one answer.
+    """
+
+    session: str = ""
+    turn: int = 0
+    call: str = ""
+    tool: str = ""
+    status: str = ""
+    summary: str = ""
 
 
 class Batch(Event, tag="batch", frozen=True, kw_only=True):
@@ -156,5 +210,14 @@ class Entry(Struct, frozen=True, kw_only=True):
 
 #: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
 type AnyEvent = (
-    TurnStarted | TurnFinished | TurnRefused | SessionsListed | ArtifactStored | KernelLeaving | AssistantText | Batch
+    TurnStarted
+    | TurnFinished
+    | TurnRefused
+    | SessionsListed
+    | ArtifactStored
+    | KernelLeaving
+    | AssistantText
+    | ToolCalled
+    | ToolReturned
+    | Batch
 )

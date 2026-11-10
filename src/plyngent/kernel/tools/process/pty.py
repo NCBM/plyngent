@@ -31,9 +31,8 @@ from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolAr
 from plyngent.kernel.workspace import PathRefused
 
 if TYPE_CHECKING:
-    from plyngent.kernel.host import Host
+    from plyngent.kernel.env import Env
     from plyngent.kernel.pty.registry import PtySession
-    from plyngent.kernel.session import TurnCtx
 
 #: How long one read may wait, whatever a call asks for: a mis-typed argument must not stall a turn.
 MAX_READ_WAIT_SECONDS = 120.0
@@ -121,10 +120,9 @@ class AskIntoPtyArgs(ToolArgs, kw_only=True):
     submit: bool = True
 
 
-async def open_pty(ctx: TurnCtx, args: OpenPtyArgs) -> ToolResult:
+async def open_pty(env: Env, args: OpenPtyArgs) -> ToolResult:
     """Start a child on a terminal, once the command policy and the registry have both agreed."""
-    host = ctx.host
-    workspace = host.workspace
+    workspace = env.workspace
     try:
         cwd = workspace.resolve(args.cwd, AccessMode.EXEC)
     except PathRefused as exc:
@@ -132,14 +130,14 @@ async def open_pty(ctx: TurnCtx, args: OpenPtyArgs) -> ToolResult:
     if not cwd.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.cwd}")
 
-    refused = await _allowed(host, args.command)
+    refused = await _allowed(env, args.command)
     if isinstance(refused, ToolResult):
         return refused
-    room = await room_for_session(host.pty)
+    room = await room_for_session(env.pty)
     if room is not None:
         return ToolResult.of(Failure.LIMIT, room)
     try:
-        session = host.pty.open(args.command, cwd=cwd, owner=ctx.session.session_id)
+        session = env.pty.open(args.command, cwd=cwd, owner=env.session)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     command = shlex.join(session.command)
@@ -153,10 +151,10 @@ async def open_pty(ctx: TurnCtx, args: OpenPtyArgs) -> ToolResult:
     )
 
 
-async def read_pty(ctx: TurnCtx, args: ReadPtyArgs) -> ToolResult:
+async def read_pty(env: Env, args: ReadPtyArgs) -> ToolResult:
     """Read what the child wrote, and say what the child is doing."""
     try:
-        result = await ctx.host.pty.read(
+        result = await env.pty.read(
             args.session_id,
             max_bytes=args.max_bytes,
             wait_seconds=min(max(0.0, args.timeout), MAX_READ_WAIT_SECONDS),
@@ -171,31 +169,30 @@ async def read_pty(ctx: TurnCtx, args: ReadPtyArgs) -> ToolResult:
     )
 
 
-async def write_pty(ctx: TurnCtx, args: WritePtyArgs) -> ToolResult:
+async def write_pty(env: Env, args: WritePtyArgs) -> ToolResult:
     """Write literal text to a session, once this session has been agreed to."""
-    return await _write(ctx, args.session_id, args.data)
+    return await _write(env, args.session_id, args.data)
 
 
-async def write_pty_keys(ctx: TurnCtx, args: WritePtyKeysArgs) -> ToolResult:
+async def write_pty_keys(env: Env, args: WritePtyKeysArgs) -> ToolResult:
     """Write the keys the markers name, once this session has been agreed to."""
     try:
         payload = decode_write_data(args.data)
     except KeySyntaxError as exc:
         return ToolResult.of(Failure.ARGS, str(exc))
-    return await _write(ctx, args.session_id, payload)
+    return await _write(env, args.session_id, payload)
 
 
-async def close_pty(ctx: TurnCtx, args: ClosePtyArgs) -> ToolResult:
+async def close_pty(env: Env, args: ClosePtyArgs) -> ToolResult:
     """Close a session — a question only while there is still a process in it."""
-    host = ctx.host
-    session = host.pty.get(args.session_id)
+    session = env.pty.get(args.session_id)
     if session is not None:
-        refused = await _consent(host, session)
+        refused = await _consent(env, session)
         if refused is not None:
             return refused
-    result = await host.pty.close(args.session_id)
+    result = await env.pty.close(args.session_id)
     if session is not None:
-        host.pty_policy.forget(args.session_id)
+        env.pty_policy.forget(args.session_id)
     if not result.closed:
         return ToolResult.of(Failure.MISSING, f"no such PTY session: {args.session_id}")
     body = _state(result.session_id, alive=False, exit_code=result.exit_code)
@@ -203,18 +200,20 @@ async def close_pty(ctx: TurnCtx, args: ClosePtyArgs) -> ToolResult:
     return ToolResult.ok(f"closed PTY session {result.session_id}", body=Text(value=body), effects=effects)
 
 
-async def ask_into_pty(ctx: TurnCtx, args: AskIntoPtyArgs) -> ToolResult:
+async def ask_into_pty(env: Env, args: AskIntoPtyArgs) -> ToolResult:
     """Ask the human, write the answer, and keep it out of everything that is reported."""
-    host = ctx.host
-    if host.pty.get(args.session_id) is None:
+    if env.pty.get(args.session_id) is None:
         return ToolResult.of(Failure.MISSING, f"no such PTY session: {args.session_id}")
     prompt = args.message.strip() or ("Secret" if args.secret else "Input")
-    written = await (host.human.secret(prompt=prompt) if args.secret else host.human.text(prompt=prompt))
+    where = env.site("answer")
+    written = await (
+        env.human.secret(prompt=prompt, site=where) if args.secret else env.human.text(prompt=prompt, site=where)
+    )
     if written.text is None:
         return ToolResult.of(Failure.BLOCKED, "the human gave no answer, so nothing was written")
     payload = written.text + ("\n" if args.submit else "")
     try:
-        host.pty.write(args.session_id, payload)
+        env.pty.write(args.session_id, payload)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     body = Text(
@@ -231,48 +230,51 @@ async def ask_into_pty(ctx: TurnCtx, args: AskIntoPtyArgs) -> ToolResult:
     return ToolResult.ok(f"wrote the human's answer to session {args.session_id}", body=body)
 
 
-async def _write(ctx: TurnCtx, session_id: int, payload: str) -> ToolResult:
+async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
     """The half of both write verbs that touches the terminal."""
-    host = ctx.host
-    session = host.pty.get(session_id)
+    session = env.pty.get(session_id)
     if session is not None:
-        refused = await _consent(host, session)
+        refused = await _consent(env, session)
         if refused is not None:
             return refused
     try:
-        host.pty.write(session_id, payload)
+        env.pty.write(session_id, payload)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     body = Text(value=f"session_id={session_id}\nwrote={len(payload)} chars")
     return ToolResult.ok(f"wrote {len(payload)} chars to session {session_id}", body=body)
 
 
-async def _consent(host: Host, session: PtySession) -> ToolResult | None:
+async def _consent(env: Env, session: PtySession) -> ToolResult | None:
     """Ask before changing a live session, once per session; ``None`` when nothing has to be asked."""
-    if not host.pty_policy.needs_consent(session):
+    if not env.pty_policy.needs_consent(session):
         return None
-    agreed = await host.human.confirm(prompt=f"change PTY session {session.session_id}, which is still running?")
+    agreed = await env.human.confirm(
+        prompt=f"change PTY session {session.session_id}, which is still running?", site=env.site("consent")
+    )
     if not agreed.accepted:
         return ToolResult.of(Failure.DENIED, f"the human did not allow changing PTY session {session.session_id}")
-    host.pty_policy.approve(session.session_id)
+    env.pty_policy.approve(session.session_id)
     return None
 
 
-async def _allowed(host: Host, command: list[str]) -> ToolResult | tuple[str, ...]:
+async def _allowed(env: Env, command: list[str]) -> ToolResult | tuple[str, ...]:
     """Whether this argv may start, from the policy and — when it asks — from the human.
 
     The answer is the programs the human allowed, so the caller can record them as this call's effects:
     the policy remembers them for the life of the host, and the effect record is about this call.
     """
-    verdict = host.workspace.commands.verdict(command)
+    verdict = env.workspace.commands.verdict(command)
     if not isinstance(verdict, NeedsHuman):
         return ()
     approvals: list[str] = []
     for program in verdict.programs:
-        agreed = await host.human.confirm(prompt=f"run {program!r} on a terminal? it is on the command denylist")
+        agreed = await env.human.confirm(
+            prompt=f"run {program!r} on a terminal? it is on the command denylist", site=env.site("gate")
+        )
         if not agreed.accepted:
             return ToolResult.of(Failure.DENIED, f"the command denylist refused {program!r}")
-        host.workspace.commands.approve(program)
+        env.workspace.commands.approve(program)
         approvals.append(program)
     return tuple(approvals)
 
@@ -311,7 +313,9 @@ OPEN = ToolSpec(
     group=Group.PROCESS,
     args=OpenPtyArgs,
     run=open_pty,
-    uses=Res.EXEC | Res.PTY,
+    # `PATHS` too: the call resolves its own directory against the workspace, and a path tool that
+    # could not resolve one would be a group of declarations that contradict each other.
+    uses=Res.EXEC | Res.PTY | Res.PATHS,
     mutates=Mutation.HOST,
     roles={"cwd": Role.CWD},
 )
@@ -331,6 +335,10 @@ WRITE = ToolSpec(
     run=write_pty,
     uses=Res.PTY,
     mutates=Mutation.HOST,
+    # The baseline would be `ONCE(SESSION)`, and the handler already asks exactly that — while the
+    # session is still alive, which is a runtime fact the approval gate cannot see. Asking twice for one
+    # write would be one question too many, so the gate is told not to, and the handler's own ask stands.
+    posture=Posture.AUTO,
 )
 
 WRITE_KEYS = ToolSpec(
@@ -340,6 +348,7 @@ WRITE_KEYS = ToolSpec(
     run=write_pty_keys,
     uses=Res.PTY,
     mutates=Mutation.HOST,
+    posture=Posture.AUTO,
 )
 
 CLOSE = ToolSpec(
@@ -362,3 +371,5 @@ ASK = ToolSpec(
     uses=Res.HUMAN | Res.PTY,
     mutates=Mutation.HOST,
 )
+
+SPECS: tuple[ToolSpec, ...] = (OPEN, READ, WRITE, WRITE_KEYS, CLOSE, ASK)

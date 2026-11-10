@@ -16,7 +16,7 @@ from plyngent.kernel.workspace import PathRefused
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.env import Env
 
 
 class WriteFileArgs(ToolArgs, kw_only=True):
@@ -30,8 +30,8 @@ class WriteFileArgs(ToolArgs, kw_only=True):
     overwrite: bool = False
 
 
-async def write_file(ctx: TurnCtx, args: WriteFileArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def write_file(env: Env, args: WriteFileArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         target = workspace.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
@@ -69,3 +69,5 @@ WRITE_FILE = ToolSpec(
     mutates=Mutation.WORKSPACE,
     roles={"path": Role.WRITE},
 )
+
+SPECS: tuple[ToolSpec, ...] = (WRITE_FILE,)

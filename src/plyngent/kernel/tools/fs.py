@@ -36,7 +36,7 @@ from plyngent.kernel.trash import Kind, Trouble, to_trash
 from plyngent.kernel.workspace import PathRefused
 
 if TYPE_CHECKING:
-    from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.env import Env
     from plyngent.kernel.workspace import Workspace
 
 #: What ``listdir`` can be asked for per entry. A closed set, so the schema says what it accepts.
@@ -129,8 +129,8 @@ class DeleteArgs(ToolArgs, kw_only=True):
     permanent: bool = False
 
 
-async def glob_paths(ctx: TurnCtx, args: GlobArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def glob_paths(env: Env, args: GlobArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         base = workspace.resolve(args.path)
     except PathRefused as exc:
@@ -153,8 +153,8 @@ async def glob_paths(ctx: TurnCtx, args: GlobArgs) -> ToolResult:
     return ToolResult.ok(f"{len(shown)} paths", body=Text(value=text), meta=_meta(listing))
 
 
-async def listdir(ctx: TurnCtx, args: ListdirArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         target = workspace.resolve(args.path)
     except PathRefused as exc:
@@ -169,8 +169,8 @@ async def listdir(ctx: TurnCtx, args: ListdirArgs) -> ToolResult:
     return ToolResult.ok(f"{len(lines)} entries", body=Text(value="\n".join(lines)), meta=_meta(listing))
 
 
-async def tree(ctx: TurnCtx, args: TreeArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def tree(env: Env, args: TreeArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         origin = workspace.resolve(args.path)
     except PathRefused as exc:
@@ -186,8 +186,8 @@ async def tree(ctx: TurnCtx, args: TreeArgs) -> ToolResult:
     return ToolResult.ok(summary, body=Text(value="\n".join(lines)), meta=_meta(listing))
 
 
-async def copy_path(ctx: TurnCtx, args: CopyArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def copy_path(env: Env, args: CopyArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         source = workspace.resolve(args.src, AccessMode.READ)
         destination = workspace.resolve(args.dst, AccessMode.WRITE)
@@ -216,8 +216,8 @@ async def copy_path(ctx: TurnCtx, args: CopyArgs) -> ToolResult:
     return ToolResult.ok(summary, effects=Effects(changed=(target,)))
 
 
-async def move_path(ctx: TurnCtx, args: MoveArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def move_path(env: Env, args: MoveArgs) -> ToolResult:
+    workspace = env.workspace
     pair = _movable(workspace, args)
     if isinstance(pair, ToolResult):
         return pair
@@ -238,8 +238,8 @@ async def move_path(ctx: TurnCtx, args: MoveArgs) -> ToolResult:
     return ToolResult.ok(summary, effects=Effects(changed=(source, moved)))
 
 
-async def delete_path(ctx: TurnCtx, args: DeleteArgs) -> ToolResult:
-    workspace = ctx.host.workspace
+async def delete_path(env: Env, args: DeleteArgs) -> ToolResult:
+    workspace = env.workspace
     try:
         target = workspace.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
@@ -248,7 +248,7 @@ async def delete_path(ctx: TurnCtx, args: DeleteArgs) -> ToolResult:
         return ToolResult.of(Failure.DENIED, "cannot delete the workspace root")
     if not _present(target):
         return ToolResult.of(Failure.MISSING, f"path does not exist: {args.path}")
-    return await _deleted(ctx, target, args)
+    return await _deleted(env, target, args)
 
 
 GLOB = ToolSpec(
@@ -466,9 +466,9 @@ def _movable(workspace: Workspace, args: MoveArgs) -> ToolResult | tuple[Path, P
     return source, destination
 
 
-async def _deleted(ctx: TurnCtx, target: Path, args: DeleteArgs) -> ToolResult:
+async def _deleted(env: Env, target: Path, args: DeleteArgs) -> ToolResult:
     """The delete itself, once the workspace has said *target* may be touched."""
-    permanent = args.permanent or not ctx.host.trash_enabled or under_system_temp(target)
+    permanent = args.permanent or not env.trash_enabled or under_system_temp(target)
     try:
         summary = await asyncio.to_thread(_remove, target, recursive=args.recursive, permanent=permanent)
     except _NotEmptyError:

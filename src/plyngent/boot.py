@@ -14,6 +14,7 @@ place reads them from what they were handed.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration
@@ -21,16 +22,17 @@ from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
+from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
 from plyngent.kernel.link import InProcLink
+from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.serving import Serving
 from plyngent.wire.manifest import KernelManifest, command_specs
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from composat import Component, ComponentKey
 
+    from plyngent.kernel.trail import Trail
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
@@ -86,12 +88,30 @@ class Installed:
         _ = await self.assembly.stop(*self.assembly.keys())
 
 
-async def install(root: Path | str, *, host: str = DEFAULT_HOST, transport: str = "inproc") -> Installed:
+async def install(
+    root: Path | str,
+    *,
+    host: str = DEFAULT_HOST,
+    transport: str = "inproc",
+    model: Model | None = None,
+    journal: Path | str | None = None,
+) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
-    The declarations are the whole kernel: a PTY registry, the channel a person answers through, and
-    the host they belong to. Sessions are *not* declared here — a session arrives with ``Open``, which
-    is what makes it a command rather than a startup flag.
+    The declarations are the whole kernel: a PTY registry, the channel a person answers through, the
+    model a turn asks, the journal a conversation is kept in, and the host they belong to. Sessions are
+    *not* declared here — a session arrives with ``Open``, which is what makes it a command rather than a
+    startup flag.
+
+    ``model`` is installed rather than reached for: ``None`` is a kernel with nothing to ask, which
+    refuses turns instead of pretending a model answered. It is the same move as attaching a client to
+    the human channel, and a test's scripted model is installed exactly the way a real one will be.
+
+    ``journal`` says where the conversation is kept, and it is a parameter rather than something the
+    backend decides for itself. ``None`` is one file per workspace in the user's data directory
+    (:func:`~plyngent.kernel.journal.journal_path`), ``":memory:"`` is a conversation nobody meant to
+    keep, and a path is that path — which is what lets a story keep its journal beside its workspace
+    instead of in the person's own data.
 
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
@@ -105,6 +125,8 @@ async def install(root: Path | str, *, host: str = DEFAULT_HOST, transport: str 
         [
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
+            Declaration(ModelChannel, instance=host, args=(model,)),
+            Declaration(Journal, instance=host, args=(_backend(root, journal),)),
             Declaration(Host, instance=host, args=(root,)),
         ]
     )
@@ -119,3 +141,16 @@ async def install(root: Path | str, *, host: str = DEFAULT_HOST, transport: str 
     link = InProcLink(manifest=KernelManifest(commands=command_specs()))
     serving = Serving(assembly, host=host, link=link)
     return Installed(assembly, serving, link, asyncio.create_task(serving.run()))
+
+
+def _backend(root: Path | str, journal: Path | str | None) -> Trail:
+    """Which journal answers this host: a file, the one this workspace has by name, or none at all.
+
+    The choice is made here because it is a fact about how the program was started and nowhere further
+    in: everything past this point holds a ``Trail`` and never asks which one it is. Both answers are the
+    same backend — a temporary journal is SQLite's in-memory database rather than a second implementation
+    of the protocol.
+    """
+    if journal == MEMORY_JOURNAL:
+        return SqliteTrail(MEMORY_JOURNAL)
+    return SqliteTrail(journal_path(root) if journal is None else Path(journal))

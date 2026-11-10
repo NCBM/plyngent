@@ -8,11 +8,11 @@ if TYPE_CHECKING:
     from tests.stories.driver import Story
 
 
-async def test_typing_a_line_is_a_turn_the_kernel_cannot_run_yet(story: Story) -> None:
+async def test_a_typed_line_is_refused_when_no_model_is_installed(story: Story) -> None:
     await story.type("look at the README")
 
-    assert story.screen() == ("turn refused: this kernel cannot run turns yet",), (
-        "there is no turn runner, and the kernel says so in its own words"
+    assert story.screen() == ("turn refused: this kernel has no model installed, so it cannot run a turn",), (
+        "there is nothing to ask, and the kernel says so in its own words"
     )
 
 
@@ -42,7 +42,7 @@ async def test_a_message_written_in_an_editor_is_sent_like_a_typed_line(story: S
     await story.type("/submit")
     await story.write("a longer thought,\nover two lines")
 
-    assert story.screen() == ("turn refused: this kernel cannot run turns yet",)
+    assert story.screen() == ("turn refused: this kernel has no model installed, so it cannot run a turn",)
 
 
 async def test_submit_will_not_take_its_text_on_the_line(story: Story) -> None:

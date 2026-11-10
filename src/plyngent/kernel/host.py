@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, override
 from composat import Component, require
 
 # Not type-only imports: ``require()`` resolves each field's annotation from this module's globals.
+from plyngent.kernel.approvals import Approvals
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
+from plyngent.kernel.journal import Journal  # noqa: TC001
+from plyngent.kernel.locks import Locks
+from plyngent.kernel.model import ModelChannel  # noqa: TC001
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.workspace import Workspace
@@ -33,6 +37,14 @@ class Host(Component):
     # and detaching it are the same move (`replace`) and two hosts cannot answer for each other's
     # humans. Nobody attached is a channel that answers "no", not a missing one.
     human: HumanChannel = require()
+    # The model a turn asks. A channel like the human's, so that installing one is a declaration and
+    # swapping it is a `replace`; nothing installed is a value (`None`) rather than a missing field, so a
+    # turn can be refused before it starts instead of failing at its first request.
+    model: ModelChannel = require()
+    # The conversation's journal. Held as the component that owns a backend rather than as the protocol,
+    # because a requirement is answered by the class that was declared; everything that reads or appends
+    # takes `Trail`, so which backend answers it is a declaration in `boot` and nothing else.
+    trail: Journal = require()
     # Not a component: the root is the host's own identity, so it is stored once, here.
     workspace: Workspace
     # Whether a delete goes to the system trash, where the human can take it back, or straight away.
@@ -43,12 +55,21 @@ class Host(Component):
     # registry's: the registry holds children, and a decision about whether a person has to agree is not
     # a fact about a child.
     pty_policy: PtyPolicy
+    # What this host has already been told it may do, keyed by what a person means by "don't ask again".
+    # A plain field rather than a component: it is a table with no lifecycle, and the host is what lives
+    # exactly as long as an approval should.
+    approvals: Approvals
+    # One lock per path, across every session on this host: two turns in two conversations that touch one
+    # file take turns. It is the host's because a session comes and goes while a file is still a file.
+    locks: Locks
 
     def __init__(self, root: Path | str, *, trash_enabled: bool = True) -> None:
         super().__init__()
         self.workspace = Workspace(root)
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
+        self.approvals = Approvals()
+        self.locks = Locks()
 
     @override
     async def unload(self) -> None:

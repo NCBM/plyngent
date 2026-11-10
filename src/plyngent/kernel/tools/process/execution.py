@@ -42,8 +42,7 @@ from plyngent.kernel.toolspec import Group, Mutation, Res, Role, ToolArgs, ToolS
 from plyngent.kernel.workspace import Denied, PathRefused
 
 if TYPE_CHECKING:
-    from plyngent.kernel.events import Human
-    from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.env import Env
     from plyngent.kernel.workspace import Workspace
 
 
@@ -85,9 +84,9 @@ class ExecuteArgs(ToolArgs, kw_only=True):
     extra_timeout_secs: float = 0.0
 
 
-async def execute(ctx: TurnCtx, args: ExecuteArgs) -> ToolResult:
+async def execute(env: Env, args: ExecuteArgs) -> ToolResult:
     """Run the tree, asking about each node as it comes up."""
-    workspace = ctx.host.workspace
+    workspace = env.workspace
     started = time.monotonic()
     try:
         count = validate(args.steps)
@@ -100,7 +99,7 @@ async def execute(ctx: TurnCtx, args: ExecuteArgs) -> ToolResult:
     if not base.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.cwd}")
 
-    gate = _Questions(workspace, ctx.host.human)
+    gate = _Questions(workspace, env)
     try:
         batch = await run_tree(
             args.steps,
@@ -109,7 +108,7 @@ async def execute(ctx: TurnCtx, args: ExecuteArgs) -> ToolResult:
             failfast=args.failfast,
             extra_timeout_secs=args.extra_timeout_secs,
             gate=gate,
-            scope=ctx.scope("proc-0"),
+            scope=env.scope("proc-0"),
         )
     except Cancelled:
         # The engine turns a stopped turn into a refusal of its own; reaching here means the cancel
@@ -128,12 +127,12 @@ class _Questions:
     """
 
     workspace: Workspace
-    human: Human
+    env: Env
     approvals: list[str]
 
-    def __init__(self, workspace: Workspace, human: Human) -> None:
+    def __init__(self, workspace: Workspace, env: Env) -> None:
         self.workspace = workspace
-        self.human = human
+        self.env = env
         self.approvals = []
 
     async def __call__(self, node: Execution, inherited: Path) -> Permit | Refused:
@@ -163,7 +162,9 @@ class _Questions:
         if not isinstance(verdict, NeedsHuman):
             return None
         for program in verdict.programs:
-            agreed = await self.human.confirm(prompt=f"run {program!r}? it is on the command denylist")
+            agreed = await self.env.human.confirm(
+                prompt=f"run {program!r}? it is on the command denylist", site=self.env.site("gate")
+            )
             if not agreed.accepted:
                 return Refused(Failure.DENIED, f"the command denylist refused {program!r}")
             self.workspace.commands.approve(program)
@@ -242,3 +243,5 @@ EXECUTE = ToolSpec(
     mutates=Mutation.OUTSIDE | Mutation.WORKSPACE,
     roles={"cwd": Role.CWD},
 )
+
+SPECS: tuple[ToolSpec, ...] = (EXECUTE,)

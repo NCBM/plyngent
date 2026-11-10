@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from plyngent.kernel.render import render, render_body, render_part, visible
-from plyngent.kernel.toolresult import Document, ProcessControl, Text, ToolResult
+from plyngent.kernel.toolresult import Document, Hint, ProcessControl, Text, ToolResult
 
 
 def test_a_terminal_sequence_in_a_body_is_written_out_rather_than_executed() -> None:
@@ -57,6 +57,14 @@ def test_a_merged_stream_is_one_block_because_it_was_one_stream() -> None:
     assert "--- output ---" in rendered, "there is one stream, so there is one heading"
     assert "--- stderr ---" not in rendered
     assert rendered.endswith("o\ne")
+
+
+def test_a_hint_is_the_call_that_would_work_and_why_it_would() -> None:
+    part = Hint(tool="write_file", given=(("overwrite", "true"),), why="replace it on purpose")
+
+    assert render_part(part) == "hint: write_file(overwrite=true) — replace it on purpose"
+    assert render_part(Hint(tool="read_file")) == "hint: read_file", "a step with nothing to patch is the call alone"
+    assert render_part(Hint(tool="read_file", why="try the other one")) == "hint: read_file — try the other one"
 
 
 def test_the_body_is_the_parts_in_the_order_they_happened() -> None:

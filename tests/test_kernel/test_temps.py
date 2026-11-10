@@ -11,6 +11,8 @@ from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
+from plyngent.kernel.journal import Journal, SqliteTrail
+from plyngent.kernel.model import ModelChannel
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.temps import TempWorkspaces, TooManyWorkspacesError, under_system_temp
 from plyngent.kernel.workspace import OutsideWorkspace, Workspace
@@ -106,7 +108,11 @@ def _two_hosts(tmp_path) -> Assembly:
         Declaration(PtyRegistry, instance="ws-a"),
         Declaration(PtyRegistry, instance="ws-b"),
         Declaration(HumanChannel, instance="ws-a"),
+        Declaration(ModelChannel, instance="ws-a"),
+        Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
         Declaration(HumanChannel, instance="ws-b"),
+        Declaration(ModelChannel, instance="ws-b"),
+        Declaration(Journal, instance="ws-b", args=(SqliteTrail(":memory:"),)),
         Declaration(Host, instance="ws-a", args=(tmp_path / "a",)),
         Declaration(Host, instance="ws-b", args=(tmp_path / "b",)),
     )

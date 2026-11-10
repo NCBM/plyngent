@@ -11,8 +11,9 @@ Three rules the shape is built around:
   time it happens, because it is rendered from one closed set (:class:`~plyngent.kernel.failure.
   Failure`) through one table, rather than spelled out at each raise site.
 * **A next step is data, not a sentence.** ``Hint`` names a tool and the arguments that fix the
-  problem; the renderer decides whether that becomes a phrase, and the kernel never writes a tool
-  name into a message about a tool it cannot see.
+  problem, and it is a part of the body so that the model reads it beside what went wrong; the
+  renderer decides whether that becomes a phrase, and the kernel never writes a tool name into a
+  message about a tool it cannot see.
 * **Cancelling is not a failure of the world.** A turn that was stopped reports ``LIMIT`` and is not
   retried, so the journal can tell "it was stopped" from "it went wrong".
 
@@ -142,9 +143,12 @@ def parts(body: BodyLike | None) -> Body:
     return tuple(body)
 
 
-@dataclass(frozen=True, slots=True)
-class Hint:
+class Hint(Part, tag="hint", frozen=True, kw_only=True):
     """A next step that would change the outcome, as data.
+
+    A hint is a part of the body rather than a field beside it, because it is meant for the model and
+    the body is what the model reads: a hint outside the body is a hint nobody can be given. So
+    ``hints`` on a result is a filter over the body, and there is no second place one could hide.
 
     ``given`` is an *argument patch*: the values this failed call should have carried instead
     (``write_file(overwrite=true)``). It is not the tool's parameter list, it does not overwrite the
@@ -153,7 +157,7 @@ class Hint:
     has to be expressible here. Nothing else promises the step works: a hint is a suggestion.
     """
 
-    tool: str
+    tool: str = ""
     given: tuple[tuple[str, str], ...] = ()
     why: str = ""
 
@@ -201,12 +205,18 @@ class Meta:
 
 @dataclass(frozen=True, slots=True)
 class ToolResult:
-    """One call's outcome: a status, one line, and the parts that are not the line."""
+    """One call's outcome: a status, one line, and the parts that are not the line.
+
+    There is no ``hints`` field, and no ``hints`` argument on the constructor either: a hint is a part
+    of the body (it is meant for the model, and the body is what the model reads), so the two factories
+    that take hints put them there and :attr:`hints` filters the body back out. A part therefore lives
+    in exactly one place, which is what lets ``render`` be the only thing that decides what any of it
+    means.
+    """
 
     status: Status
     summary: str
     body: Body = ()
-    hints: tuple[Hint, ...] = ()
     effects: Effects = field(default_factory=Effects)
     meta: Meta = field(default_factory=Meta)
     failure: Failure | None = None
@@ -228,6 +238,11 @@ class ToolResult:
             from plyngent.kernel.render import render_body
 
             object.__setattr__(self, "meta", replace(self.meta, chars=len(render_body(self.body))))
+
+    @property
+    def hints(self) -> tuple[Hint, ...]:
+        """The hints this result carries — the ones in its body, in the order they were appended."""
+        return tuple(part for part in self.body if isinstance(part, Hint))
 
     @property
     def retry(self) -> Retry:
@@ -270,8 +285,7 @@ class ToolResult:
         return cls(
             OUTCOMES[failure][0],
             summary,
-            body=parts(body),
-            hints=hints,
+            body=parts(body) + hints,
             effects=effects if effects is not None else Effects(),
             meta=meta if meta is not None else Meta(),
             failure=failure,
@@ -295,8 +309,7 @@ class ToolResult:
         return cls(
             Status.PARTIAL,
             summary,
-            body=parts(body),
-            hints=hints,
+            body=parts(body) + hints,
             effects=effects,
             meta=meta if meta is not None else Meta(),
         )

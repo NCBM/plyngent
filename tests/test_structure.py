@@ -12,11 +12,21 @@ from __future__ import annotations
 import ast
 import pathlib
 from types import ModuleType
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Any, cast, get_args
+
+import pytest
 
 from plyngent import boot, cli, kernel, wire
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import render
+from plyngent.kernel.access import AccessMode
+from plyngent.kernel.catalog import BUILTIN, ToolCatalog
+from plyngent.kernel.failure import Failure, Retry
+from plyngent.kernel.listing import Filter
+from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
+from plyngent.kernel.tools import fs
+from plyngent.kernel.toolspec import MAX_INTENTION_CHARS, Group, Intention, Mutation, Res, ToolArgs, ToolSpec
+from plyngent.kernel.workspace import Denied, OutsideWorkspace
 from plyngent.wire.event import Batch, Event, TurnStarted
 from tests.stories import driver
 
@@ -130,6 +140,244 @@ def test_the_stories_run_over_every_transport() -> None:
     assert set(driver.TRANSPORTS) == set(boot.KERNEL_TRANSPORTS), "and every one of them is run"
 
 
+# -- what a tool declares, over every tool there is ----------------------------------
+#
+# A declaration is what the model is shown and what the executor acts on, and most of it has no outside
+# a story could read: a schema with an argument that says nothing about what it accepts, a closed set
+# whose order came from a `set`, a package that can also be called by position. None of those have a
+# screen. They are asserted here — over `BUILTIN`, not over the group whose turn it was to be written.
+
+#: What makes a property a description: the keywords one of which says what a value may be.
+_TYPED = frozenset({"type", "$ref", "enum", "const", "anyOf", "oneOf", "allOf"})
+
+
+@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+def test_every_tool_answers_for_itself(spec: ToolSpec) -> None:
+    schema = spec.schema()
+
+    assert spec.name and spec.name == spec.name.strip(), "a name with space in it is a name two spellings have"
+    assert isinstance(spec.group, Group), "every builtin tool travels in a disclosure group"
+    assert spec.uses, "a tool that reaches for nothing has no handler to write"
+    assert isinstance(spec.args, type) and issubclass(spec.args, ToolArgs), "the package is one ToolArgs describes"
+    assert schema["type"] == "object" and schema["properties"], "a tool is called with named arguments"
+    assert schema["properties"]["intention"]["default"] == "", "every call may say why it is being made"
+    assert schema["properties"]["intention"]["maxLength"] == MAX_INTENTION_CHARS
+    assert "intention" not in schema.get("required", []), "the declaration asks for it, the type must not"
+    assert spec.schema() == schema, "the same declaration twice is the same bytes"
+
+
+@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+def test_every_package_refuses_to_be_called_by_position(spec: ToolSpec) -> None:
+    """Keyword only, so that no ordering of two calls can disagree about which value is which."""
+    with pytest.raises(TypeError):
+        _ = cast("Any", spec.args)(None)
+
+
+@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+def test_every_argument_the_model_can_give_says_what_it_accepts(spec: ToolSpec) -> None:
+    assert _untyped(spec.schema()) == [], "an argument with no type is an argument the model has to guess at"
+
+
+@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+def test_every_closed_set_is_an_enum_in_an_order_of_its_own(spec: ToolSpec) -> None:
+    for where, values in _enums(spec.schema()):
+        assert values == sorted(values), f"{spec.name}: {where} is a closed set in some other order"
+        assert len(set(values)) == len(values), f"{spec.name}: {where} lists a value twice"
+
+
+def _untyped(node: object, where: str = "") -> list[str]:
+    """Every subschema in *node* that says nothing about what it accepts, by its dotted path.
+
+    A schema is a tree of three shapes: an object with ``properties``, an array with ``items``, and
+    ``$defs`` beside them. Walking all three is what makes "no argument is left undescribed" a claim
+    about the whole tree rather than about the top level.
+    """
+    if not isinstance(node, dict):
+        return []
+    schema = cast("dict[str, Any]", node)
+    typed = bool(set(schema) & _TYPED)
+    found: list[str] = [] if typed else [where or "."]
+    for name, child in (schema.get("properties") or {}).items():
+        found.extend(_untyped(child, f"{where}{name}"))
+    if "items" in schema:
+        found.extend(_untyped(schema["items"], f"{where}[]"))
+    for name, definition in (schema.get("$defs") or {}).items():
+        found.extend(_untyped(definition, f"{name}."))
+    return found
+
+
+def _enums(node: object, where: str = "") -> list[tuple[str, list[Any]]]:
+    """Every closed set in *node*, by dotted path — the values a call may be given, and nothing else."""
+    if not isinstance(node, dict):
+        return []
+    schema = cast("dict[str, Any]", node)
+    found: list[tuple[str, list[Any]]] = []
+    if isinstance(values := schema.get("enum"), list):
+        found.append((where or ".", cast("list[Any]", values)))
+    for name, child in (schema.get("properties") or {}).items():
+        found.extend(_enums(child, f"{where}{name}"))
+    if "items" in schema:
+        found.extend(_enums(schema["items"], f"{where}[]"))
+    for name, definition in (schema.get("$defs") or {}).items():
+        found.extend(_enums(definition, f"{name}."))
+    return found
+
+
+def test_the_two_walkers_find_what_they_judge() -> None:
+    """A checker that finds nothing because it looked nowhere looks exactly like a clean one.
+
+    So the two walkers are shown a schema of the shape a tool produces, with one undescribed argument at
+    the top and one inside a definition, and one closed set out of order.
+    """
+    planted = {
+        "type": "object",
+        "properties": {
+            "good": {"type": "string"},
+            "bad": {},
+            "closed": {"enum": ["two", "one"]},
+            "list": {"type": "array", "items": {"type": "integer"}},
+        },
+        "$defs": {"Nested": {"type": "object", "properties": {"also_bad": {}}}},
+    }
+
+    assert _untyped(planted) == ["bad", "Nested.also_bad"], "the top level and inside a definition, both"
+    assert _enums(planted) == [("closed", ["two", "one"])]
+    assert any(_enums(spec.schema()) for spec in BUILTIN), "and the tools do hand it closed sets to judge"
+
+
+def test_the_tools_that_must_say_why_are_the_ones_that_leave_no_trace() -> None:
+    """An intention is asked for by what a tool reaches and changes, not by the tool writing it down.
+
+    The alternative is forty packages each deciding again whether "why" is worth asking, which is how the
+    rule ends up with forty-one answers — and a *read* that asks is a model taught to write "read it".
+    """
+    leaves_no_trace = {
+        spec.name
+        for spec in BUILTIN
+        if spec.uses & (Res.EXEC | Res.HUMAN) or spec.mutates & (Mutation.OUTSIDE | Mutation.DESTRUCTIVE)
+    }
+    asks = {spec.name for spec in BUILTIN if spec.intention is Intention.REQUIRED}
+
+    assert asks == leaves_no_trace, "the classification is derived from the declarations, so it cannot drift"
+
+
+def test_a_listing_tool_declares_its_bounds_rather_than_checking_them() -> None:
+    """A bound in the schema is a call the model can see is wrong; a bound in the handler is a surprise."""
+    schema = fs.GLOB.schema()
+    properties = schema["properties"]
+
+    assert schema["required"] == ["pattern"], "the one thing a call cannot leave out"
+    assert properties["pattern"]["minLength"] == 1
+    assert properties["max_matches"]["minimum"] == 1, "a budget of nothing is not a budget"
+    assert properties["path"]["default"] == "."
+    assert properties["filter"]["$ref"] == "#/$defs/Filter", "the listing knobs are one definition, not fields"
+    with pytest.raises(ValueError, match="is a path"):
+        _ = Filter(ignore_lists=["docs/.gitignore"])
+
+
+def test_a_listing_filter_is_a_declaration_and_not_a_setting() -> None:
+    """The knobs a listing takes are in the schema, with the values the schema declares.
+
+    A default read from config would rewrite this tool's schema whenever the workspace changed, and the
+    schema sits in the prompt prefix a provider caches (§10.5) — so it is the one thing that must not be
+    a function of the run.
+    """
+    knobs = fs.GLOB.schema()["$defs"]["Filter"]["properties"]
+
+    assert sorted(knobs) == ["ignore_lists", "show_hidden"], "build noise is a claim the ignore sources make"
+    assert knobs["show_hidden"]["default"] is False
+    assert knobs["ignore_lists"]["default"] is None, "the config's list of names does not go into the schema"
+
+
+def test_the_tool_block_is_a_function_of_the_tool_set() -> None:
+    """The block a model is given has to be the same bytes for the same tools, whatever the imports did.
+
+    A provider caches the prompt prefix, and the tool block sits in front of everything else in it: an
+    order that came from discovery order would rewrite the prefix whenever a tool was added, renamed or
+    moved, and the cost is paid on every request that follows (§10.5).
+    """
+    catalog = ToolCatalog()
+
+    assert len(catalog) == len(BUILTIN), "every declared tool is in the catalog, and only once"
+    assert catalog.names() == tuple(sorted(catalog.names())), "name order, not registration order"
+    assert [decl.name for decl in catalog.prompts()] == list(catalog.names())
+    assert catalog.prompts() == ToolCatalog(reversed(BUILTIN)).prompts(), "the same set, the same bytes"
+
+
 def _catalog():
     """The client's vocabulary, derived the one way it is ever derived."""
     return build(wire.KernelManifest(commands=wire.command_specs()), session="main")
+
+
+# -- what a result is, which no reader can ask it -------------------------------------
+#
+# A result is four words and a line, and every reader of it — the model, the screen, the journal — reads
+# one of those. The rules that decide them have no outside, so they are held here: the closed set that is
+# total over `Failure`, the one table that makes a status and a retry together, and the two ways a result
+# may not contradict itself.
+
+
+def test_the_four_outcomes_are_the_words_the_contract_carries() -> None:
+    """The wire spells these as plain strings, so the spelling is the contract, not our business."""
+    assert [status.value for status in Status] == ["ok", "refused", "failed", "partial"]
+
+
+def test_every_kind_of_trouble_is_one_row_of_one_table() -> None:
+    """A failure with no row is a failure with no status and no answer to "try again?"."""
+    assert set(OUTCOMES) == set(Failure)
+
+    for failure, (status, retry) in OUTCOMES.items():
+        result = ToolResult.of(failure, "something went wrong")
+
+        assert (result.status, result.retry) == (status, retry), "the table decides, never the raise site"
+
+
+def test_the_world_can_fix_two_of_them_by_itself_and_the_rest_ask_for_something() -> None:
+    assert {kind for kind, (_, retry) in OUTCOMES.items() if retry is Retry.SAME_CALL} == {
+        Failure.BUSY,
+        Failure.TIMEOUT,
+    }, "nothing else is worth trying again as it was"
+
+
+def test_a_result_cannot_disagree_with_itself() -> None:
+    with pytest.raises(ValueError, match="has to say what kind of failure"):
+        _ = ToolResult(Status.FAILED, "it broke")
+
+    with pytest.raises(ValueError, match="cannot also carry"):
+        _ = ToolResult(Status.OK, "all good", failure=Failure.BUG)
+
+
+def test_a_body_is_measured_through_the_projection_and_not_as_it_was_produced() -> None:
+    """``chars`` is what the model is sent, so a byte the renderer has to spell out counts as spelled."""
+    result = ToolResult.ok("read it", body=Text(value="a\x1bb"))
+
+    assert result.body[0] == Text(value="a\x1bb"), "the part keeps what the tool produced"
+    assert result.meta.chars == len("a\\x1bb"), "and the count is what the model reads"
+
+
+def test_a_partial_result_is_never_retried_as_a_whole() -> None:
+    result = ToolResult.partial("wrote 1 of 2 files", effects=Effects(changed=(pathlib.Path("/ws/a.txt"),)))
+
+    assert result.status is Status.PARTIAL
+    assert result.retry is Retry.NEVER, "running it again would do the parts that worked a second time"
+    assert result.effects.changed == (pathlib.Path("/ws/a.txt"),), "what landed is still recorded"
+
+
+def test_a_refusal_reads_the_way_the_workspace_put_it() -> None:
+    """One template per kind of refusal: a second wording at the tool layer is a second answer to fix."""
+    escaped = OutsideWorkspace(
+        pathlib.Path("../x"),
+        resolved=pathlib.Path("/elsewhere/x"),
+        root=pathlib.Path("/ws"),
+        need=AccessMode.EXEC,
+    )
+    lifted = refusal(escaped.with_tools("request_directory_access"))
+    denied = refusal(Denied(pathlib.Path("/ws/key.pem"), "/key"))
+
+    assert (lifted.status, lifted.failure, lifted.retry) == (Status.REFUSED, Failure.BLOCKED, Retry.FIX_ARGS)
+    assert lifted.summary == str(escaped), "the workspace's sentence, not a rewrite of it"
+    assert lifted.hints == (Hint(tool="request_directory_access", given=(("mode", "exec"),)),), (
+        "the tool is offered as data, with the mode the call needed"
+    )
+    assert "request_directory_access" not in lifted.summary, "and the kernel names no tool in prose"
+    assert (denied.failure, denied.hints) == (Failure.DENIED, ()), "nothing lifts a denial, so nothing is offered"

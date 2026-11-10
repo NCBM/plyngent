@@ -26,10 +26,13 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from msgspec.structs import replace
+
 from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.render import render
-from plyngent.wire.command import Cancel, Open, Submit
+from plyngent.wire.command import Cancel, ListSessions, Open, Submit
+from plyngent.wire.event import SessionsListed, TurnFinished
 from plyngent.wire.flow import Ack
 from plyngent.wire.scope import CancelReason
 
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from plyngent.cli.line import Line, LineEditor
+    from plyngent.wire.command import AnyCommand
     from plyngent.wire.link import KernelLink
 
 #: What a normal goodbye returns.
@@ -56,6 +60,8 @@ class App:
     _out: TextIO
     _err: TextIO
     _leaving: asyncio.Event
+    _cursor: str | None
+    _seeding: bool
 
     def __init__(
         self,
@@ -74,6 +80,13 @@ class App:
         self._out = out
         self._err = err
         self._leaving = asyncio.Event()
+        # The entry this client's conversation ends at, learned from each finished turn. Which branch a
+        # frontend is looking at is the frontend's own state, so the kernel neither keeps it nor guesses
+        # it: a message says which entry it continues, and ``None`` is a new root.
+        self._cursor = None
+        # Whether the one listing this client asks for at startup has been answered yet: that answer is
+        # state, not news, so it is read rather than drawn.
+        self._seeding = False
 
     async def run(self) -> int:
         """Serve the connection until somebody says goodbye, then say why before closing it.
@@ -81,9 +94,16 @@ class App:
         Opening the session is the first thing a client does, and it is a command rather than an
         argument because a session is admitted into the kernel's assembly, not handed to a process
         (R2.3 第 8 步).
+
+        Asking where the conversation ends is the second, and it is the reason a restarted client picks up
+        the conversation it left instead of starting a second root beside it: the session's history
+        outlives the process, so "what have I said so far" is a question, not a memory. Both commands go
+        out before the loops start, so the answer is the first event of the connection and nothing can
+        get in front of it.
         """
         if not self.client.submit(Open(session=self.session)):
             return GONE
+        self._seeding = self.client.submit(ListSessions())
         background = [asyncio.create_task(self._events()), asyncio.create_task(self._questions())]
         try:
             return await self._lines()
@@ -101,9 +121,19 @@ class App:
 
         The lane ending is not a failure: ``KernelLeaving`` is a message like any other, and the end of
         the stream after it is the kernel's way of saying the connection is over (R2.1 D20).
+
+        The first listing of a connection is the exception: this client asked for it, so it answers with a
+        cursor rather than a line. It is read before anything is drawn and acknowledged like everything
+        else, so the transport's watermark does not depend on who wanted the answer.
         """
         async for event in self.client.events():
-            self._say(self._out, *render(event, focus=self.session))
+            if self._seeding and isinstance(event, SessionsListed):
+                self._seeding = False
+                self._cursor = _ends_at(event, self.session)
+            else:
+                self._say(self._out, *render(event, focus=self.session))
+                if isinstance(event, TurnFinished) and event.ends_at is not None:
+                    self._cursor = event.ends_at
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
 
@@ -138,11 +168,11 @@ class App:
         """One line's meaning, and the exit code it earns if the connection was gone."""
         match decode(line, self.catalog, session=self.session):
             case Runs(command=command):
-                return None if self.client.submit(command) else GONE
+                return None if self.client.submit(self._continuing(command)) else GONE
             case Composes(session=session):
                 composed = await self.editor.compose()
                 if isinstance(composed, Typed):
-                    return None if self.client.submit(Submit(session=session, text=composed.text)) else GONE
+                    return None if self.client.submit(self._message(session, composed.text)) else GONE
                 return None
             case Help(text=text):
                 self._say(self._err, text)
@@ -169,3 +199,31 @@ class App:
         for line in lines:
             _ = stream.write(f"{line}\n")
         _ = stream.flush()
+
+    # -- what a message is sent as -------------------------------------------------
+
+    def _continuing(self, command: AnyCommand) -> AnyCommand:
+        """Put a command in the conversation this client is looking at.
+
+        Only a message carries a place — a command about sessions or about cancelling says nothing about
+        which branch is on screen — so this is about ``Submit`` and nothing else.
+        """
+        if isinstance(command, Submit):
+            return replace(command, begin_after=self._cursor)
+        return command
+
+    def _message(self, session: str, text: str) -> Submit:
+        """A message from this client: the one in focus, written after what it has already read."""
+        return Submit(session=session, text=text, begin_after=self._cursor)
+
+
+def _ends_at(listing: SessionsListed, session: str) -> str | None:
+    """Where this client's own conversation ends, read out of a listing.
+
+    A session the kernel does not serve, or one whose journal holds nothing, answers ``None``: a message
+    written after that is a root, which is what a conversation with no history is.
+    """
+    for listed in listing.sessions:
+        if listed.session == session:
+            return listed.head or None
+    return None

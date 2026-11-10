@@ -5,9 +5,9 @@ a real connection, and the CLI's own loop — with two substitutions, and neithe
 
 * **the human** is a :class:`~plyngent.cli.line.LineEditor`, which is exactly the interface the loop
   is handed: replacing it is the same move as attaching a client (R2.4 C2);
-* **the model** will be a component (R5's `call` step), swapped the same way `Host.human` is. Until
-  the turn runner exists there is nothing to swap: this kernel cannot run a turn, and the story says
-  so instead of pretending.
+* **the model** is a :class:`~tests.stories.model.ScriptedModel`, installed through ``boot.install`` the
+  way a real one is: one step per request, and a request past the script is a failed story rather than
+  an invented answer.
 
 A story observes four faces, all outside the boundary:
 
@@ -36,16 +36,34 @@ from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
 from plyngent.cli.render import question as question_line
 from plyngent.kernel.host import Host
+from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
     from typing import TextIO
 
     from plyngent.kernel.events import Human
+    from plyngent.kernel.model import Model, Request
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 #: How many turns of the loop a story gives the program to react before it looks at the screen.
 #: Turns, not seconds: every wait in a story is a place where the program could have done something.
 SETTLE_TURNS = 64
+
+#: How many of those turns also wait on the OS, and for how long.
+#:
+#: A turn of the loop is only half of what a step costs now: the journal writes on a thread, so a step
+#: hands the work over and waits for it to report back, and a spin of ``sleep(0)`` never lets that thread
+#: run. A short real pause is not a story about a clock — it is the same "let the work happen" as
+#: :data:`SETTLE_PAUSE`, and it is small enough that a story still costs about what its work costs.
+SETTLE_ROUNDS = 8
+SETTLE_TICK = 0.0005
+
+#: How long a story waits for work the loop handed to a thread, and how many times it looks.
+#:
+#: A bounded count of short pauses rather than a timeout: the loop has to give the OS a chance to run
+#: the thread, and a spin of ``sleep(0)`` never does.
+SETTLE_TRIES = 400
+SETTLE_PAUSE = 0.005
 
 #: The session a story starts in unless it says otherwise.
 SESSION = "main"
@@ -113,15 +131,17 @@ class Story:
     editor: ScriptedHuman
     session: str
     catalog: Catalog
+    model: Model | None
     _out: io.StringIO
     _err: io.StringIO
     _running: asyncio.Task[int]
     _code: int | None
 
-    def __init__(self, kernel: Installed, *, session: str) -> None:
+    def __init__(self, kernel: Installed, *, session: str, model: Model | None = None) -> None:
         self.kernel = kernel
         self.session = session
         self.catalog = build(kernel.client.manifest, session=session)
+        self.model = model
         self._out = io.StringIO()
         self._err = io.StringIO()
         self.editor = ScriptedHuman(focus=session, err=self._err)
@@ -137,14 +157,32 @@ class Story:
         self._running = asyncio.create_task(self.app.run())
 
     @classmethod
-    async def start(cls, root: Path, *, session: str = SESSION, transport: str = "inproc") -> Story:
+    async def start(
+        cls,
+        root: Path,
+        *,
+        session: str = SESSION,
+        transport: str = "inproc",
+        model: Model | None = None,
+        journal: Path | str | None = None,
+    ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
         ``transport`` is passed through to :func:`plyngent.boot.install`: a story says nothing about
         how it reaches the kernel, so the suite can run the same stories over every transport there is.
+        ``model`` is installed the same way — nothing installed is a kernel that refuses turns, which
+        is its own story.
+
+        ``journal`` is where the conversation is kept. A story names it, because the alternative is
+        writing into the person's own data directory: ``tmp_path`` beside the workspace is where a
+        story's history belongs, and a story about a restart names the same path twice.
         """
         root.mkdir(parents=True, exist_ok=True)
-        story = cls(await install(root, transport=transport), session=session)
+        story = cls(
+            await install(root, transport=transport, model=model, journal=journal),
+            session=session,
+            model=model,
+        )
         await story.settle()
         return story
 
@@ -171,6 +209,16 @@ class Story:
         self.editor.answers.put_nowait(Typed(text))
         await self.settle()
 
+    async def decline(self) -> None:
+        """End the question instead of answering it: the kernel is told nobody gave an answer.
+
+        A terminal's Ctrl+C at a prompt is how a person backs out of a question — not an empty line,
+        which some questions read as an answer.
+        """
+        await self._until_asked()
+        self.editor.answers.put_nowait(Cancelled())
+        await self.settle()
+
     async def write(self, text: str) -> None:
         """Write this in the editor that ``/submit`` opens."""
         self.editor.drafts.put_nowait(Typed(text))
@@ -190,17 +238,32 @@ class Story:
         """What the kernel asked, in the order it asked."""
         return tuple(self.editor.asked)
 
+    def requests(self) -> tuple[Request, ...]:
+        """What the model was asked, in order — the one outside view of the history a turn assembled."""
+        assert isinstance(self.model, ScriptedModel), "this story installed no scripted model to read back"
+        return self.model.asked
+
+    @property
+    def host(self) -> Host:
+        """The kernel's own host: the one object a story may reach into, and only as a stimulus."""
+        found = self.kernel.assembly.instance(Declaration(Host, instance=DEFAULT_HOST).key)
+        assert isinstance(found, Host), "the story's kernel has no host"
+        return found
+
+    @property
+    def workspace(self) -> Path:
+        """The directory the kernel calls its workspace: what a tool changed is checked here."""
+        return self.host.workspace.root
+
     @property
     def human(self) -> Human:
-        """The kernel's own asking hand — how a story makes the kernel ask something today.
+        """The kernel's own asking hand, for a story about the question lane with no turn in the way.
 
-        Until the turn runner exists (R5) no tool can ask, so a story about a question reaches the
-        host directly. This is a *stimulus*, not an observation: when a tool can ask, the story asks
-        through the tool and this property goes away.
+        This is a *stimulus*, not an observation: a question a tool asks arrives through a turn, and the
+        stories about those drive the tool. What this is for is the lane itself — a deadline, a client
+        that leaves mid-answer, nobody attached at all — which no tool can stage on its own.
         """
-        found = self.kernel.assembly.instance(Declaration(Host, instance=DEFAULT_HOST).key)
-        assert isinstance(found, Host), "the story's kernel has no host to ask through"
-        return found.human
+        return self.host.human
 
     # -- how it ends ---------------------------------------------------------------
 
@@ -223,9 +286,42 @@ class Story:
     # -- waiting, without a clock --------------------------------------------------
 
     async def settle(self) -> None:
-        """Give the program enough turns to finish reacting to the last thing that happened."""
-        for _ in range(SETTLE_TURNS):
-            await asyncio.sleep(0)
+        """Give the program enough turns to finish reacting to the last thing that happened.
+
+        Turns of the loop, in rounds, and every round also waits on the OS for a moment: the journal
+        writes on a thread, so the step a message started reports back from one, and a turn of the loop
+        on its own never lets that thread run. The pause is a way of letting work happen, not a story
+        about a clock — the count is bounded either way.
+        """
+        for _ in range(SETTLE_ROUNDS):
+            await asyncio.sleep(SETTLE_TICK)
+            for _ in range(SETTLE_TURNS // SETTLE_ROUNDS):
+                await asyncio.sleep(0)
+
+    async def until(self, *wanted: str) -> None:
+        """Wait until every one of these lines is on the screen.
+
+        ``settle`` is turns of the loop, and that is enough for everything the kernel does on the loop. A
+        tool may hand real work to a thread (a directory walk does), and a thread makes no progress while
+        the loop spins without yielding time — so this waits a bounded number of short pauses, which is a
+        way of waiting for work, not a story about a clock.
+        """
+        for _ in range(SETTLE_TRIES):
+            if all(any(want in line for line in self.screen()) for want in wanted):
+                return
+            await asyncio.sleep(SETTLE_PAUSE)
+        msg = f"the screen never showed {wanted!r}; it showed {self.screen()!r}"
+        raise AssertionError(msg)
+
+    async def finished(self, turn: int = 1) -> None:
+        """Wait for a turn to end, and fail on a turn that ended for a reason rather than by itself.
+
+        A turn that raised still says it finished — with the reason — so "that line is there" is not the
+        same as "the turn ran to its own end". A story that means the second one says so here.
+        """
+        line = f"turn {turn} finished"
+        await self.until(line)
+        assert line in self.screen(), f"the turn did not finish on its own: {self.screen()[-3:]!r}"
 
     async def _say(self, line: Line) -> None:
         """Hand the loop one thing the person did, and let it react."""
@@ -233,11 +329,15 @@ class Story:
         await self.settle()
 
     async def _until_asked(self) -> None:
-        """Wait until a question is pending, without a clock: only the loop's turns."""
-        for _ in range(SETTLE_TURNS):
+        """Wait until a question is pending.
+
+        The same bounded wait as :meth:`until`, and for the same reason: the call that is about to ask
+        may be finishing work the loop handed to a thread, and a question cannot arrive before that does.
+        """
+        for _ in range(SETTLE_TRIES):
             if self.editor.waiting:
                 return
-            await asyncio.sleep(0)
+            await asyncio.sleep(SETTLE_PAUSE)
         msg = "the kernel never asked the question this story answers"
         raise AssertionError(msg)
 

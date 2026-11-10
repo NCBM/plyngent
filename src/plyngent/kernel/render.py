@@ -17,8 +17,10 @@ Two decisions live here because they are decisions about text rather than about 
   where it ran and what ran, then the output under a heading. This is a format the model reads, not a
   protocol anybody parses back.
 
-Rendering deliberately does not include the summary line: that one is the same for every reader and
-travels beside the body.
+``render_body`` lays the parts out and stops there; ``render`` puts the summary line in front of them,
+and it is ``render`` that the turn writes into the history. That is the whole of what the model is told
+about a call — a summary a person can read without the body, a body the model can read without losing
+the reason it stopped — so nothing about a result is visible to one reader and not the other.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import re
 import shlex
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.toolresult import Document, ProcessControl, Text
+from plyngent.kernel.toolresult import Document, Hint, ProcessControl, Text
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -57,6 +59,8 @@ def render_part(part: Part) -> str:
         return visible(part.value)
     if isinstance(part, Document):
         return f"[{part.document_id}] {part.summary} ({part.chars} chars)"
+    if isinstance(part, Hint):
+        return _hint(part)
     if isinstance(part, ProcessControl):
         return _process(part)
     msg = f"no rendering for {type(part).__name__}: a new kind of part needs a branch in render_part"
@@ -69,9 +73,24 @@ def render_body(body: Iterable[Part]) -> str:
 
 
 def render(result: ToolResult) -> str:
-    """The whole of what the model reads for one call: the summary, then the body."""
+    """The whole of what the model is told about one call: the summary, then the body.
+
+    The summary first is not decoration: it is the one line that says what happened, and a body that
+    only says "ran these" leaves out why it stopped. So every kind of result reaches the model whole.
+    """
     rendered = render_body(result.body)
     return f"{result.summary}\n{rendered}" if rendered else result.summary
+
+
+def _hint(part: Hint) -> str:
+    """A next step, as the call that would change the outcome and why it would.
+
+    It reads as a call because that is what it is: the values this failed call should have carried.
+    Nothing here promises the call is complete, and nothing parses it back.
+    """
+    given = ", ".join(f"{name}={value}" for name, value in part.given)
+    step = f"hint: {part.tool}({given})" if given else f"hint: {part.tool}"
+    return f"{step} — {part.why}" if part.why else step
 
 
 def _process(part: ProcessControl) -> str:
