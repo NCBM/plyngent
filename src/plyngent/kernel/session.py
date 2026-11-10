@@ -18,7 +18,7 @@ through the host and the session it was taken from.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import override
 
 from composat import Component, require
@@ -27,6 +27,7 @@ from plyngent.kernel.cancel import CancelToken, Scope
 
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
 from plyngent.kernel.host import Host  # noqa: TC001
+from plyngent.kernel.reads import Reads
 from plyngent.wire.ask import AskSite
 from plyngent.wire.event import TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
@@ -53,6 +54,10 @@ class TurnCtx:
     kind: TurnKind = TurnKind.CHAT
     begin_after: str | None = None
     since: float = 0.0
+    #: What this turn has shown with line numbers, so ``edit_lineno`` can tell a range it may change
+    #: from a range nobody read. It is mutable and shared by every round of the turn — the rounds are
+    #: one turn, and "read in round one" is not unread in round two.
+    reads: Reads = field(default_factory=Reads)
 
     def turn_address(self) -> CancelScope:
         """Where a whole turn is cancelled — the first segment every other address here shares."""
@@ -90,6 +95,7 @@ class TurnCtx:
             kind=self.kind,
             begin_after=self.begin_after,
             since=self.since,
+            reads=self.reads,
         )
 
     def end(self) -> None:

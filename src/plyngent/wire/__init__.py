@@ -51,9 +51,9 @@ from plyngent.wire.command import Resume as Resume
 from plyngent.wire.command import SetRoute as SetRoute
 from plyngent.wire.command import Submit as Submit
 from plyngent.wire.event import AnyEvent as AnyEvent
-from plyngent.wire.event import ArtifactStored as ArtifactStored
 from plyngent.wire.event import AssistantText as AssistantText
 from plyngent.wire.event import Batch as Batch
+from plyngent.wire.event import DocumentStored as DocumentStored
 from plyngent.wire.event import Entry as Entry
 from plyngent.wire.event import Event as Event
 from plyngent.wire.event import KernelLeaving as KernelLeaving

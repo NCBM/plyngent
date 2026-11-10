@@ -10,6 +10,7 @@ import pytest
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel.documents import Documents
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
@@ -46,7 +47,9 @@ def _two_hosts(tmp_path, *, max_sessions: int = 8) -> Assembly:
         Declaration(HumanChannel, instance="ws-b"),
         Declaration(ModelChannel, instance="ws-b"),
         Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
+        Declaration(Documents, instance="ws-a", args=(":memory:",)),
         Declaration(Journal, instance="ws-b", args=(SqliteTrail(":memory:"),)),
+        Declaration(Documents, instance="ws-b", args=(":memory:",)),
         Declaration(Host, instance="ws-a", args=(tmp_path / "a",)),
         Declaration(Host, instance="ws-b", args=(tmp_path / "b",)),
     )
@@ -59,6 +62,7 @@ def _one_host(tmp_path, **kwargs: object) -> Assembly:
         Declaration(HumanChannel, instance="ws-a"),
         Declaration(ModelChannel, instance="ws-a"),
         Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
+        Declaration(Documents, instance="ws-a", args=(":memory:",)),
         Declaration(Host, instance="ws-a", args=(tmp_path,)),
     )
 

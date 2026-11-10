@@ -227,6 +227,11 @@ class ToolSpec:
     posture: Posture | None = None
     remember: Remember | None = None
     escalates: Mapping[str, object] | None = None
+    #: What this tool asks of a package beyond its types. A rule two arguments make *together* — one
+    #: locator and not the other — is not something a JSON Schema can say about either field alone, and
+    #: checking it in the handler would mean the rule is skipped by every caller that does not reach the
+    #: handler (a replay, a refusal, a program). So it is declared here and run by :meth:`check`.
+    guard: Callable[[Any], None] | None = None
 
     def __post_init__(self) -> None:
         declared = self._declared_fields()
@@ -270,11 +275,15 @@ class ToolSpec:
 
         It lives beside :meth:`decode` rather than in a handler so that every entry into a tool —
         a call from the model, a call from a program, a replayed journal entry — is held to the same
-        rule, and so that nothing has to remember the rule at the point where it runs.
+        rule, and so that nothing has to remember the rule at the point where it runs. A rule that is
+        about one argument is decided here; a rule two arguments make together is the tool's own
+        :attr:`guard`, for the same reason.
         """
         if self.intention is Intention.REQUIRED and not _said(args):
             msg = "field required: this tool must be told why it is called"
             raise ArgsError("intention", msg)
+        if self.guard is not None:
+            self.guard(args)
 
     def approval(self, args: Any) -> tuple[Posture, Remember | None]:
         """The posture this call is approved at, and what the approval is remembered by.

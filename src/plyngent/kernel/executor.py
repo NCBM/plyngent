@@ -55,10 +55,10 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display, key
-from plyngent.kernel.toolresult import ToolResult
+from plyngent.kernel.toolresult import Document, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Role, argument
 from plyngent.kernel.workspace import PathRefused
-from plyngent.wire.event import ToolCalled, ToolReturned
+from plyngent.wire.event import DocumentStored, ToolCalled, ToolReturned
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -191,6 +191,12 @@ class ToolExecutor:
                 summary=result.summary,
             ),
         )
+        # A body that did not fit was written to the store by the tool that produced it, before this
+        # result existed, so a handle that is here names content that is already there. Saying it out
+        # loud is for the person watching: what they are not seeing still exists, under this name.
+        for part in result.body:
+            if isinstance(part, Document):
+                self._emit(ctx, DocumentStored(session=session, document=part.document_id, chars=part.chars))
         return result
 
     async def _ran(self, ctx: TurnCtx, node: _Call) -> ToolResult:
@@ -276,7 +282,9 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
 
     Resolution is per argument rather than all-or-nothing: a call naming two paths and getting one
     refused still reads or writes the other, so what it holds is the paths it will really touch — under
-    the role it declared for each, because that is what a batch orders calls by. A refused path is
+    the role it declared for each, because that is what a batch orders calls by. An argument that is
+    empty names no path at all: a tool with two locators leaves the other one blank, and a blank is not
+    a request for the workspace root. A refused path is
     reported rather than guessed at: nothing touches a path the workspace will not resolve, so there is no
     lock to take for it, but "this call named a path and it was refused" is a different fact from "this
     call named no path", and both the approval and the batch read the difference.
@@ -286,7 +294,7 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
     refused = False
     for name, role in (spec.roles or {}).items():
         value = argument(args, name)
-        if role not in _ACCESS or not isinstance(value, str):
+        if role not in _ACCESS or not isinstance(value, str) or not value:
             continue
         try:
             held.append(Held(workspace.resolve(value, _ACCESS[role]), role))

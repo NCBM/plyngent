@@ -17,6 +17,7 @@ from composat import Component, require
 
 # Not type-only imports: ``require()`` resolves each field's annotation from this module's globals.
 from plyngent.kernel.approvals import Approvals
+from plyngent.kernel.documents import Documents  # noqa: TC001
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
 from plyngent.kernel.journal import Journal  # noqa: TC001
 from plyngent.kernel.locks import Locks
@@ -45,6 +46,10 @@ class Host(Component):
     # because a requirement is answered by the class that was declared; everything that reads or appends
     # takes `Trail`, so which backend answers it is a declaration in `boot` and nothing else.
     trail: Journal = require()
+    # Where a body too long for the conversation is kept. A component of its own, in a file of its own,
+    # because content has a different lifecycle from history: it can be expired, indexed or moved to a
+    # blob store without a migration that has to know what a transcript is.
+    documents: Documents = require()
     # Not a component: the root is the host's own identity, so it is stored once, here.
     workspace: Workspace
     # Whether a delete goes to the system trash, where the human can take it back, or straight away.

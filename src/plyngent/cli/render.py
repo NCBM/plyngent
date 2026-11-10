@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, assert_never
 
 from plyngent.wire.ask import Confirmation, FreeText, Secret, Selection
 from plyngent.wire.event import (
-    ArtifactStored,
     AssistantText,
     Batch,
+    DocumentStored,
     KernelLeaving,
     SessionsListed,
     ToolCalled,
@@ -50,7 +50,7 @@ type _Said = AssistantText | ToolCalled | ToolReturned
 #: What the kernel reports about turns and sessions — every event that is not a turn's own content.
 #: Written out rather than inferred from ``AnyEvent`` so that a new kind of news fails at the branch
 #: that has to read it, in whichever half it belongs to.
-type _Reported = TurnStarted | TurnFinished | TurnRefused | SessionsListed | ArtifactStored | KernelLeaving
+type _Reported = TurnStarted | TurnFinished | TurnRefused | SessionsListed | DocumentStored | KernelLeaving
 
 
 def focus(session: str | None) -> str:
@@ -111,8 +111,8 @@ def _reported(event: _Reported) -> tuple[str, ...]:
         case TurnRefused(session=session, reason=reason, holder=holder):
             holder_note = f" (turn {holder} is in the way)" if holder else ""
             said = (session, f"turn refused: {reason}{holder_note}")
-        case ArtifactStored(session=session, artifact=artifact, chars=chars):
-            said = (session, f"artifact {artifact} kept ({chars} chars)")
+        case DocumentStored(session=session, document=document, chars=chars):
+            said = (session, f"document {document} kept ({chars} chars)")
         case _ as never:
             assert_never(never)
     return said

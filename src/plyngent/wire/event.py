@@ -107,11 +107,16 @@ class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
     sessions: tuple[ListedSession, ...] = ()
 
 
-class ArtifactStored(Event, tag="artifact-stored", frozen=True, kw_only=True):
-    """A body was kept outside the conversation; ``artifact`` is what pulls it back."""
+class DocumentStored(Event, tag="document-stored", frozen=True, kw_only=True):
+    """A body was kept outside the conversation; ``document`` is the handle that reaches it back.
+
+    It is said out loud because somebody may want to look: the model gets the handle in its result, and
+    a person watching is told that what they are not seeing still exists, how big it is, and under what
+    name — which is the difference between a truncated answer and a lost one.
+    """
 
     session: str = ""
-    artifact: str = ""
+    document: str = ""
     chars: int = 0
 
 
@@ -214,7 +219,7 @@ type AnyEvent = (
     | TurnFinished
     | TurnRefused
     | SessionsListed
-    | ArtifactStored
+    | DocumentStored
     | KernelLeaving
     | AssistantText
     | ToolCalled

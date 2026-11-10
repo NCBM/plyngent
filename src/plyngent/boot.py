@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
@@ -34,7 +35,6 @@ from plyngent.wire.manifest import KernelManifest, command_specs
 if TYPE_CHECKING:
     from composat import Component, ComponentKey
 
-    from plyngent.kernel.trail import Trail
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
@@ -131,7 +131,9 @@ async def install(
     backend decides for itself. ``None`` is one file per workspace in the user's data directory
     (:func:`~plyngent.kernel.journal.journal_path`), ``":memory:"`` is a conversation nobody meant to
     keep, and a path is that path — which is what lets a story keep its journal beside its workspace
-    instead of in the person's own data.
+    instead of in the person's own data. The bodies too long to send are kept in their own file beside
+    whichever journal answers
+    (:func:`~plyngent.kernel.documents.documents_path`), so no second thing has to be named here.
 
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
@@ -141,13 +143,15 @@ async def install(
         raise ValueError(msg)
     registry = ComponentRegistry()
     up: dict[ComponentKey, Component] = {}
+    kept = _journal_file(root, journal)
     _ = registry.declare_all(
         [
             Declaration(PtyBroker),
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
             Declaration(ModelChannel, instance=host, args=(model,)),
-            Declaration(Journal, instance=host, args=(_backend(root, journal),)),
+            Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
+            Declaration(Documents, instance=host, args=(documents_path(kept),)),
             Declaration(Host, instance=host, args=(root,)),
         ]
     )
@@ -190,14 +194,14 @@ async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:
             _ = await assembly.replace(key, Declaration(PtyBroker))
 
 
-def _backend(root: Path | str, journal: Path | str | None) -> Trail:
+def _journal_file(root: Path | str, journal: Path | str | None) -> Path | str:
     """Which journal answers this host: a file, the one this workspace has by name, or none at all.
 
     The choice is made here because it is a fact about how the program was started and nowhere further
     in: everything past this point holds a ``Trail`` and never asks which one it is. Both answers are the
     same backend — a temporary journal is SQLite's in-memory database rather than a second implementation
-    of the protocol.
+    of the protocol — and the kept bodies of a conversation live beside whichever file answers it.
     """
     if journal == MEMORY_JOURNAL:
-        return SqliteTrail(MEMORY_JOURNAL)
-    return SqliteTrail(journal_path(root) if journal is None else Path(journal))
+        return MEMORY_JOURNAL
+    return journal_path(root) if journal is None else Path(journal)

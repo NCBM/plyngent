@@ -19,9 +19,11 @@ from plyngent.kernel.toolspec import Res
 
 if TYPE_CHECKING:
     from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.documents import Documents
     from plyngent.kernel.events import Human
     from plyngent.kernel.pty.policy import PtyPolicy
     from plyngent.kernel.pty.registry import PtyRegistry
+    from plyngent.kernel.reads import Reads
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.workspace import Workspace
     from plyngent.wire.ask import AskSite
@@ -58,6 +60,16 @@ class Env:
     def session(self) -> str:
         """Which session this call belongs to, for a tool that records its owner (a terminal does)."""
         return self._ctx.session.session_id
+
+    @property
+    def reads(self) -> Reads:
+        """What this turn has already shown with line numbers.
+
+        Not a resource but a record of the turn: it is here rather than reached for because the turn is
+        this call's address, and because a record on the turn cannot outlive it or be shared with
+        another one.
+        """
+        return self._ctx.reads
 
     def scope(self, *segments: str) -> Scope:
         """The cancellation handle for one piece of work under this call."""
@@ -100,6 +112,12 @@ class Env:
         """Which live sessions have already been agreed to. Granted by :attr:`Res.PTY`."""
         self._granted(Res.PTY, "pty_policy")
         return self._ctx.host.pty_policy
+
+    @property
+    def documents(self) -> Documents:
+        """Where a body too long for the conversation is kept. Granted by :attr:`Res.DOCUMENT`."""
+        self._granted(Res.DOCUMENT, "documents")
+        return self._ctx.host.documents
 
     @property
     def human(self) -> Human:
