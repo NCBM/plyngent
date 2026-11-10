@@ -78,6 +78,28 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
     assert any(line.startswith(f"close_pty ok: closed PTY session {used}") for line in story.screen()), story.screen()
 
 
+async def test_a_program_that_is_not_there_opens_a_terminal_that_says_so(story_with: Scripted) -> None:
+    """A terminal whose command cannot start is a terminal, not a failed call: the complaint is output."""
+    story = await story_with(
+        calling("open_pty", {"command": ["plyngent-no-such-program"], "intention": "run what is not there"}),
+        _by_session("read_pty", until="plyngent-pty-exec-failed"),
+        _by_session("close_pty"),
+        text("it never started"),
+    )
+
+    await story.type("run what is not there")
+    await story.finished()
+
+    (_, opened, read, closed) = story.requests()
+    session = _session_id(opened)
+    assert f"session_id={session}" in told(read).splitlines(), "the session opened all the same"
+    assert "plyngent-pty-exec-failed: " in told(read), "the terminal reports what could not be started"
+    assert "alive=false" in told(read).splitlines(), "and that there is nothing left to talk to"
+    assert "exit_code=127" in told(read).splitlines(), "with the code a missing program exits with"
+    assert story.questions() == (), "a session that never started is not a question, on close or before"
+    assert told(closed).splitlines()[:3] == [f"closed PTY session {session}", f"session_id={session}", "alive=false"]
+
+
 async def test_a_terminal_that_was_never_opened_is_not_a_session(story_with: Scripted) -> None:
     story = await story_with(
         calling("read_pty", {"session_id": 99}),

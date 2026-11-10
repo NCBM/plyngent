@@ -13,11 +13,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from composat import Assembly, Component, ComponentKey, ComponentRegistry, Declaration
+from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.cancel import CancelToken, Scope
 from plyngent.kernel.env import Env
 from plyngent.kernel.events import Human, NoSink
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.toolresult import Status, Text
@@ -27,6 +30,7 @@ from plyngent.kernel.workspace import Workspace
 from plyngent.wire.ask import AskSite
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
     from plyngent.kernel.session import TurnCtx
@@ -68,14 +72,37 @@ class _Ctx:
 _EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY | Res.DOCUMENT | Res.CLIENT
 
 
-def _env(root: Path, *, human: Human | None = None) -> Env:
+def _env(root: Path, registry: PtyRegistry, *, human: Human | None = None) -> Env:
     host = _Host(
         workspace=Workspace(root),
-        pty=PtyRegistry(),
+        pty=registry,
         pty_policy=PtyPolicy(),
         human=human if human is not None else NoSink(),
     )
     return Env(cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1")
+
+
+@pytest.fixture
+async def registry() -> AsyncIterator[PtyRegistry]:
+    """A registry with a real broker behind it: there has to be a terminal before one can be refused.
+
+    The broker is what makes a child now, so even a test about a refusal needs one. It is started under
+    a real assembly and taken down with it, which is also what gives the registry its loop.
+    """
+    components = ComponentRegistry()
+    up: dict[ComponentKey, Component] = {}
+    _ = components.declare_all([Declaration(PtyBroker), Declaration(PtyRegistry, instance="ws-a")])
+    rule = answering_from_the_root(components, up, only={PtyBroker}, below=ancestors)
+    assembly = Assembly(components, up=up, rule=rule)
+    key = Declaration(PtyRegistry, instance="ws-a").key
+    started = await assembly.start(key)
+    assert started.ok, started.failed
+    instance = assembly.instance(key)
+    assert isinstance(instance, PtyRegistry)
+    try:
+        yield instance
+    finally:
+        _ = await assembly.stop(*assembly.keys())
 
 
 def _body(result: ToolResult) -> str:
@@ -86,8 +113,8 @@ def _body(result: ToolResult) -> str:
     return part.value
 
 
-async def test_with_nobody_to_ask_a_live_session_is_not_written_to(tmp_path) -> None:
-    ctx = _env(tmp_path)
+async def test_with_nobody_to_ask_a_live_session_is_not_written_to(tmp_path, registry: PtyRegistry) -> None:
+    ctx = _env(tmp_path, registry)
     opened = await pty.open_pty(ctx, pty.OpenPtyArgs(command=["/bin/cat"]))
     assert opened.status is Status.OK, opened.summary
     session_id = int(_body(opened).split("session_id=")[1].splitlines()[0])

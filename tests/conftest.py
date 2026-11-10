@@ -7,6 +7,7 @@ adding one adds the runs instead of adding a suite (R2.1 D29).
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -16,6 +17,22 @@ from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
     from tests.stories.model import Step
+
+
+@pytest.fixture(autouse=True)
+def the_kernel_does_not_fork(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``os.fork`` raise, for every test in the suite.
+
+    The kernel hands its terminals to a process of its own (§9), and this is the assertion that it
+    does: anything that forks from inside the kernel — directly, or through something it calls — fails
+    on the call instead of leaving the hazard to a warning nobody reads. The broker is a process of its
+    own, so the one fork this design has still happens; it just does not happen in here.
+    """
+
+    def refuse(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("the kernel called os.fork(); terminals fork in the broker")
+
+    monkeypatch.setattr(os, "fork", refuse)
 
 
 @pytest.fixture(params=TRANSPORTS)

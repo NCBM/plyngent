@@ -1,13 +1,18 @@
 """Platform PTY backends (POSIX openpty/fork; Windows ConPTY via pywinpty).
 
-Only the ConPTY read is blocking with no fd to wait on, and only that one runs on a thread
-(``asyncio.to_thread``); the POSIX path waits on the master fd through the loop and reads what is
-there. Every method here is otherwise a plain call: no handle starts a thread, and none of them
-mutates state behind the registry's back — ``poll_exit`` is called by the caller that owns the loop,
-so the registry's per-session fields have exactly one writer.
+This module is the *broker's* platform layer, and nothing else calls it: the kernel does not fork, so a
+child on a terminal is now created by the process that has no second thread to deadlock it
+(:mod:`plyngent.kernel.pty.broker`).
 
-Fork-then-exec is the whole child path: nothing between ``fork`` and ``execvp`` touches an
-asyncio object, and every inherited fd is closed except stdio.
+Only the ConPTY read is blocking with no fd to wait on, and only that one runs on a thread; the POSIX
+path waits on the master fd through ``select`` and reads what is there. Every method here is otherwise
+a plain call: no handle starts a thread, and none of them mutates state behind its caller's back —
+``poll_exit`` is called by whoever owns the loop, so that owner's table has exactly one writer.
+
+Fork-then-exec is the whole child path: nothing between ``fork`` and ``execvp`` touches a lock or an
+allocator the parent might have held — libc is resolved before the fork for exactly that reason — and
+every inherited fd is closed except stdio. The child is also told to die with the broker
+(``PR_SET_PDEATHSIG``), so a broker killed outright leaves no orphan behind.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -46,17 +52,17 @@ class PtyHandle(Protocol):
     def read_bytes(self, max_bytes: int, timeout: float) -> bytes:
         """Read up to *max_bytes* waiting up to *timeout* seconds.
 
-        Reports nothing but bytes: polling the child is the caller's, so a read made on a worker
-        thread leaves no state behind for the loop to race with.
+        Reports nothing but bytes: polling the child is the caller's, so the one path that runs this on
+        a thread leaves no state behind for the broker's own table to disagree with.
         """
         ...
 
     def read_available(self, max_bytes: int) -> bytes:
         """Read what is readable *now*, never waiting (``b""`` when there is nothing).
 
-        The difference from :meth:`read_bytes` is the whole reason the kernel can keep one lane: a
-        caller that waits on the fd itself (``loop.add_reader``) reads with this. It is only reached
-        when ``master_fd`` is not ``None`` — the ConPTY path threads :meth:`read_bytes` instead.
+        The difference from :meth:`read_bytes` is what lets the broker stay single-threaded: a caller
+        that waits on the fd itself (``select``) reads with this. It is only reached when ``master_fd``
+        is not ``None`` — the ConPTY path hands :meth:`read_bytes` to a thread instead.
         """
         ...
 
@@ -82,7 +88,31 @@ class PtyHandle(Protocol):
 
 
 _EXEC_FAIL_MARKER = b"plyngent-pty-exec-failed: "
+"""How a child that cannot start says so: it writes this into its own terminal.
+
+It is not a log line. It arrives where the program's own complaint would have arrived — as output the
+next read reports — and the session still ends with 127, which is what makes "the program is not
+there" look like what it is: a terminal whose command failed, not a call that failed.
+"""
 _STDERR_FD = 2
+_PR_SET_PDEATHSIG = 1
+
+
+def _prctl() -> Callable[..., int] | None:
+    """``prctl`` from libc, or ``None`` where there is none — resolved *before* any fork.
+
+    A child between ``fork`` and ``execvp`` may only make async-signal-safe calls, and ``dlopen`` is not
+    one: it takes a lock the parent may have been holding when it forked. Loading libc here, in the
+    parent, leaves the child a plain syscall.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    import ctypes
+
+    try:
+        return ctypes.CDLL(None, use_errno=True).prctl  # type: ignore[no-any-return]
+    except OSError, AttributeError:
+        return None
 
 
 @dataclass
@@ -240,8 +270,8 @@ if sys.platform == "win32":
         def read_available(self, max_bytes: int) -> bytes:
             """ConPTY exposes no fd to wait on, so this would have to block.
 
-            The registry never calls it: with no ``master_fd`` it hands ``read_bytes`` to a thread
-            instead, which is the one path that can park without parking the loop.
+            The broker never calls it: with no ``master_fd`` it hands ``read_bytes`` to the session's
+            own thread instead, which is the one path that can park without parking the broker.
             """
             return self.read_bytes(max_bytes, 0.0)
 
@@ -337,12 +367,20 @@ else:
     def _spawn_posix(command: list[str], *, cwd: Path) -> PosixPtyHandle:
         import pty
 
+        prctl = _prctl()
+        parent = os.getpid()
         master_fd, slave_fd = pty.openpty()
         with contextlib.suppress(OSError, AttributeError):
             os.set_inheritable(master_fd, False)  # noqa: FBT003 — stdlib API
         pid = os.fork()
         if pid == 0:  # child — fork-then-exec only
             try:
+                # Die with the broker, even if it is killed outright: an orphan on a terminal nobody
+                # can read is worse than a child that goes down with the process that made it.
+                if prctl is not None:
+                    _ = prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+                if os.getppid() != parent:  # the broker went down before the request landed
+                    os._exit(127)
                 os.close(master_fd)
                 _ = os.setsid()
                 # Claim slave as controlling TTY before wiring stdio (sudo / PAM).

@@ -13,6 +13,7 @@ from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import Journal, SqliteTrail
 from plyngent.kernel.model import ModelChannel
+from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.temps import TempWorkspaces, TooManyWorkspacesError, under_system_temp
 from plyngent.kernel.workspace import OutsideWorkspace, Workspace
@@ -22,7 +23,7 @@ def _assembly(*declarations: Declaration) -> Assembly:
     registry = ComponentRegistry()
     up: dict[ComponentKey, object] = {}
     _ = registry.declare_all(declarations)
-    rule = answering_from_the_root(registry, up, only=set(), below=ancestors)
+    rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     return Assembly(registry, up=up, rule=rule)
 
 
@@ -105,6 +106,7 @@ async def test_a_scratch_directory_is_a_root_that_tools_may_reach(tmp_path) -> N
 
 def _two_hosts(tmp_path) -> Assembly:
     return _assembly(
+        Declaration(PtyBroker),
         Declaration(PtyRegistry, instance="ws-a"),
         Declaration(PtyRegistry, instance="ws-b"),
         Declaration(HumanChannel, instance="ws-a"),

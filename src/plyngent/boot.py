@@ -14,10 +14,11 @@ place reads them from what they were handed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from composat import Assembly, ComponentKey, ComponentRegistry, Declaration
+from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.events import HumanChannel
@@ -25,6 +26,7 @@ from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
 from plyngent.kernel.link import InProcLink
 from plyngent.kernel.model import Model, ModelChannel
+from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.serving import Serving
 from plyngent.wire.manifest import KernelManifest, command_specs
@@ -44,6 +46,10 @@ DEFAULT_HOST = "ws"
 #: this tuple, every story then runs over both without a story changing (R2.1 D29).
 KERNEL_TRANSPORTS = ("inproc",)
 
+#: How often the composition root looks at the one component it may have to replace. It is a poll
+#: rather than a callback because the thing being watched is a child process: nothing tells us it died.
+BROKER_WATCH_SECONDS = 0.5
+
 
 class Installed:
     """A host brought up with one connection served on it, and the one call that ends both.
@@ -57,12 +63,21 @@ class Installed:
     serving: Serving
     _link: InProcLink
     _task: asyncio.Task[None]
+    _watch: asyncio.Task[None] | None
 
-    def __init__(self, assembly: Assembly, serving: Serving, link: InProcLink, task: asyncio.Task[None]) -> None:
+    def __init__(
+        self,
+        assembly: Assembly,
+        serving: Serving,
+        link: InProcLink,
+        task: asyncio.Task[None],
+        watch: asyncio.Task[None] | None = None,
+    ) -> None:
         self.assembly = assembly
         self.serving = serving
         self._link = link
         self._task = task
+        self._watch = watch
 
     @property
     def client(self) -> KernelLink:
@@ -78,11 +93,16 @@ class Installed:
         await self._task
 
     async def close(self) -> None:
-        """Leave in the order things depend on: stop serving, let the loop end, then take the host down.
+        """Leave in the order things depend on: stop watching, stop serving, then take the host down.
 
         The loop is awaited rather than merely told to stop, because its last act is to put the human
         back — and a ``replace`` on an assembly that is already going down has nowhere to land.
         """
+        if self._watch is not None:
+            _ = self._watch.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watch
+            self._watch = None
         await self.serving.stop("the kernel is leaving")
         await self._task
         _ = await self.assembly.stop(*self.assembly.keys())
@@ -98,10 +118,10 @@ async def install(
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
-    The declarations are the whole kernel: a PTY registry, the channel a person answers through, the
-    model a turn asks, the journal a conversation is kept in, and the host they belong to. Sessions are
-    *not* declared here — a session arrives with ``Open``, which is what makes it a command rather than a
-    startup flag.
+    The declarations are the whole kernel: the PTY broker every host shares, a PTY registry per host,
+    the channel a person answers through, the model a turn asks, the journal a conversation is kept in,
+    and the host they belong to. Sessions are *not* declared here — a session arrives with ``Open``,
+    which is what makes it a command rather than a startup flag.
 
     ``model`` is installed rather than reached for: ``None`` is a kernel with nothing to ask, which
     refuses turns instead of pretending a model answered. It is the same move as attaching a client to
@@ -123,6 +143,7 @@ async def install(
     up: dict[ComponentKey, Component] = {}
     _ = registry.declare_all(
         [
+            Declaration(PtyBroker),
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
             Declaration(ModelChannel, instance=host, args=(model,)),
@@ -130,7 +151,9 @@ async def install(
             Declaration(Host, instance=host, args=(root,)),
         ]
     )
-    rule = answering_from_the_root(registry, up, only=set(), below=ancestors)
+    # One broker for the whole process: it is the root-qualified component, and it is the only thing
+    # here that a host reaches for across the qualifier axis (§9.4).
+    rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     assembly = Assembly(registry, up=up, rule=rule)
 
     started = await assembly.start(Declaration(Host, instance=host).key)
@@ -140,7 +163,31 @@ async def install(
 
     link = InProcLink(manifest=KernelManifest(commands=command_specs()))
     serving = Serving(assembly, host=host, link=link)
-    return Installed(assembly, serving, link, asyncio.create_task(serving.run()))
+    watch = asyncio.create_task(_replace_the_broker(assembly, Declaration(PtyBroker).key))
+    return Installed(assembly, serving, link, asyncio.create_task(serving.run()), watch)
+
+
+async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:
+    """Put a new broker behind ``key`` when the one that is there has died (§9.4).
+
+    The kernel cannot do this for itself, and should not try: a component cannot replace itself, the
+    registry only reads its field, and asking the composition root for a new one would be a second seam
+    into it. The composition root already holds the assembly, so it is where the noticing goes.
+
+    Only a broker that *was* up is replaced. One that never started — no permission, no platform
+    support, no ``pywinpty`` — is a fact about the machine, and starting it again every half second
+    would not change it; the registry keeps reporting ``PtyUnavailable`` instead.
+    """
+    while True:
+        await asyncio.sleep(BROKER_WATCH_SECONDS)
+        try:
+            current = assembly.instance(key)
+        except ServiceNotUpError:
+            continue
+        if not isinstance(current, PtyBroker) or current.available or not current.ever_ready:
+            continue
+        with contextlib.suppress(Exception):
+            _ = await assembly.replace(key, Declaration(PtyBroker))
 
 
 def _backend(root: Path | str, journal: Path | str | None) -> Trail:

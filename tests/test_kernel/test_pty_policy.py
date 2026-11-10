@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
+from composat import Assembly, Component, ComponentKey, ComponentRegistry, Declaration
+from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.pty.broker import PtyBroker
+from plyngent.kernel.pty.errors import PtyError
 from plyngent.kernel.pty.policy import PtyPolicy, room_for_session
-from plyngent.kernel.pty.registry import PtyError, PtyRegistry, PtySession
+from plyngent.kernel.pty.registry import PtyRegistry, PtySession
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fork PTY")
@@ -22,7 +27,7 @@ _SHELL = ["/bin/sh", "-c", "echo ready; sleep 300"]
 
 def _session(*, session_id: int = 1, alive: bool = True, closed: bool = False) -> PtySession:
     """A session as the policy sees it: an id, and whether anything is still behind it."""
-    return PtySession(session_id=session_id, handle=cast("object", None), alive=alive, closed=closed)  # type: ignore[arg-type]
+    return PtySession(session_id=session_id, pty_id=session_id, epoch="test", alive=alive, closed=closed)
 
 
 def test_changing_a_live_session_is_a_question_the_first_time_only() -> None:
@@ -51,17 +56,50 @@ def test_an_approval_can_be_forgotten_with_the_session() -> None:
     assert policy.needs_consent(_session(session_id=3)) is True
 
 
-async def test_a_full_registry_sweeps_before_it_refuses(tmp_path: Path) -> None:
-    full = PtyRegistry(max_sessions=1, idle_ttl_seconds=0.0)
-    _ = full.open(_SHELL, cwd=tmp_path)
+@pytest.fixture
+async def make_registry(tmp_path: Path) -> AsyncIterator[Callable[..., Awaitable[PtyRegistry]]]:
+    """A registry with a real broker behind it, and the one call that takes both down.
+
+    The broker is what makes a terminal now, so nothing about a registry can be tested without one:
+    the limits and the sweep are this host's, but the children they count are the broker's.
+    """
+    started: list[Assembly] = []
+
+    async def make(**kwargs: object) -> PtyRegistry:
+        registry = ComponentRegistry()
+        up: dict[ComponentKey, Component] = {}
+        declarations = [
+            Declaration(PtyBroker),
+            Declaration(PtyRegistry, instance="ws-a", kwargs=kwargs),
+        ]
+        _ = registry.declare_all(declarations)
+        rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
+        assembly = Assembly(registry, up=up, rule=rule)
+        key = Declaration(PtyRegistry, instance="ws-a").key
+        announced = await assembly.start(key)
+        assert announced.ok, announced.failed
+        started.append(assembly)
+        instance = assembly.instance(key)
+        assert isinstance(instance, PtyRegistry)
+        return instance
+
+    yield make
+
+    for assembly in started:
+        _ = await assembly.stop(*assembly.keys())
+
+
+async def test_a_full_registry_sweeps_before_it_refuses(make_registry, tmp_path: Path) -> None:
+    full = await make_registry(max_sessions=1, idle_ttl_seconds=0.0)
+    _ = await full.open(_SHELL, cwd=tmp_path)
 
     assert await room_for_session(full) is not None, "the sweep is off, so a full registry says so"
     await full.close_all()
 
 
-async def test_the_sweep_makes_room_for_the_next_one(tmp_path: Path) -> None:
-    registry = PtyRegistry(max_sessions=1, idle_ttl_seconds=0.001)
-    _ = registry.open(_SHELL, cwd=tmp_path)
+async def test_the_sweep_makes_room_for_the_next_one(make_registry, tmp_path: Path) -> None:
+    registry = await make_registry(max_sessions=1, idle_ttl_seconds=0.001)
+    _ = await registry.open(_SHELL, cwd=tmp_path)
     await asyncio.sleep(0.01)
 
     assert await room_for_session(registry) is None, "an idle session is what was in the way"
@@ -69,9 +107,9 @@ async def test_the_sweep_makes_room_for_the_next_one(tmp_path: Path) -> None:
     await registry.close_all()
 
 
-async def test_a_registry_with_room_needs_no_sweep(tmp_path: Path) -> None:
-    registry = PtyRegistry(max_sessions=2, idle_ttl_seconds=0.001)
-    session = registry.open(_SHELL, cwd=tmp_path)
+async def test_a_registry_with_room_needs_no_sweep(make_registry, tmp_path: Path) -> None:
+    registry = await make_registry(max_sessions=2, idle_ttl_seconds=0.001)
+    session = await registry.open(_SHELL, cwd=tmp_path)
     await asyncio.sleep(0.01)
 
     assert await room_for_session(registry) is None
@@ -79,9 +117,9 @@ async def test_a_registry_with_room_needs_no_sweep(tmp_path: Path) -> None:
     await registry.close(session.session_id)
 
 
-async def test_a_refusal_says_which_kind_of_trouble_it_is(tmp_path: Path) -> None:
-    registry = PtyRegistry(max_sessions=1)
-    session = registry.open(_SHELL, cwd=tmp_path)
+async def test_a_refusal_says_which_kind_of_trouble_it_is(make_registry, tmp_path: Path) -> None:
+    registry = await make_registry(max_sessions=1)
+    session = await registry.open(_SHELL, cwd=tmp_path)
 
     with pytest.raises(PtyError) as unknown:
         _ = await registry.read(session.session_id + 99)
@@ -99,5 +137,5 @@ async def test_a_refusal_says_which_kind_of_trouble_it_is(tmp_path: Path) -> Non
 
     await registry.unload()
     with pytest.raises(PtyError) as down:
-        _ = registry.open(_SHELL, cwd=tmp_path)
+        _ = await registry.open(_SHELL, cwd=tmp_path)
     assert down.value.failure is Failure.BUG, "a host that is gone is our own mistake to fix"

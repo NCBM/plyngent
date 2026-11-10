@@ -1,7 +1,11 @@
-"""PTY sessions as the kernel owns them: a registry per host, bytes as bytes.
+"""PTY sessions as the kernel owns them: a registry per host, and one broker per process.
 
-Four parts, deliberately apart: the platform layer (``backend``) knows how a child gets a terminal, the
-registry (``registry``) knows which children exist and belongs to one ``Host`` rather than to the
-process, ``keys`` turns ``<c-c>`` into the bytes a terminal would send, and ``policy`` answers whether
-a person has to agree to changing a session — an answer, never a question.
+Five parts, deliberately apart: ``broker`` is the process that has a terminal to give (and the only
+part that forks), ``registry`` knows which children *this host* has and belongs to it rather than to
+the process, ``errors`` says which kind of refusal each of them is, ``keys`` turns ``<c-c>`` into the
+bytes a terminal would send, and ``policy`` answers whether a person has to agree to changing a session
+— an answer, never a question.
+
+``backend`` is the platform layer under the broker: how a child is given a terminal and how its bytes
+come back. Nothing but the broker's own process imports it.
 """

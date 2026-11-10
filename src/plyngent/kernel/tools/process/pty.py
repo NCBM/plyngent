@@ -22,9 +22,10 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.command import NeedsHuman
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.pty.errors import PtyError
 from plyngent.kernel.pty.keys import KeySyntaxError, decode_write_data
 from plyngent.kernel.pty.policy import room_for_session
-from plyngent.kernel.pty.registry import DEFAULT_PTY_READ_BYTES, PtyError, PtyReadResult
+from plyngent.kernel.pty.registry import DEFAULT_PTY_READ_BYTES, PtyReadResult
 from plyngent.kernel.toolresult import Effects, Meta, Text, ToolResult
 from plyngent.kernel.tools import lifted
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
@@ -137,7 +138,7 @@ async def open_pty(env: Env, args: OpenPtyArgs) -> ToolResult:
     if room is not None:
         return ToolResult.of(Failure.LIMIT, room)
     try:
-        session = env.pty.open(args.command, cwd=cwd, owner=env.session)
+        session = await env.pty.open(args.command, cwd=cwd, owner=env.session)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     command = shlex.join(session.command)
@@ -213,7 +214,7 @@ async def ask_into_pty(env: Env, args: AskIntoPtyArgs) -> ToolResult:
         return ToolResult.of(Failure.BLOCKED, "the human gave no answer, so nothing was written")
     payload = written.text + ("\n" if args.submit else "")
     try:
-        env.pty.write(args.session_id, payload)
+        await env.pty.write(args.session_id, payload)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     body = Text(
@@ -238,7 +239,7 @@ async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
         if refused is not None:
             return refused
     try:
-        env.pty.write(session_id, payload)
+        await env.pty.write(session_id, payload)
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     body = Text(value=f"session_id={session_id}\nwrote={len(payload)} chars")

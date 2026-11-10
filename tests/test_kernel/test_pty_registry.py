@@ -15,7 +15,9 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import Journal, SqliteTrail
 from plyngent.kernel.model import ModelChannel
-from plyngent.kernel.pty.registry import PtyError, PtyRegistry
+from plyngent.kernel.pty.broker import PtyBroker
+from plyngent.kernel.pty.errors import PtyError
+from plyngent.kernel.pty.registry import PtyRegistry
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX fork PTY")
 
@@ -30,12 +32,13 @@ def _assembly(*declarations: Declaration) -> Assembly:
     registry = ComponentRegistry()
     up: dict[ComponentKey, object] = {}
     _ = registry.declare_all(declarations)
-    rule = answering_from_the_root(registry, up, only=set(), below=ancestors)
+    rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     return Assembly(registry, up=up, rule=rule)
 
 
 def _two_hosts(tmp_path, *, max_sessions: int = 8) -> Assembly:
     return _assembly(
+        Declaration(PtyBroker),
         Declaration(PtyRegistry, instance="ws-a", kwargs={"max_sessions": max_sessions}),
         Declaration(PtyRegistry, instance="ws-b", kwargs={"max_sessions": max_sessions}),
         Declaration(HumanChannel, instance="ws-a"),
@@ -51,6 +54,7 @@ def _two_hosts(tmp_path, *, max_sessions: int = 8) -> Assembly:
 
 def _one_host(tmp_path, **kwargs: object) -> Assembly:
     return _assembly(
+        Declaration(PtyBroker),
         Declaration(PtyRegistry, instance="ws-a", kwargs=kwargs),
         Declaration(HumanChannel, instance="ws-a"),
         Declaration(ModelChannel, instance="ws-a"),
@@ -72,10 +76,10 @@ async def test_two_hosts_in_one_process_do_not_cross(tmp_path) -> None:
     assert isinstance(a, Host) and isinstance(b, Host)
     assert a.pty is not b.pty, "a registry belongs to the host, not to the class"
 
-    _ = a.pty.open(_SHELL, cwd=tmp_path / "a")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path / "a")
     assert (a.pty.count(), b.pty.count()) == (1, 0)
 
-    _ = b.pty.open(_SHELL, cwd=tmp_path / "b")
+    _ = await b.pty.open(_SHELL, cwd=tmp_path / "b")
     assert (a.pty.count(), b.pty.count()) == (1, 1)
     assert a.pty.commands() == (tuple(_SHELL),)
 
@@ -91,8 +95,8 @@ async def test_the_registry_answers_for_the_children_it_has(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    first = a.pty.open(_SHELL, cwd=tmp_path)
-    second = a.pty.open(["/bin/sh", "-c", "sleep 300"], cwd=tmp_path)
+    first = await a.pty.open(_SHELL, cwd=tmp_path)
+    second = await a.pty.open(["/bin/sh", "-c", "sleep 300"], cwd=tmp_path)
 
     assert first.session_id != second.session_id
     assert a.pty.count() == 2
@@ -113,12 +117,12 @@ async def test_a_limit_is_a_property_of_one_host(tmp_path) -> None:
     b = assembly.instance(host_b)
     assert isinstance(a, Host) and isinstance(b, Host)
 
-    _ = a.pty.open(_SHELL, cwd=tmp_path)
+    _ = await a.pty.open(_SHELL, cwd=tmp_path)
     with pytest.raises(PtyError, match="limit reached"):
-        _ = a.pty.open(_SHELL, cwd=tmp_path)
+        _ = await a.pty.open(_SHELL, cwd=tmp_path)
 
     # The other host still has its own budget: the limit did not become process state.
-    _ = b.pty.open(_SHELL, cwd=tmp_path)
+    _ = await b.pty.open(_SHELL, cwd=tmp_path)
 
     done = await assembly.stop(*assembly.keys())
     assert done.ok, done.failed
@@ -132,8 +136,8 @@ async def test_bytes_go_through_and_are_raw(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    session = a.pty.open(["/bin/cat"], cwd=tmp_path)
-    a.pty.write(session.session_id, "hello\n")
+    session = await a.pty.open(["/bin/cat"], cwd=tmp_path)
+    await a.pty.write(session.session_id, "hello\n")
     read = await a.pty.read(session.session_id, wait_seconds=5.0, until="hello")
 
     assert read.matched
@@ -165,7 +169,7 @@ async def test_a_read_does_not_leave_a_thread_behind(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    first = a.pty.open(_SHELL, cwd=tmp_path)
+    first = await a.pty.open(_SHELL, cwd=tmp_path)
     before = threading.active_count()
     read = await a.pty.read(first.session_id, wait_seconds=5.0, until="ready")
     assert read.matched
@@ -184,7 +188,7 @@ async def test_shutdown_takes_the_children_with_it(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    session = a.pty.open(_SHELL, cwd=tmp_path)
+    session = await a.pty.open(_SHELL, cwd=tmp_path)
     pty = a.pty
     pid = session.pid
     assert pid is not None
@@ -209,7 +213,7 @@ async def test_a_second_reader_is_refused(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    session = a.pty.open(["/bin/cat"], cwd=tmp_path)
+    session = await a.pty.open(["/bin/cat"], cwd=tmp_path)
     holding = asyncio.create_task(a.pty.read(session.session_id, wait_seconds=5.0))
     await asyncio.sleep(0)
 
@@ -233,7 +237,7 @@ async def test_two_closes_in_one_window_do_not_both_tear_down(tmp_path) -> None:
     assert started.ok, started.failed
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
-    session = a.pty.open(_SHELL, cwd=tmp_path)
+    session = await a.pty.open(_SHELL, cwd=tmp_path)
 
     first, second = await asyncio.gather(
         a.pty.close(session.session_id),
@@ -261,11 +265,11 @@ async def test_opening_after_shutdown_is_refused(tmp_path) -> None:
     assert done.ok, done.failed
 
     with pytest.raises(PtyError, match="registry is down"):
-        _ = pty.open(_SHELL, cwd=tmp_path)
+        _ = await pty.open(_SHELL, cwd=tmp_path)
 
 
-async def test_opening_from_another_thread_is_refused(tmp_path) -> None:
-    """`open` ends in fork: a thread that is not the loop's is exactly the hazard refused here."""
+async def test_opening_from_another_loop_is_refused(tmp_path) -> None:
+    """`open` ends in fork: a loop that is not the registry's is exactly the hazard refused here."""
     assembly = _two_hosts(tmp_path)
     host_a = _key(Host, "ws-a")
     started = await assembly.start(host_a)
@@ -277,7 +281,7 @@ async def test_opening_from_another_thread_is_refused(tmp_path) -> None:
 
     def attempt() -> None:
         try:
-            _ = pty.open(_SHELL, cwd=tmp_path)
+            _ = asyncio.run(pty.open(_SHELL, cwd=tmp_path))
         except PtyError as exc:
             caught.append(exc)
 
@@ -302,12 +306,12 @@ async def test_one_session_cannot_take_the_whole_host(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
     with pytest.raises(PtyError, match="already has 1 PTY sessions") as refused:
-        _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+        _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
     assert refused.value.failure is Failure.LIMIT
 
-    _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
     assert (a.pty.count_for("ws-a/s1"), a.pty.count_for("ws-a/s2")) == (1, 1)
 
     done = await assembly.stop(*assembly.keys())
@@ -323,9 +327,9 @@ async def test_the_two_limits_are_worded_apart(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
     with pytest.raises(PtyError, match="limit reached \\(1\\)"):
-        _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
+        _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
 
     done = await assembly.stop(*assembly.keys())
     assert done.ok, done.failed
@@ -339,9 +343,9 @@ async def test_closing_a_terminal_gives_its_slot_back(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    first = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+    first = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
     _ = await a.pty.close(first.session_id)
-    _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
     assert a.pty.count_for("ws-a/s1") == 1
 
     done = await assembly.stop(*assembly.keys())
@@ -356,8 +360,8 @@ async def test_closing_a_sessions_terminals_leaves_the_others_alone(tmp_path) ->
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    mine = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
-    _ = a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
+    mine = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s1")
+    _ = await a.pty.open(_SHELL, cwd=tmp_path, owner="ws-a/s2")
 
     assert await a.pty.close_owned("ws-a/s1") == [mine.session_id]
     assert (a.pty.count_for("ws-a/s1"), a.pty.count_for("ws-a/s2")) == (0, 1)
