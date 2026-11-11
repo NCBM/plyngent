@@ -112,9 +112,10 @@ async def test_a_read_of_a_directory_is_told_which_tool_lists_one(story_with: Sc
 
     await story.type("read the directory")
 
-    assert (await _told(story)).splitlines() == ["not a file: sub", "hint: listdir(path=sub) — see what is in it"], (
-        "a directory has no text to show, and the step that would work is offered as a call"
-    )
+    assert (await _told(story)).splitlines() == [
+        "not a file: sub",
+        "hint: tool_require(group=fs) — see what is in it",
+    ], "the step that would work is in a group this session was never shown, so the hint says how to get it"
 
 
 async def test_a_read_of_bytes_that_are_not_utf8_says_what_it_cost(story_with: Scripted) -> None:
@@ -427,6 +428,8 @@ async def test_a_search_finds_the_lines_that_match(story_with: Scripted) -> None
     story = await story_with(calling("search", {"path": "notes.txt", "pattern": "two"}), text("found it"))
     _ = _file(story, "notes.txt", "one\ntwo\nthree\n")
 
+    await story.require("document")
+
     await story.type("which line says two?")
 
     assert await _told(story) == "1 match in notes.txt\n2: two", (
@@ -438,6 +441,8 @@ async def test_a_search_with_no_hits_says_so_about_what_it_looked_in(story_with:
     story = await story_with(calling("search", {"path": "notes.txt", "pattern": "zzz"}), text("fair"))
     _ = _file(story, "notes.txt", "one\ntwo\n")
 
+    await story.require("document")
+
     await story.type("look for something that is not there")
 
     assert await _told(story) == "no line of notes.txt matches 'zzz'", "no hits is an answer, not a failure"
@@ -446,6 +451,8 @@ async def test_a_search_with_no_hits_says_so_about_what_it_looked_in(story_with:
 async def test_a_search_stops_at_its_budget_and_says_what_it_left(story_with: Scripted) -> None:
     story = await story_with(calling("search", {"path": "notes.txt", "pattern": "x", "max_matches": 2}), text("enough"))
     _ = _file(story, "notes.txt", "x\nx\nx\n")
+
+    await story.require("document")
 
     await story.type("the first two")
 
@@ -463,6 +470,8 @@ async def test_a_search_shows_the_lines_around_a_hit(story_with: Scripted) -> No
     )
     _ = _file(story, "notes.txt", "one\ntwo\nthree\nfour\n")
 
+    await story.require("document")
+
     await story.type("and a line either side")
 
     assert (await _told(story)).splitlines() == [
@@ -476,6 +485,8 @@ async def test_a_search_shows_the_lines_around_a_hit(story_with: Scripted) -> No
 async def test_a_pattern_that_is_not_a_regex_is_the_arguments(story_with: Scripted) -> None:
     story = await story_with(calling("search", {"path": "notes.txt", "pattern": "("}), text("my mistake"))
     _ = _file(story, "notes.txt", "one\n")
+
+    await story.require("document")
 
     await story.type("search with a broken pattern")
 
@@ -492,6 +503,8 @@ async def test_a_search_of_a_kept_document_reads_what_was_kept(story_with: Scrip
         text("there it is"),
     )
     _ = _file(story, "big.log", content)
+
+    await story.require("document")
 
     await story.type("read the log, then look inside what was kept")
     await story.finished()

@@ -17,10 +17,12 @@ through the host and the session it was taken from.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import override
+from typing import TYPE_CHECKING, cast, override
 
+import msgspec
 from composat import Component, require
 
 from plyngent.kernel.cancel import CancelToken, Scope
@@ -28,9 +30,22 @@ from plyngent.kernel.cancel import CancelToken, Scope
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
 from plyngent.kernel.host import Host  # noqa: TC001
 from plyngent.kernel.reads import Reads
+from plyngent.kernel.trail import StateChange
 from plyngent.wire.ask import AskSite
 from plyngent.wire.event import TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+#: The key a session's tool disclosure is written under. One key in the journal's state vocabulary, and
+#: the first one written: what a session has been shown, and the epoch that says which tool set it is.
+DISCLOSURE = "disclosure"
+
+#: The key the todo stack is written under. A second key in the same vocabulary, because it is the same
+#: kind of thing: something true about this conversation that no model is sent and that comes back when
+#: the conversation is opened again (§10.9).
+TODOS = "todos"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,16 +158,103 @@ class Session(Component):
     A session keeps no "current branch": every turn records the entry it continues (``begin_after``),
     and nothing here decides what a frontend is looking at — so two frontends may read two branches of
     the same conversation and neither is wrong.
+
+    What it does keep is what it has been told about itself: the tool groups it has been shown, how
+    often its tool set has changed, and the todo stack. Those live here rather than on the turn because
+    a turn is too short to be shown anything and too frequent to be the record of it, and they come
+    back from the journal in :meth:`load` so that reopening a conversation does not mean asking for the
+    same groups again or losing its plan.
+
+    They are kept as **one kind of thing**: a setting, spelled as a key and a whole JSON value, written
+    by :meth:`change` and read back by :meth:`state`. The properties beside it are decoders of that
+    value rather than fields of their own, so there is one fact in one place and no second copy to keep
+    in step with the journal.
     """
 
     host: Host = require()
     session_id: str
     _turns: dict[int, TurnCtx]
+    _state: dict[str, str]
+    _lock: asyncio.Lock
 
     def __init__(self, session_id: str) -> None:
         super().__init__()
         self.session_id = session_id
         self._turns = {}
+        self._state = {}
+        self._lock = asyncio.Lock()
+
+    # -- what it knows about itself -------------------------------------------------
+
+    def setting(self, key: str) -> str | None:
+        """The value this session last wrote under *key*, or ``None`` when it never wrote one.
+
+        A read and not a fold: the fold happened once, in :meth:`load`, and what it produced is this
+        process's answer until a write replaces it. That is why reading it is synchronous — there is
+        nothing to wait for, and a tool that had to await its own setting would be a tool racing itself.
+
+        It is not called ``state`` because :class:`~composat.Component` already has that name, and a
+        session's own facts are not the component's lifecycle.
+        """
+        return self._state.get(key)
+
+    async def change[T](self, key: str, mutate: Callable[[str | None], tuple[str | None, T]]) -> T:
+        """Read one setting, change it, write it back, and answer what *mutate* answered.
+
+        The read-modify-write happens under this session's lock, and the answer is returned from
+        inside it because that is the only place the value it was computed from is true: two calls in
+        one answer that both read the todo stack outside a lock would each write down the group they
+        saw, and one of them would be gone.
+
+        ``None`` for the new value means the call changed nothing; so does a value equal to the one
+        already written. Neither writes an entry, because a setting that did not move must not make
+        the history say something happened — and because a journal is read by people.
+        """
+        async with self._lock:
+            before = self._state.get(key)
+            after, answer = mutate(before)
+            if after is None or after == before:
+                return answer
+            _ = await self.host.trail.append(self.session_id, StateChange(key=key, value=after))
+            self._state[key] = after
+            return answer
+
+    # -- what it has been shown ----------------------------------------------------
+
+    @property
+    def disclosed(self) -> frozenset[str]:
+        """The tool groups this session has been shown, beside the residents it always has (§10.4)."""
+        return _disclosure(self._state.get(DISCLOSURE))[0]
+
+    @property
+    def toolset_epoch(self) -> int:
+        """How many times this session's tool set has changed.
+
+        A number and not a hash: what a provider cache needs is a short key that moves when the tools
+        block moves, and what we need is to know the miss was ours (§10.5). It counts the changes we
+        made on purpose — a disclosure, and later a relist or a client attaching — because a change
+        we cannot name is a change we cannot account for.
+        """
+        return _disclosure(self._state.get(DISCLOSURE))[1]
+
+    async def disclose(self, groups: Iterable[str]) -> frozenset[str]:
+        """Show this session these groups, and answer which of them it had not seen.
+
+        The whole set is written rather than the difference, so reading it back is one value and not a
+        replay: a fold that had to apply deltas in order would be a second projector to keep in step.
+        Nothing is written when nothing is new, which is what makes two calls asking for one group in
+        one answer cost a single epoch — the second call is answered from the state the first one left.
+        """
+        asked = frozenset(groups)
+
+        def mutate(before: str | None) -> tuple[str | None, frozenset[str]]:
+            shown, epoch = _disclosure(before)
+            fresh = asked - shown
+            if not fresh:
+                return None, frozenset()
+            return _disclosure_value(shown | fresh, epoch + 1), fresh
+
+        return await self.change(DISCLOSURE, mutate)
 
     # -- turns ---------------------------------------------------------------------
 
@@ -243,6 +345,21 @@ class Session(Component):
     # -- lifecycle -----------------------------------------------------------------
 
     @override
+    async def load(self) -> None:
+        """Read back what this session already knows about itself, before its first turn.
+
+        A session is admitted fresh every time a client opens it, so anything it learned in an earlier
+        process has to come out of the journal: which tool groups it was shown, how many times its tool
+        set has changed, and what its plan was. The fold is the journal's — the last value written per
+        key — so this is one read and not a replay of the settings.
+
+        A stored value this build cannot read is skipped rather than fatal, and skipping it is each
+        decoder's job: a conversation that cannot be opened at all is worse than one that forgot a
+        setting.
+        """
+        self._state.update(await self.host.trail.state_of(self.session_id))
+
+    @override
     async def drain(self) -> None:
         """Tell every live turn the session is going down, then wait for their work to report.
 
@@ -265,3 +382,32 @@ class Session(Component):
     async def unload(self) -> None:
         """Let go of the turns: nothing may be cancelled through a session that is down."""
         self._turns.clear()
+
+
+def _disclosure(value: str | None) -> tuple[frozenset[str], int]:
+    """The groups a disclosure setting holds, and the epoch it was written with.
+
+    A value this build cannot read answers "nothing has been shown" rather than raising, and it is read
+    here rather than in :meth:`Session.load` so that a stored value a later build cannot parse costs a
+    forgotten setting and not an unopenable conversation.
+    """
+    if not value:
+        return frozenset(), 0
+    try:
+        record = msgspec.json.decode(value)
+    except msgspec.DecodeError:
+        return frozenset(), 0
+    if not isinstance(record, dict):
+        return frozenset(), 0
+    stored = cast("dict[str, object]", record)
+    groups = stored.get("groups")
+    shown = (
+        frozenset(str(name) for name in cast("list[object]", groups)) if isinstance(groups, list) else frozenset[str]()
+    )
+    epoch = stored.get("toolset_epoch")
+    return shown, epoch if isinstance(epoch, int) else len(shown)
+
+
+def _disclosure_value(shown: frozenset[str], epoch: int) -> str:
+    """One disclosure setting as the text written under its key — the whole set, not a difference."""
+    return msgspec.json.encode({"groups": sorted(shown), "toolset_epoch": epoch}).decode()

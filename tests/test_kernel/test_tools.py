@@ -21,6 +21,7 @@ import pytest
 import send2trash
 
 from plyngent.kernel import trash
+from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
@@ -42,16 +43,20 @@ class _Ctx:
 
 #: What these tests let a call reach: everything, because each test is about a tool's behaviour rather
 #: than about what it declared. The gate itself is asserted once, by name.
-_EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY | Res.DOCUMENT | Res.CLIENT
+_EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY | Res.DOCUMENT | Res.CLIENT | Res.TOOLS
+
+#: The tool set a call may look at here: nothing, because none of these tests asks.
+_VIEW = ToolCatalog().view(())
 
 
 def _env(root: Path, *, trash_enabled: bool = True) -> Env:
     """A call's world as the executor builds it, around a host rather than around a turn."""
-    return Env(cast("TurnCtx", cast("object", _Ctx(Host(root, trash_enabled=trash_enabled)))), _EVERYTHING, "tool-1")
+    host = Host(root, trash_enabled=trash_enabled)
+    return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tools=_VIEW)
 
 
 def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
-    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1")
+    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1", tools=_VIEW)
 
     assert env.workspace.root == tmp_path.resolve(), "a declared resource answers"
     with pytest.raises(AttributeError, match="pty"):

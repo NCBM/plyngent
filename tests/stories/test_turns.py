@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent.kernel.catalog import RESIDENT
 from plyngent.kernel.model import Assistant, Result, User
 from plyngent.wire.ask import Confirmation
 from tests.stories.model import Held, calling, text
@@ -51,7 +52,7 @@ async def test_the_model_is_given_the_conversation_so_far(story_with: Scripted) 
     ), "the second turn continues the chain the first one left, and nothing had to be handed over"
 
 
-async def test_the_model_is_offered_the_tools_by_name(story_with: Scripted) -> None:
+async def test_the_model_is_offered_the_residents_and_told_what_is_missing(story_with: Scripted) -> None:
     story = await story_with(text("ok"))
 
     await story.type("what can you do?")
@@ -59,7 +60,10 @@ async def test_the_model_is_offered_the_tools_by_name(story_with: Scripted) -> N
     (asked,) = story.requests()
     names = [tool.name for tool in asked.tools]
     assert names == sorted(names), "the block sits in front of the prompt, so its order is the name's"
-    assert {"write_file", "execute", "listdir"} <= set(names)
+    assert set(names) == set(RESIDENT), "a session is offered what it always has, and nothing else"
+    assert asked.system == (
+        "4 more groups (13 tools): document(1), fs(5), process(6), session(1) — use tool_require(group=…) to add one"
+    ), "and one line says what it is not seeing, because a group nobody mentions cannot be asked for"
 
 
 async def test_a_call_runs_and_the_model_reads_what_it_said(story_with: Scripted) -> None:

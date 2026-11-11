@@ -56,6 +56,8 @@ async def test_a_listing_shows_what_is_in_a_directory(story_with: Scripted) -> N
     _ = _file(story)
     _ = (story.workspace / "sub").mkdir()
 
+    await story.require("fs")
+
     await story.type("what is here?")
 
     told = await _told(story)
@@ -70,6 +72,8 @@ async def test_a_listing_says_the_columns_it_was_asked_for(story_with: Scripted)
     )
     _ = _file(story, "notes.txt", "12345")
     _ = (story.workspace / "link").symlink_to(story.workspace / "notes.txt")
+
+    await story.require("fs")
 
     await story.type("what is here, with the details?")
 
@@ -86,6 +90,8 @@ async def test_a_listing_of_something_that_is_not_a_directory_is_the_worlds_answ
     story = await story_with(calling("listdir", {"path": "notes.txt"}), text("fair"))
     _ = _file(story)
 
+    await story.require("fs")
+
     await story.type("list that file")
 
     assert "listdir failed: not a directory: notes.txt" in story.screen(), (
@@ -96,6 +102,8 @@ async def test_a_listing_of_something_that_is_not_a_directory_is_the_worlds_answ
 async def test_a_tree_shows_the_shape_of_a_directory(story_with: Scripted) -> None:
     story = await story_with(calling("tree", {"path": ".", "max_depth": 2}), text("that is all"))
     _ = _file(story, "sub/deep.txt", "x")
+
+    await story.require("fs")
 
     await story.type("what is the shape of this?")
 
@@ -112,6 +120,8 @@ async def test_a_tree_can_be_drawn_three_ways(story_with: Scripted) -> None:
     )
     _ = _file(story, "b.txt", "x")
     _ = _file(story, "src/a.py", "x")
+
+    await story.require("fs")
 
     await story.type("how is this shaped?")
     await story.finished()
@@ -137,6 +147,8 @@ async def test_a_tree_budget_is_per_directory(story_with: Scripted) -> None:
     _ = _file(story, "a.txt", "x")
     for name in ("1.txt", "2.txt", "3.txt"):
         _ = _file(story, f"big/{name}", "x")
+
+    await story.require("fs")
 
     await story.type("the first couple of each")
     await story.finished()
@@ -210,6 +222,8 @@ async def test_a_copy_and_a_move_change_the_tree(story_with: Scripted) -> None:
     )
     _ = _file(story)
 
+    await story.require("fs")
+
     await story.type("copy it, then rename the copy")
     await story.answer("y")
     await story.answer("y")
@@ -228,6 +242,8 @@ async def test_a_delete_takes_the_file_away(story_with: Scripted) -> None:
     )
     _ = _file(story)
 
+    await story.require("fs")
+
     await story.type("delete the note")
     await story.answer("y")
 
@@ -238,6 +254,8 @@ async def test_a_delete_takes_the_file_away(story_with: Scripted) -> None:
 async def test_a_call_that_leaves_nothing_behind_has_to_say_why(story_with: Scripted) -> None:
     story = await story_with(calling("delete_path", {"path": "notes.txt"}), text("fair"))
     _ = _file(story)
+
+    await story.require("fs")
 
     await story.type("delete the note")
 
@@ -320,6 +338,8 @@ async def test_a_program_that_is_not_there_fails_the_call(story_with: Scripted) 
 async def test_a_path_outside_the_workspace_is_refused_and_says_where_the_tree_ends(story_with: Scripted) -> None:
     story = await story_with(calling("listdir", {"path": "../elsewhere"}), text("oh"))
 
+    await story.require("fs")
+
     await story.type("look outside")
 
     told = await _told(story)
@@ -373,6 +393,8 @@ async def test_a_copy_takes_a_whole_directory_and_will_not_land_on_one_unless_to
     )
     _ = _file(story, "src/a.txt", "x")
 
+    await story.require("fs")
+
     await story.type("copy the tree")
     await story.answer("y")
     await story.finished()
@@ -391,6 +413,8 @@ async def test_a_file_copied_onto_a_directory_lands_inside_it(story_with: Script
     _ = _file(story, "a.txt", "x")
     _ = (story.workspace / "sub").mkdir()
 
+    await story.require("fs")
+
     await story.type("put a copy of it in there")
     await story.answer("y")
 
@@ -404,6 +428,8 @@ async def test_a_move_into_itself_is_the_arguments_and_not_the_rules(story_with:
         text("fair"),
     )
     _ = _file(story, "src/a.txt", "x")
+
+    await story.require("fs")
 
     await story.type("move it inside itself")
     await story.answer("y")
@@ -420,6 +446,8 @@ async def test_taking_away_a_directory_has_to_be_asked_for_and_the_root_never_is
         text("done"),
     )
     _ = _file(story, "sub/a.txt", "x")
+
+    await story.require("fs")
 
     await story.type("clear the scratch directory")
     await story.answer("y")

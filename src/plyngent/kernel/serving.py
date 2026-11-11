@@ -71,9 +71,8 @@ class Serving:
         self._human = Declaration(HumanChannel, instance=host)
         self._detached = False
         self._stopped = False
-        # One table of tools for every session this kernel serves: the set is the same for all of them
-        # until disclosure makes it a per-session answer, and building it per turn would rebuild forty-odd
-        # schemas to say the same thing.
+        # One table of tools for every session this kernel serves: which of them a session may reach is
+        # its own answer (:meth:`ToolCatalog.view`), so what is shared is the registry and not a block.
         self._catalog = ToolCatalog()
         self._executor = ToolExecutor(self._catalog)
         self._turns = set()

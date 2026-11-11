@@ -28,7 +28,7 @@ import io
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from composat import Declaration
+from composat import Declaration, ServiceNotUpError
 
 from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Installed, install
 from plyngent.cli.app import App
@@ -36,6 +36,7 @@ from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
 from plyngent.cli.render import question as question_line
 from plyngent.kernel.host import Host
+from plyngent.kernel.session import Session
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
@@ -264,6 +265,45 @@ class Story:
         that leaves mid-answer, nobody attached at all — which no tool can stage on its own.
         """
         return self.host.human
+
+    # -- what the session has been shown ---------------------------------------------
+
+    async def require(self, *groups: str) -> None:
+        """Show this session these groups, the way ``tool_require`` would — without a turn in the way.
+
+        A stimulus like :attr:`human`, and for the same reason: most stories are about what a tool does
+        once it can be reached, and making each of them spend two rounds asking would bury the tool
+        behind its own preamble. The stories about the asking itself call ``tool_require`` for real, so
+        this is what keeps them the only ones that have to.
+        """
+        for _ in range(SETTLE_TRIES):
+            try:
+                found = self._session_component()
+            except ServiceNotUpError:
+                await asyncio.sleep(SETTLE_PAUSE)
+                continue
+            _ = await found.disclose(groups)
+            await self.settle()
+            return
+        msg = f"the session {self.session!r} was never admitted, so nothing could be shown to it"
+        raise AssertionError(msg)
+
+    @property
+    def toolset_epoch(self) -> int:
+        """How many times this session's tool set has changed — the number a provider cache keys on.
+
+        It has no screen and it is the only thing a story reads *out* of the kernel rather than at its
+        boundary: the acceptance for disclosure is that one ask costs one change, and no line a person
+        sees can say that (§10.5).
+        """
+        return self._session_component().toolset_epoch
+
+    def _session_component(self) -> Session:
+        """The kernel's session object for this story's session, which a stimulus may hold."""
+        key = Declaration(Session, instance=f"{DEFAULT_HOST}/{self.session}").key
+        found = self.kernel.assembly.instance(key)
+        assert isinstance(found, Session), "the story's session is not admitted"
+        return found
 
     # -- how it ends ---------------------------------------------------------------
 

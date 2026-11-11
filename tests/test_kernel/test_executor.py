@@ -48,9 +48,15 @@ class _Host:
 
 @dataclass(frozen=True)
 class _Session:
-    """The one field a call reads off its session: which conversation it belongs to."""
+    """The two things a call reads off its session: which conversation it belongs to, and what it has
+    been shown.
+
+    ``fs`` is shown because that is the group these tests put their own tools in: a view hides what a
+    session was never shown (§10.4), and a test of the scheduler is not a test of the disclosure.
+    """
 
     session_id: str = "s1"
+    disclosed: frozenset[str] = frozenset({"fs"})
 
 
 @dataclass(frozen=True)

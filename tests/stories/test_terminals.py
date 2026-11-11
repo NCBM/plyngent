@@ -56,6 +56,8 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
         text("it said hello back"),
     )
 
+    await story.require("process")
+
     await story.type("say hello back")
     await story.answer("y")
     await story.until("turn 1 finished", "it said hello back")
@@ -87,6 +89,8 @@ async def test_a_program_that_is_not_there_opens_a_terminal_that_says_so(story_w
         text("it never started"),
     )
 
+    await story.require("process")
+
     await story.type("run what is not there")
     await story.finished()
 
@@ -107,6 +111,8 @@ async def test_a_terminal_that_was_never_opened_is_not_a_session(story_with: Scr
         text("then there is nothing to read"),
     )
 
+    await story.require("process")
+
     await story.type("read the terminal that is not there")
     await story.finished()
 
@@ -125,6 +131,8 @@ async def test_keys_are_what_a_terminal_reads_and_a_typo_is_reported(story_with:
         _by_session("write_pty_keys", data="<nope>"),
         text("done"),
     )
+
+    await story.require("process")
 
     await story.type("type into it")
     await story.answer("y")
@@ -152,6 +160,8 @@ async def test_closing_a_terminal_that_is_still_running_is_a_question(story_with
         text("left it running"),
     )
 
+    await story.require("process")
+
     await story.type("close it")
     await story.answer("n")
     await story.finished()
@@ -173,6 +183,8 @@ async def test_a_terminal_outside_the_workspace_never_starts(story_with: Scripte
         text("oh"),
     )
 
+    await story.require("process")
+
     await story.type("open it next door")
     await story.finished()
 
@@ -187,6 +199,8 @@ async def test_a_denylisted_program_is_asked_about_before_a_terminal_starts(stor
         calling("open_pty", {"command": ["rm"], "intention": "clean something up"}),
         text("nothing started then"),
     )
+
+    await story.require("process")
 
     await story.type("clean up on a terminal")
     await story.answer("n")
@@ -207,6 +221,8 @@ async def test_a_session_that_already_has_its_terminals_says_so(story_with: Scri
         text("two is what there is room for"),
     )
 
+    await story.require("process")
+
     await story.type("open three terminals")
     await story.finished()
 
@@ -222,6 +238,8 @@ async def test_the_humans_answer_reaches_the_terminal_and_is_reported_nowhere_el
         _by_session("ask_into_pty", message="the passphrase", secret=True, intention="it must not be in the history"),
         text("wrote it"),
     )
+
+    await story.require("process")
 
     await story.type("ask me for the passphrase")
     await story.answer("s3cret")
@@ -248,6 +266,8 @@ async def test_an_answer_nobody_gave_writes_nothing(story_with: Scripted) -> Non
         _by_session("ask_into_pty", message="the passphrase", secret=True, intention="it must not be in the history"),
         text("fine"),
     )
+
+    await story.require("process")
 
     await story.type("ask me for the passphrase")
     await story.decline()

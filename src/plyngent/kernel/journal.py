@@ -40,7 +40,7 @@ from composat import Component
 from platformdirs import user_data_path
 
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
-from plyngent.kernel.trail import Entry, Shape, Trail
+from plyngent.kernel.trail import STATE_CHANGE_TAG, AnyRecord, Entry, Shape, StateChange, Trail
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -251,7 +251,7 @@ class SqliteTrail(Trail):
     async def append(
         self,
         session: str,
-        payload: AnyMessage,
+        payload: AnyRecord,
         *,
         begin_after: str | None = None,
         turn: int = 0,
@@ -337,13 +337,35 @@ class SqliteTrail(Trail):
         chain = await self._read_all(_CHAIN, (session, row))
         if not chain:
             raise ValueError(_broken_chain(begin_after, session))
-        messages = tuple(_decode(payload) for tag, payload in chain if tag in MODEL_TAGS)
+        messages = tuple(_message(payload) for tag, payload in chain if tag in MODEL_TAGS)
         remembered = msgspec.json.encode(list(messages)).decode()
         _ = await self._execute(
             "INSERT OR REPLACE INTO projection (session, entry, projector, messages) VALUES (?, ?, ?, ?)",
             (session, row, PROJECTOR, remembered),
         )
         return messages
+
+    @override
+    async def state_of(self, session: str) -> Mapping[str, str]:
+        """Everything this session has written down about itself, folded last-write-wins per key.
+
+        Read as the session's own column rather than along a chain, because a fact about a session is
+        not a fact about a branch of it: a conversation that disclosed a group has disclosed it, and a
+        branch that grew from before the disclosure is still part of that conversation.
+
+        The fold is a dict built in arrival order, so a later entry overwrites an earlier one and no
+        reader has to know that a key was written twice. What a setting *means* is the writer's
+        business: this answers text, and a caller that wants a value parses it.
+        """
+        rows = await self._read_all(
+            "SELECT payload FROM entry WHERE session = ? AND tag = ? ORDER BY seq",
+            (session, STATE_CHANGE_TAG),
+        )
+        folded: dict[str, str] = {}
+        for (payload,) in rows:
+            record = msgspec.json.decode(str(payload), type=StateChange)
+            folded[record.key] = record.value
+        return folded
 
     @override
     async def shape(self, session: str) -> Shape:
@@ -445,7 +467,7 @@ class Journal(Component, Trail):
     async def append(
         self,
         session: str,
-        payload: AnyMessage,
+        payload: AnyRecord,
         *,
         begin_after: str | None = None,
         turn: int = 0,
@@ -469,6 +491,11 @@ class Journal(Component, Trail):
         return await self._backend.derive(session, begin_after)
 
     @override
+    async def state_of(self, session: str) -> Mapping[str, str]:
+        """What this session knows about itself, folded from what its backend holds."""
+        return await self._backend.state_of(session)
+
+    @override
     async def shape(self, session: str) -> Shape:
         """This session's heads and roots, in arrival order."""
         return await self._backend.shape(session)
@@ -487,32 +514,44 @@ def _row_of(entry_id: str) -> int | None:
     return int(digits)
 
 
-def _tag_of(payload: AnyMessage) -> str:
+def _tag_of(payload: AnyRecord) -> str:
     """What kind of record this payload is, kept in its own column so a projection can skip it unread."""
     tag = payload.__struct_config__.tag
     return tag if isinstance(tag, str) else ""
 
 
-def _encode(payload: AnyMessage) -> str:
+def _encode(payload: AnyRecord) -> str:
     """One record as the text a row keeps; the tag is stored beside it and is not lost by encoding."""
     return msgspec.json.encode(payload).decode()
 
 
-def _decode(payload: str) -> AnyMessage:
-    """One record back out of its row, by the tag the row also carries."""
+def _decode(tag: str, payload: str) -> AnyRecord:
+    """One record back out of its row, by the tag the row already keeps for exactly this reason.
+
+    Not a union decode: ``msgspec`` refuses a union whose members disagree about the name of their tag
+    field, and the two kinds of record do — a message is tagged ``role`` and a state change ``type``.
+    The tag is a column here, so reading it is one branch and no JSON guessing.
+    """
+    if tag == STATE_CHANGE_TAG:
+        return msgspec.json.decode(payload, type=StateChange)
+    return _message(payload)
+
+
+def _message(payload: str) -> AnyMessage:
+    """One message back out of its row, for a projection or for a record that is not a state change."""
     return msgspec.json.decode(payload, type=AnyMessage)
 
 
 def _entry(session: str, row: tuple[Any, ...]) -> Entry:
     """One row as the value everything outside reads it as."""
-    row_id, seq, turn, parent, _tag, payload = row
+    row_id, seq, turn, parent, tag, payload = row
     return Entry(
         id=f"e{row_id}",
         session=session,
         seq=int(seq),
         turn=int(turn),
         begin_after=None if parent is None else f"e{parent}",
-        payload=_decode(str(payload)),
+        payload=_decode(str(tag), str(payload)),
     )
 
 

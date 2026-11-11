@@ -40,6 +40,8 @@ async def test_a_call_reads_what_the_call_before_it_wrote(story_with: Scripted) 
         text("copied it back"),
     )
 
+    await story.require("fs")
+
     await story.type("write the note and copy it")
     await story.answer("y")
     await story.answer("y")

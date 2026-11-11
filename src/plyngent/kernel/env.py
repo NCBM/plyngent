@@ -19,12 +19,13 @@ from plyngent.kernel.toolspec import Res
 
 if TYPE_CHECKING:
     from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.documents import Documents
     from plyngent.kernel.events import Human
     from plyngent.kernel.pty.policy import PtyPolicy
     from plyngent.kernel.pty.registry import PtyRegistry
     from plyngent.kernel.reads import Reads
-    from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.session import Session, TurnCtx
     from plyngent.kernel.workspace import Workspace
     from plyngent.wire.ask import AskSite
 
@@ -46,13 +47,16 @@ class Env:
     the call would be a second way to reach the same resources that no declaration is checked against.
     """
 
-    __slots__ = ("_call", "_ctx", "_uses")
+    __slots__ = ("_call", "_ctx", "_tools", "_uses")
 
-    def __init__(self, ctx: TurnCtx, uses: Res, call: str) -> None:
+    def __init__(self, ctx: TurnCtx, uses: Res, call: str, *, tools: ToolView) -> None:
         self._ctx = ctx
         self._uses = uses
         #: This call's segment of the turn's address — ``tool-1`` in ``3/r0/tool-1/proc-0``.
         self._call = call
+        #: What this session can reach, as the round it runs in saw it. Handed in rather than reached
+        #: for, because the answer belongs to one round's request and nothing here may ask twice.
+        self._tools = tools
 
     # -- the address, which is not a resource --------------------------------------
 
@@ -112,6 +116,28 @@ class Env:
         """Which live sessions have already been agreed to. Granted by :attr:`Res.PTY`."""
         self._granted(Res.PTY, "pty_policy")
         return self._ctx.host.pty_policy
+
+    @property
+    def tools(self) -> ToolView:
+        """What this session can reach, and what it has not been shown. Granted by :attr:`Res.TOOLS`.
+
+        A view and not the catalog: a tool may see the set it is part of, and may not reach every tool
+        this kernel has — the difference between the two is the whole of §10.4.
+        """
+        self._granted(Res.TOOLS, "tools")
+        return self._tools
+
+    @property
+    def session_state(self) -> Session:
+        """What this session knows about itself, and the one way to add to it. Granted by :attr:`Res.HISTORY`.
+
+        The name says "the record", not "the state of a turn": what a tool may reach here is the
+        conversation's own memory — which groups it has been shown, what its plan is — and adding to it
+        is an append to the journal, which is why it takes the same flag as anything else that reads
+        history.
+        """
+        self._granted(Res.HISTORY, "session_state")
+        return self._ctx.session
 
     @property
     def documents(self) -> Documents:

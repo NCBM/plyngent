@@ -15,6 +15,7 @@ from platformdirs import user_data_path
 
 from plyngent.kernel.journal import MIGRATIONS, SqliteTrail, journal_path
 from plyngent.kernel.model import Assistant, User
+from plyngent.kernel.trail import StateChange
 
 
 async def test_a_workspace_names_its_journal_and_creates_nothing(tmp_path) -> None:
@@ -126,6 +127,32 @@ async def test_a_projection_is_cached_and_the_cache_can_be_dropped(tmp_path) -> 
         assert await again.derive("main", head.id) == (User(text="hello"), Assistant(text="hi")), (
             "a checkpoint is a cache: dropping every row of it changes the answer not at all"
         )
+    finally:
+        await again.close()
+
+
+async def test_a_session_state_is_folded_last_write_wins_and_never_projects(tmp_path) -> None:
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        said = await trail.append("main", User(text="hello"))
+        said = await trail.append("main", Assistant(text="hi"), begin_after=said.id)
+        _ = await trail.append("main", StateChange(key="disclosure", value='{"groups": []}'))
+        _ = await trail.append("main", StateChange(key="disclosure", value='{"groups": ["fs"]}'))
+
+        assert await trail.state_of("main") == {"disclosure": '{"groups": ["fs"]}'}, "the last write wins"
+        assert await trail.state_of("elsewhere") == {}, "a session that wrote nothing knows nothing"
+    finally:
+        await trail.close()
+
+    again = SqliteTrail(path)
+    await again.open()
+    try:
+        assert await again.derive("main", said.id) == (User(text="hello"), Assistant(text="hi")), (
+            "a fact about the session is not something a model is sent"
+        )
+        assert await again.state_of("main") == {"disclosure": '{"groups": ["fs"]}'}, "and it outlives the process"
     finally:
         await again.close()
 

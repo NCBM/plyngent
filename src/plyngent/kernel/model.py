@@ -123,8 +123,14 @@ class Request(Struct, frozen=True, kw_only=True):
     ``messages`` is the whole history the model is given, not a delta. There is no incremental protocol
     here, and "what the model saw" has to be reproducible from the journal alone — a request carrying the
     delta would make the answer depend on a second list that had to be kept in step.
+
+    ``system`` is the part of the prompt that is not the conversation: today the one line saying which
+    tool groups this session has not been shown (§10.4), and later the sections a prompt is made of
+    (R9). It is a field rather than a message because nobody said it — a history that carried it would
+    hand it back to the model as its own words on the next turn.
     """
 
+    system: str = ""
     messages: tuple[AnyMessage, ...] = ()
     tools: tuple[ToolDecl, ...] = ()
 

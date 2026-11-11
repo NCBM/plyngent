@@ -70,6 +70,7 @@ async def test_a_permanent_delete_asks_every_time(story_with: Scripted) -> None:
         text("done"),
     )
     _ = (story.workspace / "gone.txt").write_text("x", encoding="utf-8")
+    await story.require("fs")
 
     await story.type("delete it")
     await story.answer("y")
@@ -83,6 +84,7 @@ async def test_a_permanent_delete_asks_every_time(story_with: Scripted) -> None:
 
 async def test_reading_is_never_asked_about(story_with: Scripted) -> None:
     story = await story_with(calling("listdir", {"path": "."}), text("that is all"))
+    await story.require("fs")
 
     await story.type("what is here?")
     await story.until("listdir ok")

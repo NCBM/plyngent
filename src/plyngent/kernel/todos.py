@@ -1,0 +1,213 @@
+"""The todo stack, as a value: groups of sibling tasks, bottom to top.
+
+A conversation's plan is a LIFO of **groups** and not a list of tasks. One push is one level of
+breakdown — "write the parser" and "test it" pushed together are two siblings at one level, not two
+levels — and a pop takes that whole level back off, so what is left is the question the level was
+answering. An individual task is finished through :meth:`Todos.update`, never by being taken out from
+under the ones beside it.
+
+Two numbers address a task, and neither moves when something is pushed above it:
+
+* a group's **depth** — ``0`` is the bottom, the last group is the TOP one — so pushing a child
+  breakdown does not rename the parent it came from;
+* an item's **number inside its group**, counting from 1 in the order the listing prints.
+
+That is a deliberate difference from ``main``, which numbers every item of the stack in one sequence,
+TOP group first: one number is easier to say, but every push and pop renumbers everything, so nothing
+can be talked about twice without listing it again. Here the price is a second number and the gain is
+that "group 0, item 1" identifies the same task until it is changed.
+
+Nothing here knows about a session, a journal or a clock: the stack is read and written as JSON text
+by the session that owns it (§10.9), so this module is about the shape alone.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+import msgspec
+from msgspec import Struct, field
+
+if TYPE_CHECKING:
+    from collections.abc import Collection, Iterable
+
+#: What a listing says when the stack holds nothing, which is a state and not a missing answer.
+EMPTY = "(todo stack empty — no groups)"
+
+
+class TodoStatus(StrEnum):
+    """Where one task stands.
+
+    The members are declared in name order and not in the order a task moves through them, because
+    this is the closed set a tool's schema carries and a schema is written in a stable order rather
+    than in a meaningful one (§10.5). Which of them still count as work is :data:`OPEN`.
+    """
+
+    CANCELLED = "cancelled"
+    DONE = "done"
+    IN_PROGRESS = "in_progress"
+    PENDING = "pending"
+
+
+#: The statuses that are still work: an item is open until somebody finishes it or gives it up.
+OPEN: frozenset[TodoStatus] = frozenset({TodoStatus.PENDING, TodoStatus.IN_PROGRESS})
+
+#: What a listing writes in front of an item, by status — the marks a checklist uses.
+MARKS: dict[TodoStatus, str] = {
+    TodoStatus.CANCELLED: "[-]",
+    TodoStatus.DONE: "[x]",
+    TodoStatus.IN_PROGRESS: "[~]",
+    TodoStatus.PENDING: "[ ]",
+}
+
+
+class TodoItem(Struct, kw_only=True):
+    """One task: what it is, where it stands, and what was noted about it.
+
+    ``id`` is the stored key and nothing else — a listing numbers items by their place in their
+    group, so the id never has to move when the order a task was written in stops being the order it
+    is read in. It is kept because two items may carry the same title, and something has to tell them
+    apart in the text this is written down as.
+    """
+
+    id: int
+    title: str
+    status: TodoStatus = TodoStatus.PENDING
+    notes: str = ""
+
+
+class TodoGroup(Struct, kw_only=True):
+    """One level of breakdown: the tasks that were pushed together.
+
+    A group is not a tree node with a parent pointer. The stack *is* the nesting: the group above
+    this one is why it exists, and nothing has to be kept in step when one of them goes away.
+    """
+
+    items: list[TodoItem] = field(default_factory=list)
+
+
+class Todos(Struct, kw_only=True):
+    """The stack: ``groups[0]`` is the bottom, ``groups[-1]`` is the TOP group.
+
+    Every method that changes the stack changes this value in place, and the caller decides what to
+    write down — which is what lets the session write one whole setting per change instead of a
+    difference that a reader would have to apply in order.
+    """
+
+    groups: list[TodoGroup] = field(default_factory=list)
+    #: The id the next item gets. Stored with the stack so that a restart cannot hand out an id twice.
+    next_id: int = 1
+
+    def depth(self) -> int:
+        """How many groups the stack holds — 0 for an empty stack, which is also how deep it is."""
+        return len(self.groups)
+
+    def group(self, depth: int) -> TodoGroup | None:
+        """The group a listing wrote as number *depth* (0 is the bottom), or ``None``."""
+        return self.groups[depth] if 0 <= depth < len(self.groups) else None
+
+    def items(self) -> list[TodoItem]:
+        """Every item on the stack, bottom group first."""
+        return [item for group in self.groups for item in group.items]
+
+    def open_items(self) -> list[TodoItem]:
+        """Every item that is still work."""
+        return [item for item in self.items() if item.status in OPEN]
+
+    def push_group(self, titles: Iterable[str], *, notes: str = "") -> TodoGroup:
+        """Put one new group of siblings on top, and answer it.
+
+        Blank titles are dropped rather than stored: a task with no name is a level of breakdown that
+        says nothing, and what a tool refuses is a group where *every* title was blank — a call that
+        wrote one real task and one accidental newline meant the one real task.
+        """
+        group = TodoGroup(items=[self._item(title, notes) for title in titles if title.strip()])
+        self.groups.append(group)
+        return group
+
+    def pop(self) -> TodoGroup | None:
+        """Take the TOP group off, and answer it — ``None`` when the stack was already empty."""
+        return self.groups.pop() if self.groups else None
+
+    def clear(self) -> int:
+        """Empty the stack, and answer how many items went with it."""
+        count = len(self.items())
+        self.groups.clear()
+        return count
+
+    def update(
+        self,
+        group: int,
+        number: int,
+        *,
+        title: str | None = None,
+        status: TodoStatus | None = None,
+        notes: str | None = None,
+    ) -> TodoItem | None:
+        """Change one item by its group's depth and its number inside that group.
+
+        ``None`` means these two numbers name nothing — the caller says which of them was wrong,
+        because only it knows what the listing looked like.
+
+        A field left as ``None`` is a field the call did not mention: clearing a note is
+        ``notes=""``, and nothing here can tell that apart from a call that said nothing about it.
+        """
+        found = self.group(group)
+        if found is None or not 1 <= number <= len(found.items):
+            return None
+        item = found.items[number - 1]
+        if title is not None:
+            item.title = title.strip()
+        if status is not None:
+            item.status = status
+        if notes is not None:
+            item.notes = notes.strip()
+        return item
+
+    def render(self, only: Collection[int] | None = None) -> str:
+        """The listing: the whole stack, or the groups ``only`` names, each under its own number.
+
+        ``only`` is a set of depths, which is how a tool that changed one layer answers with that
+        layer and nothing else — and why "show the whole thing" is a choice only a listing makes: the
+        other calls have no window to open in the first place.
+        """
+        if not self.groups:
+            return EMPTY
+        drawn = range(self.depth()) if only is None else sorted(d for d in only if 0 <= d < self.depth())
+        return "\n".join(line for depth in drawn for line in self._layer(depth))
+
+    def _layer(self, depth: int) -> list[str]:
+        """One group's heading and its items, in the shape a model reads a checklist in."""
+        heading = f"Group {depth} (TOP):" if depth == self.depth() - 1 else f"Group {depth}:"
+        numbered = enumerate(self.groups[depth].items, start=1)
+        lines = [f"  {MARKS[item.status]} {number}. {item.title}{_noted(item)}" for number, item in numbered]
+        return [heading, *lines]
+
+    def _item(self, title: str, notes: str) -> TodoItem:
+        item = TodoItem(id=self.next_id, title=title.strip(), notes=notes.strip())
+        self.next_id += 1
+        return item
+
+    def dump(self) -> str:
+        """The whole stack as JSON text — one value, so reading it back is a fold and not a replay."""
+        return msgspec.json.encode(self).decode()
+
+    @classmethod
+    def load(cls, text: str | None) -> Todos:
+        """The stack a session wrote down, or an empty one when there is none this build can read.
+
+        A value that does not decode is treated as nothing written: a conversation that cannot be
+        opened at all is worse than one that forgot its plan.
+        """
+        if not text:
+            return cls()
+        try:
+            return msgspec.json.decode(text, type=cls)
+        except msgspec.DecodeError:
+            return cls()
+
+
+def _noted(item: TodoItem) -> str:
+    """What was noted about a task, on the line it is already on."""
+    return f" — {item.notes}" if item.notes else ""

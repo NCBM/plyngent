@@ -124,10 +124,16 @@ class TurnRunner:
         The conversation is the journal's projection rather than a list this turn kept up to date, so a
         request is exactly "what the history says" and a second turn of the same session sees what the
         first one wrote without anything having to be handed over.
+
+        The tools are the view this session has: the residents, plus the groups it has been shown, and
+        the system line says what it is still missing. A view is built per *round* rather than per turn,
+        because a group asked for in one round arrives in the next — a block that changed inside a round
+        would be a prefix that changed between two requests for no reason a provider could cache (§10.5).
         """
         trail = state.ctx.host.trail
         messages = await trail.derive(state.ctx.session.session_id, state.cursor)
-        return Request(messages=messages, tools=self._catalog.prompts())
+        view = self._catalog.view(state.ctx.session.disclosed)
+        return Request(system=view.index(), messages=messages, tools=view.prompts())
 
     async def call(self, state: TurnState, request: Request) -> Reply:
         """Ask the model for the next message, under the round's own address.

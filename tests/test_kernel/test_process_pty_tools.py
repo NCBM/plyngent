@@ -17,6 +17,7 @@ from composat import Assembly, Component, ComponentKey, ComponentRegistry, Decla
 from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.cancel import CancelToken, Scope
+from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.events import Human, NoSink
 from plyngent.kernel.failure import Failure
@@ -69,7 +70,10 @@ class _Ctx:
 
 
 #: Everything a call may reach: these tests are about what a tool does, not about what it declared.
-_EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY | Res.DOCUMENT | Res.CLIENT
+_EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY | Res.DOCUMENT | Res.CLIENT | Res.TOOLS
+
+#: The tool set a call may look at here: nothing, because none of these tests asks.
+_VIEW = ToolCatalog().view(())
 
 
 def _env(root: Path, registry: PtyRegistry, *, human: Human | None = None) -> Env:
@@ -79,7 +83,7 @@ def _env(root: Path, registry: PtyRegistry, *, human: Human | None = None) -> En
         pty_policy=PtyPolicy(),
         human=human if human is not None else NoSink(),
     )
-    return Env(cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1")
+    return Env(cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1", tools=_VIEW)
 
 
 @pytest.fixture

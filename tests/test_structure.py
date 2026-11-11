@@ -20,7 +20,7 @@ from plyngent import boot, cli, kernel, wire
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import render
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.catalog import BUILTIN, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
@@ -259,6 +259,62 @@ def test_the_tools_that_must_say_why_are_the_ones_that_leave_no_trace() -> None:
     asks = {spec.name for spec in BUILTIN if spec.intention is Intention.REQUIRED}
 
     assert asks == leaves_no_trace, "the classification is derived from the declarations, so it cannot drift"
+
+
+def test_the_group_table_is_a_fold_over_the_tools() -> None:
+    """A group is what a tool says it travels in, so no second list may disagree with one.
+
+    Written as a walk over the tools rather than over a table: a tool that forgot its group, or a group
+    listed twice with different members, would otherwise be a thing only a reviewer could notice.
+    """
+    catalog = ToolCatalog()
+    grouped = [name for _group, members in catalog.groups() for name in members]
+
+    assert sorted(grouped) == sorted(catalog.names()), "every tool travels in exactly one group"
+    assert [group for group, _ in catalog.groups()] == sorted(group for group, _ in catalog.groups()), (
+        "a group table is written in name order, like the tools inside it"
+    )
+    assert all(list(members) == sorted(members) for _group, members in catalog.groups())
+
+
+def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> None:
+    """What is always there, what is missing, and the one line that says so — all from the same fold."""
+    catalog = ToolCatalog()
+    nothing_shown = catalog.view(())
+    everything_shown = catalog.view({group for group, _ in catalog.groups()})
+
+    assert nothing_shown.names() == tuple(sorted(RESIDENT)), "a resident name that names nothing would show here"
+    assert everything_shown.index() == "", "a session that has been shown everything is told nothing"
+    assert nothing_shown.index() == (
+        "4 more groups (13 tools): document(1), fs(5), process(6), session(1) — use tool_require(group=…) to add one"
+    ), "the index counts what *this* session cannot reach, and it is a function of the set"
+    assert catalog.view({"document", "process", "session"}).index() == (
+        "1 more group (5 tools): fs(5) — use tool_require(group=…) to add one"
+    ), "one group left reads as one group"
+
+
+def test_a_shown_group_arrives_whole_and_leaves_the_index() -> None:
+    catalog = ToolCatalog()
+    shown = catalog.view({"fs"})
+
+    assert {"listdir", "tree", "copy_path", "move_path", "delete_path"} <= set(shown.names())
+    assert "fs" not in shown.index(), "a group that has arrived is not still described as missing"
+    assert shown.get("execute") == catalog.get("execute"), "and the residents did not move: both views hold it"
+
+
+def test_the_tool_that_adds_a_group_is_one_a_session_cannot_lose() -> None:
+    """A fallback nobody can reach is not a fallback: the asking tool is resident, and it is about the set.
+
+    It is also the one group that is never offered: ``meta`` holds nothing a session is missing, so the
+    index line never names it — which is what keeps "there are: document, fs, process" honest.
+    """
+    catalog = ToolCatalog()
+    spec = catalog.get("tool_require")
+
+    assert spec is not None, "a hint pointing at this tool would point at nothing"
+    assert spec.group is Group.META, "its subject is the tool set, not a path or a process"
+    assert spec.name in RESIDENT
+    assert "meta" not in catalog.view(()).index()
 
 
 def test_a_listing_tool_declares_its_bounds_rather_than_checking_them() -> None:

@@ -47,7 +47,7 @@ nothing else. Two calls that change files and depend on each other through a pro
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.access import AccessMode
@@ -55,7 +55,7 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display, key
-from plyngent.kernel.toolresult import Document, ToolResult
+from plyngent.kernel.toolresult import Document, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Role, argument
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.event import DocumentStored, ToolCalled, ToolReturned
@@ -64,9 +64,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from plyngent.kernel.catalog import ToolCatalog
+    from plyngent.kernel.catalog import ToolCatalog, ToolView
     from plyngent.kernel.model import Call
     from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.toolresult import Part
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.wire.event import AnyEvent
 
@@ -77,6 +78,10 @@ _ACCESS: dict[Role, AccessMode] = {Role.READ: AccessMode.READ, Role.WRITE: Acces
 #: what may overlap, and this decides how much of it is worth doing at once — a batch of forty reads is
 #: forty open files, which is a number to bound rather than to discover.
 CONCURRENCY = 8
+
+#: The one tool name this layer may write into a hint: showing a group is what a refusal for a tool
+#: nobody has been shown points at, and that tool exists to be named by exactly such a line (§10.4).
+ASKING = "tool_require"
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,10 +146,16 @@ class ToolExecutor:
         the turn's scope (``tool-1``) — the turn knows how many calls it has made — and the same segment is
         what a frontend pairs :class:`~plyngent.wire.event.ToolCalled` with
         :class:`~plyngent.wire.event.ToolReturned` by.
+
+        What a call may reach is the session's view, built once for the batch: the tools the round was
+        asked with. A call naming a tool it cannot see is answered rather than run, and the answer says
+        which group that tool is in — naming it here is this layer's job, because it is the only one
+        that holds both the registry and the session.
         """
-        nodes = _prepared(ctx, self._catalog, calls)
+        view = self._catalog.view(ctx.session.disclosed)
+        nodes = _prepared(ctx, self._catalog, view, calls)
         _ordered(nodes)
-        await self._run(ctx, nodes)
+        await self._run(ctx, nodes, view)
         answered: list[ToolResult] = []
         for node in nodes:
             result = node.result
@@ -152,7 +163,7 @@ class ToolExecutor:
             answered.append(result)
         return tuple(answered)
 
-    async def _run(self, ctx: TurnCtx, nodes: list[_Call]) -> None:
+    async def _run(self, ctx: TurnCtx, nodes: list[_Call], view: ToolView) -> None:
         """Start each call once what it waits for has finished, and no more than ``CONCURRENCY`` at once."""
         breathing = asyncio.Semaphore(CONCURRENCY)
 
@@ -162,7 +173,7 @@ class ToolExecutor:
                 for waited in sorted(node.after):
                     _ = await nodes[waited].finished.wait()
                 async with breathing:
-                    node.result = await self._answer(ctx, node)
+                    node.result = await self._answer(ctx, node, view)
             finally:
                 # Set even by a cancellation: a call that stopped is still finished as far as the calls
                 # waiting behind it are concerned, and leaving them waiting would hang the batch.
@@ -172,14 +183,15 @@ class ToolExecutor:
 
     # -- one call --------------------------------------------------------------------
 
-    async def _answer(self, ctx: TurnCtx, node: _Call) -> ToolResult:
+    async def _answer(self, ctx: TurnCtx, node: _Call, view: ToolView) -> ToolResult:
         """Say what this call is about to do, then run it — or answer what it is instead."""
         session, turn = ctx.session.session_id, ctx.turn_id
         self._emit(
             ctx,
             ToolCalled(session=session, turn=turn, call=node.call, tool=node.name, intention=_why(node.args)),
         )
-        result = node.refusal if node.refusal is not None else await self._ran(ctx, node)
+        result = node.refusal if node.refusal is not None else await self._ran(ctx, node, view)
+        result = _reachable(result, self._catalog, view)
         self._emit(
             ctx,
             ToolReturned(
@@ -199,7 +211,7 @@ class ToolExecutor:
                 self._emit(ctx, DocumentStored(session=session, document=part.document_id, chars=part.chars))
         return result
 
-    async def _ran(self, ctx: TurnCtx, node: _Call) -> ToolResult:
+    async def _ran(self, ctx: TurnCtx, node: _Call, view: ToolView) -> ToolResult:
         """Ask about this call if its declarations say to, then run it — or answer the refusal."""
         spec, args = node.spec, node.args
         assert spec is not None, "a call with nothing to run is answered without reaching here"
@@ -207,7 +219,7 @@ class ToolExecutor:
         if turned_down is not None:
             return turned_down
         reads, writes = _locks(node.held)
-        env = Env(ctx, spec.uses, node.call)
+        env = Env(ctx, spec.uses, node.call, tools=view)
         try:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.
@@ -303,27 +315,24 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
     return tuple(held), refused
 
 
-def _prepared(ctx: TurnCtx, catalog: ToolCatalog, calls: Sequence[tuple[str, Call]]) -> list[_Call]:
+def _prepared(ctx: TurnCtx, catalog: ToolCatalog, view: ToolView, calls: Sequence[tuple[str, Call]]) -> list[_Call]:
     """Read every call of one answer before any of them runs.
 
     A batch has to be decoded as a whole, because what a call will touch is inside its arguments and the
-    schedule is made of that. Two answers come out of it here and not later: a name nobody has, and
-    arguments that are not this tool's, are answered without running — and a call that answers without
-    running touches nothing, so the schedule leaves it out.
+    schedule is made of that. Answers come out of it here and not later — a name this session cannot see,
+    a name nobody has, and arguments that are not this tool's are all answered without running, and a
+    call that answers without running touches nothing, so the schedule leaves it out.
+
+    The two ways a name can be unknown are answered differently on purpose: a tool this kernel has but
+    this session was never shown says which group it is in, because that is the one thing the caller can
+    do something about; a tool nobody has says so and nothing more.
     """
     nodes: list[_Call] = []
     for address, call in calls:
-        spec = catalog.get(call.tool)
+        spec = view.get(call.tool)
         if spec is None:
-            nodes.append(
-                _Call(
-                    call=address,
-                    name=call.tool,
-                    spec=None,
-                    args=None,
-                    refusal=ToolResult.of(Failure.ARGS, f"no tool is named {call.tool!r}"),
-                )
-            )
+            unanswered = _unreachable(catalog, call.tool)
+            nodes.append(_Call(call=address, name=call.tool, spec=None, args=None, refusal=unanswered))
             continue
         args, refusal = _read(spec, call.arguments)
         node = _Call(call=address, name=call.tool, spec=spec, args=args, refusal=refusal)
@@ -331,6 +340,52 @@ def _prepared(ctx: TurnCtx, catalog: ToolCatalog, calls: Sequence[tuple[str, Cal
             node.held, node.refused = _paths(ctx, spec, args)
         nodes.append(node)
     return nodes
+
+
+def _reachable(result: ToolResult, catalog: ToolCatalog, view: ToolView) -> ToolResult:
+    """A result whose hints point at tools this session can actually call.
+
+    A hint names the call that would have worked, and a hint naming a tool nobody was shown is a
+    suggestion the model cannot take: it would be told to use ``listdir`` by a kernel that did not offer
+    it. So the hint is rewritten to the one call that does work — the group, and the tool that shows it
+    — and it is rewritten here rather than in each handler because no handler knows what the session was
+    shown, and forty handlers deciding it again is forty answers (§10.3).
+
+    Nothing else about a hint changes: the reason survives, because the reason is what makes the hint
+    worth following, and the argument patch does not, because it belonged to a call nobody can make.
+    """
+    if not any(isinstance(part, Hint) and part.tool not in view for part in result.body):
+        return result
+    body = tuple(_reachable_part(part, catalog, view) for part in result.body)
+    return replace(result, body=body, meta=replace(result.meta, chars=0))
+
+
+def _reachable_part(part: Part, catalog: ToolCatalog, view: ToolView) -> Part:
+    """One part of a body, with a hint about an unreachable tool pointing at the group instead."""
+    if not isinstance(part, Hint) or part.tool in view:
+        return part
+    group = catalog.group_of(part.tool)
+    if group is None:
+        return part
+    return Hint(tool=ASKING, given=(("group", group),), why=part.why)
+
+
+def _unreachable(catalog: ToolCatalog, name: str) -> ToolResult:
+    """What to answer a call naming a tool this session cannot reach.
+
+    A tool that exists in another group is the interesting case: the model was told there are groups it
+    has not been shown, so the answer names the group and the one call that shows it. Naming
+    :data:`ASKING` here is this layer's privilege and not a leak — the tool it names is the one whose
+    whole purpose is to be named by the kernel's own refusals (§10.3).
+    """
+    group = catalog.group_of(name)
+    if group is None:
+        return ToolResult.of(Failure.ARGS, f"no tool is named {name!r}")
+    return ToolResult.of(
+        Failure.ARGS,
+        f"{name!r} is not available yet: it is in the {group!r} group",
+        hints=(Hint(tool=ASKING, given=(("group", group),), why="show that group first"),),
+    )
 
 
 def _ordered(nodes: list[_Call]) -> None:

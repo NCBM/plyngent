@@ -51,6 +51,9 @@ class Res(Flag):
     HISTORY = 1 << 5
     DOCUMENT = 1 << 6
     CLIENT = 1 << 7
+    #: The tool set itself: what exists, what this session can reach, what it has not been shown. The
+    #: one resource whose subject is the tools rather than the world (§10.4).
+    TOOLS = 1 << 8
 
 
 class Mutation(Flag):

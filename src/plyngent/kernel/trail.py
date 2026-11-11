@@ -27,9 +27,11 @@ they hold whichever backend is behind this protocol:
    (``Event.seq``) and never a turn's number. Two numbers that read alike and mean different things
    are how a history starts disagreeing with itself.
 3. **An entry's payload is one tagged record, and the vocabulary is open.** ``user``, ``assistant``
-   (which may carry the calls it asked for) and ``tool-result`` are what a conversation is made of
-   today; ``failure``, ``state-change``, ``prune``, ``summary``, ``attempt`` and ``document-ref`` each
-   become one more tag when the feature that writes them lands — never a column. Three consequences
+   (which may carry the calls it asked for) and ``tool-result`` are what a conversation is made of,
+   and ``state-change`` is the first tag beside them that no model reads (:class:`StateChange`):
+   which tool groups a session has been shown, and whatever else a session knows about itself. The
+   rest — ``failure``, ``prune``, ``summary``, ``attempt``, ``document-ref`` — each become one more
+   tag when the feature that writes them lands, never a column. Three consequences
    come with that: **a body never enters a row** (a payload too big for one entry is kept in the
    document store and the row carries only the handle); **:meth:`Trail.derive` is the projector** and
    reads a subset of the tags, so a new projector version invalidates everything it made; and **a
@@ -56,8 +58,41 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from msgspec import Struct
+
+# Not a type-only import: ``type AnyRecord`` evaluates its members at runtime, and a lazily-undefined
+# name would make a row that carries a message undecodable.
+from plyngent.kernel.model import AnyMessage
+
 if TYPE_CHECKING:
-    from plyngent.kernel.model import AnyMessage
+    from collections.abc import Mapping
+
+
+#: The tag a session's own facts carry, so a projection can skip one unread — the same trick the
+#: messages use. It is spelled once here because it is half of the record's identity.
+STATE_CHANGE_TAG = "state-change"
+
+
+class StateChange(Struct, tag=STATE_CHANGE_TAG, frozen=True, kw_only=True):
+    """Something true about the session, written down where the session can find it again.
+
+    A conversation's own facts — which tool groups it has been shown, what it has agreed to, what it
+    was told to remember — are not messages: no model reads them, and a projection that carried them
+    into a request would be sending a model notes to itself. They are entries anyway, because the
+    alternative is a second store with its own lifecycle and its own way of getting out of step with
+    the history it belongs beside.
+
+    ``key`` names the fact and ``value`` is its whole setting as JSON text, so the fold that reads a
+    session back is "last write per key wins" and a writer never has to describe a difference from
+    what came before. A key with no writer has no entry: an empty setting is a value, not an absence.
+    """
+
+    key: str = ""
+    value: str = ""
+
+
+#: Everything a row may carry: what a conversation says, and what it knows about itself.
+type AnyRecord = AnyMessage | StateChange
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +109,8 @@ class Entry:
     seq: int
     turn: int
     begin_after: str | None
-    #: One tagged record. Widened to a union the day an entry that is not a message arrives.
-    payload: AnyMessage
+    #: One tagged record: a message, or a fact about the session (:class:`StateChange`).
+    payload: AnyRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +129,7 @@ class Shape:
 class Trail(ABC):
     """The journal, as everything that appends to it or projects it sees it.
 
-    Six business methods and the pair of hooks that open and close a backend: the lifecycle is the
+    Seven business methods and the pair of hooks that open and close a backend: the lifecycle is the
     component's which holds it, and a second backend (a database file, with a projection cache beside
     it) implements this and is installed there. Nothing outside allocates a number, and nothing outside
     reads a row without going through an id it was given.
@@ -120,7 +155,7 @@ class Trail(ABC):
     async def append(
         self,
         session: str,
-        payload: AnyMessage,
+        payload: AnyRecord,
         *,
         begin_after: str | None = None,
         turn: int = 0,
@@ -147,6 +182,17 @@ class Trail(ABC):
         ``None`` is an empty history rather than "the whole journal": a turn that begins at a root
         sees what grows above it and nothing beside it. Only the tags a model understands are read, so
         an entry that is bookkeeping (a prune, a state change) changes nothing here.
+        """
+
+    @abstractmethod
+    async def state_of(self, session: str) -> Mapping[str, str]:
+        """What this session knows about itself, as the last value written under each key.
+
+        Read across the whole session rather than along one chain: what a session has been shown is a
+        fact about the conversation and not about a place inside it, and a branch that never saw a
+        disclosure is still a branch of a session that has one. Keys with no entry are simply absent —
+        "nothing has been written" and "nothing is true" are the same answer here, and a caller that
+        needs a default supplies it.
         """
 
     @abstractmethod
