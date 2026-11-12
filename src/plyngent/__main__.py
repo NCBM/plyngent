@@ -19,6 +19,7 @@ from plyngent.boot import install
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PromptEditor
+from plyngent.kernel.skills import Skills
 
 #: The session a run starts in: one frontend, one conversation, unless it is told otherwise.
 DEFAULT_SESSION = "main"
@@ -40,7 +41,10 @@ def main(session: str, workspace: Path | None) -> None:
 
 async def _serve(*, session: str, root: Path | None) -> int:
     """Bring the kernel up, talk to it, and take it down — in that order, whatever happened."""
-    installed = await install(root if root is not None else Path.cwd())
+    workspace = Path.cwd() if root is None else root
+    # The skills plan is decided here, once: a program started on a machine reads that machine's skill
+    # directories, and nothing below this line has to know which ones they were (§0.10, E36).
+    installed = await install(workspace, skills=Skills.standard(workspace))
     try:
         catalog = build(installed.client.manifest, session=session)
         editor = PromptEditor(session=session, catalog=catalog)

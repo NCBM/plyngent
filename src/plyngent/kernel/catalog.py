@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.model import ToolDecl
-from plyngent.kernel.tools import document, fs, meta, process, session
+from plyngent.kernel.tools import document, fs, meta, net, process, session, skills
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping
@@ -38,7 +38,24 @@ if TYPE_CHECKING:
     from plyngent.kernel.toolspec import ToolSpec
 
 #: Every tool this kernel has, as the modules declare them.
-BUILTIN: tuple[ToolSpec, ...] = (*document.SPECS, *fs.SPECS, *meta.SPECS, *process.SPECS, *session.SPECS)
+#:
+#: The net group is here in full, and some of its tools need a backend to be installed before a session
+#: may reach them; that is a fact about the set a kernel is serving, decided where the set is assembled
+#: (§0.9, E26), never by leaving a tool out of the table of what exists.
+BUILTIN: tuple[ToolSpec, ...] = (
+    *document.SPECS,
+    *fs.SPECS,
+    *meta.SPECS,
+    *net.SPECS,
+    *process.SPECS,
+    *session.SPECS,
+)
+
+#: Every tool this build declares, installed or not: ``BUILTIN`` plus the ones a kernel serves only when
+#: something was installed for them — a web backend for two of the net tools, a skills directory for all
+#: five skill tools. A structural check walks this — a schema is a promise to a model whether or not this
+#: particular kernel has what is behind it, and a tool left out of the walk is a tool nobody checks.
+EVERY: tuple[ToolSpec, ...] = (*BUILTIN, *net.CONDITIONAL, *skills.SPECS)
 
 #: The tools a session has without having asked for anything, named one by one (§10.4).
 #:

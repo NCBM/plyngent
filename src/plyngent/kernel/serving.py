@@ -64,7 +64,7 @@ class Serving:
     _executor: ToolExecutor
     _turns: set[asyncio.Task[None]]
 
-    def __init__(self, assembly: Assembly, *, host: str, link: KernelSide) -> None:
+    def __init__(self, assembly: Assembly, *, host: str, link: KernelSide, catalog: ToolCatalog | None = None) -> None:
         self.assembly = assembly
         self.host = host
         self.link = link
@@ -73,7 +73,9 @@ class Serving:
         self._stopped = False
         # One table of tools for every session this kernel serves: which of them a session may reach is
         # its own answer (:meth:`ToolCatalog.view`), so what is shared is the registry and not a block.
-        self._catalog = ToolCatalog()
+        # The table itself is handed in when a set of tools depends on what the composition root installed
+        # (§0.9, E26); nothing else changes, because existence is not a fact a session can move.
+        self._catalog = ToolCatalog() if catalog is None else catalog
         self._executor = ToolExecutor(self._catalog)
         self._turns = set()
 

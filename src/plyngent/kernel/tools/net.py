@@ -1,0 +1,413 @@
+"""The net group's own tool: ``client_fetch``, a request that leaves from *this* machine.
+
+The engine (:mod:`plyngent.kernel.net.client`) makes the request and the policy
+(:mod:`plyngent.kernel.net.policy`) says what a URL is; what is left for this module is the part only a
+tool can do — read a call's arguments, put the question to a person, and shape the answer for a model.
+
+**The question is here, and the policy only says whether there is one.** A private address, a cleartext
+transport, a verb that changes something and a body that leaves the machine are four reasons, and three
+kinds; :meth:`NetPolicy.needs` reports which ones this request trips and never asks anybody, this module
+asks once with all of them in the same sentence (§0.9, E34). What the answer is worth is kept in the
+same place: a read that was not agreed to may be tried again, a write that was not agreed to may not
+(E33) — the difference lives in :func:`_unagreed` and nowhere else.
+
+**A body too long for the conversation is not cut.** It goes to the document store and the result carries
+the handle, exactly as a read of a long file does (E28): one drawer, one resumption
+(``read(document_id=…)``), and no second way to page through what a tool produced.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated
+
+import msgspec
+
+from plyngent.kernel.documents import picture_media
+from plyngent.kernel.failure import Failure
+from plyngent.kernel.net import client, policy, web
+from plyngent.kernel.toolresult import Effects, Hint, Part, Text, ToolResult
+from plyngent.kernel.tools.document import kept, kept_bytes
+from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from plyngent.kernel.env import Env
+
+#: How many bytes a size is written in, at the two steps the summary reads in: ``1.2 KB``, ``3.4 MB``.
+_KILO = 1000
+_MEGA = 1_000_000
+
+#: How many hits a search shows by default: enough to choose from, and not a page of links.
+DEFAULT_MAX_HITS = 8
+
+
+class ClientFetchArgs(ToolArgs, kw_only=True):
+    """Send one HTTP request from this machine, and read what came back.
+
+    Use it for public docs and APIs, and for a server on this machine or the local network once you have
+    agreed to reach it. The request leaves from *this* host, so what can be reached is what this host can
+    reach: a loopback or private address is exactly the case the person is asked about.
+
+    ``method`` is one of DELETE, GET, HEAD, POST, PUT. ``headers`` are the request's own, except the ones
+    that change what a request *is* rather than what it asks for — the framing and proxy headers are
+    refused, and ``user_agent`` is the one identity a call may state, winning over a ``User-Agent`` in
+    ``headers``.
+
+    A response body longer than the conversation can hold is kept whole and the result carries a handle:
+    ``read(document_id=…)`` resumes it without a second request. ``max_bytes`` caps the download and a cut
+    body says ``truncated``; ``max_redirects`` bounds the chain; a redirect that leaves https for plain
+    http is refused unless ``allow_http_downgrade=true``.
+
+    A private host is asked about once per process and then remembered by host and port. Plain http, a
+    method that changes something on the other end, and a body that leaves this machine are asked about
+    every time, because each of them is a fact about this request and not about that machine.
+    """
+
+    url: Annotated[str, msgspec.Meta(min_length=1)]
+    # Written in name order: msgspec emits the enum in the order the literal spells it (E32).
+    method: policy.Method = "GET"
+    headers: dict[str, str] | None = None
+    body: str | None = None
+    user_agent: str | None = None
+    timeout_seconds: Annotated[float, msgspec.Meta(gt=0)] = policy.DEFAULT_TIMEOUT_SECONDS
+    max_bytes: Annotated[int, msgspec.Meta(ge=1)] = policy.DEFAULT_MAX_BYTES
+    max_redirects: Annotated[int, msgspec.Meta(ge=0)] = policy.DEFAULT_MAX_REDIRECTS
+    follow_redirects: bool = True
+    allow_http_downgrade: bool = False
+
+
+async def client_fetch(env: Env, args: ClientFetchArgs) -> ToolResult:
+    """Read the call into a request, make it, and shape what came back."""
+    request = _read(args)
+    if isinstance(request, policy.Unreadable):
+        return ToolResult.of(Failure.ARGS, request.message)
+    questions = _Questions(env)
+    outcome = await client.fetch(request, gate=questions)
+    if isinstance(outcome, client.Stopped):
+        return ToolResult.of(
+            outcome.failure,
+            outcome.message,
+            hints=() if outcome.fix is None else (_hint(outcome.fix),),
+            effects=Effects(approvals=tuple(questions.approvals)),
+        )
+    return await _answered(env, outcome, approvals=tuple(questions.approvals))
+
+
+def _read(args: ClientFetchArgs) -> client.Request | policy.Unreadable:
+    """The call's arguments as one request, or which argument could not be read and why."""
+    url = policy.parse_url(args.url)
+    if isinstance(url, policy.Unreadable):
+        return url
+    method = policy.parse_method(args.method)
+    if isinstance(method, policy.Unreadable):
+        return method
+    headers = policy.request_headers(args.headers, user_agent=args.user_agent)
+    if isinstance(headers, policy.Unreadable):
+        return headers
+    body: bytes | None = None
+    if args.body is not None:
+        if len(args.body) > policy.MAX_BODY_CHARS:
+            return policy.Unreadable(
+                "body", f"a request body may be at most {policy.MAX_BODY_CHARS} characters ({len(args.body)} given)"
+            )
+        body = args.body.encode("utf-8")
+    return client.Request(
+        method=method,
+        url=url.url,
+        headers=headers,
+        body=body,
+        timeout_seconds=args.timeout_seconds,
+        max_bytes=args.max_bytes,
+        max_redirects=args.max_redirects,
+        follow_redirects=args.follow_redirects,
+        allow_http_downgrade=args.allow_http_downgrade,
+    )
+
+
+class _Questions:
+    """One call's gate: whether this hop may be made, and what a person has already agreed to.
+
+    Per hop rather than per request, because a redirect is a second destination — and per *call* for the
+    agreements, because what a person agreed to is this request and the record of it belongs to the
+    result this call produces.
+    """
+
+    env: Env
+    approvals: list[str]
+
+    def __init__(self, env: Env) -> None:
+        self.env = env
+        self.approvals = []
+
+    async def __call__(self, leg: client.Leg) -> client.Stopped | None:
+        """Ask about one hop: nobody, when it needs no agreement; a stop, when it may not be made."""
+        assessment = await policy.assess(leg.url, assume_public=self.env.net.assume_public)
+        if assessment is None:
+            return client.Stopped(Failure.MISSING, f"{leg.url.host} does not resolve to an address")
+        if assessment.kind is policy.HostClass.FORBIDDEN:
+            addresses = ", ".join(assessment.addresses)
+            return client.Stopped(
+                Failure.DENIED, f"{leg.url.host} resolves to {addresses}, which this build never contacts"
+            )
+        reasons = self.env.net.needs(assessment, method=leg.method, has_body=leg.has_body)
+        if not reasons:
+            return None
+        agreed = await self.env.human.confirm(prompt=_asked(leg, reasons), site=self.env.site("gate"))
+        if not agreed.accepted:
+            return _unagreed(leg)
+        if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons):
+            # The one reason that is about the machine rather than about this request, so agreeing to it is
+            # agreeing to that host and port and it is not asked about again. Cleartext and a payload are
+            # facts about *this* request: remembering one of them would agree to a request nobody described.
+            self.approvals.append(self.env.net.approve(leg.url))
+        return None
+
+
+def _asked(leg: client.Leg, reasons: tuple[policy.Reason, ...]) -> str:
+    """The one question a request is asked, with every reason it tripped in the same sentence."""
+    return f"may I send {leg.method} to {leg.url.url}? {'; '.join(text for _kind, text in reasons)}"
+
+
+def _unagreed(leg: client.Leg) -> client.Stopped:
+    """What an unanswered request is worth: a read may be tried again, a write may not (§0.9, E33).
+
+    A read is idempotent, so "nobody answered" is the world being unavailable rather than a refusal, and
+    the same call a minute later may well go through. A write that nobody agreed to is not replayed: it
+    would be the same unagreed request, and a model told "try again" would ask the same question again.
+    """
+    message = f"nobody agreed to contact {policy.grant_key(leg.url.host, leg.url.port)}, so the request was not sent"
+    return client.Stopped(Failure.BUSY if leg.method in policy.READ_ONLY else Failure.DENIED, message)
+
+
+async def _answered(env: Env, fetched: client.Fetched, *, approvals: tuple[str, ...]) -> ToolResult:
+    """The result: one line that says everything but the body, and the body as text or as a handle."""
+    effects = Effects(
+        external=(f"{fetched.status} {fetched.method} {fetched.url.url}",),
+        approvals=approvals,
+    )
+    if fetched.kind is client.BodyKind.EMPTY:
+        return ToolResult.ok(_summary(fetched, kept=False), effects=effects)
+    if fetched.kind is client.BodyKind.TEXT:
+        body, summary = await _text(env, fetched.as_text(), line=lambda kept: _summary(fetched, kept=kept))
+        return ToolResult.ok(summary, body=body, effects=effects)
+    media = picture_media(fetched.body) or _media_of(fetched)
+    summary = _summary(fetched, kept=True)
+    return ToolResult.ok(
+        summary,
+        body=await kept_bytes(env, fetched.body, summary=summary, media=media),
+        effects=effects,
+    )
+
+
+async def _text(env: Env, content: str, *, line: Callable[[bool], str]) -> tuple[Part, str]:
+    """A body as the model gets it, and the line that stands in for it when it did not fit.
+
+    ``line`` is given whether the body had to be kept, because the handle's own summary has to say that it
+    *is* a handle — and the line beside the handle is the one the model reads.
+    """
+    long = len(content) > env.documents.keep_chars
+    summary = line(long)
+    return await kept(env, content, summary=summary), summary
+
+
+def _summary(fetched: client.Fetched, *, kept: bool) -> str:
+    """Everything about the answer except the answer: the status, the line, the size and what became of it."""
+    notes = list(fetched.notes)
+    if fetched.truncated:
+        notes.append("truncated")
+    if kept:
+        notes.append("kept")
+    if fetched.redirects:
+        notes.append(f"{fetched.redirects} {_redirects(fetched.redirects)}")
+    beside = f" ({', '.join(notes)})" if notes else ""
+    return f"{fetched.status} {fetched.method} {fetched.url.url} — {_size(len(fetched.body))} {fetched.kind}{beside}"
+
+
+def _hint(fix: client.Fix) -> Hint:
+    """The argument that would have let this call finish, as the call it belongs to."""
+    match fix:
+        case client.Fix.ALLOW_DOWNGRADE:
+            return Hint(
+                tool=CLIENT_FETCH.name,
+                given=(("allow_http_downgrade", "true"),),
+                why="the redirect leaves https, which is this call's decision to follow",
+            )
+        case client.Fix.MORE_REDIRECTS:
+            return Hint(
+                tool=CLIENT_FETCH.name,
+                given=(("max_redirects", "10"),),
+                why="the chain is longer than this call allowed",
+            )
+
+
+def _size(count: int) -> str:
+    """How big a body is, in the unit a person reads without counting digits."""
+    if count < _KILO:
+        return f"{count} byte" if count == 1 else f"{count} bytes"
+    if count < _MEGA:
+        return f"{count / _KILO:.1f} KB"
+    return f"{count / _MEGA:.1f} MB"
+
+
+def _redirects(count: int) -> str:
+    """The noun a redirect count is written in, so that one of them does not read like a bug."""
+    return "redirect" if count == 1 else "redirects"
+
+
+def _media_of(fetched: client.Fetched) -> str:
+    """The response's content type as a store's media, or the one that says "bytes, not text"."""
+    return fetched.content_type.split(";")[0].strip() or "application/octet-stream"
+
+
+class BuiltinWebSearchArgs(ToolArgs, kw_only=True):
+    """Search the web through the sources this program was built with, and read the pages it names.
+
+    One entry per hit — a title, a URL, and the line the source had for it — and nothing else: a search
+    result is a place to read, not the reading. Use ``client_fetch`` for a page on this machine or a
+    local network, and note that this one goes out from here too, so the same question about a
+    destination applies to it.
+    """
+
+    query: Annotated[str, msgspec.Meta(min_length=1)]
+    hits: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_MAX_HITS
+
+
+async def builtin_websearch(env: Env, args: BuiltinWebSearchArgs) -> ToolResult:
+    """Ask each source in turn, and show the pages the first one that answered named."""
+    questions = _Questions(env)
+    found = await web.search_in_order(env.web.sources, args.query, gate=questions)
+    shown = found.hits[: args.hits]
+    effects = Effects(approvals=tuple(questions.approvals))
+    if not shown:
+        return ToolResult.ok(f"no hit for {args.query!r} ({_because(found)})", effects=effects)
+    body = Text(value="\n".join(_entry(hit) for hit in shown))
+    return ToolResult.ok(_found(found, shown, args.query), body=body, effects=effects)
+
+
+def _found(found: web.Found, shown: tuple[web.Hit, ...], query: str) -> str:
+    """How many of what was found is being shown, and what the sources that did not answer said."""
+    total = len(found.hits)
+    count = f"{len(shown)} of {total}" if len(shown) < total else str(total)
+    said = f"{count} {'hit' if total == 1 else 'hits'} for {query!r}"
+    return f"{said} ({_because(found)})" if found.failures else said
+
+
+def _because(found: web.Found) -> str:
+    """Why a search came back with nothing, as what each source said in its own words."""
+    return "; ".join(found.failures) or "no source is installed"
+
+
+def _entry(hit: web.Hit) -> str:
+    """One hit as the model reads it: what it is called and where it is, then the line the source had."""
+    said = f"- {hit.title or '(untitled)'} — {hit.url}"
+    return f"{said}\n  {hit.snippet}" if hit.snippet else said
+
+
+class WebFetchArgs(ToolArgs, kw_only=True):
+    """Read one public page as Markdown, through the network of the service this program was given.
+
+    Use it for an article or a documentation page when clean text is enough. The page is fetched and
+    rendered on somebody else's network, so a target on this machine or a local network is unreachable
+    here — ``client_fetch`` is the one that goes out from here, and the one to use for a non-GET method,
+    a custom header, or the raw status of a response.
+
+    ``http`` and ``https`` are the only schemes, and a URL with a username or a password in it is refused.
+    A page longer than the conversation can hold is kept whole and the result carries a handle:
+    ``read(document_id=…)`` resumes it with no second request.
+    """
+
+    url: Annotated[str, msgspec.Meta(min_length=1)]
+
+
+async def web_fetch(env: Env, args: WebFetchArgs) -> ToolResult:
+    """Read the page through the vendor, and hand the model its title and its text."""
+    pages = env.web.pages
+    if pages is None:
+        return ToolResult.of(Failure.MISSING, "no page reader is installed")
+    url = policy.parse_url(args.url)
+    if isinstance(url, policy.Unreadable):
+        return ToolResult.of(Failure.ARGS, url.message)
+    try:
+        page = await pages.fetch(url.url)
+    except web.SourceFailed as exc:
+        return ToolResult.of(Failure.PROTOCOL, str(exc))
+    body, summary = await _text(env, page.content, line=lambda kept: _page(page, url, kept=kept))
+    return ToolResult.ok(summary, body=body, effects=Effects(external=(f"read {url.url}",)))
+
+
+def _page(page: web.Page, url: policy.ParsedUrl, *, kept: bool) -> str:
+    """What the vendor read, in one line: what it is called, where it was, and how much of it there is."""
+    beside = " (kept)" if kept else ""
+    return f"{page.title or '(untitled)'} — {url.url} — {_size(len(page.content))} markdown{beside}"
+
+
+CLIENT_FETCH = ToolSpec(
+    name="client_fetch",
+    group=Group.NET,
+    args=ClientFetchArgs,
+    run=client_fetch,
+    # ``HUMAN`` is the question this tool asks for itself; ``NET`` is what it reaches; ``DOCUMENT`` is
+    # where a body too long to send goes. What a request may reach is decided by the policy at the moment
+    # it is made, so the posture derived from these is ``AUTO`` — the executor must not ask a second time
+    # about what the handler already asked (§0.9).
+    uses=Res.NET | Res.DOCUMENT | Res.HUMAN,
+    # It leaves this machine, and a write leaves it changed somewhere nobody here can see. Declared so
+    # that every call has to say why it is being made (§10.10).
+    mutates=Mutation.OUTSIDE,
+)
+
+BUILTIN_WEBSEARCH = ToolSpec(
+    name="builtin_websearch",
+    group=Group.NET,
+    args=BuiltinWebSearchArgs,
+    run=builtin_websearch,
+    # ``NET`` and not ``HUMAN``: it may have to ask about a destination (a source that reaches a server of
+    # its own does), but the question is not what this tool *is* — a search with nothing to ask runs.
+    uses=Res.NET,
+    # It reads somebody else's index and changes nothing on either side, so the posture derived from this
+    # is ``AUTO``: a search is not a thing the executor has an opinion about.
+    mutates=Mutation.NONE,
+)
+
+WEB_FETCH = ToolSpec(
+    name="web_fetch",
+    group=Group.NET,
+    args=WebFetchArgs,
+    run=web_fetch,
+    # ``NET`` for the channel the reader lives on, ``DOCUMENT`` for a page too long to send. No ``HUMAN``:
+    # the request leaves through the vendor, so there is no destination of this machine's to agree to.
+    uses=Res.NET | Res.DOCUMENT,
+    # A page read changes nothing on either side. What it costs is the vendor's business, and a charge is
+    # not a change to anything here.
+    mutates=Mutation.NONE,
+)
+
+#: The net tools a kernel with no backend installed serves (§0.9, E26).
+SPECS: tuple[ToolSpec, ...] = (CLIENT_FETCH,)
+
+#: The net tools a backend enables; which of them a kernel has is :func:`net_specs`'s answer.
+CONDITIONAL: tuple[ToolSpec, ...] = (BUILTIN_WEBSEARCH, WEB_FETCH)
+
+#: Every tool in this module, installed or not: what a structural check walks and a table may hold.
+ALL: tuple[ToolSpec, ...] = (*SPECS, *CONDITIONAL)
+
+
+def net_specs(installed: web.Web | None) -> tuple[ToolSpec, ...]:
+    """The net tools a kernel serves **because** of what was installed, and nothing when nothing was.
+
+    The one place where "does this tool exist" is decided, and it is decided by what the composition root
+    holds rather than by what a call names: a kernel with no backend is ``BUILTIN`` alone, and a tool that
+    is not there is answered as a name nothing has rather than as a refusal. What never changes with the
+    answer is a tool's name and its schema, so a provider's cached prefix stays a function of the *set* a
+    session may reach (§10.5).
+
+    Each capability enables its own tool: a program with a key and no page reader still searches, and one
+    with a reader and no key still reads a page.
+    """
+    served: list[ToolSpec] = []
+    if installed is not None and installed.pages is not None:
+        served.append(WEB_FETCH)
+    if installed is not None and installed.sources:
+        served.append(BUILTIN_WEBSEARCH)
+    return tuple(served)

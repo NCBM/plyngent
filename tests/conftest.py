@@ -16,6 +16,8 @@ from tests.stories.driver import TRANSPORTS, Story
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
+    from plyngent.kernel.net.web import Web
+    from plyngent.kernel.skills import Skills
     from tests.stories.model import Step
 
 
@@ -73,10 +75,17 @@ async def story_with(tmp_path, transport):
     """
     started: list[Story] = []
 
-    async def start(*script: Step) -> Story:
+    async def start(*script: Step, web: Web | None = None, skills: Skills | None = None) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
-        story = await Story.start(root, transport=transport, model=ScriptedModel(script), journal=journal)
+        story = await Story.start(
+            root,
+            transport=transport,
+            model=ScriptedModel(script),
+            web=web,
+            skills=skills,
+            journal=journal,
+        )
         started.append(story)
         return story
 

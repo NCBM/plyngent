@@ -21,20 +21,25 @@ from typing import TYPE_CHECKING
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel.catalog import BUILTIN, ToolCatalog
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
 from plyngent.kernel.link import InProcLink
 from plyngent.kernel.model import Model, ModelChannel
+from plyngent.kernel.net.web import Web, WebChannel
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.serving import Serving
+from plyngent.kernel.tools.net import net_specs
+from plyngent.kernel.tools.skills import skill_specs
 from plyngent.wire.manifest import KernelManifest, command_specs
 
 if TYPE_CHECKING:
     from composat import Component, ComponentKey
 
+    from plyngent.kernel.skills import Skills
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
@@ -114,6 +119,8 @@ async def install(
     host: str = DEFAULT_HOST,
     transport: str = "inproc",
     model: Model | None = None,
+    web: Web | None = None,
+    skills: Skills | None = None,
     journal: Path | str | None = None,
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
@@ -126,6 +133,18 @@ async def install(
     ``model`` is installed rather than reached for: ``None`` is a kernel with nothing to ask, which
     refuses turns instead of pretending a model answered. It is the same move as attaching a client to
     the human channel, and a test's scripted model is installed exactly the way a real one will be.
+
+    ``web`` is the same move for the vendor's web tools: ``None`` is a kernel that has none, and then
+    ``web_fetch`` and ``builtin_websearch`` are not in the table at all rather than failing when called.
+    That is the one thing about this program that decides *which* tools exist, and it is decided here
+    because it is a fact about how the program was started (§0.9, E26).
+
+    ``skills`` is where a skill is looked for, and ``None`` is a kernel with no skill tools at all — the
+    same move again, for the five of them (§0.10, E36). Which directories those are is
+    :meth:`~plyngent.kernel.skills.Skills.standard`'s answer and it is given by whoever starts the
+    program, because a list of places to look is a fact about the machine rather than about the kernel.
+    Passing a store built from a temporary directory is what lets a story have skills without reading
+    the person's own.
 
     ``journal`` says where the conversation is kept, and it is a parameter rather than something the
     backend decides for itself. ``None`` is one file per workspace in the user's data directory
@@ -150,9 +169,10 @@ async def install(
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
             Declaration(ModelChannel, instance=host, args=(model,)),
+            Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
             Declaration(Documents, instance=host, args=(documents_path(kept),)),
-            Declaration(Host, instance=host, args=(root,)),
+            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills}),
         ]
     )
     # One broker for the whole process: it is the root-qualified component, and it is the only thing
@@ -166,7 +186,14 @@ async def install(
         raise RuntimeError(msg)
 
     link = InProcLink(manifest=KernelManifest(commands=command_specs()))
-    serving = Serving(assembly, host=host, link=link)
+    # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
+    # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4).
+    serving = Serving(
+        assembly,
+        host=host,
+        link=link,
+        catalog=ToolCatalog((*BUILTIN, *net_specs(web), *skill_specs(skills))),
+    )
     watch = asyncio.create_task(_replace_the_broker(assembly, Declaration(PtyBroker).key))
     return Installed(assembly, serving, link, asyncio.create_task(serving.run()), watch)
 

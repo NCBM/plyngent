@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.events import Human
     from plyngent.kernel.model import Model, Request
+    from plyngent.kernel.net.web import Web
+    from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 #: How many turns of the loop a story gives the program to react before it looks at the screen.
@@ -165,6 +167,8 @@ class Story:
         session: str = SESSION,
         transport: str = "inproc",
         model: Model | None = None,
+        web: Web | None = None,
+        skills: Skills | None = None,
         journal: Path | str | None = None,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
@@ -174,13 +178,20 @@ class Story:
         ``model`` is installed the same way — nothing installed is a kernel that refuses turns, which
         is its own story.
 
+        ``web`` is what a kernel was configured with for the vendor's web tools, and ``None`` is the
+        ordinary case: no backend, and the two tools that need one are not in the table at all.
+
+        ``skills`` is where a kernel looks for skills, and ``None`` is the ordinary case here too: no
+        directory, and none of the five skill tools exist. A story that is about skills passes a store
+        built from its own ``tmp_path``, so the suite never reads the person's own skill directories.
+
         ``journal`` is where the conversation is kept. A story names it, because the alternative is
         writing into the person's own data directory: ``tmp_path`` beside the workspace is where a
         story's history belongs, and a story about a restart names the same path twice.
         """
         root.mkdir(parents=True, exist_ok=True)
         story = cls(
-            await install(root, transport=transport, model=model, journal=journal),
+            await install(root, transport=transport, model=model, web=web, skills=skills, journal=journal),
             session=session,
             model=model,
         )

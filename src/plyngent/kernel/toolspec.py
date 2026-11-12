@@ -54,6 +54,11 @@ class Res(Flag):
     #: The tool set itself: what exists, what this session can reach, what it has not been shown. The
     #: one resource whose subject is the tools rather than the world (§10.4).
     TOOLS = 1 << 8
+    #: The skills this host can read, and the one root a new one is written under. A resource of its own
+    #: rather than a use of :attr:`PATHS` because a skill is not a path in the workspace: it is reached
+    #: through the store that discovered it, and a tool that could resolve any path would not be saying
+    #: that it only touches these.
+    SKILLS = 1 << 9
 
 
 class Mutation(Flag):

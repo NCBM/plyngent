@@ -44,6 +44,18 @@ MEMORY_DOCUMENTS = ":memory:"
 #: The media type of text a document tool produced, as opposed to a picture or anything else.
 TEXT_MEDIA = "text/plain"
 
+#: The pictures this build recognizes, by their leading bytes. A format is never guessed from a name:
+#: what a provider is handed is the bytes, so the bytes are what says what they are.
+_PICTURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+#: How much of a WebP header says so: four bytes of container, four of size, then the form type.
+_WEBP_HEADER = 12
+
 #: How much of a body goes into the conversation before it is kept instead.
 #:
 #: One number in one place, because it is a fact about this store: it is what "too long to send" means,
@@ -88,6 +100,21 @@ def documents_path(journal: Path | str) -> Path | str:
     if str(journal) == MEMORY_DOCUMENTS:
         return MEMORY_DOCUMENTS
     return Path(journal).parent / "documents.db"
+
+
+def picture_media(data: bytes) -> str | None:
+    """What picture format these bytes are, or ``None`` when they are not one this build knows.
+
+    Shared by every reader of content — a file in the workspace, a body that came back over a network —
+    because it is one question about one kind of bytes, and two tables would eventually disagree about
+    one of them.
+    """
+    for signature, media in _PICTURES:
+        if data.startswith(signature):
+            return media
+    if len(data) >= _WEBP_HEADER and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 @dataclass(frozen=True, slots=True)

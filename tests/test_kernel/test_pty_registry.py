@@ -16,6 +16,7 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import Journal, SqliteTrail
 from plyngent.kernel.model import ModelChannel
+from plyngent.kernel.net.web import WebChannel
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.errors import PtyError
 from plyngent.kernel.pty.registry import PtyRegistry
@@ -44,8 +45,10 @@ def _two_hosts(tmp_path, *, max_sessions: int = 8) -> Assembly:
         Declaration(PtyRegistry, instance="ws-b", kwargs={"max_sessions": max_sessions}),
         Declaration(HumanChannel, instance="ws-a"),
         Declaration(ModelChannel, instance="ws-a"),
+        Declaration(WebChannel, instance="ws-a"),
         Declaration(HumanChannel, instance="ws-b"),
         Declaration(ModelChannel, instance="ws-b"),
+        Declaration(WebChannel, instance="ws-b"),
         Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
         Declaration(Documents, instance="ws-a", args=(":memory:",)),
         Declaration(Journal, instance="ws-b", args=(SqliteTrail(":memory:"),)),
@@ -61,6 +64,7 @@ def _one_host(tmp_path, **kwargs: object) -> Assembly:
         Declaration(PtyRegistry, instance="ws-a", kwargs=kwargs),
         Declaration(HumanChannel, instance="ws-a"),
         Declaration(ModelChannel, instance="ws-a"),
+        Declaration(WebChannel, instance="ws-a"),
         Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
         Declaration(Documents, instance="ws-a", args=(":memory:",)),
         Declaration(Host, instance="ws-a", args=(tmp_path,)),

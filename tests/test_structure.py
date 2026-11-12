@@ -20,12 +20,26 @@ from plyngent import boot, cli, kernel, wire
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import render
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN, EVERY, RESIDENT, ToolCatalog
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
+from plyngent.kernel.net.web import Web
+from plyngent.kernel.skills import NAME_PATTERN, Skills
 from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
-from plyngent.kernel.tools import fs
-from plyngent.kernel.toolspec import MAX_INTENTION_CHARS, Group, Intention, Mutation, Res, ToolArgs, ToolSpec
+from plyngent.kernel.tools import fs, net, skills
+from plyngent.kernel.tools.net import net_specs
+from plyngent.kernel.tools.skills import skill_specs
+from plyngent.kernel.toolspec import (
+    MAX_INTENTION_CHARS,
+    ArgsError,
+    Group,
+    Intention,
+    Mutation,
+    Posture,
+    Res,
+    ToolArgs,
+    ToolSpec,
+)
 from plyngent.kernel.workspace import Denied, OutsideWorkspace
 from plyngent.wire.event import Batch, Event, TurnStarted
 from tests.stories import driver
@@ -145,13 +159,15 @@ def test_the_stories_run_over_every_transport() -> None:
 # A declaration is what the model is shown and what the executor acts on, and most of it has no outside
 # a story could read: a schema with an argument that says nothing about what it accepts, a closed set
 # whose order came from a `set`, a package that can also be called by position. None of those have a
-# screen. They are asserted here — over `BUILTIN`, not over the group whose turn it was to be written.
+# screen. They are asserted here — over `EVERY`, not over the group whose turn it was to be written, and
+# over the tools a kernel only serves with a backend too: a schema is a promise to a model whether or not
+# this particular kernel has the backend behind it.
 
 #: What makes a property a description: the keywords one of which says what a value may be.
 _TYPED = frozenset({"type", "$ref", "enum", "const", "anyOf", "oneOf", "allOf"})
 
 
-@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", EVERY, ids=lambda spec: spec.name)
 def test_every_tool_answers_for_itself(spec: ToolSpec) -> None:
     schema = spec.schema()
 
@@ -166,19 +182,19 @@ def test_every_tool_answers_for_itself(spec: ToolSpec) -> None:
     assert spec.schema() == schema, "the same declaration twice is the same bytes"
 
 
-@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", EVERY, ids=lambda spec: spec.name)
 def test_every_package_refuses_to_be_called_by_position(spec: ToolSpec) -> None:
     """Keyword only, so that no ordering of two calls can disagree about which value is which."""
     with pytest.raises(TypeError):
         _ = cast("Any", spec.args)(None)
 
 
-@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", EVERY, ids=lambda spec: spec.name)
 def test_every_argument_the_model_can_give_says_what_it_accepts(spec: ToolSpec) -> None:
     assert _untyped(spec.schema()) == [], "an argument with no type is an argument the model has to guess at"
 
 
-@pytest.mark.parametrize("spec", BUILTIN, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", EVERY, ids=lambda spec: spec.name)
 def test_every_closed_set_is_an_enum_in_an_order_of_its_own(spec: ToolSpec) -> None:
     for where, values in _enums(spec.schema()):
         assert values == sorted(values), f"{spec.name}: {where} is a closed set in some other order"
@@ -250,13 +266,17 @@ def test_the_tools_that_must_say_why_are_the_ones_that_leave_no_trace() -> None:
 
     The alternative is forty packages each deciding again whether "why" is worth asking, which is how the
     rule ends up with forty-one answers — and a *read* that asks is a model taught to write "read it".
+
+    Over ``EVERY`` and not over ``BUILTIN``, for the same reason the schema walks are: ``client_fetch`` and
+    the two skill writers are declarations whether or not this particular kernel was started with what they
+    need behind them, and a tool left out of the walk is a tool nobody checks.
     """
     leaves_no_trace = {
         spec.name
-        for spec in BUILTIN
+        for spec in EVERY
         if spec.uses & (Res.EXEC | Res.HUMAN) or spec.mutates & (Mutation.OUTSIDE | Mutation.DESTRUCTIVE)
     }
-    asks = {spec.name for spec in BUILTIN if spec.intention is Intention.REQUIRED}
+    asks = {spec.name for spec in EVERY if spec.intention is Intention.REQUIRED}
 
     assert asks == leaves_no_trace, "the classification is derived from the declarations, so it cannot drift"
 
@@ -286,10 +306,11 @@ def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> No
     assert nothing_shown.names() == tuple(sorted(RESIDENT)), "a resident name that names nothing would show here"
     assert everything_shown.index() == "", "a session that has been shown everything is told nothing"
     assert nothing_shown.index() == (
-        "4 more groups (13 tools): document(1), fs(5), process(6), session(1) — use tool_require(group=…) to add one"
+        "5 more groups (14 tools): document(1), fs(5), net(1), process(6), session(1) — "
+        "use tool_require(group=…) to add one"
     ), "the index counts what *this* session cannot reach, and it is a function of the set"
     assert catalog.view({"document", "process", "session"}).index() == (
-        "1 more group (5 tools): fs(5) — use tool_require(group=…) to add one"
+        "2 more groups (6 tools): fs(5), net(1) — use tool_require(group=…) to add one"
     ), "one group left reads as one group"
 
 
@@ -300,6 +321,37 @@ def test_a_shown_group_arrives_whole_and_leaves_the_index() -> None:
     assert {"listdir", "tree", "copy_path", "move_path", "delete_path"} <= set(shown.names())
     assert "fs" not in shown.index(), "a group that has arrived is not still described as missing"
     assert shown.get("execute") == catalog.get("execute"), "and the residents did not move: both views hold it"
+
+
+def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> None:
+    """Existence is decided where the set is assembled, so the table is a function of what was installed.
+
+    Nothing installed is a kernel with one net tool, and the index line says so; a backend is two more
+    tools and a longer line. What never changes with the answer is a name or a schema — that is what keeps
+    the block a function of the *set* rather than of how the program was started (§0.9, E26).
+    """
+    assert net_specs(None) == (), "a kernel with no backend serves nothing because of one"
+    with_backend = ToolCatalog((*BUILTIN, *net_specs(Web(pages=_Any(), sources=(_Any(),)))))
+
+    assert with_backend.view(()).index() == (
+        "5 more groups (16 tools): document(1), fs(5), net(3), process(6), session(1) — "
+        "use tool_require(group=…) to add one"
+    ), "the line counts what this kernel has, and it is a function of the set"
+    assert {"client_fetch", "builtin_websearch", "web_fetch"} <= set(with_backend.names())
+
+
+def test_a_net_body_is_kept_rather_than_paged_through() -> None:
+    """A body too long to send is a handle, so no net tool takes an offset to page through one (§0.9, E28).
+
+    ``read`` has an offset, and it counts *lines of a file* — that is a window on something already here.
+    A response body is not read that way: it is kept, and the handle is the one way to the rest of it.
+    """
+    for spec in (*net.SPECS, *net.CONDITIONAL):
+        assert "offset" not in spec.schema()["properties"], f"{spec.name} pages a body instead of keeping it"
+
+
+class _Any:
+    """A backend that is only ever asked whether it is there."""
 
 
 def test_the_tool_that_adds_a_group_is_one_a_session_cannot_lose() -> None:
@@ -437,3 +489,87 @@ def test_a_refusal_reads_the_way_the_workspace_put_it() -> None:
     )
     assert "request_directory_access" not in lifted.summary, "and the kernel names no tool in prose"
     assert (denied.failure, denied.hints) == (Failure.DENIED, ()), "nothing lifts a denial, so nothing is offered"
+
+
+# -- the skill tools: a group that exists only when there is somewhere to look -------------
+#
+# Five tools whose whole group is conditional, which is the second kind of conditional tool this kernel
+# has (the net group was the first). What exists is decided where the set is assembled, so what each
+# declaration says about itself is asserted here — over the declared specs, not over a catalog built for
+# one of the answers.
+
+
+def _given(spec: ToolSpec) -> object:
+    """A package of this tool with its required arguments filled in, as a call would carry them."""
+    required: list[str] = spec.schema().get("required", [])
+    assert isinstance(spec.args, type), "a builtin tool's arguments are a package, not somebody else's schema"
+    return spec.args(**dict.fromkeys(required, "x"))
+
+
+def test_a_kernel_with_no_skills_directory_has_no_skill_tools() -> None:
+    """Existence is a function of what the host holds, and nothing else about the index line moves."""
+    assert skill_specs(None) == (), "a kernel with no store serves nothing because of one"
+    assert skill_specs(Skills(())) == skills.SPECS, "and one that has a store serves all five"
+
+    without = ToolCatalog((*BUILTIN, *net_specs(None)))
+    plain = ToolCatalog((*BUILTIN, *net_specs(None), *skill_specs(None)))
+    with_store = ToolCatalog((*BUILTIN, *net_specs(None), *skill_specs(Skills(()))))
+
+    assert plain.view(()).index() == without.view(()).index(), "nothing installed is the line it always was"
+    assert f"skills({len(skills.SPECS)})" in with_store.view(()).index(), "a store is one more group in it, counted"
+
+
+def test_the_skill_tools_are_one_group_and_none_of_them_is_resident() -> None:
+    """A group is what arrives together; nothing in this one is part of what a conversation starts with."""
+    catalog = ToolCatalog((*BUILTIN, *skills.SPECS))
+
+    assert {spec.group for spec in skills.SPECS} == {Group.SKILLS}
+    assert dict(catalog.groups())["skills"] == tuple(sorted(spec.name for spec in skills.SPECS))
+    assert not {spec.name for spec in skills.SPECS} & set(RESIDENT), "the residents are the same twelve"
+
+
+def test_the_skill_reading_tools_are_reads() -> None:
+    """Reading a directory nobody in this workspace wrote changes nothing, so nothing is asked."""
+    for spec in skills.SPECS:
+        if spec.mutates is not Mutation.NONE:
+            continue
+        assert spec.approval(_given(spec)) == (Posture.AUTO, None), f"{spec.name} only reads"
+        assert spec.intention is Intention.OPTIONAL, "a read that asks why teaches a model to write 'read it'"
+
+
+def test_a_skill_name_is_one_rule_for_the_schema_and_for_the_handler() -> None:
+    """A name that passes one check and fails the other makes the refusal depend on which ran first."""
+    for spec in skills.SPECS:
+        declared = spec.schema()["properties"].get("name")
+        if declared is not None:
+            assert declared["pattern"] == NAME_PATTERN, f"{spec.name} spells the name rule its own way"
+
+    with pytest.raises(ArgsError):
+        _ = skills.SKILL_READ.decode('{"name": "Not A Name"}')
+    assert skills.SKILL_READ.decode('{"name": "fine-name"}').name == "fine-name", "and a good one decodes"
+
+
+def test_the_skill_writing_tools_ask_every_time() -> None:
+    """A directory that is not the workspace's is not something a path policy can judge one call about.
+
+    Loosening this to a session grant is a change to §10.10, not a habit: ``ALWAYS`` does not consult a
+    table, and the only way to have one would be a second posture that is lower than the declaration.
+    """
+    for spec in (skills.SKILL_CREATE, skills.SKILL_EDIT):
+        assert spec.mutates is Mutation.OUTSIDE, "the effect is in somebody else's directory"
+        assert spec.approval(_given(spec)) == (Posture.ALWAYS, None), f"{spec.name} asks every single time"
+        assert spec.intention is Intention.REQUIRED, "and every call says why it is being made"
+
+
+def test_the_skill_group_is_three_readers_and_two_writers() -> None:
+    """What the group is made of, so that a tool added to it has to say which of the two it is."""
+    writing = {spec.name for spec in skills.SPECS if spec.mutates is not Mutation.NONE}
+
+    assert writing == {"skill_create", "skill_edit"}, "only these two write"
+    assert {spec.name for spec in skills.SPECS} == {
+        "skill_list",
+        "skill_read",
+        "skill_search",
+        "skill_create",
+        "skill_edit",
+    }

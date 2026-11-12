@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import msgspec
 
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.documents import TEXT_MEDIA
+from plyngent.kernel.documents import TEXT_MEDIA, picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
 from plyngent.kernel.toolresult import Document, Effects, Hint, Part, Text, ToolResult
@@ -44,18 +44,6 @@ _LINENO_WIDTH = 6
 
 #: How many unread line numbers a refusal quotes before it says how many there are in all.
 _UNREAD_PREVIEW = 8
-
-#: The pictures this build recognizes, by their leading bytes. A format is never guessed from a name:
-#: what a provider is handed is the bytes, so the bytes are what says what they are.
-_PICTURES: tuple[tuple[bytes, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
-
-#: How much of a WebP header says so: four bytes of container, four of size, then the form type.
-_WEBP_HEADER = 12
 
 #: How much of a matching line a search shows: enough to recognise it, and not a minified file.
 _LINE_PREVIEW = 200
@@ -98,7 +86,15 @@ async def read(env: Env, args: ReadArgs) -> ToolResult:
         return ToolResult.of(Failure.of(exc), f"read failed: {exc}")
     if isinstance(found, _Picture):
         return await _kept_picture(env, args.path, found)
-    return await _shown(env, args.path, args, found, target=target)
+    return await window(
+        env,
+        args.path,
+        found,
+        offset=args.offset,
+        limit=args.limit,
+        with_lineno=args.with_lineno,
+        target=target,
+    )
 
 
 async def _kept_window(env: Env, args: ReadArgs) -> ToolResult:
@@ -108,8 +104,15 @@ async def _kept_window(env: Env, args: ReadArgs) -> ToolResult:
         return _no_document(args.document_id)
     if found.kept.media != TEXT_MEDIA:
         return ToolResult.ok(_unlookable(found.kept))
-    source = _Source(text=found.data.decode("utf-8", errors="replace"), seen=0, replaced=False)
-    return await _shown(env, found.kept.id, args, source)
+    source = Source(text=found.data.decode("utf-8", errors="replace"), seen=0, replaced=False)
+    return await window(
+        env,
+        found.kept.id,
+        source,
+        offset=args.offset,
+        limit=args.limit,
+        with_lineno=args.with_lineno,
+    )
 
 
 def _no_document(document_id: str) -> ToolResult:
@@ -147,7 +150,7 @@ def _nothing_there(name: str, target: Path, *, make_with: ToolSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class _Source:
+class Source:
     """A file as this build can read it: its text, when it was last written, and what reading cost.
 
     ``replaced`` says some bytes were not UTF-8 and became ``\ufffd``. It is carried out to the summary
@@ -160,7 +163,7 @@ class _Source:
     replaced: bool
 
 
-def _read_file(target: Path) -> _Source | _Picture:
+def _read_file(target: Path) -> Source | _Picture:
     """A file as a window of text, or as a picture; off the loop, read once either way.
 
     Which of the two it is, is decided by the bytes and never by the name: a file called ``.png`` may
@@ -169,25 +172,14 @@ def _read_file(target: Path) -> _Source | _Picture:
     of, and no summary would undo that.
     """
     data = target.read_bytes()
-    media = _image_media(data)
+    media = picture_media(data)
     if media is not None:
         return _Picture(media=media, data=data)
     seen = target.stat().st_mtime_ns
     try:
-        return _Source(text=data.decode("utf-8"), seen=seen, replaced=False)
+        return Source(text=data.decode("utf-8"), seen=seen, replaced=False)
     except UnicodeDecodeError:
-        return _Source(text=data.decode("utf-8", errors="replace"), seen=seen, replaced=True)
-
-
-def _image_media(data: bytes) -> str | None:
-    """What picture format these bytes are, or ``None`` when they are not a picture this build knows."""
-    for signature, media in _PICTURES:
-        if data.startswith(signature):
-            return media
-    # RIFF....WEBP: four bytes of container, four of size, then the form type.
-    if len(data) >= _WEBP_HEADER and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
+        return Source(text=data.decode("utf-8", errors="replace"), seen=seen, replaced=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,8 +211,22 @@ async def _kept_picture(env: Env, name: str, picture: _Picture) -> ToolResult:
     )
 
 
-async def _shown(env: Env, name: str, args: ReadArgs, source: _Source, *, target: Path | None = None) -> ToolResult:
+async def window(
+    env: Env,
+    name: str,
+    source: Source,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+    with_lineno: bool = False,
+    target: Path | None = None,
+) -> ToolResult:
     """One window over the text, numbered when the call asked for numbers.
+
+    It takes the values rather than an argument package, because this is the one reading of a text's
+    window that the kernel has: ``read`` asks it about a file or a kept document, and a tool that reads
+    text which is not the workspace's — a skill's — asks it too, so that a window cuts in the same place
+    and hands back the same handle wherever it was asked for.
 
     ``target`` is the file the text came from and is what line numbers are recorded against; a
     document is not a file, so a window over one is never made editable by reading it. And nothing is
@@ -230,17 +236,17 @@ async def _shown(env: Env, name: str, args: ReadArgs, source: _Source, *, target
     lines = source.text.splitlines(keepends=True)
     if not lines:
         return ToolResult.ok(f"read {name} (nothing in it)")
-    start = args.offset
-    end = len(lines) if args.limit is None else min(len(lines), start + max(0, args.limit))
+    start = offset
+    end = len(lines) if limit is None else min(len(lines), start + max(0, limit))
     if start >= len(lines):
         return ToolResult.ok(f"read {name}: no lines at offset {start} (it has {len(lines)}, offset is 0-based)")
     shown = lines[start:end]
-    body = _numbered(shown, start + 1) if args.with_lineno else "".join(shown)
+    body = _numbered(shown, start + 1) if with_lineno else "".join(shown)
     summary = f"read {name} (lines {start + 1}-{end} of {len(lines)})"
     if source.replaced:
         summary += " — not utf-8, so some bytes were replaced"
     part = await kept(env, body, summary=f"{name}, lines {start + 1}-{end} of {len(lines)}")
-    if args.with_lineno and target is not None and isinstance(part, Text):
+    if with_lineno and target is not None and isinstance(part, Text):
         env.reads.mark(target, range(start + 1, end + 1), seen=source.seen)
     return ToolResult.ok(summary, body=part)
 
@@ -313,7 +319,7 @@ async def search(env: Env, args: SearchArgs) -> ToolResult:
         return named
     name, text = named
     try:
-        regex = re.compile(args.pattern, re.MULTILINE)
+        regex = compile_lines(args.pattern)
     except re.error as exc:
         return ToolResult.of(Failure.ARGS, f"invalid regex: {exc}")
     lines = text.splitlines()
@@ -321,12 +327,25 @@ async def search(env: Env, args: SearchArgs) -> ToolResult:
     if not hits:
         return ToolResult.ok(f"no line of {name} matches {args.pattern!r}")
     shown = hits[: args.max_matches]
-    body = _around(lines, shown, args.context_lines)
-    summary = f"{_matches(len(shown))} in {name}"
+    body = around(lines, shown, args.context_lines)
+    summary = f"{matches(len(shown))} in {name}"
     if len(shown) < len(hits):
         summary = f"{len(shown)} of {len(hits)} matches in {name}"
         body.append(f"...[truncated at {args.max_matches} matches]")
     return ToolResult.ok(summary, body=Text(value="\n".join(body)))
+
+
+def compile_lines(pattern: str, *, case_insensitive: bool = False) -> re.Pattern[str]:
+    """A pattern as the one kind of search this kernel does: a Python ``re``, matched per line.
+
+    Compiled here rather than at each caller so that "per line" and "multiline on" are one decision —
+    a search that forgot ``MULTILINE`` would answer differently about ``^`` and nobody would notice
+    until a file had anchors in it.
+
+    Raises:
+        re.error: The pattern is not a regular expression.
+    """
+    return re.compile(pattern, re.MULTILINE | (re.IGNORECASE if case_insensitive else 0))
 
 
 async def _searched(env: Env, args: SearchArgs) -> tuple[str, str] | ToolResult:
@@ -364,7 +383,7 @@ async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
     return name, source.text
 
 
-def _around(lines: list[str], hits: list[int], context: int) -> list[str]:
+def around(lines: list[str], hits: list[int], context: int) -> list[str]:
     """The hit lines with their neighbours, hits marked and neighbours not, each line written once.
 
     Windows that overlap are merged rather than repeated, and a group that starts after a gap is
@@ -377,17 +396,17 @@ def _around(lines: list[str], hits: list[int], context: int) -> list[str]:
         if said and first > last + 1:
             said.append("--")
         for index in range(max(first, last + 1), min(len(lines), hit + context + 1)):
-            said.append(f"{index + 1}{':' if index == hit else '-'} {_clipped(lines[index])}")
+            said.append(f"{index + 1}{':' if index == hit else '-'} {clipped(lines[index])}")
             last = index
     return said
 
 
-def _clipped(line: str) -> str:
+def clipped(line: str) -> str:
     """One line, cut where it stops being worth reading — a minified file has lines of megabytes."""
     return line if len(line) <= _LINE_PREVIEW else line[:_LINE_PREVIEW] + "…"
 
 
-def _matches(count: int) -> str:
+def matches(count: int) -> str:
     """A count of matches, singular where one is one."""
     return f"{count} match" if count == 1 else f"{count} matches"
 

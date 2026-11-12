@@ -22,8 +22,11 @@ from plyngent.kernel.events import HumanChannel  # noqa: TC001
 from plyngent.kernel.journal import Journal  # noqa: TC001
 from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import ModelChannel  # noqa: TC001
+from plyngent.kernel.net.policy import NetPolicy
+from plyngent.kernel.net.web import WebChannel  # noqa: TC001
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
+from plyngent.kernel.skills import Skills  # noqa: TC001
 from plyngent.kernel.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -42,6 +45,10 @@ class Host(Component):
     # swapping it is a `replace`; nothing installed is a value (`None`) rather than a missing field, so a
     # turn can be refused before it starts instead of failing at its first request.
     model: ModelChannel = require()
+    # The vendor's web tools, when a program was configured with one. A component for the same reason the
+    # model is: installing a backend is a declaration and swapping it is a `replace`, and nothing installed
+    # is a value — which is what decides whether `web_fetch` and `builtin_websearch` exist at all (§0.9).
+    web: WebChannel = require()
     # The conversation's journal. Held as the component that owns a backend rather than as the protocol,
     # because a requirement is answered by the class that was declared; everything that reads or appends
     # takes `Trail`, so which backend answers it is a declaration in `boot` and nothing else.
@@ -64,17 +71,28 @@ class Host(Component):
     # A plain field rather than a component: it is a table with no lifecycle, and the host is what lives
     # exactly as long as an approval should.
     approvals: Approvals
+    # Which machines this host has already been told it may contact, and which requests have to be agreed
+    # to at all. Its own table rather than a row in ``approvals``: an agreement here is about one machine
+    # at one port, which is not one of the four things an approval is remembered by (§0.9, E27).
+    net: NetPolicy
     # One lock per path, across every session on this host: two turns in two conversations that touch one
     # file take turns. It is the host's because a session comes and goes while a file is still a file.
     locks: Locks
+    # The skills this host can read, or ``None`` when it was started without any. A plain field: a skill
+    # has no lifecycle, so there is nothing to open or close and nothing that a component would answer.
+    # ``None`` is a value rather than a missing field — a kernel with no skills directory has no skill
+    # tools at all, which is decided where the tools are assembled (§0.10, E36).
+    skills: Skills | None
 
-    def __init__(self, root: Path | str, *, trash_enabled: bool = True) -> None:
+    def __init__(self, root: Path | str, *, trash_enabled: bool = True, skills: Skills | None = None) -> None:
         super().__init__()
         self.workspace = Workspace(root)
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
         self.approvals = Approvals()
+        self.net = NetPolicy()
         self.locks = Locks()
+        self.skills = skills
 
     @override
     async def unload(self) -> None:
