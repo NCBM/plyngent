@@ -1,6 +1,6 @@
-"""The loop: three tasks, one cursor, and one way out.
+"""The loop: four tasks, one cursor, and one way out.
 
-A client of this kernel has exactly three jobs, and they run as three tasks because each one waits on
+A client of this kernel has exactly four jobs, and they run as four tasks because each one waits on
 something different:
 
 * **events** — read what the kernel says, draw it, and tell the transport how far it got. The ack is
@@ -9,6 +9,9 @@ something different:
 * **questions** — read what the kernel is waiting on, take the cursor for it, and send back exactly
   one answer. This is why the editor is the same object the line loop uses: a question may take the
   cursor from a line mid-typing (R2.4 C3).
+* **invocations** — read what the kernel wants one of *this client's* tools to do, run it, and send
+  back what came of it. It is the same lane as questions and a different kind of message: the kernel is
+  not asking a person, it is calling a tool that lives here (§10.8).
 * **lines** — read one line, decide what it meant, and send it. Plain text is a message; a slash word
   is a command (:mod:`plyngent.cli.grammar`).
 
@@ -17,8 +20,9 @@ Leaving has three entrances and one exit. The connection refusing a command, the
 and the other two are a normal goodbye (0). Before closing, the client says *why* it is leaving with a
 ``Cancel`` — the kernel cannot tell "left" from "slow", so it has to be told (R2.1 D15).
 
-What this file deliberately does not do: draw a prompt, decide how a line looks, or know what a
-command's arguments are. Those are the editor's and the grammar's, and this loop only routes.
+What this file deliberately does not do: draw a prompt, decide how a line looks, decide what a tool of
+its own does, or know what a command's arguments are. Those are the editor's, the offers', and the
+grammar's, and this loop only routes.
 """
 
 from __future__ import annotations
@@ -30,9 +34,10 @@ from msgspec.structs import replace
 
 from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
+from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.render import render
-from plyngent.wire.command import Cancel, ListSessions, Open, Submit
-from plyngent.wire.event import SessionsListed, TurnFinished
+from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
+from plyngent.wire.event import Compacted, SessionsListed, TurnFinished
 from plyngent.wire.flow import Ack
 from plyngent.wire.scope import CancelReason
 
@@ -57,6 +62,7 @@ class App:
     session: str
     editor: LineEditor
     catalog: Catalog
+    tools: ClientTools
     _out: TextIO
     _err: TextIO
     _leaving: asyncio.Event
@@ -72,11 +78,13 @@ class App:
         editor: LineEditor,
         out: TextIO,
         err: TextIO,
+        tools: ClientTools = TERMINAL,
     ) -> None:
         self.client = client
         self.session = session
         self.editor = editor
         self.catalog = catalog
+        self.tools = tools
         self._out = out
         self._err = err
         self._leaving = asyncio.Event()
@@ -100,11 +108,21 @@ class App:
         outlives the process, so "what have I said so far" is a question, not a memory. Both commands go
         out before the loops start, so the answer is the first event of the connection and nothing can
         get in front of it.
+
+        Saying what this client can run is the third, and it comes after the session exists: attaching a
+        tool changes what every session is shown, so the one this client just opened is one of the
+        sessions that has to be told (§10.8).
         """
         if not self.client.submit(Open(session=self.session)):
             return GONE
         self._seeding = self.client.submit(ListSessions())
-        background = [asyncio.create_task(self._events()), asyncio.create_task(self._questions())]
+        if not self.client.submit(Offer(tools=self.tools.offer)):
+            return GONE
+        background = [
+            asyncio.create_task(self._events()),
+            asyncio.create_task(self._questions()),
+            asyncio.create_task(self._invocations()),
+        ]
         try:
             return await self._lines()
         finally:
@@ -134,6 +152,11 @@ class App:
                 self._say(self._out, *render(event, focus=self.session))
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
                     self._cursor = event.ends_at
+                if isinstance(event, Compacted) and event.session == self.session:
+                    # A summary is a place to continue from, so this client's place moves to it: what is
+                    # written after a compaction goes past it rather than beside it. A compaction of
+                    # another session says nothing about where this one stands.
+                    self._cursor = event.entry
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
 
@@ -141,6 +164,16 @@ class App:
         """Answer what the kernel asks, one at a time, through the one cursor."""
         async for question in self.client.questions():
             _ = self.client.answer(await self.editor.ask(question))
+
+    async def _invocations(self) -> None:
+        """Run what the kernel asks this client's tools for, one at a time, and answer each one.
+
+        The same cursor answers these: a tool of this client's is a question to a person here, and one
+        cursor is what keeps them from drawing over each other. A name this client does not have is
+        answered too — the kernel is waiting, and silence would cost it the whole deadline.
+        """
+        async for invocation in self.client.invocations():
+            _ = self.client.completed(await dispatch(self.tools, self.editor, invocation))
 
     # -- what the human says -------------------------------------------------------
 

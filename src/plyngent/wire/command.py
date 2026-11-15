@@ -5,9 +5,9 @@ A command is an *intent*, never a query: everything a client wants to read is a 
 therefore no request ids to correlate. ``submit`` returns ``None``; whether a turn began is reported
 back as an event.
 
-Every command names a ``session`` except the ones about the set of sessions. Nothing here is a
-callback and nothing here carries a callable: the kernel owns the time, so a client may only say what
-it wants, not when or how.
+Every command names a ``session`` except the ones about the set of sessions, and ``Offer`` — a command
+about the connection itself. Nothing here is a callback and nothing here carries a callable: the kernel
+owns the time, so a client may only say what it wants, not when or how.
 
 :class:`Open` is the one place a trajectory can start somewhere else: ``seed_from`` copies the chain
 ending at another entry (possibly in another session) into this one. That copy is what "compact into
@@ -124,5 +124,36 @@ class Export(Command, tag="export", frozen=True, kw_only=True):
     path: str = ""
 
 
+class OfferedTool(Struct, frozen=True, kw_only=True):
+    """One tool a client offers: its name, the shape of its arguments, and whether it is always there.
+
+    ``schema`` is the provider's own JSON Schema **text**, and it is empty for a name the kernel has a
+    shape for — the asking tools. A client may not say what shape the kernel's own question has, and
+    the kernel does not take somebody else's word for a tool it already defines (§10.8).
+
+    ``resident`` is the offer's promise that this tool exists before anything asks for it. The kernel's
+    name table cannot express "resident while a client is attached", so the client says it.
+    """
+
+    name: str = ""
+    schema: str = ""
+    resident: bool = False
+
+
+class Offer(Command, tag="offer", frozen=True, kw_only=True):
+    """The tools this client can run, said when it connects.
+
+    About the connection and not about a session — the inherited ``session`` is unused, as it is for
+    :class:`ListSessions`. A second ``Offer`` replaces the first rather than adding to it: it is the
+    same client, and what it can run is whatever it last said, which is also how a client withdraws a
+    tool it no longer has.
+
+    A name the kernel already has is refused, one by one, and the refusal is an event: attaching a
+    tool changes what every session in this kernel is shown, so it is never silent (§10.8).
+    """
+
+    tools: tuple[OfferedTool, ...] = ()
+
+
 #: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
-type AnyCommand = Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export
+type AnyCommand = Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export | Offer

@@ -40,7 +40,17 @@ from composat import Component
 from platformdirs import user_data_path
 
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
-from plyngent.kernel.trail import STATE_CHANGE_TAG, AnyRecord, Entry, Shape, StateChange, Trail
+from plyngent.kernel.trail import (
+    STATE_CHANGE_TAG,
+    SUMMARY_TAG,
+    AnyRecord,
+    Entry,
+    Shape,
+    StateChange,
+    Summary,
+    Trail,
+    as_message,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -123,10 +133,19 @@ MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2)
 
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
-#: rebuildable and may therefore be dropped rather than migrated.
-PROJECTOR = 1
+#: rebuildable and may therefore be dropped rather than migrated. Version 2 reads a ``summary`` as the
+#: message it stands for; version 1 skipped it, and nothing it wrote can be true of a chain that has one.
+PROJECTOR = 2
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
+
+#: The tags a conversation continues from: what a model reads, plus the summary that stands in for what
+#: it read before. One set, two uses — the placeholder list for the one query that names them (:meth:`head`)
+#: and the filter a projection applies — so what a turn may continue and what a model is shown cannot
+#: drift.
+_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG}
+_CONVERSATION = tuple(sorted(_CONVERSATION_TAGS))
+_CONVERSATION_IN = ", ".join("?" for _ in _CONVERSATION)
 
 #: One append: the number, the parent check and the row, as one statement.
 #:
@@ -305,8 +324,11 @@ class SqliteTrail(Trail):
 
     @override
     async def head(self, session: str) -> Entry | None:
-        """The entry that arrived last, which is where a conversation is normally continued from."""
-        found = await self._read(_COLUMNS + " WHERE session = ? ORDER BY seq DESC LIMIT 1", (session,))
+        """The newest entry a conversation continues from — the bookkeeping does not count."""
+        found = await self._read(
+            _COLUMNS + f" WHERE session = ? AND tag IN ({_CONVERSATION_IN}) ORDER BY seq DESC LIMIT 1",
+            (session, *_CONVERSATION),
+        )
         return None if found is None else _entry(session, found)
 
     @override
@@ -337,7 +359,8 @@ class SqliteTrail(Trail):
         chain = await self._read_all(_CHAIN, (session, row))
         if not chain:
             raise ValueError(_broken_chain(begin_after, session))
-        messages = tuple(_message(payload) for tag, payload in chain if tag in MODEL_TAGS)
+        records = (_decode(tag, payload) for tag, payload in chain if tag in _CONVERSATION_TAGS)
+        messages = tuple(message for record in records if (message := as_message(record)) is not None)
         remembered = msgspec.json.encode(list(messages)).decode()
         _ = await self._execute(
             "INSERT OR REPLACE INTO projection (session, entry, projector, messages) VALUES (?, ?, ?, ?)",
@@ -482,7 +505,7 @@ class Journal(Component, Trail):
 
     @override
     async def head(self, session: str) -> Entry | None:
-        """The entry that arrived last, which is where a conversation is normally continued from."""
+        """The newest entry a conversation continues from, which is where a turn may grow."""
         return await self._backend.head(session)
 
     @override
@@ -529,11 +552,13 @@ def _decode(tag: str, payload: str) -> AnyRecord:
     """One record back out of its row, by the tag the row already keeps for exactly this reason.
 
     Not a union decode: ``msgspec`` refuses a union whose members disagree about the name of their tag
-    field, and the two kinds of record do — a message is tagged ``role`` and a state change ``type``.
-    The tag is a column here, so reading it is one branch and no JSON guessing.
+    field, and the kinds of record do — a message is tagged ``role`` while a state change and a summary
+    are tagged ``type``. The tag is a column here, so reading it is one branch and no JSON guessing.
     """
     if tag == STATE_CHANGE_TAG:
         return msgspec.json.decode(payload, type=StateChange)
+    if tag == SUMMARY_TAG:
+        return msgspec.json.decode(payload, type=Summary)
     return _message(payload)
 
 

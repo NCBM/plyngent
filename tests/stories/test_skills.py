@@ -326,7 +326,7 @@ async def test_asking_for_the_group_twice_costs_one_change_of_the_tool_set(
 
     assert "skills(" in story.requests()[0].system, "the first request says there is a group to ask for"
     assert "skills(" not in story.requests()[-1].system, "and after asking it is not missing any more"
-    assert story.toolset_epoch == 1, "asking twice in one answer is one change of the tool set, not two"
+    assert story.toolset_epoch == 2, "the client's own offer was the first change; asking twice is the second"
 
 
 async def test_a_kernel_with_no_skills_directory_has_no_skill_tools(story_with: Scripted) -> None:
@@ -340,7 +340,7 @@ async def test_a_kernel_with_no_skills_directory_has_no_skill_tools(story_with: 
     await story.type("what skills are there?")
 
     assert (await _told(story)).splitlines() == [
-        "no group named 'skills'; there are: document, fs, net, process, session"
+        "no group named 'skills'; there are: client:c1, document, fs, net, process, session"
     ]
     assert told(story.requests()[1]) == "no tool is named 'skill_list'", "a name nothing has, answered as such"
     assert "skills" not in story.requests()[0].system, "and the line a model is given never mentions it"

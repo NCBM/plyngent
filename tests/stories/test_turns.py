@@ -60,9 +60,9 @@ async def test_the_model_is_offered_the_residents_and_told_what_is_missing(story
     (asked,) = story.requests()
     names = [tool.name for tool in asked.tools]
     assert names == sorted(names), "the block sits in front of the prompt, so its order is the name's"
-    assert set(names) == set(RESIDENT), "a session is offered what it always has, and nothing else"
+    assert set(names) == {*RESIDENT, "ask_user_line"}, "what it always has, plus what the client offers"
     assert asked.system == (
-        "5 more groups (14 tools): document(1), fs(5), net(1), process(6), session(1) — "
+        "6 more groups (15 tools): client:c1(1), document(1), fs(5), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one"
     ), "and one line says what it is not seeing, because a group nobody mentions cannot be asked for"
 

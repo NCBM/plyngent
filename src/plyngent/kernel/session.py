@@ -47,6 +47,12 @@ DISCLOSURE = "disclosure"
 #: the conversation is opened again (§10.9).
 TODOS = "todos"
 
+#: The key the compaction ledger is written under: how many times a summary changed the shape of what
+#: the next prompt holds. A third key in the same vocabulary, and the second of the two numbers a
+#: provider cache keys on (§10.5): the tools move, and the plan moves, and neither has to move for the
+#: other to.
+PROMPT_PLAN = "prompt-plan"
+
 
 @dataclass(frozen=True, slots=True)
 class TurnCtx:
@@ -256,6 +262,51 @@ class Session(Component):
 
         return await self.change(DISCLOSURE, mutate)
 
+    async def notice_tools(self) -> int:
+        """Say this session's tool set moved without it asking, and answer the number it stands at.
+
+        Two things move a session's tool set besides its own asking, and neither is something it can
+        write itself: a client attaching its tools and a client leaving with them. Both change the
+        block the next request carries, so both have to change the number a provider cache keys on —
+        otherwise the prefix moves quietly, and a miss we caused is a miss we cannot account for
+        (§10.5, §10.8).
+
+        The disclosure's groups are rewritten unchanged: what moved is the set, not what was asked for.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, int]:
+            shown, epoch = _disclosure(before)
+            return _disclosure_value(shown, epoch + 1), epoch + 1
+
+        return await self.change(DISCLOSURE, mutate)
+
+    # -- what the prompt plan is made of -------------------------------------------
+
+    @property
+    def prompt_plan_epoch(self) -> int:
+        """How many times what the next prompt holds has changed — every compaction, so far.
+
+        The second of the two numbers a provider cache keys on (§10.5), and a separate one because the
+        two move for different reasons: a disclosure changes the tools block, and a compaction changes
+        the conversation under it. Keeping them apart is what makes a cache miss attributable to one of
+        them instead of to "something happened".
+        """
+        return _epoch(self._state.get(PROMPT_PLAN))
+
+    async def note_compaction(self) -> int:
+        """Say a summary just changed what the next prompt holds, and answer the number it stands at.
+
+        Written by whoever wrote the summary, because the count lives beside the history it counts: a
+        session reopened after a compaction has to know the plan moved, or the first request of the new
+        process would claim a prefix no provider ever answered for.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, int]:
+            epoch = _epoch(before) + 1
+            return msgspec.json.encode({"epoch": epoch}).decode(), epoch
+
+        return await self.change(PROMPT_PLAN, mutate)
+
     # -- turns ---------------------------------------------------------------------
 
     async def begin_turn(self, *, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT) -> TurnCtx:
@@ -411,3 +462,21 @@ def _disclosure(value: str | None) -> tuple[frozenset[str], int]:
 def _disclosure_value(shown: frozenset[str], epoch: int) -> str:
     """One disclosure setting as the text written under its key — the whole set, not a difference."""
     return msgspec.json.encode({"groups": sorted(shown), "toolset_epoch": epoch}).decode()
+
+
+def _epoch(value: str | None) -> int:
+    """The number a counter setting holds; a value this build cannot read is a counter at zero.
+
+    Read here rather than in :meth:`Session.load` for the same reason a disclosure is: a stored value a
+    later build cannot parse costs a forgotten count and not an unopenable conversation.
+    """
+    if not value:
+        return 0
+    try:
+        record = msgspec.json.decode(value)
+    except msgspec.DecodeError:
+        return 0
+    if not isinstance(record, dict):
+        return 0
+    epoch = cast("dict[str, object]", record).get("epoch")
+    return epoch if isinstance(epoch, int) else 0

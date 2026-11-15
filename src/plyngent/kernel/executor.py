@@ -52,11 +52,12 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.cancel import Cancelled
+from plyngent.kernel.client import declared
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display, key
-from plyngent.kernel.toolresult import Document, Hint, ToolResult
-from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Role, argument
+from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
+from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.event import DocumentStored, ToolCalled, ToolReturned
 
@@ -104,6 +105,9 @@ class _Call:
     name: str
     spec: ToolSpec | None
     args: object
+    #: The arguments as the model spelled them. Kept because a call that leaves this process has to
+    #: declare what it sent, and the decoded package is not that text.
+    raw: str = ""
     #: The answer when nothing runs — a name nobody has, arguments that are not this tool's.
     refusal: ToolResult | None = None
     held: tuple[Held, ...] = ()
@@ -226,7 +230,9 @@ class ToolExecutor:
             async with ctx.host.locks.hold(reads=reads, writes=writes):
                 return await env.scope().guard(spec.run(env, args))
         except Cancelled:
-            return ToolResult.of(Failure.LIMIT, "stopped")
+            # A call that was stopped still left this process, so it still declares what it sent. The
+            # handler normally records that, and a stopped call never gets as far as a result of its own.
+            return ToolResult.of(Failure.LIMIT, "stopped", effects=_sent(spec, node.raw))
 
     async def _approve(self, ctx: TurnCtx, node: _Call) -> ToolResult | None:
         """Put this call to a person when its posture says to; ``None`` when nothing has to be asked.
@@ -254,6 +260,18 @@ class ToolExecutor:
     def _emit(self, ctx: TurnCtx, event: AnyEvent) -> None:
         """Say what a call is doing, through the same channel every other claim travels on."""
         ctx.host.human.emit(event)
+
+
+def _sent(spec: ToolSpec, arguments: str) -> Effects:
+    """What this call sent out of this process, or nothing when it stayed here.
+
+    A tool that declares :attr:`~plyngent.kernel.toolspec.Res.CLIENT` has its effect in somebody
+    else's process, so the only honest record is the declaration that it was asked for — which is why
+    it is written even for a call that was stopped before it could come back (§10.8).
+    """
+    if not spec.uses & Res.CLIENT:
+        return Effects()
+    return Effects(external=(declared(spec, arguments),))
 
 
 def _read(spec: ToolSpec, arguments: str) -> tuple[object, None] | tuple[None, ToolResult]:
@@ -335,7 +353,7 @@ def _prepared(ctx: TurnCtx, catalog: ToolCatalog, view: ToolView, calls: Sequenc
             nodes.append(_Call(call=address, name=call.tool, spec=None, args=None, refusal=unanswered))
             continue
         args, refusal = _read(spec, call.arguments)
-        node = _Call(call=address, name=call.tool, spec=spec, args=args, refusal=refusal)
+        node = _Call(call=address, name=call.tool, spec=spec, args=args, refusal=refusal, raw=call.arguments)
         if args is not None:
             node.held, node.refused = _paths(ctx, spec, args)
         nodes.append(node)

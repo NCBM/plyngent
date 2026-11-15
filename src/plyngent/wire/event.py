@@ -107,6 +107,31 @@ class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
     sessions: tuple[ListedSession, ...] = ()
 
 
+class Compacted(Event, tag="compacted", frozen=True, kw_only=True):
+    """A summary was written, and where it sits.
+
+    ``entry`` is the summary itself, and a frontend needs it: a summary is a place a conversation may
+    continue from, so a client that compacted and then kept writing to the entry it was on before would
+    continue beside the compression instead of past it. ``chars`` is how much text now stands in for the
+    stretch that went away — the one number that says whether the compaction was worth its cost.
+    """
+
+    session: str = ""
+    entry: str = ""
+    chars: int = 0
+
+
+class CompactRefused(Event, tag="compact-refused", frozen=True, kw_only=True):
+    """A compaction wrote nothing, and why.
+
+    An event and not a receipt, for the reason every outcome here is one (D5): a command has no reply,
+    so what came of it is said on the lane everything else is said on.
+    """
+
+    session: str = ""
+    reason: str = ""
+
+
 class DocumentStored(Event, tag="document-stored", frozen=True, kw_only=True):
     """A body was kept outside the conversation; ``document`` is the handle that reaches it back.
 
@@ -177,6 +202,21 @@ class ToolReturned(Event, tag="tool-returned", frozen=True, kw_only=True):
     summary: str = ""
 
 
+class OfferRefused(Event, tag="offer-refused", frozen=True, kw_only=True):
+    """One tool a client offered was not taken, and why.
+
+    ``name`` is the tool, and it is empty when the refusal is about the whole offer rather than about
+    one of its tools — a connection that cannot do offers at all refuses every offer it is sent, and
+    says so once.
+
+    It is an event and not a reply because a command has no reply (D5): the client learns what came of
+    its offer from the same lane everything else comes on.
+    """
+
+    name: str = ""
+    reason: str = ""
+
+
 class Batch(Event, tag="batch", frozen=True, kw_only=True):
     """Several events handed over as one, because the client is behind.
 
@@ -219,10 +259,13 @@ type AnyEvent = (
     | TurnFinished
     | TurnRefused
     | SessionsListed
+    | Compacted
+    | CompactRefused
     | DocumentStored
     | KernelLeaving
     | AssistantText
     | ToolCalled
     | ToolReturned
+    | OfferRefused
     | Batch
 )

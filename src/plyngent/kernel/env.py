@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, final, override
 
+from plyngent.kernel.client import NO_CLIENT
 from plyngent.kernel.toolspec import Res
 
 if TYPE_CHECKING:
     from plyngent.kernel.cancel import Scope
     from plyngent.kernel.catalog import ToolView
+    from plyngent.kernel.client import Client
     from plyngent.kernel.documents import Documents
     from plyngent.kernel.events import Human
     from plyngent.kernel.net.policy import NetPolicy
@@ -192,6 +194,20 @@ class Env:
         if not self._uses & ASKING:
             self._refused("human", ASKING)
         return self._ctx.host.human
+
+    @property
+    def client(self) -> Client:
+        """The client that offered this tool, and the one way to run one of its tools.
+
+        Granted by :attr:`Res.CLIENT`, which is the resource with the least certainty attached to it:
+        the call happens in another process, this one records that it was declared and cannot know
+        whether it happened (§10.8). Nobody offering is :data:`~plyngent.kernel.client.NO_CLIENT`
+        rather than a missing attribute — a tool that reaches here without a client attached is a
+        call that lost its client, which is an answer, not a bug in the declaration.
+        """
+        self._granted(Res.CLIENT, "client")
+        attached = self._ctx.host.offers.attached
+        return NO_CLIENT if attached is None else attached
 
     def _granted(self, resource: Res, name: str) -> None:
         if not self._uses & resource:

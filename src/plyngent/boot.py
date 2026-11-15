@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
-from plyngent.kernel.catalog import BUILTIN, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN
+from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
@@ -34,7 +35,8 @@ from plyngent.kernel.pty.registry import PtyRegistry
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
-from plyngent.wire.manifest import KernelManifest, command_specs
+from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS
+from plyngent.wire.manifest import CLIENT_OFFER, KernelManifest, command_specs
 
 if TYPE_CHECKING:
     from composat import Component, ComponentKey
@@ -122,6 +124,7 @@ async def install(
     web: Web | None = None,
     skills: Skills | None = None,
     journal: Path | str | None = None,
+    deadline: float | None = None,
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
@@ -156,6 +159,10 @@ async def install(
 
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
+
+    ``deadline`` is how long a question to a person, or a call to one of the client's own tools, may
+    wait before it counts as unanswered. It belongs to the connection and not to a session, so it is
+    set where the connection is built, and ``None`` is the transport's own default.
     """
     if transport not in KERNEL_TRANSPORTS:
         msg = f"{transport!r} is not a transport this kernel can open; it knows {KERNEL_TRANSPORTS}"
@@ -168,6 +175,7 @@ async def install(
             Declaration(PtyBroker),
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
+            Declaration(Offers, instance=host),
             Declaration(ModelChannel, instance=host, args=(model,)),
             Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
@@ -185,15 +193,14 @@ async def install(
         msg = f"the host at {root!r} did not come up: {started.failed}"
         raise RuntimeError(msg)
 
-    link = InProcLink(manifest=KernelManifest(commands=command_specs()))
-    # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
-    # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4).
-    serving = Serving(
-        assembly,
-        host=host,
-        link=link,
-        catalog=ToolCatalog((*BUILTIN, *net_specs(web), *skill_specs(skills))),
+    link = InProcLink(
+        manifest=KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,)),
+        timeout=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
     )
+    # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
+    # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
+    # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
+    serving = Serving(assembly, host=host, link=link, specs=(*BUILTIN, *net_specs(web), *skill_specs(skills)))
     watch = asyncio.create_task(_replace_the_broker(assembly, Declaration(PtyBroker).key))
     return Installed(assembly, serving, link, asyncio.create_task(serving.run()), watch)
 

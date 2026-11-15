@@ -1,11 +1,11 @@
-"""One connection, three lanes: the only way in or out of a kernel.
+"""One connection, four streams: the only way in or out of a kernel.
 
 A client and a kernel share this object — the client holds its far face, the kernel its near one —
 and nothing else. The faces are methods on one value rather than a pair of channels, because a
 channel pair has to name a direction, and a direction read from the wrong end is a bug that still
 works in one process (R2.1 D8).
 
-The lanes differ in exactly one thing, and it is the reason they are separate objects:
+The streams differ in exactly one thing, and it is the reason they are separate objects:
 
 * ``commands`` — client to kernel, never dropped and never reordered. Unbounded here because a client
   that cannot keep up is stopped by the transport it writes through, not by losing an instruction.
@@ -15,6 +15,9 @@ The lanes differ in exactly one thing, and it is the reason they are separate ob
 * ``questions`` — kernel to client and the answer back, never dropped. A question that disappeared
   would leave the kernel waiting on an answer nobody can give, and its deadline would turn that into
   a silent refusal. So it is not an event and it is not folded.
+* ``invocations`` — the same lane for the other kind of asking: a tool the client offered, called and
+  answered. Never dropped either, and it differs from ``questions`` in exactly one rule — a
+  disconnect does not answer a call that is in flight, it lets the deadline do it (§10.8).
 
 What is *not* here yet: replay. ``Ack`` carries the watermark a replay would start from, and the
 watermark already drives folding and liveness, but replaying means keeping the messages a client
@@ -42,7 +45,9 @@ from plyngent.wire.ask import (
     AskSite,
     Confirmation,
     FreeText,
+    Invocation,
     Picked,
+    Returned,
     Secret,
     Selection,
     Written,
@@ -323,10 +328,11 @@ class _Waiting(NamedTuple):
 
 
 class InProcLink:
-    """A kernel and one client, in one process, over three lanes on one object.
+    """A kernel and one client, in one process, over four streams on one object.
 
-    The kernel side is :meth:`emit` and :meth:`ask`; the client side is :meth:`submit`,
-    :meth:`events`, :meth:`questions`, :meth:`answer` and :meth:`ack` — the two halves of
+    The kernel side is :meth:`emit`, :meth:`ask` and :meth:`invoke`; the client side is
+    :meth:`submit`, :meth:`events`, :meth:`questions`, :meth:`answer`, :meth:`invocations`,
+    :meth:`completed` and :meth:`ack` — the two halves of
     :class:`~plyngent.wire.link.KernelSide` and :class:`~plyngent.wire.link.KernelLink`. Holding both
     is the point: an in-process client is not allowed a shortcut past the lanes, because a shortcut
     is an API that no other transport can honour and that no later change can remove. What a client
@@ -342,7 +348,9 @@ class InProcLink:
     _commands: Stream[AnyCommand]
     _events: EventLane
     _questions: Stream[AnyAsk]
+    _invocations: Stream[Invocation]
     _waiting: dict[int, _Waiting]
+    _running: dict[int, asyncio.Future[Returned]]
     _timeout: float | None
     _next_id: int
     _closed: bool
@@ -360,6 +368,7 @@ class InProcLink:
         self.manifest = manifest if manifest is not None else KernelManifest()
         self._commands = Stream()
         self._questions = Stream()
+        self._invocations = Stream()
         self._events = EventLane(
             capacity=backlog,
             batch_items=batch_items,
@@ -367,6 +376,7 @@ class InProcLink:
             clock=clock,
         )
         self._waiting = {}
+        self._running = {}
         self._timeout = timeout
         self._next_id = 1
         self._closed = False
@@ -415,6 +425,33 @@ class InProcLink:
         """Read what the client asked for, oldest first, until the connection ends."""
         return self._commands.reader()
 
+    async def invoke(self, invocation: Invocation) -> Returned:
+        """Ask the client to run one of its tools, and wait for that one answer — or for the deadline.
+
+        Nobody answering is ``Returned(ok=False)`` and nothing more: this side cannot tell a client
+        that is gone from one that is slow, and which of the two it was changes nothing about what the
+        caller owes its history — an unanswered call is a failure either way (R2.1 D15, §10.8).
+
+        Unlike a question, a call is *not* released when the connection closes: a disconnect is often
+        the gap before a reconnect, and turning it into a verdict on a call that may still be running
+        is exactly what a deadline is for (:meth:`close`).
+        """
+        if self._closed:
+            return Returned(ok=False)
+        id_ = invocation.id or self._next_id
+        self._next_id = max(self._next_id, id_) + 1
+        if invocation.id != id_:
+            invocation = replace(invocation, id=id_)
+        waiter: asyncio.Future[Returned] = asyncio.get_running_loop().create_future()
+        self._running[id_] = waiter
+        self._invocations.put(invocation)
+        try:
+            return await asyncio.wait_for(waiter, self._timeout)
+        except TimeoutError:
+            return Returned(ok=False)
+        finally:
+            _ = self._running.pop(id_, None)
+
     # -- the client's face ---------------------------------------------------------
 
     def submit(self, command: AnyCommand) -> bool:
@@ -449,6 +486,23 @@ class InProcLink:
         """Read what the kernel is waiting on, oldest first — the lane that is never folded."""
         return self._questions.reader()
 
+    def invocations(self) -> AsyncIterator[Invocation]:
+        """Read what the kernel wants this client to run, oldest first — the same lane as questions."""
+        return self._invocations.reader()
+
+    def completed(self, returned: Returned) -> bool:
+        """Deliver what one of this client's tools came back with; ``False`` when that call is over.
+
+        A call the kernel stopped waiting for is gone, and a late answer is dropped rather than taken:
+        the result was written when the deadline passed, and a second one would be a second history.
+        """
+        waiter = self._running.get(returned.id)
+        if waiter is None or waiter.done():
+            return False
+        del self._running[returned.id]
+        waiter.set_result(returned)
+        return True
+
     @property
     def acked(self) -> int:
         """The watermark this client last claimed."""
@@ -464,6 +518,10 @@ class InProcLink:
 
         A question that is still queued is dropped rather than handed over, because nobody could act
         on the answer: the turn that asked it is not waiting for it any more.
+
+        A call in flight is the one exception, and being the exception is the reason the two kinds are
+        two kinds: it is left to its own deadline instead of being answered here, so a client that
+        vanished does not decide what happened to work it may still be doing (§10.8, E47).
         """
         if self._closed:
             return
@@ -471,6 +529,8 @@ class InProcLink:
         self._commands.close()
         self._questions.replace(())
         self._questions.close()
+        self._invocations.replace(())
+        self._invocations.close()
         self._events.close()
         for waiting in tuple(self._waiting.values()):
             if not waiting.future.done():

@@ -1,4 +1,12 @@
-"""The one channel by which the kernel asks somebody outside it a question, and the shape of the answer.
+"""The one channel by which the kernel asks somebody outside it for something, and the shape of the answer.
+
+Two things travel here and they are one idea asked of two different people: a **question** for whoever
+is talking to the kernel (:class:`Ask` and :class:`Answer`), and an **invocation** of a tool that a
+client offered (:class:`Invocation` and :class:`Returned`). They share the lane because they share the
+property the lane exists for — neither may be dropped, and both are paired with one reply — and they
+are kept apart because a question's answer is a person's words while a call's answer is whatever
+happened: every reader of an answer asks "did a person say yes" of it, and a fifth kind of question
+would make that question unanswerable.
 
 This is its own lane, not a member of the event stream, and the reason is measurable rather than
 aesthetic: events may be coalesced or dropped when a client falls behind, and a question may not. An
@@ -179,3 +187,35 @@ def unanswered(ask: AnyAsk) -> AnyAnswer:
             return Picked(id=ask.id)
         case FreeText() | Secret():
             return Written(id=ask.id)
+
+
+class Invocation(Struct, frozen=True, kw_only=True):
+    """The kernel asking a client to run one of the tools that client offered.
+
+    ``session`` and ``turn`` are where the call belongs, for the same reason a question names its
+    place: a frontend holding several sessions shows the call under the right one. ``tool`` is the
+    name the client offered, and ``arguments`` is the model's own JSON text, unread by the kernel
+    beyond "it is an object" — the schema the client declared is what it is valid against.
+
+    An ``id`` of ``0`` means "name this one for me", exactly as it does for a question: uniqueness
+    within one connection is the connection's promise, not the caller's.
+    """
+
+    session: str = ""
+    turn: int = 0
+    id: int = 0
+    tool: str = ""
+    arguments: str = ""
+
+
+class Returned(Struct, frozen=True, kw_only=True):
+    """What a client's tool came back with: whether it ran, and the text it would have shown a model.
+
+    ``text`` is untrusted. It is a client's words about its own work, so the kernel sends it on as
+    prose and reads no status, no path and no next step out of it (§10.8): a client may not forge a
+    hint, and may not claim it changed a file.
+    """
+
+    id: int = 0
+    ok: bool = False
+    text: str = ""

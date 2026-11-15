@@ -69,6 +69,7 @@ OUTCOMES: dict[Failure, tuple[Status, Retry]] = {
     Failure.LIMIT: (Status.FAILED, Retry.FIX_ARGS),
     Failure.TIMEOUT: (Status.FAILED, Retry.SAME_CALL),
     Failure.PROTOCOL: (Status.FAILED, Retry.FIX_ARGS),
+    Failure.CLIENT: (Status.FAILED, Retry.NEVER),
     Failure.BUG: (Status.FAILED, Retry.NEVER),
 }
 

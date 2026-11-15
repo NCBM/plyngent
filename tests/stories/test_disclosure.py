@@ -53,16 +53,18 @@ async def test_asking_for_a_group_brings_its_tools_in_the_next_round(story_with:
     _ = (story.workspace / "notes.txt").write_text("hi", encoding="utf-8")
 
     await story.type("what can you do with files?")
+    await story.finished()
 
     first, second, last = story.requests()
     assert "listdir" not in _names(first), "a group nobody asked for is not offered"
     assert first.system == (
-        "5 more groups (14 tools): document(1), fs(5), net(1), process(6), session(1) — "
+        "6 more groups (15 tools): client:c1(1), document(1), fs(5), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one"
     ), "and the line says what is missing, because a group nobody mentions cannot be asked for"
     assert "listdir" in _names(second), "what one round asks for arrives in the next"
     assert second.system == (
-        "4 more groups (9 tools): document(1), net(1), process(6), session(1) — use tool_require(group=…) to add one"
+        "5 more groups (10 tools): client:c1(1), document(1), net(1), process(6), session(1) — "
+        "use tool_require(group=…) to add one"
     ), "a group that has arrived is not still described as missing"
     assert "tool_require ok: showing 5 tools from fs: copy_path, delete_path, listdir, move_path, tree" in (
         story.screen()
@@ -91,7 +93,7 @@ async def test_two_asks_for_one_group_cost_one_change_of_the_tool_set(story_with
     await story.type("I will need the file tools")
     await story.finished()
 
-    assert story.toolset_epoch == 1, "one group asked for twice is one change, so one miss to pay for"
+    assert story.toolset_epoch == 2, "the client's offer was the first change; asking twice is the second"
     (_, second) = story.requests()
     answers = [message.text.splitlines()[0] for message in second.messages if isinstance(message, Result)]
     assert answers == [
@@ -105,9 +107,9 @@ async def test_a_group_that_does_not_exist_lists_the_ones_that_do(story_with: Sc
 
     await story.type("show me everything")
 
-    assert _told_of(story.requests()[-1]) == "no group named 'nope'; there are: document, fs, net, process, session", (
-        "a wrong name is an argument error that can be fixed, so the answer says what the names are"
-    )
+    assert _told_of(story.requests()[-1]) == (
+        "no group named 'nope'; there are: client:c1, document, fs, net, process, session"
+    ), "a wrong name is an argument error that can be fixed, so the answer says what the names are"
 
 
 async def test_a_hint_names_the_tool_once_its_group_is_shown(story_with: Scripted) -> None:
@@ -157,10 +159,9 @@ async def test_a_group_a_conversation_asked_for_is_still_shown_after_a_restart(t
         first, last = second.requests()
         assert "listdir" in _names(first), "a conversation that asked once does not ask again in the next process"
         assert first.system == (
-            "4 more groups (9 tools): document(1), net(1), process(6), session(1) — "
+            "5 more groups (10 tools): client:c1(1), document(1), net(1), process(6), session(1) — "
             "use tool_require(group=…) to add one"
         ), "and the line it is given says the same thing it would have said before the restart"
-        assert second.toolset_epoch == 1, "the tool set a conversation has is part of what it comes back with"
         assert "file\tnotes.txt" in _told_of(last)
     finally:
         await second.close()

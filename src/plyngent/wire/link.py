@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from plyngent.wire.ask import AnyAnswer, AnyAsk
+    from plyngent.wire.ask import AnyAnswer, AnyAsk, Invocation, Returned
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent
     from plyngent.wire.flow import Ack
@@ -66,12 +66,24 @@ class KernelLink(Protocol):
         """
         ...
 
+    def completed(self, returned: Returned) -> bool:
+        """Deliver what one of this client's tools came back with; ``False`` when that call is over.
+
+        A call is over when the kernel stopped waiting for it — its deadline passed, or the turn that
+        made it went away — and a late answer then changes nothing: the result is already written.
+        """
+        ...
+
     def events(self) -> AsyncIterator[AnyEvent]:
         """Read what the kernel says, in emission order, until it closes the lane."""
         ...
 
     def questions(self) -> AsyncIterator[AnyAsk]:
         """Read what the kernel is waiting on, oldest first — the lane that is never folded."""
+        ...
+
+    def invocations(self) -> AsyncIterator[Invocation]:
+        """Read what the kernel wants this client to run, oldest first — the same lane as questions."""
         ...
 
     def close(self) -> None:
@@ -88,7 +100,13 @@ class KernelSide(Protocol):
 
     The kernel cannot read the client's events or write its commands, which is the whole point: the
     only way to be a client is to be given a client's value.
+
+    ``manifest`` is here as well as on the client's face, and it is one value: what a kernel advertised
+    and what it is willing to honour have to be the same document, or a capability in a handshake would
+    be a promise nothing keeps.
     """
+
+    manifest: KernelManifest
 
     def emit(self, event: AnyEvent) -> None:
         """Say something outward without waiting for anyone to see it."""
@@ -100,6 +118,15 @@ class KernelSide(Protocol):
         within its own life (R2.1 D18). The answer is of the kind the question admits
         (:func:`plyngent.wire.ask.answer_kind`); a question nobody answered answers as
         :func:`plyngent.wire.ask.unanswered` says.
+        """
+        ...
+
+    async def invoke(self, invocation: Invocation) -> Returned:
+        """Ask the client to run one of its own tools, and wait for what came of it — or the deadline.
+
+        The same deadline a question has, and the same "``0`` names this one for me". Nobody answering
+        is not answered here: what a lost call means is the caller's decision, because "the client is
+        gone" and "the client is slow" look the same from this side (R2.1 D15).
         """
         ...
 

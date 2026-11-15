@@ -39,6 +39,10 @@ class Failure(StrEnum):
     LIMIT = "limit"
     TIMEOUT = "timeout"
     PROTOCOL = "protocol"
+    #: A tool the client offered was called and never answered: the client is gone, or the deadline
+    #: passed. What it did is unknown on purpose — the effect happened in somebody else's process, so
+    #: the call is neither "refused" nor "nothing happened" (§10.8).
+    CLIENT = "client"
     BUG = "bug"
 
     @classmethod

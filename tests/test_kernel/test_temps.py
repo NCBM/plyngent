@@ -9,6 +9,7 @@ import pytest
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
@@ -112,11 +113,13 @@ def _two_hosts(tmp_path) -> Assembly:
         Declaration(PtyRegistry, instance="ws-a"),
         Declaration(PtyRegistry, instance="ws-b"),
         Declaration(HumanChannel, instance="ws-a"),
+        Declaration(Offers, instance="ws-a"),
         Declaration(ModelChannel, instance="ws-a"),
         Declaration(WebChannel, instance="ws-a"),
         Declaration(Journal, instance="ws-a", args=(SqliteTrail(":memory:"),)),
         Declaration(Documents, instance="ws-a", args=(":memory:",)),
         Declaration(HumanChannel, instance="ws-b"),
+        Declaration(Offers, instance="ws-b"),
         Declaration(ModelChannel, instance="ws-b"),
         Declaration(WebChannel, instance="ws-b"),
         Declaration(Journal, instance="ws-b", args=(SqliteTrail(":memory:"),)),

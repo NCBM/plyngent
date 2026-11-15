@@ -29,8 +29,10 @@ they hold whichever backend is behind this protocol:
 3. **An entry's payload is one tagged record, and the vocabulary is open.** ``user``, ``assistant``
    (which may carry the calls it asked for) and ``tool-result`` are what a conversation is made of,
    and ``state-change`` is the first tag beside them that no model reads (:class:`StateChange`):
-   which tool groups a session has been shown, and whatever else a session knows about itself. The
-   rest — ``failure``, ``prune``, ``summary``, ``attempt``, ``document-ref`` — each become one more
+   which tool groups a session has been shown, and whatever else a session knows about itself.
+   ``summary`` is the second record of its own kind and the opposite case — what a conversation was
+   compressed into, which a model does read (:class:`Summary`). The
+   rest — ``failure``, ``prune``, ``attempt``, ``document-ref`` — each become one more
    tag when the feature that writes them lands, never a column. Three consequences
    come with that: **a body never enters a row** (a payload too big for one entry is kept in the
    document store and the row carries only the handle); **:meth:`Trail.derive` is the projector** and
@@ -62,7 +64,7 @@ from msgspec import Struct
 
 # Not a type-only import: ``type AnyRecord`` evaluates its members at runtime, and a lazily-undefined
 # name would make a row that carries a message undecodable.
-from plyngent.kernel.model import AnyMessage
+from plyngent.kernel.model import AnyMessage, User
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -91,8 +93,54 @@ class StateChange(Struct, tag=STATE_CHANGE_TAG, frozen=True, kw_only=True):
     value: str = ""
 
 
-#: Everything a row may carry: what a conversation says, and what it knows about itself.
-type AnyRecord = AnyMessage | StateChange
+#: The tag a summary carries. Spelled here because it is half of the record's identity, the same way a
+#: state change's is.
+SUMMARY_TAG = "summary"
+
+#: What a model is told around a summary's text: the heading says this block is a compression rather
+#: than something somebody said, and the closing line says what to do with it. Model-visible wording, so
+#: it is spelled once and pinned by a test.
+SUMMARY_HEADING = "Conversation summary (compacted):"
+SUMMARY_TAIL = "Continue from this summary. Prefer not to re-ask for information already covered."
+
+
+class Summary(Struct, tag=SUMMARY_TAG, frozen=True, kw_only=True):
+    """What a conversation was compressed into: one entry standing in for the ones before it.
+
+    A summary is an ordinary entry with one rule attached — **where it continues is its whole
+    meaning**. ``begin_after`` is the entry it attaches to, so a projection walking the chain reads
+    the kept prefix and then this text, and the compressed stretch is simply no longer on the chain;
+    ``begin_after=None`` makes the summary a root, which is "start the conversation again, same
+    session". Nothing is rewritten and nothing is deleted: the old chain is still there, and a turn
+    continuing from the old tip goes back to before the compression.
+
+    ``replaces`` is **bookkeeping**: the span this text stands for, for people and for an audit. The
+    projection never reads it — which is why changing it cannot change what a model sees, and why it is
+    not checked against the log: it is a note, not a pointer.
+    """
+
+    text: str = ""
+    replaces: tuple[str, str] | None = None
+
+
+#: Everything a row may carry: what a conversation says, what it knows about itself, and what it was
+#: compressed into.
+type AnyRecord = AnyMessage | StateChange | Summary
+
+
+def as_message(record: AnyRecord) -> AnyMessage | None:
+    """What a model reads of one record, or ``None`` when it is not a record a model reads.
+
+    Two records have a meaning of their own and neither is a message. A state change is a fact about
+    the session, and is dropped. A summary is read as one message — the person's turn it stands in for
+    — with the heading saying what it is, because a model handed an unannounced block of prose as its
+    own history would take it for something somebody said.
+    """
+    if isinstance(record, Summary):
+        return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
+    if isinstance(record, StateChange):
+        return None
+    return record
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +221,13 @@ class Trail(ABC):
 
     @abstractmethod
     async def head(self, session: str) -> Entry | None:
-        """The entry that arrived last, which is where a conversation is normally continued from."""
+        """The last entry a conversation continues from — bookkeeping does not count.
+
+        A state change is a fact about the session rather than about a branch of it, so it is written
+        as a root and nothing continues from it (§10.9). That makes "the newest row" the wrong answer
+        for the one caller that asks: a session that disclosed a group before anybody said anything
+        has a newest row and no conversation, and continuing from it would project to nothing.
+        """
 
     @abstractmethod
     async def derive(self, session: str, begin_after: str | None) -> tuple[AnyMessage, ...]:
@@ -181,7 +235,9 @@ class Trail(ABC):
 
         ``None`` is an empty history rather than "the whole journal": a turn that begins at a root
         sees what grows above it and nothing beside it. Only the tags a model understands are read, so
-        an entry that is bookkeeping (a prune, a state change) changes nothing here.
+        an entry that is bookkeeping (a prune, a state change) changes nothing here — and a summary is
+        read as the one message it stands for (:func:`as_message`), so a compressed conversation is
+        given to a model as the text its author wrote instead of the stretch it replaced.
         """
 
     @abstractmethod

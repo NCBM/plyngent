@@ -11,22 +11,25 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from dataclasses import replace
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast, get_args
 
 import pytest
 
 from plyngent import boot, cli, kernel, wire
+from plyngent.cli import offers
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import render
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.catalog import BUILTIN, EVERY, RESIDENT, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalog
+from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.net.web import Web
 from plyngent.kernel.skills import NAME_PATTERN, Skills
 from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
-from plyngent.kernel.tools import fs, net, skills
+from plyngent.kernel.tools import fs, meta, net, skills
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.kernel.toolspec import (
@@ -298,20 +301,58 @@ def test_the_group_table_is_a_fold_over_the_tools() -> None:
 
 
 def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> None:
-    """What is always there, what is missing, and the one line that says so — all from the same fold."""
+    """What is always there, what is missing, and the line that says so — all from the same fold."""
     catalog = ToolCatalog()
     nothing_shown = catalog.view(())
     everything_shown = catalog.view({group for group, _ in catalog.groups()})
 
     assert nothing_shown.names() == tuple(sorted(RESIDENT)), "a resident name that names nothing would show here"
-    assert everything_shown.index() == "", "a session that has been shown everything is told nothing"
+    assert everything_shown.index() == NOBODY, "a session with every group is told one thing: nobody to ask"
+    assert not everything_shown.asks, "and the sentence is the group table's answer, not a second flag"
     assert nothing_shown.index() == (
         "5 more groups (14 tools): document(1), fs(5), net(1), process(6), session(1) — "
-        "use tool_require(group=…) to add one"
+        "use tool_require(group=…) to add one\n" + NOBODY
     ), "the index counts what *this* session cannot reach, and it is a function of the set"
     assert catalog.view({"document", "process", "session"}).index() == (
-        "2 more groups (6 tools): fs(5), net(1) — use tool_require(group=…) to add one"
+        "2 more groups (6 tools): fs(5), net(1) — use tool_require(group=…) to add one\n" + NOBODY
     ), "one group left reads as one group"
+
+
+def test_a_client_group_is_what_says_a_client_is_attached() -> None:
+    """The two things a catalog takes as input rather than derives: residency, and whether one is here.
+
+    Both are the same fact seen twice — a client's tools travel in a ``client:<id>`` group that exists
+    only while it is attached — so neither is a field anybody has to remember to set (§10.8, E44).
+    """
+    offered = replace(meta.TOOL_REQUIRE, name="client_tool", group=f"{CLIENT}:c1")
+    resident = ToolCatalog((*BUILTIN, offered), resident=(*RESIDENT, "client_tool"))
+    hidden = ToolCatalog((*BUILTIN, offered))
+
+    assert resident.view(()).asks and hidden.view(()).asks, "attached is the group, resident or not"
+    assert "client_tool" in resident.view(()).names(), "a resident offer is there without being asked for"
+    assert f"{CLIENT}:c1" not in resident.view(()).index(), "and a group with nothing left in it is not missing"
+    assert dict(hidden.view(()).missing)[f"{CLIENT}:c1"] == 1, "unresident, it is one more group to ask for"
+    assert not ToolCatalog().view(()).asks, "a kernel with no client has nobody to ask"
+
+
+def test_the_asking_tools_are_an_offer_and_never_a_builtin() -> None:
+    """A kernel with nobody attached cannot ask, so these names are not in its table at all (§10.8).
+
+    Written over ``EVERY`` because that is the walk of what this build declares: a name that reached it
+    would be a tool that exists without a client, which is the state the offer exists to end.
+    """
+    assert not {spec.name for spec in EVERY} & ASKING_NAMES, "asking is a client's tool, not this kernel's"
+    assert "ask_user_line" not in ToolCatalog().names()
+
+
+def test_the_terminal_offers_the_two_ways_to_ask_and_nothing_else() -> None:
+    """§10.8: a client offers questions and no other privilege, and it does not shape them itself."""
+    names = {tool.name for tool in offers.TERMINAL.offer}
+
+    assert names == {"ask_user_line", "ask_user_choice"} <= ASKING_NAMES
+    assert set(offers.TERMINAL.handlers) == names, "every tool it offers is one it can run"
+    assert all(not tool.schema for tool in offers.TERMINAL.offer), "the shape of a question is the kernel's"
+    assert "ask_user_form" not in names, "a form needs a multi-field editor, which arrives with R8"
 
 
 def test_a_shown_group_arrives_whole_and_leaves_the_index() -> None:
@@ -335,7 +376,7 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
 
     assert with_backend.view(()).index() == (
         "5 more groups (16 tools): document(1), fs(5), net(3), process(6), session(1) — "
-        "use tool_require(group=…) to add one"
+        "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
     assert {"client_fetch", "builtin_websearch", "web_fetch"} <= set(with_backend.names())
 

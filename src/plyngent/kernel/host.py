@@ -17,6 +17,7 @@ from composat import Component, require
 
 # Not type-only imports: ``require()`` resolves each field's annotation from this module's globals.
 from plyngent.kernel.approvals import Approvals
+from plyngent.kernel.client import Offers  # noqa: TC001
 from plyngent.kernel.documents import Documents  # noqa: TC001
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
 from plyngent.kernel.journal import Journal  # noqa: TC001
@@ -41,6 +42,11 @@ class Host(Component):
     # and detaching it are the same move (`replace`) and two hosts cannot answer for each other's
     # humans. Nobody attached is a channel that answers "no", not a missing one.
     human: HumanChannel = require()
+    # The tools the connection serving this host offers, and the way to call them. A component for the
+    # same reason the human channel is one: attaching a client's tools and detaching them are one
+    # `replace` each, and a reader never sees half of an offer. Nobody offering is a value, not a
+    # missing field (§10.8).
+    offers: Offers = require()
     # The model a turn asks. A channel like the human's, so that installing one is a declaration and
     # swapping it is a `replace`; nothing installed is a value (`None`) rather than a missing field, so a
     # turn can be refused before it starts instead of failing at its first request.

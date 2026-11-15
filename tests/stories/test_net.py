@@ -599,6 +599,7 @@ async def test_with_no_backend_the_web_tools_are_not_in_the_table(story_with: Sc
     )
 
     await story.type("what can reach the web?")
+    await story.finished()
 
     assert any(line.endswith("from net: client_fetch") for line in story.screen()), (
         "a kernel with no backend serves one net tool, and says which"

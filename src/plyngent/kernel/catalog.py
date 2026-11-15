@@ -21,6 +21,10 @@ conversation and each of them is handed a view rather than a table of its own. A
 missing, which is the index line a model is given: a model that is not told there is more cannot ask
 for it, and a model that is told everything exists cannot tell when a call is refused because a group
 was never shown.
+
+One thing about the table is not derived from the tools: which names are resident. A client's offer
+adds to the residents of the sessions it is attached to (§10.8), which a name table written into this
+module could not say, so the set is an input the catalog is handed rather than a constant it holds.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from plyngent.kernel.client import CLIENT
 from plyngent.kernel.model import ToolDecl
 from plyngent.kernel.tools import document, fs, meta, net, process, session, skills
 
@@ -84,17 +89,27 @@ RESIDENT: tuple[str, ...] = (
 )
 
 
+#: What a session is told when no client is attached: the asking tools are not in the table at all, and
+#: a model that is not told why would call one of them and be refused for a name nobody has (§10.8).
+NOBODY = "no interactive client is attached, so nothing can ask a person a question"
+
+
 class ToolCatalog:
     """Name to tool, and the declarations a request carries.
 
     Built once per session (or per turn — it is a frozen table either way). A duplicate name is refused
     at construction: two tools answering to one name would make which one runs depend on the order the
     tuple happened to be written in.
+
+    ``resident`` is what a session has without asking, and it is a parameter because a client's offer
+    adds to it: ``ask_user_line`` is resident while the client that answers with it is attached, and a
+    name table written into this module could not say "while" (§10.8, E44).
     """
 
     _specs: dict[str, ToolSpec]
+    resident: frozenset[str]
 
-    def __init__(self, specs: Iterable[ToolSpec] = BUILTIN) -> None:
+    def __init__(self, specs: Iterable[ToolSpec] = BUILTIN, *, resident: Iterable[str] = RESIDENT) -> None:
         table: dict[str, ToolSpec] = {}
         for spec in specs:
             if spec.name in table:
@@ -102,6 +117,7 @@ class ToolCatalog:
                 raise ValueError(msg)
             table[spec.name] = spec
         self._specs = table
+        self.resident = frozenset(resident)
 
     def __len__(self) -> int:
         return len(self._specs)
@@ -147,7 +163,9 @@ class ToolCatalog:
         order and the byte-stable schemas are the catalog's own (:func:`_declared`), so a request
         assembled from a view and a request assembled from the catalog differ only in what is in them.
         """
-        visible = {name: spec for name, spec in self._specs.items() if name in RESIDENT or _group_of(spec) in disclosed}
+        visible = {
+            name: spec for name, spec in self._specs.items() if name in self.resident or _group_of(spec) in disclosed
+        }
         return ToolView(specs=visible, groups=self.groups())
 
 
@@ -172,6 +190,16 @@ class ToolView:
         return name in self.specs
 
     @property
+    def asks(self) -> bool:
+        """Whether a client is attached, and therefore whether a person can be asked anything.
+
+        Derived from the group table rather than carried beside it: the group a client's tools travel
+        in exists only while it is attached, so its presence *is* the answer, and a second flag could
+        disagree with it.
+        """
+        return any(_is_client(group) for group, _members in self.groups)
+
+    @property
     def missing(self) -> tuple[tuple[str, int], ...]:
         """Which groups still hold tools this session cannot reach, and how many of each."""
         return tuple(
@@ -193,20 +221,25 @@ class ToolView:
         return _declared(self.specs)
 
     def index(self) -> str:
-        """The line that tells a model what it is not seeing, or nothing when it is seeing everything.
+        """The line that tells a model what it is not seeing, and whether there is anybody to ask.
 
         This is the only way a model can know a group exists (§10.4), so it is part of the prompt and
         not of a tool's result: a tool that mentioned the other tools would have to be called first,
-        which is the state this line exists to end.
+        which is the state this line exists to end. The second half is the same argument one step
+        further out: with no client attached, the asking tools are not in the table at all, so the line
+        has to say so rather than leave a model to find out by calling one (§10.8).
         """
-        if not self.missing:
-            return ""
-        hidden = sum(count for _group, count in self.missing)
-        groups = ", ".join(f"{group}({count})" for group, count in self.missing)
-        return (
-            f"{len(self.missing)} more {_many(len(self.missing), 'group')} "
-            f"({hidden} {_many(hidden, 'tool')}): {groups} — use tool_require(group=…) to add one"
-        )
+        parts: list[str] = []
+        if self.missing:
+            hidden = sum(count for _group, count in self.missing)
+            groups = ", ".join(f"{group}({count})" for group, count in self.missing)
+            parts.append(
+                f"{len(self.missing)} more {_many(len(self.missing), 'group')} "
+                f"({hidden} {_many(hidden, 'tool')}): {groups} — use tool_require(group=…) to add one"
+            )
+        if not self.asks:
+            parts.append(NOBODY)
+        return "\n".join(parts)
 
 
 def _declared(specs: Mapping[str, ToolSpec]) -> tuple[ToolDecl, ...]:
@@ -220,6 +253,11 @@ def _declared(specs: Mapping[str, ToolSpec]) -> tuple[ToolDecl, ...]:
 def _group_of(spec: ToolSpec) -> str:
     """The disclosure group a tool travels in, as the name the index line spells."""
     return str(spec.group)
+
+
+def _is_client(group: str) -> bool:
+    """Whether a group is one a client's tools travel in — the one thing that says a client is attached."""
+    return group == CLIENT or group.startswith(f"{CLIENT}:")
 
 
 def _many(count: int, noun: str) -> str:

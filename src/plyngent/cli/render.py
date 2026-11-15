@@ -27,8 +27,11 @@ from plyngent.wire.ask import Confirmation, FreeText, Secret, Selection
 from plyngent.wire.event import (
     AssistantText,
     Batch,
+    Compacted,
+    CompactRefused,
     DocumentStored,
     KernelLeaving,
+    OfferRefused,
     SessionsListed,
     ToolCalled,
     ToolReturned,
@@ -50,7 +53,17 @@ type _Said = AssistantText | ToolCalled | ToolReturned
 #: What the kernel reports about turns and sessions — every event that is not a turn's own content.
 #: Written out rather than inferred from ``AnyEvent`` so that a new kind of news fails at the branch
 #: that has to read it, in whichever half it belongs to.
-type _Reported = TurnStarted | TurnFinished | TurnRefused | SessionsListed | DocumentStored | KernelLeaving
+type _Reported = (
+    TurnStarted
+    | TurnFinished
+    | TurnRefused
+    | SessionsListed
+    | Compacted
+    | CompactRefused
+    | DocumentStored
+    | KernelLeaving
+    | OfferRefused
+)
 
 
 def focus(session: str | None) -> str:
@@ -104,6 +117,10 @@ def _reported(event: _Reported) -> tuple[str, ...]:
             return ("", f"the kernel is leaving{': ' + reason if reason else ''}")
         case SessionsListed(sessions=sessions):
             return ("", f"sessions: {', '.join(_listed(item) for item in sessions) if sessions else 'none'}")
+        case Compacted(session=session, entry=entry, chars=chars):
+            said = (session, f"summary {entry} written ({chars} chars)")
+        case CompactRefused(session=session, reason=reason):
+            said = (session, f"compact refused: {reason}")
         case TurnStarted(session=session, turn=turn, kind=kind):
             said = (session, f"turn {turn} started ({kind})")
         case TurnFinished(session=session, turn=turn, reason=reason):
@@ -113,6 +130,8 @@ def _reported(event: _Reported) -> tuple[str, ...]:
             said = (session, f"turn refused: {reason}{holder_note}")
         case DocumentStored(session=session, document=document, chars=chars):
             said = (session, f"document {document} kept ({chars} chars)")
+        case OfferRefused(name=name, reason=reason):
+            said = ("", f"offer refused: {name} — {reason}" if name else f"offer refused: {reason}")
         case _ as never:
             assert_never(never)
     return said

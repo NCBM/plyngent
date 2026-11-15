@@ -34,9 +34,15 @@ from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Installed, install
 from plyngent.cli.app import App
 from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
+from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.cli.render import question as question_line
+from plyngent.kernel.catalog import BUILTIN
 from plyngent.kernel.host import Host
+from plyngent.kernel.link import InProcLink
+from plyngent.kernel.serving import Serving
 from plyngent.kernel.session import Session
+from plyngent.wire.command import Offer
+from plyngent.wire.manifest import KernelManifest, command_specs
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
@@ -47,6 +53,8 @@ if TYPE_CHECKING:
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import AnyAnswer, AnyAsk
+    from plyngent.wire.command import OfferedTool
+    from plyngent.wire.link import KernelLink
 
 #: How many turns of the loop a story gives the program to react before it looks at the screen.
 #: Turns, not seconds: every wait in a story is a place where the program could have done something.
@@ -138,9 +146,17 @@ class Story:
     _out: io.StringIO
     _err: io.StringIO
     _running: asyncio.Task[int]
+    _others: list[asyncio.Task[None]]
     _code: int | None
 
-    def __init__(self, kernel: Installed, *, session: str, model: Model | None = None) -> None:
+    def __init__(
+        self,
+        kernel: Installed,
+        *,
+        session: str,
+        model: Model | None = None,
+        tools: ClientTools = TERMINAL,
+    ) -> None:
         self.kernel = kernel
         self.session = session
         self.catalog = build(kernel.client.manifest, session=session)
@@ -149,6 +165,7 @@ class Story:
         self._err = io.StringIO()
         self.editor = ScriptedHuman(focus=session, err=self._err)
         self._code = None
+        self._others = []
         self.app = App(
             kernel.client,
             session=session,
@@ -156,6 +173,7 @@ class Story:
             editor=self.editor,
             out=self._out,
             err=self._err,
+            tools=tools,
         )
         self._running = asyncio.create_task(self.app.run())
 
@@ -170,6 +188,8 @@ class Story:
         web: Web | None = None,
         skills: Skills | None = None,
         journal: Path | str | None = None,
+        tools: ClientTools = TERMINAL,
+        deadline: float | None = None,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
@@ -188,12 +208,28 @@ class Story:
         ``journal`` is where the conversation is kept. A story names it, because the alternative is
         writing into the person's own data directory: ``tmp_path`` beside the workspace is where a
         story's history belongs, and a story about a restart names the same path twice.
+
+        ``tools`` is what this client offers the kernel, and ``TERMINAL`` is the ordinary case: the two
+        ways a person can be asked. A story about a client's *own* tool passes a bigger value, because
+        implementing one is what makes it a tool somebody can call — a story cannot pretend that part.
+
+        ``deadline`` is the connection's deadline for a question or a call that nobody answers, which is
+        how a story about one lost call costs a hundredth of a second instead of half a minute.
         """
         root.mkdir(parents=True, exist_ok=True)
         story = cls(
-            await install(root, transport=transport, model=model, web=web, skills=skills, journal=journal),
+            await install(
+                root,
+                transport=transport,
+                model=model,
+                web=web,
+                skills=skills,
+                journal=journal,
+                deadline=deadline,
+            ),
             session=session,
             model=model,
+            tools=tools,
         )
         await story.settle()
         return story
@@ -277,8 +313,34 @@ class Story:
         """
         return self.host.human
 
-    # -- what the session has been shown ---------------------------------------------
+    # -- what the client offers --------------------------------------------------------
 
+    async def offer(self, *tools: OfferedTool) -> None:
+        """Say what this client can run, the way a frontend says it when it connects.
+
+        A stimulus like :attr:`human`: a frontend's own offer travels on the client's face of the
+        connection, so a story sends it the same way the loop does — and this is how a story about
+        offered tools stages one without pretending the terminal offers more than it does.
+        """
+        if not self.kernel.client.submit(Offer(tools=tools)):
+            msg = "the connection was already gone, so the offer went nowhere"
+            raise AssertionError(msg)
+        await self.settle()
+
+    def another_client(self, *, caps: tuple[str, ...] = ()) -> KernelLink:
+        """A second connection to this kernel, served, as a client with the capabilities it was given.
+
+        What it is for is the rule that a capability is a promise: a connection whose manifest does not
+        carry one is refused the command that would need it. It answers nothing — this kernel already
+        has one approval owner — so what it can be used for is what a client *without* those rights
+        can still do, which is exactly the case.
+        """
+        link = InProcLink(manifest=KernelManifest(commands=command_specs(), caps=caps))
+        serving = Serving(self.kernel.assembly, host=DEFAULT_HOST, link=link, specs=BUILTIN)
+        self._others.append(asyncio.create_task(serving.run()))
+        return link
+
+    # -- what the session has been shown ---------------------------------------------
     async def require(self, *groups: str) -> None:
         """Show this session these groups, the way ``tool_require`` would — without a turn in the way.
 
@@ -309,6 +371,16 @@ class Story:
         """
         return self._session_component().toolset_epoch
 
+    @property
+    def plan_epoch(self) -> int:
+        """How many times a compaction changed what the next prompt holds — the other half of the pair.
+
+        Read for the same reason :attr:`toolset_epoch` is: a compaction is supposed to move this number
+        and no line says so. The two counters are separate so that "the plan moved" and "the tools moved"
+        can each be asserted on their own (§10.5).
+        """
+        return self._session_component().prompt_plan_epoch
+
     def _session_component(self) -> Session:
         """The kernel's session object for this story's session, which a stimulus may hold."""
         key = Declaration(Session, instance=f"{DEFAULT_HOST}/{self.session}").key
@@ -329,6 +401,11 @@ class Story:
 
     async def close(self) -> None:
         """Take the kernel down, whether or not the story got as far as stopping it."""
+        for other in self._others:
+            if not other.done():
+                _ = other.cancel()
+                _ = await asyncio.gather(other, return_exceptions=True)
+        self._others.clear()
         if not self._running.done():
             _ = self._running.cancel()
             _ = await asyncio.gather(self._running, return_exceptions=True)

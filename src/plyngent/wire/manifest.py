@@ -31,6 +31,11 @@ PROTOCOL_VERSION = 1
 DEFAULT_ACK_INTERVAL = 2.0
 DEFAULT_DEAD_AFTER = 8.0
 
+#: The capability a client looks for before it offers anything: without it the kernel refuses every
+#: ``Offer`` it is sent. A kernel that cannot run a client's tools must not be told about them, so the
+#: answer is in the document a client reads at handshake time rather than in a refusal after the fact.
+CLIENT_OFFER = "client-offer"
+
 
 class CommandSpec(Struct, frozen=True, kw_only=True):
     """One command, as a client needs it: a tag to send, a line to show, an argument shape.

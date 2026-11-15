@@ -12,10 +12,12 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from plyngent.cli.offers import TERMINAL
 from tests.stories.driver import TRANSPORTS, Story
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
+    from plyngent.cli.offers import ClientTools
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.skills import Skills
     from tests.stories.model import Step
@@ -75,7 +77,13 @@ async def story_with(tmp_path, transport):
     """
     started: list[Story] = []
 
-    async def start(*script: Step, web: Web | None = None, skills: Skills | None = None) -> Story:
+    async def start(
+        *script: Step,
+        web: Web | None = None,
+        skills: Skills | None = None,
+        tools: ClientTools = TERMINAL,
+        deadline: float | None = None,
+    ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
         story = await Story.start(
@@ -85,6 +93,8 @@ async def story_with(tmp_path, transport):
             web=web,
             skills=skills,
             journal=journal,
+            tools=tools,
+            deadline=deadline,
         )
         started.append(story)
         return story
