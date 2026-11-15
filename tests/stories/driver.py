@@ -46,9 +46,11 @@ from plyngent.wire.manifest import KernelManifest, command_specs
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import TextIO
 
     from plyngent.kernel.events import Human
+    from plyngent.kernel.lm.route import Route
     from plyngent.kernel.model import Model, Request
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.skills import Skills
@@ -185,6 +187,8 @@ class Story:
         session: str = SESSION,
         transport: str = "inproc",
         model: Model | None = None,
+        routes: Iterable[Route] | None = None,
+        route: str = "",
         web: Web | None = None,
         skills: Skills | None = None,
         journal: Path | str | None = None,
@@ -222,6 +226,8 @@ class Story:
                 root,
                 transport=transport,
                 model=model,
+                routes=routes,
+                route=route,
                 web=web,
                 skills=skills,
                 journal=journal,

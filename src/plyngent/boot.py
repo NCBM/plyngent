@@ -28,6 +28,7 @@ from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
 from plyngent.kernel.link import InProcLink
+from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.net.web import Web, WebChannel
 from plyngent.kernel.pty.broker import PtyBroker
@@ -39,6 +40,8 @@ from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS
 from plyngent.wire.manifest import CLIENT_OFFER, KernelManifest, command_specs
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from composat import Component, ComponentKey
 
     from plyngent.kernel.skills import Skills
@@ -121,6 +124,8 @@ async def install(
     host: str = DEFAULT_HOST,
     transport: str = "inproc",
     model: Model | None = None,
+    routes: Iterable[Route] | None = None,
+    route: str = "",
     web: Web | None = None,
     skills: Skills | None = None,
     journal: Path | str | None = None,
@@ -136,6 +141,13 @@ async def install(
     ``model`` is installed rather than reached for: ``None`` is a kernel with nothing to ask, which
     refuses turns instead of pretending a model answered. It is the same move as attaching a client to
     the human channel, and a test's scripted model is installed exactly the way a real one will be.
+
+    ``routes`` and ``route`` are the other half of asking a model: the endpoints this program may use,
+    and which of them answers a session that has not chosen. They are handed in for the same reason the
+    skills directories are — which services exist and which key they take is a fact about how the program
+    was started, and nothing below this line could have guessed it. A program given no routes and no
+    model has nothing to ask, which is the state this tree is in until the configuration surface lands
+    (R7/R8); a program given routes but no model asks the route its session names.
 
     ``web`` is the same move for the vendor's web tools: ``None`` is a kernel that has none, and then
     ``web_fetch`` and ``builtin_websearch`` are not in the table at all rather than failing when called.
@@ -170,17 +182,19 @@ async def install(
     registry = ComponentRegistry()
     up: dict[ComponentKey, Component] = {}
     kept = _journal_file(root, journal)
+    table = Routes(routes or (), default=route)
+    asked = model if model is not None else (Posted(table) if table.default else None)
     _ = registry.declare_all(
         [
             Declaration(PtyBroker),
             Declaration(PtyRegistry, instance=host),
             Declaration(HumanChannel, instance=host),
             Declaration(Offers, instance=host),
-            Declaration(ModelChannel, instance=host, args=(model,)),
+            Declaration(ModelChannel, instance=host, args=(asked,)),
             Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
             Declaration(Documents, instance=host, args=(documents_path(kept),)),
-            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills}),
+            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills, "routes": table}),
         ]
     )
     # One broker for the whole process: it is the root-qualified component, and it is the only thing

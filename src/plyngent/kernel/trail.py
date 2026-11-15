@@ -123,22 +123,53 @@ class Summary(Struct, tag=SUMMARY_TAG, frozen=True, kw_only=True):
     replaces: tuple[str, str] | None = None
 
 
-#: Everything a row may carry: what a conversation says, what it knows about itself, and what it was
-#: compressed into.
-type AnyRecord = AnyMessage | StateChange | Summary
+#: The tag one failed asking carries. Its own record kind, and the third of them: a state change is what a
+#: session knows, a summary is what a conversation was compressed into, and an attempt is what happened to
+#: a request that never became an answer. No model reads it, so it stays out of the projector — and it is
+#: written as a **root**, so it sits beside the conversation rather than in it and can never become the
+#: place a turn continues from.
+ATTEMPT_TAG = "attempt"
+
+
+class Attempt(Struct, tag=ATTEMPT_TAG, frozen=True, kw_only=True):
+    """One request that did not produce an answer, and what became of it.
+
+    R4's "an attempt is a first-class citizen": a failed request is a row somebody can query rather than a
+    line that scrolled past, and it is the only place the *route epoch* of one asking is written down. That
+    is what makes "which model was asked, and when did that change" answerable after the fact — the
+    setting says where the session is now, and this says where it was when it tried.
+
+    ``failure`` and ``retry`` are the closed-set words (:class:`~plyngent.kernel.failure.Failure` and
+    :class:`~plyngent.kernel.failure.Retry`) as text, so a row written by today's build is still readable
+    when one of those sets grows a member, and so this record does not drag the kernel's own vocabulary
+    into a stored shape it would then have to migrate.
+    """
+
+    turn: int = 0
+    route: str = ""
+    epoch: int = 0
+    failure: str = ""
+    retry: str = ""
+    says: str = ""
+
+
+#: Everything a row may carry: what a conversation says, what it knows about itself, what it was
+#: compressed into, and what became of a request that was never answered.
+type AnyRecord = AnyMessage | StateChange | Summary | Attempt
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
     """What a model reads of one record, or ``None`` when it is not a record a model reads.
 
-    Two records have a meaning of their own and neither is a message. A state change is a fact about
-    the session, and is dropped. A summary is read as one message — the person's turn it stands in for
-    — with the heading saying what it is, because a model handed an unannounced block of prose as its
-    own history would take it for something somebody said.
+    Three records have a meaning of their own and none is a message. A state change is a fact about the
+    session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
+    the heading saying what it is, because a model handed an unannounced block of prose as its own history
+    would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
+    arrived, and a model told about it would be reading a conversation that did not happen.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange):
+    if isinstance(record, StateChange | Attempt):
         return None
     return record
 

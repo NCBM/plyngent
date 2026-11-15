@@ -193,10 +193,11 @@ class _Picture:
 async def _kept_picture(env: Env, name: str, picture: _Picture) -> ToolResult:
     """A picture as this build can give one: the whole file kept, and said what it is.
 
-    The pixels cannot reach a model yet — that is R11's picture part and the capability that gates it —
-    so the answer says which format the bytes are, how big they are, and where they went. Keeping them
-    whole is the point: when the capability arrives, the content is already stored, and until then the
-    alternative is a model reading a binary as text.
+    Whether the pixels reach a model is decided above this layer — by the route's capability and by
+    whether its dialect has a channel for an image at all (:mod:`plyngent.kernel.lm`) — so this says the
+    three things that are true either way: which format the bytes are, how big they are, and the handle
+    they were kept under. A tool that promised "you cannot see this" would be wrong on the next request,
+    because the same result reasons differently down each route.
     """
     handle = await kept_bytes(
         env,
@@ -205,8 +206,7 @@ async def _kept_picture(env: Env, name: str, picture: _Picture) -> ToolResult:
         media=picture.media,
     )
     return ToolResult.ok(
-        f"read {name} ({picture.media}, {len(picture.data)} bytes) — kept as {handle.document_id}; "
-        "a picture cannot be shown yet, so say what you need in words",
+        f"read {name} ({picture.media}, {len(picture.data)} bytes) — kept as {handle.document_id}",
         body=handle,
     )
 

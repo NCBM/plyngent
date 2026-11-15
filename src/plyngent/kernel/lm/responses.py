@@ -1,0 +1,173 @@
+"""The responses dialect: an ``instructions`` field, and a conversation as a list of typed items.
+
+The third row, and the one that proves the shape: adding it changed this file and one line of the table,
+and nothing else — no loop, no journal, no cap, no command. Its conversation is a list of *items* rather
+than of turns: a message item, a ``function_call`` item, a ``function_call_output`` item, each standing
+on its own, which is why a run of results needs no merging here the way it does in ``messages``.
+
+Two things it does differently from the other two, both of them this endpoint's opinion:
+
+* **The prompt that is not the conversation is a field** (``instructions``) rather than a leading
+  message, so a cached prefix starts at it and the tools follow.
+* **A picture travels inside a tool's answer** as an ``input_image`` part beside the ``input_text`` one,
+  so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.vision``.
+
+A thinking *budget* is not written: this endpoint takes an effort level, which is a different fact from
+the number of tokens a route is willing to spend, and this build only has the number.
+"""
+
+from __future__ import annotations
+
+import base64
+from typing import TYPE_CHECKING, override
+
+from plyngent.kernel.failure import Failure
+from plyngent.kernel.lm.caps import PrefixCache
+from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
+from plyngent.kernel.model import Assistant, Call, ModelFailed, Reply, Result, Usage, User
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    from plyngent.kernel.lm.caps import Caps
+    from plyngent.kernel.lm.codec import Body
+    from plyngent.kernel.model import AnyMessage, Request
+
+#: The word a route names this dialect by.
+RESPONSES = "responses"
+
+#: What an ``incomplete_details.reason`` means when the answer did not simply end.
+#:
+#: ``content_filter`` is ``DENIED`` for the same reason ``refusal`` is in ``messages``: the provider
+#: decided not to answer, and no retry lifts that.
+_CUT: dict[str, Failure] = {"max_output_tokens": Failure.LIMIT, "content_filter": Failure.DENIED}
+
+
+class Responses(Codec):
+    """``POST {base}/responses``: instructions, typed items, and ``max_output_tokens``."""
+
+    name: str = RESPONSES
+    endpoint: str = "/responses"
+    pictures: bool = True
+
+    @override
+    def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
+        body: Body = {
+            "model": model,
+            "input": [item for message in request.messages for item in _items(message)],
+            "stream": False,
+            "max_output_tokens": caps.max_output,
+            "parallel_tool_calls": caps.parallel_tools,
+        }
+        if request.system:
+            body["instructions"] = request.system
+        if request.tools:
+            body["tools"] = [
+                {"type": "function", "name": tool.name, "parameters": schema(tool.schema)} for tool in request.tools
+            ]
+        if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
+            body["prompt_cache_key"] = request.cache_key
+        return body
+
+    @override
+    def decode(self, payload: bytes) -> Reply:
+        document = decoded(payload, where=self.name)
+        output = as_list(as_dict(document).get("output"))
+        if not output:
+            msg = f"{self.name} answered with no items, so nothing was said"
+            raise ModelFailed(Failure.PROTOCOL, msg)
+        return Reply(
+            text=_said(output),
+            calls=_calls(output),
+            usage=_usage(document),
+            cut=_CUT.get(as_text(as_dict(as_dict(document).get("incomplete_details")).get("reason"))),
+        )
+
+    @override
+    def explain(self, payload: bytes) -> str:
+        try:
+            document = decoded(payload, where=self.name)
+        except Exception:  # noqa: BLE001 — an error body that is not JSON is not a worse error
+            return payload.decode("utf-8", "replace").strip()
+        said = as_dict(document).get("error")
+        return said.strip() if isinstance(said, str) else as_text(as_dict(said).get("message"))
+
+
+def _items(message: AnyMessage) -> list[Body]:
+    """One canonical message as the one item this dialect has for it.
+
+    One item each, unlike ``messages``: an answer that asked for two tools becomes an answer item and two
+    ``function_call`` items, and each of them is addressed by its own ``call_id`` — so nothing has to be
+    folded together at the front of the next turn.
+    """
+    if isinstance(message, User):
+        return [{"role": "user", "content": [{"type": "input_text", "text": message.text}]}]
+    if isinstance(message, Assistant):
+        said: list[Body] = []
+        if message.text:
+            said.append({"role": "assistant", "content": [{"type": "output_text", "text": message.text}]})
+        said.extend(
+            {"type": "function_call", "call_id": call.id, "name": call.tool, "arguments": call.arguments or "{}"}
+            for call in message.calls
+        )
+        return said
+    return [_output(message)]
+
+
+def _output(message: Result) -> Body:
+    """One tool's answer, with its pictures when there are any."""
+    return {"type": "function_call_output", "call_id": message.call, "output": _told(message)}
+
+
+def _told(message: Result) -> str | list[Body]:
+    """What a tool's answer carries: its text, or its text and its pictures when there are any."""
+    if not message.pictures:
+        return message.text
+    told: list[Body] = [{"type": "input_text", "text": message.text}]
+    told.extend(
+        {
+            "type": "input_image",
+            "image_url": f"data:{picture.media};base64,{base64.b64encode(picture.data).decode('ascii')}",
+        }
+        for picture in message.pictures
+    )
+    return told
+
+
+def _said(output: list[Any]) -> str:
+    """What the answer said: every output text of every message item, in order."""
+    said: list[str] = []
+    for item in output:
+        if as_dict(item).get("type") != "message":
+            continue
+        said.extend(
+            as_text(as_dict(part).get("text"))
+            for part in as_list(as_dict(item).get("content"))
+            if as_dict(part).get("type") == "output_text"
+        )
+    return "".join(said)
+
+
+def _calls(output: list[Any]) -> tuple[Call, ...]:
+    """The calls the answer asked for, in the order the items arrived."""
+    return tuple(
+        Call(
+            id=as_text(item.get("call_id")),
+            tool=as_text(item.get("name")),
+            arguments=as_text(item.get("arguments")),
+        )
+        for item in (as_dict(one) for one in output)
+        if item.get("type") == "function_call"
+    )
+
+
+def _usage(document: Any) -> Usage:
+    """What the answer cost, with the cached share this dialect nests one level down."""
+    usage = as_dict(as_dict(document).get("usage"))
+    details = as_dict(usage.get("input_tokens_details"))
+    cached = details.get("cached_tokens")
+    return Usage(
+        prompt=as_int(usage.get("input_tokens")),
+        completion=as_int(usage.get("output_tokens")),
+        cached=None if cached is None else as_int(cached),
+    )

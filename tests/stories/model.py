@@ -20,7 +20,8 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, override
 
-from plyngent.kernel.model import Call, Model, Reply
+from plyngent.kernel.failure import Failure
+from plyngent.kernel.model import Call, Model, ModelFailed, Reply
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -55,13 +56,28 @@ class Held:
     ready: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-#: One step of a script: a reply, a reply that waits, or a reply chosen by what the model was told.
+@dataclass(frozen=True, slots=True)
+class Failing:
+    """A step that does not answer: the model could not be asked, and how.
+
+    A scripted model that only ever answered could not play the one case the route layer exists for —
+    an endpoint that is busy, that refuses the key, that answers nonsense — so a story says which kind of
+    trouble it wants and the model reports it the way a real one would: as a value the turn can act on,
+    not as a traceback.
+    """
+
+    failure: Failure
+    says: str
+
+
+#: One step of a script: a reply, a reply that waits, a request that cannot be answered, or a reply
+#: chosen by what the model was told.
 #:
-#: The third kind is there for the values a story cannot write down in advance. A call can hand back a
+#: The last kind is there for the values a story cannot write down in advance. A call can hand back a
 #: name or a handle that the next call has to carry — a terminal's session, a document to continue — so
 #: the next reply is decided from the request the moment it arrives, which is the only place that value
 #: exists. The step answers a reply, so a decided reply can still be a :class:`Held` one.
-type Step = Reply | Held | Callable[[Request], Reply | Held]
+type Step = Reply | Held | Failing | Callable[[Request], Reply | Held]
 
 
 def told(request: Request) -> str:
@@ -103,4 +119,6 @@ class ScriptedModel(Model):
         if isinstance(step, Held):
             await step.ready.wait()
             step = step.reply
+        if isinstance(step, Failing):
+            raise ModelFailed(step.failure, step.says)
         return step

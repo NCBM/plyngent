@@ -59,6 +59,7 @@ from plyngent.wire.command import Prune as Prune
 from plyngent.wire.command import Resume as Resume
 from plyngent.wire.command import SetRoute as SetRoute
 from plyngent.wire.command import Submit as Submit
+from plyngent.wire.event import AnswerCut as AnswerCut
 from plyngent.wire.event import AnyEvent as AnyEvent
 from plyngent.wire.event import AssistantText as AssistantText
 from plyngent.wire.event import Batch as Batch
@@ -70,6 +71,8 @@ from plyngent.wire.event import Event as Event
 from plyngent.wire.event import KernelLeaving as KernelLeaving
 from plyngent.wire.event import ListedSession as ListedSession
 from plyngent.wire.event import OfferRefused as OfferRefused
+from plyngent.wire.event import Routed as Routed
+from plyngent.wire.event import RouteRefused as RouteRefused
 from plyngent.wire.event import SessionsListed as SessionsListed
 from plyngent.wire.event import ToolCalled as ToolCalled
 from plyngent.wire.event import ToolReturned as ToolReturned
@@ -77,6 +80,7 @@ from plyngent.wire.event import TurnFinished as TurnFinished
 from plyngent.wire.event import TurnKind as TurnKind
 from plyngent.wire.event import TurnRefused as TurnRefused
 from plyngent.wire.event import TurnStarted as TurnStarted
+from plyngent.wire.event import Usage as Usage
 from plyngent.wire.flow import Ack as Ack
 from plyngent.wire.link import KernelLink as KernelLink
 from plyngent.wire.link import KernelSide as KernelSide

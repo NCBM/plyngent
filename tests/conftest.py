@@ -17,7 +17,10 @@ from tests.stories.driver import TRANSPORTS, Story
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from plyngent.cli.offers import ClientTools
+    from plyngent.kernel.lm.route import Route
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.skills import Skills
     from tests.stories.model import Step
@@ -79,6 +82,8 @@ async def story_with(tmp_path, transport):
 
     async def start(
         *script: Step,
+        routes: Iterable[Route] | None = None,
+        route: str = "",
         web: Web | None = None,
         skills: Skills | None = None,
         tools: ClientTools = TERMINAL,
@@ -90,6 +95,8 @@ async def story_with(tmp_path, transport):
             root,
             transport=transport,
             model=ScriptedModel(script),
+            routes=routes,
+            route=route,
             web=web,
             skills=skills,
             journal=journal,

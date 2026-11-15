@@ -250,6 +250,16 @@ class ToolResult:
         """What the caller should do next — from the table, never from the raise site."""
         return Retry.NEVER if self.failure is None else OUTCOMES[self.failure][1]
 
+    @property
+    def handles(self) -> tuple[str, ...]:
+        """The documents this result's body kept, in the order they were laid out.
+
+        A handle is what a request acts on later — a body too long to send is continued from it, and a
+        picture is fetched through it — and the body's parts are where those handles live, so this is the
+        one place that reads them out rather than parsing them back out of the text a model reads.
+        """
+        return tuple(part.document_id for part in self.body if isinstance(part, Document))
+
     @classmethod
     def ok(
         cls,

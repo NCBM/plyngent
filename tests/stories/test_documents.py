@@ -527,8 +527,7 @@ async def test_a_picture_is_kept_and_never_read_as_text(story_with: Scripted) ->
 
     told = await _told(story)
     assert told == (
-        f"read shot.png (image/png, {len(picture)} bytes) — kept as d1; "
-        "a picture cannot be shown yet, so say what you need in words\n"
+        f"read shot.png (image/png, {len(picture)} bytes) — kept as d1\n"
         f"[d1] image/png, {len(picture)} bytes ({len(picture)} chars)"
     ), "no mojibake, no guessed text: the bytes are kept and the answer says what they are"
     assert "\ufffd" not in told

@@ -53,6 +53,12 @@ TODOS = "todos"
 #: other to.
 PROMPT_PLAN = "prompt-plan"
 
+#: The key the session's route is written under: which of the host's endpoints answers it, and the epoch
+#: that says when that changed. A fourth key in the same vocabulary, and the first one whose value is a
+#: *choice* rather than a fact the kernel tracked — which is why the epoch is written beside the name:
+#: an attempt records the epoch it ran under, so "which model answered this" is answerable after the fact.
+ROUTE = "route"
+
 
 @dataclass(frozen=True, slots=True)
 class TurnCtx:
@@ -307,6 +313,58 @@ class Session(Component):
 
         return await self.change(PROMPT_PLAN, mutate)
 
+    # -- which route answers this session -----------------------------------------
+
+    @property
+    def route(self) -> str:
+        """The route this session chose, or nothing when it never chose and takes the host's default.
+
+        Read at the boundary of every request and not remembered by a turn: that is what makes a route
+        change take effect at the next request rather than needing to refuse anybody (R7's ``SetRoute``).
+        """
+        return _route(self._state.get(ROUTE))[0]
+
+    @property
+    def route_epoch(self) -> int:
+        """How many times this session's route has changed — the number an attempt records."""
+        return _route(self._state.get(ROUTE))[1]
+
+    async def set_route(self, name: str) -> tuple[str, int]:
+        """Point this session at *name*, and answer the name and epoch it now stands at.
+
+        No change writes nothing, and that is not an optimisation: a setting that did not move must not
+        make the history say something happened. An empty name is a choice too — it says "ask whatever
+        this host asks by default", which is different from the name it happens to resolve to.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, tuple[str, int]]:
+            current, epoch = _route(before)
+            if current == name:
+                return None, (current, epoch)
+            return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
+
+        return await self.change(ROUTE, mutate)
+
+    @property
+    def prefix_epoch(self) -> tuple[int, int]:
+        """The two numbers a provider's prefix cache is keyed on, in one value (§10.5).
+
+        A pair rather than a sum, because the two move for different reasons and a miss has to be
+        attributable to one of them: a disclosure moves the tool block, a compaction moves the
+        conversation under it.
+        """
+        return (self.toolset_epoch, self.prompt_plan_epoch)
+
+    @property
+    def cache_key(self) -> str:
+        """What a request names its prefix by: this session, and where its prompt stands.
+
+        Short and stable because it is an opaque key a provider hashes beside its own; a session's own
+        name is in it because two conversations on one host must not be able to hit each other's cache.
+        """
+        toolset, plan = self.prefix_epoch
+        return f"{self.session_id}:{toolset}:{plan}"
+
     # -- turns ---------------------------------------------------------------------
 
     async def begin_turn(self, *, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT) -> TurnCtx:
@@ -480,3 +538,24 @@ def _epoch(value: str | None) -> int:
         return 0
     epoch = cast("dict[str, object]", record).get("epoch")
     return epoch if isinstance(epoch, int) else 0
+
+
+def _route(value: str | None) -> tuple[str, int]:
+    """One route setting as the name it chose and the epoch it was written at.
+
+    A value this build cannot read is "never chose", which lands the session on the host's default —
+    the same forgiveness every setting here gets, and the one that matters most: a conversation must not
+    become unopenable because a model was retired.
+    """
+    if not value:
+        return "", 0
+    try:
+        record = msgspec.json.decode(value)
+    except msgspec.DecodeError:
+        return "", 0
+    if not isinstance(record, dict):
+        return "", 0
+    stored = cast("dict[str, object]", record)
+    name = stored.get("name")
+    epoch = stored.get("epoch")
+    return (name if isinstance(name, str) else "", epoch if isinstance(epoch, int) else 0)

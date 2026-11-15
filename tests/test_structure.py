@@ -26,6 +26,7 @@ from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalo
 from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
+from plyngent.kernel.lm import DIALECTS, codec_named
 from plyngent.kernel.net.web import Web
 from plyngent.kernel.skills import NAME_PATTERN, Skills
 from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
@@ -60,6 +61,10 @@ TERMINAL_LIBRARIES = frozenset(
 #: it configures the slave a tool talks to, which is the kernel's own job (§9). Anywhere else, a
 #: terminal library would mean the display had leaked out of the CLI.
 _DEVICE = pathlib.Path("kernel") / "pty" / "backend.py"
+
+#: The words that name a provider or one of its endpoints. They belong to ``kernel/lm`` and nowhere else,
+#: because a loop that compares one of them is a loop that has to be edited to add a provider.
+DIALECT_WORDS = frozenset({"openai", "anthropic", "deepseek", "chat-completions", "chat/completions", "/v1/messages"})
 
 
 def _ours(name: str) -> bool:
@@ -113,6 +118,51 @@ def test_the_contract_depends_on_nothing_of_ours() -> None:
     offenders = _offenders(_modules_of(wire), lambda name: name.startswith("plyngent.") and not _ours(name))
 
     assert offenders == [], "the contract is importable by anyone, including a client with no kernel"
+
+
+def test_the_kernel_names_no_dialect() -> None:
+    """One dialect is one file and one row: a provider's name outside ``kernel/lm`` is a row that failed.
+
+    This is the acceptance for the whole provider layer written as a machine check (§6, R11). It is a
+    *word* scan rather than an import scan because the failure it guards against is a comparison, not a
+    dependency: the day a loop writes ``if provider == "…"``, nothing new is imported and the layer is
+    gone. A route names a dialect by a string it was handed; the kernel is not allowed to know any.
+
+    ``kernel/net`` is out of scope, and not as a loophole: a vendor's *search* endpoint is named after
+    the company that runs it by design (§0.9), which is a different claim from "the model loop speaks
+    one dialect". What this asserts is that nothing that *asks a model* knows who answered.
+    """
+    package = pathlib.Path(kernel.__file__).parent.parent
+    everywhere = [
+        *_modules_of(kernel),
+        pathlib.Path(boot.__file__),
+        pathlib.Path(boot.__file__).with_name("__main__.py"),
+    ]
+    outside = [
+        path for path in everywhere if path.relative_to(package).parts[:2] not in {("kernel", "lm"), ("kernel", "net")}
+    ]
+    offenders = [
+        f"{path.name}: {word}"
+        for path in outside
+        for word in DIALECT_WORDS
+        if word in path.read_text(encoding="utf-8").lower()
+    ]
+
+    assert offenders == [], "a dialect's name outside kernel/lm means the loop knows a provider"
+
+
+def test_every_dialect_is_one_row_in_one_module() -> None:
+    """The table is the list: every dialect is filed under its own name, and each lives in its own module.
+
+    A codec that exists and is not filed is a dialect nobody can route to; one filed from somewhere other
+    than this package is a row that a second place could also have written.
+    """
+    filed = [codec.name for codec in DIALECTS]
+
+    assert len(filed) == len(set(filed)), "two dialects are filed under one name"
+    assert [codec_named(name) for name in filed] == list(DIALECTS), "a row the lookup cannot find, in order"
+    for codec in DIALECTS:
+        assert type(codec).__module__.startswith("plyngent.kernel.lm."), f"{codec.name} is filed from elsewhere"
 
 
 def test_the_composition_root_does_not_depend_on_a_client() -> None:

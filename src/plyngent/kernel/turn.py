@@ -29,14 +29,20 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from msgspec.structs import replace as replaced
+
 from plyngent.kernel.cancel import Cancelled
-from plyngent.kernel.model import Assistant, Reply, Request, Result, User
+from plyngent.kernel.documents import picture_media
+from plyngent.kernel.model import Assistant, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
-from plyngent.wire.event import AssistantText, TurnFinished, TurnStarted
+from plyngent.kernel.toolresult import OUTCOMES
+from plyngent.kernel.trail import Attempt
+from plyngent.wire.event import AnswerCut, AssistantText, TurnFinished, TurnStarted, Usage
 
 if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolCatalog
     from plyngent.kernel.executor import ToolExecutor
+    from plyngent.kernel.failure import Failure
     from plyngent.kernel.model import AnyMessage
     from plyngent.kernel.session import TurnCtx
     from plyngent.wire.event import AnyEvent
@@ -92,6 +98,7 @@ class TurnRunner:
         state = TurnState(ctx=ctx, cursor=ctx.begin_after, text=text)
         self._emit(TurnStarted(session=session, turn=ctx.turn_id, begin_after=ctx.begin_after, kind=ctx.kind))
         reason = ""
+        failure: Failure | None = None
         try:
             state = await self._append(state, User(text=text))
             while True:
@@ -103,6 +110,14 @@ class TurnRunner:
                 state = replace(state, ctx=state.ctx.next_round())
         except Cancelled as stopped:
             reason = str(stopped.reason)
+        except ModelFailed as unmet:
+            # A model that could not be asked is a *result*, not a bug: the turn ends having done what
+            # it could, and says which kind of trouble it met so a person can act on it (and a program
+            # can switch on it). Nothing is re-raised — a turn that raised would be handed to a task
+            # nobody awaits, and the one place that prints is a terminal the kernel may not write to.
+            failure = unmet.failure
+            reason = unmet.says
+            await self._attempted(state, unmet)
         except Exception:
             # A turn that raised is a bug, and the turn still has to stop being the session's live one:
             # every later `Submit` is refused while a turn is live, so a turn that vanished would take
@@ -112,7 +127,13 @@ class TurnRunner:
         finally:
             _ = await ctx.cancel.settle(ctx.turn_address())
             self._emit(
-                TurnFinished(session=session, turn=ctx.turn_id, reason=reason, ends_at=state.cursor),
+                TurnFinished(
+                    session=session,
+                    turn=ctx.turn_id,
+                    reason=reason,
+                    ends_at=state.cursor,
+                    failure="" if failure is None else str(failure),
+                ),
             )
             ctx.end()
 
@@ -129,11 +150,65 @@ class TurnRunner:
         the system line says what it is still missing. A view is built per *round* rather than per turn,
         because a group asked for in one round arrives in the next — a block that changed inside a round
         would be a prefix that changed between two requests for no reason a provider could cache (§10.5).
+
+        ``route`` and ``cache_key`` are filled here for the same reason the tools are: both are facts
+        about *this* request. Which route answers is read at this boundary, so a ``SetRoute`` lands on the
+        next round rather than on a turn that is half way through, and the key names the prefix by the
+        session and the two counters that say where its prompt stands.
         """
-        trail = state.ctx.host.trail
-        messages = await trail.derive(state.ctx.session.session_id, state.cursor)
-        view = self._catalog.view(state.ctx.session.disclosed)
-        return Request(system=view.index(), messages=messages, tools=view.prompts())
+        ctx = state.ctx
+        trail = ctx.host.trail
+        messages = await trail.derive(ctx.session.session_id, state.cursor)
+        view = self._catalog.view(ctx.session.disclosed)
+        asked = ctx.host.routes.resolve(ctx.session.route)
+        return Request(
+            system=view.index(),
+            messages=await self._seen(ctx, messages),
+            tools=view.prompts(),
+            route="" if asked is None else asked.name,
+            cache_key=ctx.session.cache_key,
+        )
+
+    async def _seen(self, ctx: TurnCtx, messages: tuple[AnyMessage, ...]) -> tuple[AnyMessage, ...]:
+        """The conversation as this route can read it: a picture travels only where both sides can take it.
+
+        Two gates, and both are needed. The *route's* ``vision`` says what the model on the other end can
+        read; the *dialect's* ``pictures`` says whether the wire has a channel for one at all — a
+        text-only dialect answers a tool with text, and putting pixels in a person's message would be
+        inventing a speaker. Where either says no, the handle stays in the words and nothing is fetched:
+        the model reads what the tool said, which is true either way.
+
+        The bytes are fetched here rather than stored in the row, which is what keeps "a body never enters
+        an entry" true while a model still sees an image (E56).
+        """
+        asked = ctx.host.routes.resolve(ctx.session.route)
+        codec = None if asked is None else asked.codec()
+        if asked is None or not asked.caps.vision or codec is None or not codec.pictures:
+            return messages
+        seen: list[AnyMessage] = []
+        for message in messages:
+            if isinstance(message, Result) and message.documents:
+                seen.append(await self._fetched(ctx, message))
+            else:
+                seen.append(message)
+        return tuple(seen)
+
+    async def _fetched(self, ctx: TurnCtx, message: Result) -> Result:
+        """One tool result with the pictures among its handles filled in, and unchanged when there are none.
+
+        A handle that is not a picture — a truncated body — is *not* attached: the whole point of the
+        separation is that a handle says where content is and the media type says what it is, so only the
+        ones the bytes identify as an image travel as an image.
+        """
+        pictures: list[Picture] = []
+        for handle in message.documents:
+            found = await ctx.host.documents.get(ctx.session.session_id, handle)
+            if found is None:
+                continue
+            media = picture_media(found.data)
+            if media is not None:
+                pictures.append(Picture(media=media, data=found.data))
+        return replaced(message, pictures=tuple(pictures)) if pictures else message
 
     async def call(self, state: TurnState, request: Request) -> Reply:
         """Ask the model for the next message, under the round's own address.
@@ -141,8 +216,27 @@ class TurnRunner:
         The guard is what makes an interruption reach a request that is in flight: the round's scope sits
         under the turn's, so a cancel of either stops this, and the request is cancelled instead of being
         left running while the turn says it finished.
+
+        What the asking cost is said outward here rather than by the model: a model answers a value, and
+        every event on this lane is the kernel's to emit. An answer that stopped short is said the same
+        way, because both are facts about the request that just came back and neither is the turn's end.
         """
-        return await state.ctx.round_scope().guard(state.ctx.host.model.respond(request))
+        reply = await state.ctx.round_scope().guard(state.ctx.host.model.respond(request))
+        if reply.usage.reported:
+            self._emit(
+                Usage(
+                    session=state.ctx.session.session_id,
+                    turn=state.ctx.turn_id,
+                    prompt=reply.usage.prompt,
+                    completion=reply.usage.completion,
+                    cached=reply.usage.cached,
+                ),
+            )
+        if reply.cut is not None:
+            self._emit(
+                AnswerCut(session=state.ctx.session.session_id, turn=state.ctx.turn_id, reason=str(reply.cut)),
+            )
+        return reply
 
     async def dispatch(self, state: TurnState, reply: Reply) -> TurnState:
         """Write what the model answered, then run every call it asked for, as one batch.
@@ -165,10 +259,37 @@ class TurnRunner:
         results = await self._executor.batch(ctx, asked)
         for call, result in zip(reply.calls, results, strict=True):
             text = render(result)
-            said = await self._append(said, Result(call=call.id, tool=call.tool, status=result.status, text=text))
+            said = await self._append(
+                said,
+                Result(call=call.id, tool=call.tool, status=result.status, text=text, documents=result.handles),
+            )
         return replace(said, more=True)
 
     # -- the pieces ----------------------------------------------------------------
+
+    async def _attempted(self, state: TurnState, unmet: ModelFailed) -> None:
+        """Write down that a request was made and never answered, and under which route.
+
+        A **root**, deliberately: an attempt is not a place a conversation continues from, so it goes
+        beside the chain rather than into it, and a turn that stopped here leaves the history it had
+        rather than a node every later message would descend from. It is also the only record of the
+        route *epoch* that was in force — the setting says where the session is now, and this says where
+        it was when it tried (R4's "attempt is a first-class citizen").
+        """
+        ctx = state.ctx
+        route = ctx.host.routes.resolve(ctx.session.route)
+        _ = await ctx.host.trail.append(
+            ctx.session.session_id,
+            Attempt(
+                turn=ctx.turn_id,
+                route="" if route is None else route.name,
+                epoch=ctx.session.route_epoch,
+                failure=str(unmet.failure),
+                retry=str(OUTCOMES[unmet.failure][1]),
+                says=unmet.says,
+            ),
+            turn=ctx.turn_id,
+        )
 
     async def _append(self, state: TurnState, payload: AnyMessage) -> TurnState:
         """Write one entry at the end of the chain, and answer the state that continues from it."""

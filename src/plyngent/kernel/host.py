@@ -21,6 +21,7 @@ from plyngent.kernel.client import Offers  # noqa: TC001
 from plyngent.kernel.documents import Documents  # noqa: TC001
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
 from plyngent.kernel.journal import Journal  # noqa: TC001
+from plyngent.kernel.lm.route import Routes
 from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import ModelChannel  # noqa: TC001
 from plyngent.kernel.net.policy import NetPolicy
@@ -89,8 +90,19 @@ class Host(Component):
     # ``None`` is a value rather than a missing field — a kernel with no skills directory has no skill
     # tools at all, which is decided where the tools are assembled (§0.10, E36).
     skills: Skills | None
+    # The endpoints this program can ask a model at, and which of them answers a session that has not
+    # chosen. A plain field, like the skills directory and for the same reason: a table of routes has no
+    # lifecycle. What *does* have one is the model channel, because swapping the model is a `replace`.
+    routes: Routes
 
-    def __init__(self, root: Path | str, *, trash_enabled: bool = True, skills: Skills | None = None) -> None:
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        trash_enabled: bool = True,
+        skills: Skills | None = None,
+        routes: Routes | None = None,
+    ) -> None:
         super().__init__()
         self.workspace = Workspace(root)
         self.trash_enabled = trash_enabled
@@ -99,6 +111,7 @@ class Host(Component):
         self.net = NetPolicy()
         self.locks = Locks()
         self.skills = skills
+        self.routes = Routes() if routes is None else routes
 
     @override
     async def unload(self) -> None:

@@ -68,12 +68,51 @@ class TurnFinished(Event, tag="turn-finished", frozen=True, kw_only=True):
     entry the turn left behind — the last one it wrote, or the one it started from when it wrote
     nothing — which is what a frontend continues from: the kernel keeps no cursor of its own, so this
     is how a client learns where the conversation now stands without reading the history back.
+
+    ``failure`` is a word from the kernel's closed set when the turn could not do its work at all — the
+    model was not reachable, the key was wrong, the endpoint answered nonsense — and empty when it ran.
+    It is a string here for the reason every status on this lane is one: the contract may not name a
+    kernel type, and "busy" means the same thing to a client that has never seen ``Failure``. ``reason``
+    carries the sentence, which is what a person reads; this is what a program switches on.
     """
 
     session: str = ""
     turn: int = 0
     reason: str = ""
     ends_at: str | None = None
+    failure: str = ""
+
+
+class Usage(Event, tag="usage", frozen=True, kw_only=True):
+    """What one request to a model cost, and how much of it a provider answered from its own cache.
+
+    Said out loud because §10.5's whole claim is a countable one: "the prefix was cheaper this time" is
+    only checkable if the number reaches somebody. ``cached`` is ``None`` when the endpoint reported
+    nothing about it, which is *not* the same as zero and is why it is not defaulted to one.
+
+    It is per request and not per turn: a turn that ran four rounds asked four times, and what a person
+    wants to see is the last one — the size of the context that was just sent — with the cached share
+    beside it.
+    """
+
+    session: str = ""
+    turn: int = 0
+    prompt: int = 0
+    completion: int = 0
+    cached: int | None = None
+
+
+class AnswerCut(Event, tag="answer-cut", frozen=True, kw_only=True):
+    """The model stopped short, and why.
+
+    Separate from :class:`TurnFinished` because it is not the end of anything: an answer that hit its
+    output limit is one the turn acts on like any other, and the next round continues from it. What a
+    person needs is the one line that says the text they are reading is not a whole thought.
+    """
+
+    session: str = ""
+    turn: int = 0
+    reason: str = ""
 
 
 class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
@@ -127,6 +166,30 @@ class CompactRefused(Event, tag="compact-refused", frozen=True, kw_only=True):
     An event and not a receipt, for the reason every outcome here is one (D5): a command has no reply,
     so what came of it is said on the lane everything else is said on.
     """
+
+    session: str = ""
+    reason: str = ""
+
+
+class Routed(Event, tag="routed", frozen=True, kw_only=True):
+    """This session now asks *route*, and which epoch that is.
+
+    ``route`` is the name the host resolved — not the name the command carried, which may have been
+    empty and meant "whatever the default is". ``epoch`` is the number an attempt records, so "which
+    model answered this request" is answerable later from the history rather than from a terminal that
+    scrolled away.
+
+    The change takes effect at the next request and never refuses anybody: a turn already asking keeps
+    the route it started with (R7, ``SetRoute``).
+    """
+
+    session: str = ""
+    route: str = ""
+    epoch: int = 0
+
+
+class RouteRefused(Event, tag="route-refused", frozen=True, kw_only=True):
+    """A session's route was not changed, and why. Said on the same lane every outcome is said on."""
 
     session: str = ""
     reason: str = ""
@@ -267,5 +330,9 @@ type AnyEvent = (
     | ToolCalled
     | ToolReturned
     | OfferRefused
+    | Usage
+    | AnswerCut
+    | Routed
+    | RouteRefused
     | Batch
 )

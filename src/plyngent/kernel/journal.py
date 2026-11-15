@@ -41,9 +41,11 @@ from platformdirs import user_data_path
 
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
 from plyngent.kernel.trail import (
+    ATTEMPT_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
     AnyRecord,
+    Attempt,
     Entry,
     Shape,
     StateChange,
@@ -559,6 +561,8 @@ def _decode(tag: str, payload: str) -> AnyRecord:
         return msgspec.json.decode(payload, type=StateChange)
     if tag == SUMMARY_TAG:
         return msgspec.json.decode(payload, type=Summary)
+    if tag == ATTEMPT_TAG:
+        return msgspec.json.decode(payload, type=Attempt)
     return _message(payload)
 
 

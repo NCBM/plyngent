@@ -16,7 +16,7 @@ Two rules shape it:
   detaches it — a client that is gone cannot answer, so the host goes back to "nobody to ask", which
   answers "no" rather than hanging.
 
-What the commands do not yet have: ``Prune`` / ``Resume`` / ``Export`` / ``SetRoute`` have no meaning
+What the commands do not yet have: ``Prune`` / ``Resume`` / ``Export`` have no meaning
 until the rest of the history store and the route component exist, so they are accepted and do nothing.
 ``Compact`` is no longer one of them — it writes the summary entry that is a place a conversation can
 continue from (:meth:`Serving._compact`) — and it is a command rather than a turn because a summary is
@@ -39,13 +39,15 @@ from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import Summary
 from plyngent.kernel.turn import TurnRunner
-from plyngent.wire.command import Cancel, Close, Compact, ListSessions, Offer, Open, Submit
+from plyngent.wire.command import Cancel, Close, Compact, ListSessions, Offer, Open, SetRoute, Submit
 from plyngent.wire.event import (
     Compacted,
     CompactRefused,
     KernelLeaving,
     ListedSession,
     OfferRefused,
+    Routed,
+    RouteRefused,
     SessionsListed,
     TurnKind,
     TurnRefused,
@@ -160,10 +162,12 @@ class Serving:
                 await self._offer(tools)
             case Compact(session=session, begin_after=begin_after, replaces=replaces, text=text):
                 await self._compact(session, begin_after, replaces, text)
+            case SetRoute(session=session, route=route):
+                await self._route(session, route)
             case _:
-                # SetRoute / Prune / Resume / Export: accepted, and nothing to do until the route
-                # component and the rest of the history store exist. Silence is the contract's answer
-                # for a command with no outcome to report (D5), not an oversight.
+                # Prune / Resume / Export: accepted, and nothing to do until the rest of the history
+                # store exists. Silence is the contract's answer for a command with no outcome to
+                # report (D5), not an oversight.
                 return
 
     async def _open(self, session: str, seed_from: tuple[str, str] | None) -> None:
@@ -260,6 +264,30 @@ class Serving:
         return found if isinstance(found, Offers) else Offers()
 
     # -- what a compaction writes --------------------------------------------------
+
+    async def _route(self, session: str, route: str) -> None:
+        """Point one session at a route, or say why nothing moved.
+
+        Two refusals and no third: a session this kernel does not serve, and a name it does not have. An
+        empty name is not a refusal — it is "ask whatever this host asks by default", which is a choice
+        like any other and the only way back from a route that was set. What the session ends up asking
+        is answered resolved, because the name the command carried may have been no name at all.
+
+        Nothing here asks the model anything or waits for a turn: the setting moves, and a turn already
+        in flight keeps the route it started with — the change lands at the next request, which is the
+        boundary that makes a mid-turn route change legal instead of a race (R7).
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(RouteRefused(session=session, reason=NO_SESSION))
+            return
+        known = found.host.routes
+        if route and known.named(route) is None:
+            self.link.emit(RouteRefused(session=session, reason=f"no route named {route!r} here"))
+            return
+        name, epoch = await found.set_route(route)
+        asked = known.resolve(name)
+        self.link.emit(Routed(session=session, route="" if asked is None else asked.name, epoch=epoch))
 
     async def _compact(
         self,
