@@ -15,10 +15,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, final, override
 
+from plyngent.kernel.access import AccessMode
 from plyngent.kernel.client import NO_CLIENT
 from plyngent.kernel.toolspec import Res
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
     from plyngent.kernel.cancel import Scope
     from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.client import Client
@@ -100,6 +104,31 @@ class Env:
         """The paths this call resolves and changes. Granted by :attr:`Res.PATHS`."""
         self._granted(Res.PATHS, "workspace")
         return self._ctx.host.workspace
+
+    def resolve(self, path: str | Path, need: AccessMode = AccessMode.WRITE) -> Path:
+        """Resolve *path* the way every path tool does: with this conversation's own grants.
+
+        The one way to ask, so that a path a person allowed once resolves the same way in every tool —
+        and so that no tool has to remember to pass a table it cannot reach. Granted by
+        :attr:`Res.PATHS`, because the grants are a path tool's business rather than the history's.
+        """
+        self._granted(Res.PATHS, "resolve")
+        return self._ctx.host.workspace.resolve(path, need, grants=self._ctx.session.grants)
+
+    @property
+    def grants(self) -> Mapping[Path, AccessMode]:
+        """Which paths outside the workspace this conversation may reach, and how far.
+
+        The same table :meth:`resolve` reads, for the one tool that adds to it: a tool that may resolve
+        a path outside the root is the only one that can say what is still missing (§0.11, E73).
+        """
+        self._granted(Res.PATHS, "grants")
+        return self._ctx.session.grants
+
+    async def grant(self, path: Path, need: AccessMode) -> bool:
+        """Allow *need* on *path* for the rest of this conversation; ``False`` when it already did."""
+        self._granted(Res.PATHS, "grant")
+        return await self._ctx.session.grant(path, need)
 
     @property
     def trash_enabled(self) -> bool:

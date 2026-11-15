@@ -26,6 +26,7 @@ from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import ModelChannel  # noqa: TC001
 from plyngent.kernel.net.policy import NetPolicy
 from plyngent.kernel.net.web import WebChannel  # noqa: TC001
+from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.skills import Skills  # noqa: TC001
@@ -94,6 +95,10 @@ class Host(Component):
     # chosen. A plain field, like the skills directory and for the same reason: a table of routes has no
     # lifecycle. What *does* have one is the model channel, because swapping the model is a `replace`.
     routes: Routes
+    # What every request to a model begins with: the sections that do not come from the conversation. A
+    # plain field again — a prompt plan is text made once at install, and the one part of it that moves
+    # (which groups this session can reach) is handed in per request rather than stored here.
+    prompt: PromptPlan
 
     def __init__(
         self,
@@ -102,6 +107,7 @@ class Host(Component):
         trash_enabled: bool = True,
         skills: Skills | None = None,
         routes: Routes | None = None,
+        prompt: PromptPlan | None = None,
     ) -> None:
         super().__init__()
         self.workspace = Workspace(root)
@@ -112,6 +118,7 @@ class Host(Component):
         self.locks = Locks()
         self.skills = skills
         self.routes = Routes() if routes is None else routes
+        self.prompt = PromptPlan() if prompt is None else prompt
 
     @override
     async def unload(self) -> None:

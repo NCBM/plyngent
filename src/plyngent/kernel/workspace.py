@@ -9,7 +9,8 @@ Two refusals, and the difference is the whole point of having two:
 
 * :class:`OutsideWorkspace` — no root and no grant covers the path. A grant (or a temporary
   workspace) can lift it, so the tool layer that knows those tools says so. The names travel back on
-  the refusal, as names: this module does not compose sentences about tools it cannot see.
+  the refusal, with the one argument a refusal can fill in for each: this module does not compose
+  sentences about tools it cannot see.
 * :class:`Denied` — the configured path denylist matches. No grant lifts it, and a tool must not
   offer one.
 
@@ -37,19 +38,33 @@ class PathRefused(Exception):  # noqa: N818 — a refusal is the workspace's ans
     """A path this workspace will not hand out. The subclasses say whether anything can lift it."""
 
 
+@dataclass(frozen=True, slots=True)
+class Lift:
+    """A tool that would let a refused path through, and the arguments a refusal can fill in for it.
+
+    A name alone was not enough: the two ways to lift a refusal take different arguments, and a hint
+    that names an argument its tool does not have is a call the model cannot make. What a refusal
+    knows is the mode the call needed, so that is what a ``given`` patch may say — the tool that takes
+    a ``mode`` is told it, and the tool that takes none is told nothing.
+    """
+
+    tool: str
+    given: tuple[tuple[str, str], ...] = ()
+
+
 class OutsideWorkspace(PathRefused):
     """No root and no grant covers the path; a grant or a temporary workspace would.
 
-    ``related_tools`` names the tools that can lift this, and holds names only. The kernel raises it
-    empty — a module that spells another module's tool names is a module that knows about the tool
-    layer — and the tool layer attaches them with :meth:`with_tools` on the way out.
+    ``related_tools`` names the tools that can lift this, with the arguments a refusal knows. The
+    kernel raises it empty — a module that spells another module's tool names is a module that knows
+    about the tool layer — and the tool layer attaches them with :meth:`with_tools` on the way out.
     """
 
     path: Path
     resolved: Path
     root: Path
     need: AccessMode
-    related_tools: tuple[str, ...]
+    related_tools: tuple[Lift, ...]
 
     def __init__(
         self,
@@ -58,7 +73,7 @@ class OutsideWorkspace(PathRefused):
         resolved: Path,
         root: Path,
         need: AccessMode,
-        related_tools: tuple[str, ...] = (),
+        related_tools: tuple[Lift, ...] = (),
     ) -> None:
         super().__init__(f"path escapes workspace root ({root}): {path}")
         self.path = path
@@ -67,14 +82,14 @@ class OutsideWorkspace(PathRefused):
         self.need = need
         self.related_tools = related_tools
 
-    def with_tools(self, *names: str) -> OutsideWorkspace:
-        """The same refusal, carrying the tools that can lift it (names, never sentences)."""
+    def with_tools(self, *lifters: Lift) -> OutsideWorkspace:
+        """The same refusal, carrying the tools that can lift it (names and patches, never sentences)."""
         return OutsideWorkspace(
             self.path,
             resolved=self.resolved,
             root=self.root,
             need=self.need,
-            related_tools=(*self.related_tools, *names),
+            related_tools=(*self.related_tools, *lifters),
         )
 
 

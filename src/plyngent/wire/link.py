@@ -115,9 +115,11 @@ class KernelSide(Protocol):
         """Ask somebody outside, and wait for that one answer — or for the deadline.
 
         An ``id`` of ``0`` means "name this one for me": only the connection can promise uniqueness
-        within its own life (R2.1 D18). The answer is of the kind the question admits
-        (:func:`plyngent.wire.ask.answer_kind`); a question nobody answered answers as
-        :func:`plyngent.wire.ask.unanswered` says.
+        within its own life (R2.1 D18). ``timeout`` on the question is how long *it* gets, and ``None``
+        is this connection's own deadline; the connection resolves the two into one number before the
+        question is sent, so both sides are counting down to the same moment. The answer is of the kind
+        the question admits (:func:`plyngent.wire.ask.answer_kind`); a question nobody answered answers
+        as :func:`plyngent.wire.ask.unanswered` says.
         """
         ...
 

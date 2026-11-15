@@ -20,11 +20,13 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, cast, override
 
 import msgspec
 from composat import Component, require
 
+from plyngent.kernel.access import AccessMode, mode_covers, parse_access_mode
 from plyngent.kernel.cancel import CancelToken, Scope
 
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
@@ -36,7 +38,7 @@ from plyngent.wire.event import TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
 #: The key a session's tool disclosure is written under. One key in the journal's state vocabulary, and
 #: the first one written: what a session has been shown, and the epoch that says which tool set it is.
@@ -58,6 +60,12 @@ PROMPT_PLAN = "prompt-plan"
 #: *choice* rather than a fact the kernel tracked — which is why the epoch is written beside the name:
 #: an attempt records the epoch it ran under, so "which model answered this" is answerable after the fact.
 ROUTE = "route"
+
+#: The key the session's own path grants are written under: which paths outside the workspace this
+#: conversation may reach, and how far. A fifth key, and the only one whose subject is the world rather
+#: than this conversation — it is written because a person said yes once, and it has to outlive the
+#: process for that to mean anything (§0.11, E73).
+GRANTS = "grants"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +180,8 @@ class Session(Component):
     the same conversation and neither is wrong.
 
     What it does keep is what it has been told about itself: the tool groups it has been shown, how
-    often its tool set has changed, and the todo stack. Those live here rather than on the turn because
+    often its tool set has changed, the todo stack, and the paths it may reach outside the workspace.
+    Those live here rather than on the turn because
     a turn is too short to be shown anything and too frequent to be the record of it, and they come
     back from the journal in :meth:`load` so that reopening a conversation does not mean asking for the
     same groups again or losing its plan.
@@ -344,6 +353,37 @@ class Session(Component):
             return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
 
         return await self.change(ROUTE, mutate)
+
+    # -- which paths this conversation may reach -----------------------------------
+
+    @property
+    def grants(self) -> Mapping[Path, AccessMode]:
+        """The paths outside the workspace this conversation is allowed, and how far.
+
+        Read by every path tool through ``Env.resolve``, which is what makes one "yes" mean the rest of
+        the conversation rather than the one call that asked (§0.11, E73). A grant is a gate in front of
+        a resolving tool and never a sandbox: what runs inside a granted directory is still judged by the
+        command policy, and a path the denylist refuses is refused whatever this says.
+        """
+        return _grants(self._state.get(GRANTS))
+
+    async def grant(self, path: Path, need: AccessMode) -> bool:
+        """Allow *need* on *path* for the rest of this conversation; ``False`` when it already did.
+
+        The whole table is written rather than the one new row, for the same reason the disclosure set
+        is: reading it back is one value instead of a replay of differences. A narrower need leaves a
+        wider grant alone, so a second "yes" never makes the first one smaller.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, bool]:
+            held = _grants(before)
+            have = held.get(path)
+            if have is not None and mode_covers(have, need):
+                return None, False
+            held[path] = need if have is None else max(have, need)
+            return _grants_value(held), True
+
+        return await self.change(GRANTS, mutate)
 
     @property
     def prefix_epoch(self) -> tuple[int, int]:
@@ -538,6 +578,38 @@ def _epoch(value: str | None) -> int:
         return 0
     epoch = cast("dict[str, object]", record).get("epoch")
     return epoch if isinstance(epoch, int) else 0
+
+
+def _grants(value: str | None) -> dict[Path, AccessMode]:
+    """The path grants a setting holds; a value this build cannot read is no grants at all.
+
+    Read here rather than in :meth:`Session.load` for the same reason the other decoders are: a stored
+    value a later build cannot parse costs a forgotten grant, and a forgotten grant is refused rather
+    than honoured — the direction that is safe to be wrong in.
+    """
+    if not value:
+        return {}
+    try:
+        record = msgspec.json.decode(value)
+    except msgspec.DecodeError:
+        return {}
+    if not isinstance(record, dict):
+        return {}
+    stored = cast("dict[str, object]", record).get("paths")
+    if not isinstance(stored, dict):
+        return {}
+    held: dict[Path, AccessMode] = {}
+    for path, mode in cast("dict[str, object]", stored).items():
+        grant = parse_access_mode(str(mode))
+        if grant is not None:
+            held[Path(path)] = grant
+    return held
+
+
+def _grants_value(held: Mapping[Path, AccessMode]) -> str:
+    """One grants setting as the text written under its key — the whole table, in path order."""
+    paths = {str(path): mode.name.lower() for path, mode in sorted(held.items())}
+    return msgspec.json.encode({"paths": paths}).decode()
 
 
 def _route(value: str | None) -> tuple[str, int]:

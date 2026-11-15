@@ -73,6 +73,12 @@ class Ask(Struct, frozen=True, kw_only=True, tag_field="ask"):
 
     ``prompt`` is what to show the human. It is not the secret itself, ever: the caller passes the
     label, and the value travels back in the answer and straight out to where it was needed.
+
+    ``timeout`` is how long this question is worth waiting for, in seconds, and ``None`` is the
+    connection's own deadline. A caller that cannot wait the whole of it — a tool that promised to
+    wait one minute, no longer — says so here rather than in a second clock on the side; the
+    connection resolves the two into the one number it acts on before the question is sent, so the
+    kernel and the client are never counting down to different moments.
     """
 
     session: str = ""
@@ -82,6 +88,7 @@ class Ask(Struct, frozen=True, kw_only=True, tag_field="ask"):
     scope: str = ""
     id: int = 0
     prompt: str = ""
+    timeout: float | None = None
 
 
 class Confirmation(Ask, tag="confirmation", frozen=True, kw_only=True):

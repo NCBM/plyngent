@@ -73,9 +73,8 @@ async def read(env: Env, args: ReadArgs) -> ToolResult:
     """One file's text, or one document's, as the window the call asked for."""
     if args.document_id:
         return await _kept_window(env, args)
-    workspace = env.workspace
     try:
-        target = workspace.resolve(args.path, AccessMode.READ)
+        target = env.resolve(args.path, AccessMode.READ)
     except PathRefused as exc:
         return lifted(exc)
     if not target.is_file():
@@ -367,9 +366,8 @@ async def _document_text(env: Env, document_id: str) -> tuple[str, str] | ToolRe
 
 async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
     """One file's text, or what to answer instead of searching it."""
-    workspace = env.workspace
     try:
-        target = workspace.resolve(name, AccessMode.READ)
+        target = env.resolve(name, AccessMode.READ)
     except PathRefused as exc:
         return lifted(exc)
     if not target.is_file():
@@ -454,7 +452,7 @@ class WriteFileArgs(ToolArgs, kw_only=True):
 async def write_file(env: Env, args: WriteFileArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        target = workspace.resolve(args.path, AccessMode.WRITE)
+        target = env.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if target.is_file() and not args.overwrite:
@@ -508,9 +506,8 @@ class EditReplaceArgs(ToolArgs, kw_only=True):
 
 
 async def edit_replace(env: Env, args: EditReplaceArgs) -> ToolResult:
-    workspace = env.workspace
     try:
-        target = workspace.resolve(args.path, AccessMode.WRITE)
+        target = env.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if not target.is_file():
@@ -607,9 +604,8 @@ class EditLinenoArgs(ToolArgs, kw_only=True):
 
 
 async def edit_lineno(env: Env, args: EditLinenoArgs) -> ToolResult:
-    workspace = env.workspace
     try:
-        target = workspace.resolve(args.path, AccessMode.WRITE)
+        target = env.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if not target.is_file():

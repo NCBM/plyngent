@@ -340,11 +340,11 @@ def refusal(exc: PathRefused) -> ToolResult:
 
 
 def hints_for(exc: PathRefused) -> tuple[Hint, ...]:
-    """What would lift a refusal, as data: which tool, and the mode the call needed.
+    """What would lift a refusal, as data: which tool, and what a refusal can fill in for it.
 
-    Nothing for a denial, because nothing lifts it; the names come off the refusal, which the tool
-    layer attaches — the kernel names no tool of its own.
+    Nothing for a denial, because nothing lifts it; the tools come off the refusal with their patches
+    already attached, which is what keeps a hint from naming an argument its tool does not have.
     """
     if not isinstance(exc, OutsideWorkspace):
         return ()
-    return tuple(Hint(tool=name, given=(("mode", exc.need.name.lower()),)) for name in exc.related_tools)
+    return tuple(Hint(tool=lift.tool, given=lift.given) for lift in exc.related_tools)

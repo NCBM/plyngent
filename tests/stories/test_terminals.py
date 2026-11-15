@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from plyngent.kernel.pty.registry import Limits
 from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
@@ -230,6 +231,30 @@ async def test_a_session_that_already_has_its_terminals_says_so(story_with: Scri
     assert _session_id(first) != _session_id(second), "the first two were opened, one after the other"
     said = "this session already has 2 PTY sessions (main); close one before opening another"
     assert told(too_many) == said, told(too_many)
+
+
+async def test_a_host_with_room_for_one_terminal_says_which_number_it_hit(story_with: Scripted) -> None:
+    """The host's budget is the one the program was started with, and the refusal repeats that number.
+
+    A refusal a caller cannot act on is a refusal in the wrong place, which is why the host's budget and a
+    session's are counted apart — and why the sentence carries the number: "the host is full" and "the host
+    has one terminal" are one state with two different next steps (§0.11, E72).
+    """
+    story = await story_with(
+        calling("open_pty", {"command": ["cat"], "intention": "the one there is room for"}),
+        calling("open_pty", {"command": ["cat"], "intention": "and one too many"}),
+        text("one is what there is room for"),
+        limits=Limits(max_sessions=1),
+    )
+
+    await story.require("process")
+
+    await story.type("open two terminals")
+    await story.finished()
+
+    (_, first, too_many) = story.requests()
+    assert _session_id(first) > 0, "the first one opened"
+    assert told(too_many) == "PTY session limit reached (1); close an idle session first", told(too_many)
 
 
 async def test_the_humans_answer_reaches_the_terminal_and_is_reported_nowhere_else(story_with: Scripted) -> None:

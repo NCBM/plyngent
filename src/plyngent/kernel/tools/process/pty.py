@@ -123,9 +123,8 @@ class AskIntoPtyArgs(ToolArgs, kw_only=True):
 
 async def open_pty(env: Env, args: OpenPtyArgs) -> ToolResult:
     """Start a child on a terminal, once the command policy and the registry have both agreed."""
-    workspace = env.workspace
     try:
-        cwd = workspace.resolve(args.cwd, AccessMode.EXEC)
+        cwd = env.resolve(args.cwd, AccessMode.EXEC)
     except PathRefused as exc:
         return lifted(exc)
     if not cwd.is_dir():

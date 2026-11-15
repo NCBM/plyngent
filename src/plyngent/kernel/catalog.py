@@ -83,6 +83,9 @@ RESIDENT: tuple[str, ...] = (
     "todo_push",
     "todo_update",
     "todo_pop",
+    # Waiting for a person is the thirteenth resident (§10.4): a model that has to be shown a group
+    # before it can wait cannot wait, and waiting is what a conversation does with a person in it.
+    "wait",
     # The fallback a hint points at, and the one tool about the tool set: a session that had to be
     # shown this one before it could ask for anything else could not ask at all.
     "tool_require",
@@ -166,7 +169,7 @@ class ToolCatalog:
         visible = {
             name: spec for name, spec in self._specs.items() if name in self.resident or _group_of(spec) in disclosed
         }
-        return ToolView(specs=visible, groups=self.groups())
+        return ToolView(specs=visible, groups=self.groups(), disclosed=frozenset(disclosed))
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,10 +181,16 @@ class ToolView:
     there are when it names one that does not exist. ``missing`` is derived from the two: a group whose
     every member is resident never appears there, because there is nothing left to ask for, which is
     what makes the index line honest — it says what a session is missing, not what exists.
+
+    ``disclosed`` is what the session asked for, which is not the same thing as what it can reach: a
+    group with a resident member is reachable from the first turn, and its instructions are still not
+    something the prompt carries until somebody asks for the group (§10.4, E64). So the set is kept
+    rather than inferred, and a view is the one place both questions are answered.
     """
 
     specs: Mapping[str, ToolSpec]
     groups: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    disclosed: frozenset[str] = frozenset()
 
     def __len__(self) -> int:
         return len(self.specs)

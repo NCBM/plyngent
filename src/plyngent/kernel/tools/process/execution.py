@@ -93,7 +93,7 @@ async def execute(env: Env, args: ExecuteArgs) -> ToolResult:
     except ValueError as exc:
         return ToolResult.of(Failure.ARGS, str(exc))
     try:
-        base = workspace.resolve(args.cwd, AccessMode.EXEC)
+        base = env.resolve(args.cwd, AccessMode.EXEC)
     except PathRefused as exc:
         return lifted(exc)
     if not base.is_dir():
@@ -139,16 +139,14 @@ class _Questions:
         """Where this node runs and what it may touch, or why it does not run."""
         here = node.cwd if node.cwd is not None else str(inherited)
         try:
-            cwd = self.workspace.resolve(here, AccessMode.EXEC)
+            cwd = self.env.resolve(here, AccessMode.EXEC)
         except PathRefused as exc:
             return Refused(_kind(exc), str(exc), lifting_hints(exc))
         if not cwd.is_dir():
             return Refused(Failure.MISSING, f"not a directory: {here}")
         try:
-            sink = self.workspace.resolve(node.pipe, AccessMode.WRITE) if isinstance(node.pipe, str) else None
-            source = (
-                self.workspace.resolve(node.stdin.path, AccessMode.READ) if isinstance(node.stdin, FromFile) else None
-            )
+            sink = self.env.resolve(node.pipe, AccessMode.WRITE) if isinstance(node.pipe, str) else None
+            source = self.env.resolve(node.stdin.path, AccessMode.READ) if isinstance(node.stdin, FromFile) else None
         except PathRefused as exc:
             return Refused(_kind(exc), str(exc), lifting_hints(exc))
         refused = await self._allowed(node.argv)

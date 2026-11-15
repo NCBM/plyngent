@@ -31,8 +31,9 @@ from plyngent.kernel.link import InProcLink
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.net.web import Web, WebChannel
+from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
-from plyngent.kernel.pty.registry import PtyRegistry
+from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
@@ -128,7 +129,9 @@ async def install(
     route: str = "",
     web: Web | None = None,
     skills: Skills | None = None,
+    prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
+    limits: Limits | None = None,
     deadline: float | None = None,
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
@@ -146,8 +149,8 @@ async def install(
     and which of them answers a session that has not chosen. They are handed in for the same reason the
     skills directories are — which services exist and which key they take is a fact about how the program
     was started, and nothing below this line could have guessed it. A program given no routes and no
-    model has nothing to ask, which is the state this tree is in until the configuration surface lands
-    (R7/R8); a program given routes but no model asks the route its session names.
+    model has nothing to ask, which is a program nobody configured; one given routes but no model asks
+    the route its session names. Both are what :mod:`plyngent.config` hands over (§0.11).
 
     ``web`` is the same move for the vendor's web tools: ``None`` is a kernel that has none, and then
     ``web_fetch`` and ``builtin_websearch`` are not in the table at all rather than failing when called.
@@ -161,6 +164,13 @@ async def install(
     Passing a store built from a temporary directory is what lets a story have skills without reading
     the person's own.
 
+    ``prompt`` is what every request to a model begins with, and it is a parameter for the same reason
+    ``skills`` is: the catalog of skills under those directories is read from the machine this program was
+    started on, and the plan is read once there rather than per request (a prompt is the front of a
+    provider's cached prefix, and a section recomputed on every ask would move it with no counter to say
+    so). ``None`` is the plan these skills make (:meth:`~plyngent.kernel.prompt.PromptPlan.of`); a program
+    that says who the model is says it here.
+
     ``journal`` says where the conversation is kept, and it is a parameter rather than something the
     backend decides for itself. ``None`` is one file per workspace in the user's data directory
     (:func:`~plyngent.kernel.journal.journal_path`), ``":memory:"`` is a conversation nobody meant to
@@ -168,6 +178,12 @@ async def install(
     instead of in the person's own data. The bodies too long to send are kept in their own file beside
     whichever journal answers
     (:func:`~plyngent.kernel.documents.documents_path`), so no second thing has to be named here.
+
+    ``limits`` is how much of this host its terminals may take, and it is one parameter because it is one
+    value: three numbers that only ever travel together, decided here for the same reason the skills
+    directories are. ``None`` is the numbers this tree ships with, so a program with no configuration file
+    is the program it always was; a story that wants one terminal's worth of room says so here instead of
+    reaching into a registry it did not build (§0.11, E85).
 
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
@@ -184,17 +200,21 @@ async def install(
     kept = _journal_file(root, journal)
     table = Routes(routes or (), default=route)
     asked = model if model is not None else (Posted(table) if table.default else None)
+    # Read once, here: the skills this program can see are a fact about how it was started, and the prompt
+    # they are part of is the front of a cached prefix (§10.5, E65/E66). Nothing in the tree is read for it
+    # — a model that wants the workspace's own ``AGENTS.md`` reads it with the `read` call.
+    plan = PromptPlan.of(skills) if prompt is None else prompt
     _ = registry.declare_all(
         [
             Declaration(PtyBroker),
-            Declaration(PtyRegistry, instance=host),
+            Declaration(PtyRegistry, instance=host, kwargs=(Limits() if limits is None else limits).declared()),
             Declaration(HumanChannel, instance=host),
             Declaration(Offers, instance=host),
             Declaration(ModelChannel, instance=host, args=(asked,)),
             Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
             Declaration(Documents, instance=host, args=(documents_path(kept),)),
-            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills, "routes": table}),
+            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills, "routes": table, "prompt": plan}),
         ]
     )
     # One broker for the whole process: it is the root-qualified component, and it is the only thing

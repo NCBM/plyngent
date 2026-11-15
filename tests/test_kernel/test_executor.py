@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from plyngent.kernel.access import AccessMode
     from plyngent.kernel.cancel import Scope
     from plyngent.kernel.session import TurnCtx
 
@@ -48,15 +49,17 @@ class _Host:
 
 @dataclass(frozen=True)
 class _Session:
-    """The two things a call reads off its session: which conversation it belongs to, and what it has
-    been shown.
+    """The three things a call reads off its session: which conversation it belongs to, what it has
+    been shown, and which paths outside the workspace it was allowed.
 
     ``fs`` is shown because that is the group these tests put their own tools in: a view hides what a
-    session was never shown (§10.4), and a test of the scheduler is not a test of the disclosure.
+    session was never shown (§10.4), and a test of the scheduler is not a test of the disclosure. No
+    grants, because a test of the scheduler is not a test of the grant table either.
     """
 
     session_id: str = "s1"
     disclosed: frozenset[str] = frozenset({"fs"})
+    grants: dict[Path, AccessMode] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

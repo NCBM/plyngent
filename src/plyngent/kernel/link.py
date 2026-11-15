@@ -269,13 +269,21 @@ class LinkHuman(Human):
         self._link.emit(event)
 
     @override
-    async def confirm(self, *, prompt: str, default: bool | None = None, site: AskSite | None = None) -> Agreed:
+    async def confirm(
+        self,
+        *,
+        prompt: str,
+        default: bool | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Agreed:
         """Turn the question into the contract's value, and wait for the one answer by id.
 
-        The deadline is the connection's: an unanswered question is a refusal, and it is refused by
-        whoever owns the clock (R2.1 D13), so this adds nothing of its own.
+        The deadline is the question's, and ``None`` is the connection's own: whoever owns the clock
+        (R2.1 D13) is still the connection, and this adds nothing of its own to it.
         """
-        answer = await self._link.ask(_placed(Confirmation(prompt=prompt, default=default), site))
+        question = Confirmation(prompt=prompt, default=default, timeout=timeout)
+        answer = await self._link.ask(_placed(question, site))
         return answer if isinstance(answer, Agreed) else Agreed(accepted=False)
 
     @override
@@ -286,21 +294,37 @@ class LinkHuman(Human):
         options: tuple[str, ...],
         default: str | None = None,
         site: AskSite | None = None,
+        timeout: float | None = None,
     ) -> Picked:
         """Ask for one of ``options`` and wait for the one answer by id."""
-        answer = await self._link.ask(_placed(Selection(prompt=prompt, options=options, default=default), site))
+        question = Selection(prompt=prompt, options=options, default=default, timeout=timeout)
+        answer = await self._link.ask(_placed(question, site))
         return answer if isinstance(answer, Picked) else Picked()
 
     @override
-    async def text(self, *, prompt: str, default: str | None = None, site: AskSite | None = None) -> Written:
+    async def text(
+        self,
+        *,
+        prompt: str,
+        default: str | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Ask for a line, with ``default`` suggested, and wait for the one answer by id."""
-        answer = await self._link.ask(_placed(FreeText(prompt=prompt, default=default), site))
+        question = FreeText(prompt=prompt, default=default, timeout=timeout)
+        answer = await self._link.ask(_placed(question, site))
         return answer if isinstance(answer, Written) else Written()
 
     @override
-    async def secret(self, *, prompt: str, site: AskSite | None = None) -> Written:
+    async def secret(
+        self,
+        *,
+        prompt: str,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Ask for a line that is not echoed, offering no suggestion, and wait for the one answer."""
-        answer = await self._link.ask(_placed(Secret(prompt=prompt), site))
+        answer = await self._link.ask(_placed(Secret(prompt=prompt, timeout=timeout), site))
         return answer if isinstance(answer, Written) else Written()
 
 
@@ -400,6 +424,10 @@ class InProcLink:
         arrives before the wait is armed is not lost, because the waiter exists before the question
         is handed over.
 
+        ``ask.timeout`` is how long this question gets, and ``None`` is this connection's deadline. The
+        two are resolved into one number *before* the question travels, so the client counts down to
+        the same moment the kernel does rather than to a default of its own.
+
         The answer is of the kind the question admits (:func:`~plyngent.wire.ask.answer_kind`); a
         wrong kind is refused at :meth:`answer` and leaves this wait running. Nobody answering — a
         deadline, or a connection that closed — answers as :func:`~plyngent.wire.ask.unanswered`
@@ -409,13 +437,14 @@ class InProcLink:
             return unanswered(ask)
         id_ = ask.id or self._next_id
         self._next_id = max(self._next_id, id_) + 1
-        if ask.id != id_:
-            ask = replace(ask, id=id_)
+        patience = self._timeout if ask.timeout is None else ask.timeout
+        if ask.id != id_ or ask.timeout != patience:
+            ask = replace(ask, id=id_, timeout=patience)
         waiter: asyncio.Future[AnyAnswer] = asyncio.get_running_loop().create_future()
         self._waiting[id_] = _Waiting(question=ask, future=waiter)
         self._questions.put(ask)
         try:
-            return await asyncio.wait_for(waiter, self._timeout)
+            return await asyncio.wait_for(waiter, patience)
         except TimeoutError:
             return unanswered(ask)
         finally:

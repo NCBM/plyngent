@@ -147,9 +147,11 @@ class TurnRunner:
         first one wrote without anything having to be handed over.
 
         The tools are the view this session has: the residents, plus the groups it has been shown, and
-        the system line says what it is still missing. A view is built per *round* rather than per turn,
-        because a group asked for in one round arrives in the next — a block that changed inside a round
-        would be a prefix that changed between two requests for no reason a provider could cache (§10.5).
+        the prompt the host was installed with says what that view means — the playbook of every group it
+        can reach, and the index line naming the ones it cannot. A view is built per *round* rather than
+        per turn, because a group asked for in one round arrives in the next — a block that changed inside
+        a round would be a prefix that changed between two requests for no reason a provider could cache
+        (§10.5).
 
         ``route`` and ``cache_key`` are filled here for the same reason the tools are: both are facts
         about *this* request. Which route answers is read at this boundary, so a ``SetRoute`` lands on the
@@ -162,7 +164,7 @@ class TurnRunner:
         view = self._catalog.view(ctx.session.disclosed)
         asked = ctx.host.routes.resolve(ctx.session.route)
         return Request(
-            system=view.index(),
+            system=ctx.host.prompt.compose(view),
             messages=await self._seen(ctx, messages),
             tools=view.prompts(),
             route="" if asked is None else asked.name,

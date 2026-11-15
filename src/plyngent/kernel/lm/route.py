@@ -59,11 +59,12 @@ NO_ROUTE_CAPS = Caps(max_output=0)
 class Route(Struct, frozen=True, kw_only=True):
     """One endpoint of one model: where it is, what it answers in, and what it can do.
 
-    ``key`` is the credential and it is a value here rather than something read from the environment:
+    ``secret`` is the credential and it is a value here rather than something read from the environment:
     what a program is allowed to talk to is a fact about how it was started, and a route that went
-    looking would be a second place that decides. ``attempts`` is the delays between tries — empty is
-    "one try", and the tuple is what a story sets to a hundredth of a second so a story about a retry
-    costs no clock.
+    looking would be a second place that decides. The *name* of the variable it came from never reaches
+    this field — configuration resolves it, and a route holds only what it will send (§0.11, E71/E77).
+    ``attempts`` is the delays between tries — empty is "one try", and the tuple is what a story sets to
+    a hundredth of a second so a story about a retry costs no clock.
     """
 
     name: str = ""
@@ -72,11 +73,11 @@ class Route(Struct, frozen=True, kw_only=True):
     #: Where the endpoint lives, without the path: ``https://host/v1`` and the dialect adds its own.
     base: str = ""
     model: str = ""
-    key: str = ""
+    secret: str = ""
     caps: Caps
     #: The header the credential travels in, spelled per route because it is the one thing no compatible
     #: gateway agrees about: a bearer token, an ``x-api-key``, a vendor's own.
-    auth: tuple[str, str] = ("Authorization", "Bearer {key}")
+    auth: tuple[str, str] = ("Authorization", "Bearer {secret}")
     attempts: tuple[float, ...] = ()
     timeout: float = DEFAULT_TIMEOUT
     headers: tuple[tuple[str, str], ...] = ()
@@ -97,8 +98,8 @@ class Route(Struct, frozen=True, kw_only=True):
         sent = dict(self.headers)
         sent["Content-Type"] = "application/json"
         name, value = self.auth
-        if self.key:
-            sent[name] = value.replace("{key}", self.key)
+        if self.secret:
+            sent[name] = value.replace("{secret}", self.secret)
         return sent
 
 

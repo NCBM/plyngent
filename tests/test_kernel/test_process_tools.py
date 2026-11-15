@@ -12,7 +12,7 @@ Everything else is a story now (:mod:`tests.stories.test_programs`). Three thing
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from plyngent.kernel.cancel import CancelToken, Scope
@@ -30,6 +30,7 @@ from plyngent.wire.ask import AskSite
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from plyngent.kernel.access import AccessMode
     from plyngent.kernel.session import TurnCtx
 
 
@@ -42,11 +43,19 @@ class _Host:
 
 
 @dataclass(frozen=True)
+class _Session:
+    """As much of a session as a path tool needs: no grants, since nothing here was allowed one."""
+
+    grants: dict[Path, AccessMode] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class _Ctx:
     """The parts of a turn these tools reach for: its host, and an address to cancel under."""
 
     host: _Host
     cancel: CancelToken
+    session: _Session = field(default_factory=_Session)
 
     def scope(self, *segments: str) -> Scope:
         return self.cancel.at("1", "r0", *segments)

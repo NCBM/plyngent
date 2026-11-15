@@ -14,7 +14,8 @@ The rest of what this module asserted is a story now (:mod:`tests.stories.test_t
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -25,20 +26,29 @@ from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
-from plyngent.kernel.tools import fs
-from plyngent.kernel.toolspec import Res
+from plyngent.kernel.tools import fs, session
+from plyngent.kernel.toolspec import ArgsError, Res
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from plyngent.kernel.access import AccessMode
     from plyngent.kernel.session import TurnCtx
 
 
 @dataclass(frozen=True)
+class _Session:
+    """As much of a session as a path tool needs: no grants, since nothing here was allowed one."""
+
+    grants: dict[Path, AccessMode] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class _Ctx:
-    """The only part of a turn these tools touch: its host."""
+    """The parts of a turn these tools touch: its host, and the session whose grants it resolves with."""
 
     host: Host
+    session: _Session = field(default_factory=_Session)
 
 
 #: What these tests let a call reach: everything, because each test is about a tool's behaviour rather
@@ -63,6 +73,23 @@ def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
         _ = env.pty
     with pytest.raises(AttributeError, match="human"):
         _ = env.human
+
+
+async def test_a_wait_with_nobody_to_ask_still_sleeps(tmp_path: Path) -> None:
+    """A run with no terminal waits rather than asking a no-sink that answers at once.
+
+    The bound is declared in the schema, so a call that would wait an hour is one the model can see is
+    wrong before it makes it — and the sleep itself is what "waited" means, which a clock has to say.
+    """
+    world = _env(tmp_path)
+    started = time.monotonic()
+
+    result = await session.wait(world, session.WaitArgs(seconds=0.05, intention="let the build finish"))
+
+    assert result.summary == "waited 0.05s: nobody is at a terminal to say anything"
+    assert time.monotonic() - started >= 0.03, "a headless wait is a sleep, not an answer that arrives at once"
+    with pytest.raises(ArgsError):
+        _ = session.WAIT.decode('{"seconds": 700, "intention": "the rest of the day"}')
 
 
 async def test_a_missing_path_is_the_worlds_answer_and_a_fixable_parameter_is_the_models(tmp_path) -> None:

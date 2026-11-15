@@ -55,7 +55,8 @@ def mode_covers(granted: AccessMode, required: AccessMode) -> bool:
     return granted >= required
 
 
-# Bounds how many grant questions can be open at once, and so how long `/grants` gets.
+# Bounds how many grants one table may hold, and so how long a list of them would be if one existed. The
+# tool that adds to a conversation's table is the one that enforces it.
 MAX_GRANTS = 32
 
 type Source = Literal["config", "process"]

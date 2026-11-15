@@ -36,6 +36,7 @@ from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.render import render
+from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
 from plyngent.wire.event import Compacted, SessionsListed, TurnFinished
 from plyngent.wire.flow import Ack
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
     from plyngent.cli.line import Line, LineEditor
+    from plyngent.wire.ask import AnyAnswer, AnyAsk
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.link import KernelLink
 
@@ -163,7 +165,23 @@ class App:
     async def _questions(self) -> None:
         """Answer what the kernel asks, one at a time, through the one cursor."""
         async for question in self.client.questions():
-            _ = self.client.answer(await self.editor.ask(question))
+            _ = self.client.answer(await self._answered(question))
+
+    async def _answered(self, question: AnyAsk) -> AnyAnswer:
+        """What one question gets back: what the person said, or the value for nobody having said it.
+
+        A question may carry its own deadline, and it is always the number the kernel is counting down
+        to as well — the connection resolved the two before the question was sent. When it passes, the
+        cursor is let go and the answer is :func:`~plyngent.wire.ask.unanswered`: the kernel is told
+        nobody answered instead of waiting on a prompt that nobody is typing into, and the prompt comes
+        down rather than standing there until the person happens to press Enter.
+        """
+        if question.timeout is None:
+            return await self.editor.ask(question)
+        try:
+            return await asyncio.wait_for(self.editor.ask(question), question.timeout)
+        except TimeoutError:
+            return unanswered(question)
 
     async def _invocations(self) -> None:
         """Run what the kernel asks this client's tools for, one at a time, and answer each one.

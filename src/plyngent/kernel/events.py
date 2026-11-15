@@ -48,6 +48,10 @@ class Human(ABC):
     a turn and passes that turn's place, so a frontend holding several sessions can show the question
     under the right one. It stays an argument rather than a field on the channel because the channel
     is one per host while the place is one per call.
+
+    ``timeout`` is how long *this* question is worth waiting for; ``None`` is the connection's own
+    deadline. It is an argument for the same reason ``site`` is: "wait a minute" is the caller's
+    promise, and the channel is one per host rather than one per promise.
     """
 
     @abstractmethod
@@ -55,7 +59,14 @@ class Human(ABC):
         """Hand an event outward, without waiting for anything to happen to it."""
 
     @abstractmethod
-    async def confirm(self, *, prompt: str, default: bool | None = None, site: AskSite | None = None) -> Agreed:
+    async def confirm(
+        self,
+        *,
+        prompt: str,
+        default: bool | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
+    ) -> Agreed:
         """Ask yes or no; ``default`` is the answer suggested to the human, if any.
 
         An unanswered question is a ``False``, so a question nobody answered can never be mistaken
@@ -70,15 +81,29 @@ class Human(ABC):
         options: tuple[str, ...],
         default: str | None = None,
         site: AskSite | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
     ) -> Picked:
         """Offer ``options`` and take one; ``default`` is a suggested line, not an extra option."""
 
     @abstractmethod
-    async def text(self, *, prompt: str, default: str | None = None, site: AskSite | None = None) -> Written:
+    async def text(
+        self,
+        *,
+        prompt: str,
+        default: str | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
+    ) -> Written:
         """Take a line of prose; the empty string is an answer and ``None`` is the absence of one."""
 
     @abstractmethod
-    async def secret(self, *, prompt: str, site: AskSite | None = None) -> Written:
+    async def secret(
+        self,
+        *,
+        prompt: str,
+        site: AskSite | None = None,
+        timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
+    ) -> Written:
         """Take a line the client must not echo, and never offer one back as a suggestion.
 
         The value goes back in the answer and straight to where it was needed; it is never carried
@@ -99,9 +124,16 @@ class NoSink(Human):
         """Drop it: there is no one to show it to."""
 
     @override
-    async def confirm(self, *, prompt: str, default: bool | None = None, site: AskSite | None = None) -> Agreed:
+    async def confirm(
+        self,
+        *,
+        prompt: str,
+        default: bool | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Agreed:
         """Answer "no", with nothing attached."""
-        _ = (prompt, default, site)
+        _ = (prompt, default, site, timeout)
         return Agreed()
 
     @override
@@ -112,21 +144,35 @@ class NoSink(Human):
         options: tuple[str, ...],
         default: str | None = None,
         site: AskSite | None = None,
+        timeout: float | None = None,
     ) -> Picked:
         """Answer "nothing was picked"."""
-        _ = (prompt, options, default, site)
+        _ = (prompt, options, default, site, timeout)
         return Picked()
 
     @override
-    async def text(self, *, prompt: str, default: str | None = None, site: AskSite | None = None) -> Written:
+    async def text(
+        self,
+        *,
+        prompt: str,
+        default: str | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Answer "nothing was written"."""
-        _ = (prompt, default, site)
+        _ = (prompt, default, site, timeout)
         return Written()
 
     @override
-    async def secret(self, *, prompt: str, site: AskSite | None = None) -> Written:
+    async def secret(
+        self,
+        *,
+        prompt: str,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Answer "nothing was written", and offer nothing to suggest it."""
-        _ = (prompt, site)
+        _ = (prompt, site, timeout)
         return Written()
 
 
@@ -162,9 +208,16 @@ class HumanChannel(Component, Human):
         self._human().emit(event)
 
     @override
-    async def confirm(self, *, prompt: str, default: bool | None = None, site: AskSite | None = None) -> Agreed:
+    async def confirm(
+        self,
+        *,
+        prompt: str,
+        default: bool | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Agreed:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().confirm(prompt=prompt, default=default, site=site)
+        return await self._human().confirm(prompt=prompt, default=default, site=site, timeout=timeout)
 
     @override
     async def choose(
@@ -174,19 +227,33 @@ class HumanChannel(Component, Human):
         options: tuple[str, ...],
         default: str | None = None,
         site: AskSite | None = None,
+        timeout: float | None = None,
     ) -> Picked:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().choose(prompt=prompt, options=options, default=default, site=site)
+        return await self._human().choose(prompt=prompt, options=options, default=default, site=site, timeout=timeout)
 
     @override
-    async def text(self, *, prompt: str, default: str | None = None, site: AskSite | None = None) -> Written:
+    async def text(
+        self,
+        *,
+        prompt: str,
+        default: str | None = None,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().text(prompt=prompt, default=default, site=site)
+        return await self._human().text(prompt=prompt, default=default, site=site, timeout=timeout)
 
     @override
-    async def secret(self, *, prompt: str, site: AskSite | None = None) -> Written:
+    async def secret(
+        self,
+        *,
+        prompt: str,
+        site: AskSite | None = None,
+        timeout: float | None = None,
+    ) -> Written:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().secret(prompt=prompt, site=site)
+        return await self._human().secret(prompt=prompt, site=site, timeout=timeout)
 
     def _human(self) -> Human:
         """Who answers: the attached client, or the answer that is always no."""

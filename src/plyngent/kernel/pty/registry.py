@@ -54,6 +54,38 @@ DEFAULT_SESSION_OUTPUT_BUDGET = 256_000
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
 
 
+@dataclass(frozen=True, slots=True)
+class Limits:
+    """How much of a host its terminals may take, as one value rather than one parameter per number.
+
+    A host's budgets are a fact about how the program was started, so they are handed in at install — but
+    they are three numbers that only ever travel together, and a composition root that grew a parameter
+    per number is the signature this rewrite exists to end. The defaults are this value's, so a program
+    started with no configuration file has the numbers this tree shipped with, and a story that wants one
+    terminal's worth of room says so here rather than by reaching into a registry it did not build.
+
+    Only the three that bound a *terminal* are here. What a listing may return is a tool's own declaration
+    in its schema, and "a result too long to send" is the move-to-a-handle track (§10.3): neither is a
+    budget of a host, and one field answering both questions is what §0.11 E85 refused.
+    """
+
+    max_sessions: int = DEFAULT_MAX_SESSIONS
+    max_per_session: int = DEFAULT_MAX_PER_SESSION
+    session_output_budget: int = DEFAULT_SESSION_OUTPUT_BUDGET
+
+    def declared(self) -> dict[str, int]:
+        """The keyword arguments a registry is declared from — the one place these three names are spelled.
+
+        It exists so that the composition root hands over a value and does not restate the field names,
+        which is the same move as handing over a ``Routes`` rather than a list and a default.
+        """
+        return {
+            "max_sessions": self.max_sessions,
+            "max_per_session": self.max_per_session,
+            "session_output_budget": self.session_output_budget,
+        }
+
+
 @dataclass
 class PtySession:
     """One child on a terminal, as *this host* remembers it.

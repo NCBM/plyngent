@@ -17,7 +17,7 @@ from plyngent.kernel.skills import SKILL_FILE, Skills
 from plyngent.kernel.toolresult import Status
 from plyngent.kernel.workspace import WorkspaceConfig
 from tests.stories.driver import Story
-from tests.stories.model import calling, text, told
+from tests.stories.model import ScriptedModel, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -324,8 +324,12 @@ async def test_asking_for_the_group_twice_costs_one_change_of_the_tool_set(
 
     await story.type("show me the skills")
 
-    assert "skills(" in story.requests()[0].system, "the first request says there is a group to ask for"
-    assert "skills(" not in story.requests()[-1].system, "and after asking it is not missing any more"
+    assert "skills(" in story.requests()[0].system.rsplit("\n\n", 1)[-1], (
+        "the first request's last section says there is a group to ask for"
+    )
+    assert "skills(" not in story.requests()[-1].system.rsplit("\n\n", 1)[-1], (
+        "and after asking it is not missing any more"
+    )
     assert story.toolset_epoch == 2, "the client's own offer was the first change; asking twice is the second"
 
 
@@ -344,6 +348,71 @@ async def test_a_kernel_with_no_skills_directory_has_no_skill_tools(story_with: 
     ]
     assert told(story.requests()[1]) == "no tool is named 'skill_list'", "a name nothing has, answered as such"
     assert "skills" not in story.requests()[0].system, "and the line a model is given never mentions it"
+
+
+async def test_a_kernel_with_no_skills_says_nothing_about_skills(story_with: Scripted) -> None:
+    """No store is no section: not an empty heading, not a line saying there are none (§0.10, E65).
+
+    The prompt says what this program can see, and a program with nowhere to look sees nothing — so the
+    subject does not come up at all. What a model can still learn about skills is the group the index line
+    names, which is the tool set's business and not the catalog's.
+    """
+    story = await story_with(text("ok"))
+
+    await story.type("what skills do you have?")
+
+    (asked,) = story.requests()
+    assert "skill" not in asked.system.lower(), "a prompt about tools this kernel does not have says nothing"
+
+
+async def test_the_skills_catalog_is_read_once_when_the_kernel_starts(story_with: Scripted, tmp_path: Path) -> None:
+    """A skill on disk is one line in the prompt, and a skill written later waits for the next start.
+
+    Discovery re-reads its roots on every question, on purpose, so a section computed per request would be
+    a prefix that moved whenever somebody wrote a skill file — with no counter to say it did (§10.5). The
+    catalog is therefore read where the prompt is planned, at install, and the price is exactly this
+    story's second half: the model is told about it when the program is started again.
+    """
+    store = _store(tmp_path)
+    _ = _skill(store, "alpha", description="does alpha")
+    story = await story_with(text("one"), text("two"), skills=store)
+
+    await story.type("what skills are there?")
+    _ = _skill(store, "beta", description="does beta")
+    await story.type("and now?")
+
+    first, second = story.requests()
+    assert "- alpha: does alpha" in first.system, "the section lists the name and what the skill is for"
+    assert "- beta" not in first.system
+    assert second.system == first.system, "a skill written while the program runs moves nothing it already sent"
+
+
+async def test_a_skill_written_during_a_session_is_in_the_next_process(tmp_path: Path, transport: str) -> None:
+    """The other half of the snapshot: the file was always there, and the next start reads it."""
+    store = _store(tmp_path)
+    _ = _skill(store, "alpha", description="does alpha")
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+
+    first = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("one")]), skills=store, journal=journal
+    )
+    try:
+        await first.type("what skills are there?")
+        _ = _skill(store, "beta", description="does beta")
+    finally:
+        await first.close()
+
+    second = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("two")]), skills=store, journal=journal
+    )
+    try:
+        await second.type("what skills are there?")
+
+        (asked,) = second.requests()
+        assert "- beta: does beta" in asked.system, "the startup that came after the write is the one that sees it"
+    finally:
+        await second.close()
 
 
 async def test_a_denylisted_skill_file_is_refused(story_with: Scripted, tmp_path: Path) -> None:

@@ -1,9 +1,12 @@
-"""The session's own plan, as tools: the todo stack (§10.9).
+"""The conversation's own two subjects: the plan as a stack of tasks, and the person at the other end.
 
 One value, asked for, added to, and changed a task at a time. ``todo_list`` is the only one that shows
 a window of the stack; a call that changes one layer answers **that layer**, which is why only the
 listing takes a ``full``: there is nothing to open a window on when the call was about one group in the
 first place.
+
+``wait`` is the other half of the group, and the one call that spends time rather than state: a person
+reading what was just written needs a moment, and a turn that ended cannot be picked up again.
 
 The stack belongs to the conversation and not to this process: every change is written into the
 session's own history as one state change (§10.9, and ``Session.change``), so reopening a conversation
@@ -18,6 +21,7 @@ refused rather than guessed when they name nothing.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import msgspec
@@ -89,6 +93,50 @@ class ClearArgs(ToolArgs, kw_only=True):
     The plan is the conversation's, so clearing it clears it for good; what was there is still in the
     history as the state changes that wrote it, one entry at a time.
     """
+
+
+# -- waiting for a person -------------------------------------------------------------------------
+
+
+#: The longest a ``wait`` may sleep. In the schema rather than in the handler, so a call that asks for an
+#: hour is one the model can see is wrong before it makes it, and bounded because a turn waiting longer
+#: than this is a stopped turn rather than patience.
+MAX_WAIT_SECONDS = 600.0
+
+
+class WaitArgs(ToolArgs, kw_only=True):
+    """Wait for a person to say something, for up to ``seconds``.
+
+    The answer has three endings, and they are the three things a person can do: write a line, press
+    Enter on an empty one, or say nothing until the wait runs out. Waiting is the one thing a
+    conversation cannot do for itself — somebody reading what was just written needs a moment, and a turn
+    that ended has no way to be picked up again — so it is a call, and the kernel keeps waiting.
+    """
+
+    seconds: Annotated[float, msgspec.Meta(gt=0, le=MAX_WAIT_SECONDS)]
+
+
+async def wait(env: Env, args: WaitArgs) -> ToolResult:
+    """Sleep until somebody speaks, and say which of the three things happened."""
+    limit = _duration(args.seconds)
+    if not env.tools.asks:
+        # Nobody to ask is not nothing to wait for: a run with no terminal still sleeps. The sleep is
+        # inside the call's own scope, so the cancellation a person sends from outside still stops it.
+        await asyncio.sleep(args.seconds)
+        return ToolResult.ok(f"waited {limit}: nobody is at a terminal to say anything")
+    said = await env.human.text(prompt=f"waiting up to {limit} — {args.intention}", timeout=args.seconds)
+    match said.text:
+        case None:
+            return ToolResult.ok(f"nobody spoke in {limit}")
+        case "":
+            return ToolResult.ok("the person pressed enter on an empty line")
+        case words:
+            return ToolResult.ok(f"the person wrote: {words}")
+
+
+def _duration(seconds: float) -> str:
+    """A number of seconds written the way a summary line says it: ``2.5s``, not ``2.500000s``."""
+    return f"{seconds:g}s"
 
 
 async def todo_list(env: Env, args: ListArgs) -> ToolResult:
@@ -299,4 +347,15 @@ TODO_CLEAR = ToolSpec(
     mutates=Mutation.SESSION,
 )
 
-SPECS: tuple[ToolSpec, ...] = (TODO_LIST, TODO_PUSH, TODO_UPDATE, TODO_POP, TODO_CLEAR)
+#: The kernel's own waiting: a person's line with a deadline. ``TOOLS`` is declared beside ``HUMAN``
+#: because a wait has to know whether anybody is there at all — ``env.tools.asks`` is that answer, and a
+#: run with no terminal sleeps instead of asking a no-sink that answers at once.
+WAIT = ToolSpec(
+    name="wait",
+    group=Group.SESSION,
+    args=WaitArgs,
+    run=wait,
+    uses=Res.HUMAN | Res.TOOLS,
+)
+
+SPECS: tuple[ToolSpec, ...] = (TODO_LIST, TODO_PUSH, TODO_UPDATE, TODO_POP, TODO_CLEAR, WAIT)

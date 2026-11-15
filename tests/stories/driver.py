@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 from composat import Declaration, ServiceNotUpError
 
+from plyngent import config as configured
 from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Installed, install
 from plyngent.cli.app import App
 from plyngent.cli.grammar import Catalog, build
@@ -49,10 +50,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import TextIO
 
+    from plyngent.config import Settings
     from plyngent.kernel.events import Human
     from plyngent.kernel.lm.route import Route
     from plyngent.kernel.model import Model, Request
     from plyngent.kernel.net.web import Web
+    from plyngent.kernel.prompt import PromptPlan
+    from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import AnyAnswer, AnyAsk
     from plyngent.wire.command import OfferedTool
@@ -187,12 +191,15 @@ class Story:
         session: str = SESSION,
         transport: str = "inproc",
         model: Model | None = None,
+        config: Settings | None = None,
         routes: Iterable[Route] | None = None,
         route: str = "",
         web: Web | None = None,
         skills: Skills | None = None,
+        prompt: PromptPlan | None = None,
         journal: Path | str | None = None,
         tools: ClientTools = TERMINAL,
+        limits: Limits | None = None,
         deadline: float | None = None,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
@@ -209,6 +216,10 @@ class Story:
         directory, and none of the five skill tools exist. A story that is about skills passes a store
         built from its own ``tmp_path``, so the suite never reads the person's own skill directories.
 
+        ``prompt`` is the sections every request begins with, handed through to ``boot.install``: ``None``
+        is the plan this workspace and those skills make, and a story that installs its own says what a
+        program saying who the model is looks like.
+
         ``journal`` is where the conversation is kept. A story names it, because the alternative is
         writing into the person's own data directory: ``tmp_path`` beside the workspace is where a
         story's history belongs, and a story about a restart names the same path twice.
@@ -217,12 +228,38 @@ class Story:
         ways a person can be asked. A story about a client's *own* tool passes a bigger value, because
         implementing one is what makes it a tool somebody can call — a story cannot pretend that part.
 
+        ``limits`` is how much of the host its terminals may take, handed through to ``boot.install``:
+        ``None`` is the numbers this tree ships with, and a story about running out of room says the
+        smaller one here rather than building a registry of its own.
+
         ``deadline`` is the connection's deadline for a question or a call that nobody answers, which is
         how a story about one lost call costs a hundredth of a second instead of half a minute.
+
+        ``config`` is a settings value — the answer :func:`plyngent.config.load` gives a file — and it is
+        the program's own door: a story that hands one is a story about a program started from a file, and
+        the kernel is brought up by :func:`plyngent.config.install`, which is the same call ``__main__``
+        makes. Everything the file decides is then the file's, so naming one of those here as well is
+        refused rather than silently outvoted.
         """
         root.mkdir(parents=True, exist_ok=True)
-        story = cls(
-            await install(
+        settled: dict[str, bool] = {
+            "routes": routes is not None,
+            "route": bool(route),
+            "web": web is not None,
+            "skills": skills is not None,
+            "prompt": prompt is not None,
+            "journal": journal is not None,
+            "limits": limits is not None,
+            "deadline": deadline is not None,
+        }
+        if config is not None and any(settled.values()):
+            also = ", ".join(name for name, given in settled.items() if given)
+            msg = f"a settings value decides {also} as well; say it in the file, or pass no settings"
+            raise TypeError(msg)
+        kernel = (
+            await configured.install(root, config, model=model, transport=transport)
+            if config is not None
+            else await install(
                 root,
                 transport=transport,
                 model=model,
@@ -230,13 +267,13 @@ class Story:
                 route=route,
                 web=web,
                 skills=skills,
+                prompt=prompt,
                 journal=journal,
+                limits=limits,
                 deadline=deadline,
-            ),
-            session=session,
-            model=model,
-            tools=tools,
+            )
         )
+        story = cls(kernel, session=session, model=model, tools=tools)
         await story.settle()
         return story
 

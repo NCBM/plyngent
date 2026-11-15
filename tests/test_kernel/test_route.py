@@ -14,22 +14,13 @@ made of, not the length of a default.
 
 from __future__ import annotations
 
-import json
-import threading
-import time
-from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, override
-
 import pytest
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps, Route, Routes
 from plyngent.kernel.lm.route import Posted
 from plyngent.kernel.model import ModelFailed, Request, User
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
+from tests.loopback import Answer, answered
 
 
 def _request(route: str = "") -> Request:
@@ -41,85 +32,9 @@ def _caps(**given: object) -> Caps:
     return Caps(max_output=64, **given)  # type: ignore[arg-type]
 
 
-@dataclass
-class Answer:
-    """What a server says: a status and a body, and whether it says it at all."""
-
-    status: int = 200
-    body: bytes = b""
-    sleepy: float = 0.0
-
-
-@dataclass
-class Site:
-    """One server: what it answers, in order, and every request that arrived."""
-
-    answers: list[Answer] = field(default_factory=list)
-    asked: list[str] = field(default_factory=list)
-    bodies: list[dict[str, object]] = field(default_factory=list)
-    headers: list[dict[str, str]] = field(default_factory=list)
-    port: int = 0
-
-    def says(self, *answers: Answer) -> str:
-        """Answer these in order, and hand back the base URL a route would name."""
-        self.answers.extend(answers)
-        return f"http://127.0.0.1:{self.port}"
-
-
-def _handler(site: Site) -> type[BaseHTTPRequestHandler]:
-    """The request handler for one server, as ``ThreadingHTTPServer`` wants it."""
-
-    class Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def do_POST(self) -> None:
-            length = int(self.headers.get("Content-Length") or 0)
-            said = self.rfile.read(length)
-            site.asked.append(self.path)
-            site.bodies.append(json.loads(said.decode("utf-8")) if said else {})
-            site.headers.append({name.lower(): value for name, value in self.headers.items()})
-            answer = site.answers.pop(0) if site.answers else Answer(status=500, body=b"{}")
-            if answer.sleepy:
-                time.sleep(answer.sleepy)
-            self.send_response(answer.status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(answer.body)))
-            self.end_headers()
-            self.wfile.write(answer.body)
-
-        @override
-        def log_message(self, format: str, *args: object) -> None:
-            """Say nothing: a test's server is not somebody's terminal."""
-
-    return Handler
-
-
-@pytest.fixture
-def serve() -> Iterator[object]:
-    """A factory of servers on the loopback, each on a port the OS picks, all stopped at the end."""
-    running: list[ThreadingHTTPServer] = []
-
-    def start() -> Site:
-        site = Site()
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(site))
-        server.daemon_threads = True
-        site.port = int(server.server_address[1])
-        running.append(server)
-        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
-        return site
-
-    try:
-        yield start
-    finally:
-        for server in running:
-            server.shutdown()
-            server.server_close()
-
-
 def _answered(body: dict[str, object], *, say: str = "hello") -> Answer:
     """A chat-completions answer that said *say* and nothing else."""
-    said = {"choices": [{"message": {"content": say}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 3}}
-    return Answer(body=json.dumps(said).encode(), status=200)
+    return answered(body, say=say)
 
 
 def _route(base: str, **given: object) -> Route:
@@ -136,7 +51,7 @@ async def test_a_route_posts_the_dialects_body_to_the_dialects_path(serve) -> No
     """
     site = serve()
     base = site.says(_answered({}))
-    route = _route(base, key="secret", headers=(("X-Traced", "yes"),))
+    route = _route(base, secret="s3cr3t", headers=(("X-Traced", "yes"),))
 
     reply = await Posted(Routes([route], default="local")).respond(_request())
 
@@ -144,7 +59,7 @@ async def test_a_route_posts_the_dialects_body_to_the_dialects_path(serve) -> No
     assert reply.text == "hello"
     assert site.bodies[0]["model"] == "m"
     assert site.bodies[0]["messages"] == [{"role": "user", "content": "hi"}]
-    assert site.headers[0]["authorization"] == "Bearer secret"
+    assert site.headers[0]["authorization"] == "Bearer s3cr3t"
     assert site.headers[0]["x-traced"] == "yes"
     assert site.headers[0]["content-type"] == "application/json"
 

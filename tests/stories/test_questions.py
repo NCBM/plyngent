@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from plyngent.wire.ask import Confirmation
+from plyngent.wire.ask import Confirmation, Written
+from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from tests.stories.driver import Story
+
+    type Scripted = Callable[..., Awaitable[Story]]
 
 
 async def test_a_question_is_asked_and_the_answer_goes_back(story: Story) -> None:
@@ -69,3 +74,93 @@ async def test_nobody_is_asked_after_the_client_left(story: Story) -> None:
     agreed = await story.human.confirm(prompt="anyone?")
 
     assert agreed.accepted is False, "no client is not no channel: the answer is no, not a hang"
+
+
+async def test_a_question_that_runs_out_of_time_takes_the_prompt_with_it(story: Story) -> None:
+    """Acceptance ①: a question asks for a hundredth of a second, and the hundredth passes."""
+    asked = asyncio.ensure_future(story.human.text(prompt="what next?", timeout=0.01))
+
+    answer = await asked
+    await story.settle()
+
+    assert answer.text is None, "nobody wrote anything, so the answer is the absence of one"
+    assert story.questions()[0].timeout == 0.01, "the question says how long it is worth waiting for"
+    assert story.editor.waiting == 0, "the prompt came down instead of standing there unread"
+
+
+async def test_an_answer_that_arrives_too_late_is_refused(story: Story) -> None:
+    """Acceptance ②: the wait is over, so an answer to it changes nothing."""
+    asked = asyncio.ensure_future(story.human.text(prompt="what next?", timeout=0.01))
+    await story.settle()
+    question = story.questions()[0]
+
+    assert (await asked).text is None
+    assert story.kernel.client.answer(Written(id=question.id, text="late")) is False, (
+        "the kernel stopped waiting, so the late line is not an answer to anything"
+    )
+
+
+async def test_a_question_with_no_deadline_of_its_own_gets_the_connections(story_with: Scripted) -> None:
+    """Acceptance ③: the connection's deadline is the default, and the client counts to the same one."""
+    story = await story_with(deadline=0.01)
+
+    asked = asyncio.ensure_future(story.human.text(prompt="what next?"))
+    await story.settle()
+    question = story.questions()[0]
+
+    assert (await asked).text is None
+    assert question.timeout == 0.01, "the connection's deadline, resolved before the question was sent"
+
+
+# -- waiting for a person, which is the same question with a deadline ------------------------------
+
+
+async def test_a_wait_comes_back_with_what_the_person_wrote(story_with: Scripted) -> None:
+    """Acceptance ③ of §0.11: the first of a wait's three endings — somebody wrote a line."""
+    story = await story_with(
+        calling("wait", {"seconds": 30, "intention": "they are reading the plan"}),
+        text("thanks"),
+    )
+
+    await story.type("give them a moment")
+    await story.answer("read it, go ahead")
+    await story.finished()
+
+    assert "wait ok: the person wrote: read it, go ahead" in story.screen()
+    question = story.questions()[0]
+    assert question.prompt.startswith("waiting up to 30s — "), "what they read says how long it lasts"
+    assert "they are reading the plan" in question.prompt, "and why the model is waiting"
+
+
+async def test_an_empty_line_wakes_a_wait(story_with: Scripted) -> None:
+    """The second ending: an empty line is an answer, and it is not the same one as silence."""
+    story = await story_with(calling("wait", {"seconds": 30, "intention": "wait for an answer"}), text("ah"))
+
+    await story.type("wait for them to nod")
+    await story.answer("")
+    await story.finished()
+
+    assert "wait ok: the person pressed enter on an empty line" in story.screen()
+
+
+async def test_a_wait_that_runs_out_says_nobody_spoke(story_with: Scripted) -> None:
+    """The third ending: the wait gives up on its own, and the turn goes on after it."""
+    story = await story_with(
+        calling("wait", {"seconds": 0.01, "intention": "see if they are there"}), text("all right")
+    )
+
+    await story.type("wait a moment")
+    await story.finished()
+
+    assert "wait ok: nobody spoke in 0.01s" in story.screen()
+
+
+async def test_ctrl_c_stops_a_wait(story_with: Scripted) -> None:
+    """A wait is a call like any other: the stop a person sends ends it, and the turn says why."""
+    story = await story_with(calling("wait", {"seconds": 30, "intention": "wait for the build"}), text("stopped"))
+
+    await story.type("wait for the build")
+    await story.press("ctrl-c")
+    await story.until("turn 1 finished: user")
+
+    assert "calling wait: wait for the build" in story.screen(), "the call had started, and the sleep was its own"

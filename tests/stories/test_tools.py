@@ -8,17 +8,18 @@ afterwards, what the model was told, and what a refusal names.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.model import Result
-from tests.stories.model import calling, text
+from plyngent.kernel.model import Reply, Result
+from tests.stories.driver import Story
+from tests.stories.model import ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from pathlib import Path
 
     from plyngent.kernel.model import Request
-    from tests.stories.driver import Story
 
     type Scripted = Callable[..., Awaitable[Story]]
 
@@ -49,6 +50,13 @@ def _told_of(request: Request) -> str:
     said = request.messages[-1]
     assert isinstance(said, Result), "the answer after a call carries what came of it"
     return said.text
+
+
+def _made(request: Request) -> Path:
+    """The scratch directory the last thing the model was read named, read the way the model reads it."""
+    found = re.search(r"temporary workspace: (.+)", _told_of(request))
+    assert found is not None, f"nothing the model was read named a directory: {_told_of(request)!r}"
+    return Path(found.group(1).strip())
 
 
 async def test_a_listing_shows_what_is_in_a_directory(story_with: Scripted) -> None:
@@ -349,6 +357,93 @@ async def test_a_path_outside_the_workspace_is_refused_and_says_where_the_tree_e
         "the model is handed the step that would work, as the call to make — not as a sentence about it"
     )
     assert "hint: new_temporary_workspace" in told, "and the other way through, since there are two"
+
+
+async def test_a_granted_path_reads_again_and_still_reads_after_a_restart(tmp_path: Path, transport: str) -> None:
+    """Acceptance ①: the refusal, the grant it names, and the same call working — here and in the next process."""
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    _ = (outside / "notes.txt").write_text("kept outside", encoding="utf-8")
+    first = await Story.start(
+        root,
+        transport=transport,
+        model=ScriptedModel(
+            [
+                calling("listdir", {"path": "../elsewhere"}),
+                calling(
+                    "request_directory_access",
+                    {"path": "../elsewhere", "mode": "read", "intention": "the notes are kept outside"},
+                ),
+                calling("listdir", {"path": "../elsewhere"}),
+                text("it is readable now"),
+            ]
+        ),
+        journal=journal,
+    )
+    try:
+        await first.require("fs")
+        await first.type("look outside")
+        await first.answer("y")
+        await first.finished()
+
+        assert any(line.startswith("request_directory_access ok: allowed read") for line in first.screen()), (
+            first.screen()
+        )
+        assert any(line.startswith("listdir ok: 1 entries") for line in first.screen()), (
+            "the same call that was refused now reads the directory a person allowed"
+        )
+        assert await first.stop() == 0
+    finally:
+        await first.close()
+
+    second = await Story.start(
+        root,
+        transport=transport,
+        model=ScriptedModel([calling("listdir", {"path": "../elsewhere"}), text("still readable")]),
+        journal=journal,
+    )
+    try:
+        await second.require("fs")
+        await second.type("is it still there?")
+
+        assert any(line.startswith("listdir ok: 1 entries") for line in second.screen()), (
+            "a grant belongs to the conversation, so it is still there in the next process"
+        )
+    finally:
+        await second.close()
+
+
+async def test_a_temporary_workspace_is_written_in_and_gone_when_the_host_stops(story_with: Scripted) -> None:
+    """Acceptance ②: the other way to lift a refusal — a directory the host makes, and later removes."""
+    made: list[Path] = []
+
+    def scratch(request: Request) -> Reply:
+        """The write a model would make next: inside the directory it was just handed."""
+        made.append(_made(request))
+        return calling("write_file", {"path": str(made[-1] / "notes.txt"), "content": "hi"})
+
+    story = await story_with(
+        calling("write_file", {"path": "../elsewhere/notes.txt", "content": "hi"}),
+        calling("new_temporary_workspace", {"prefix": "story"}),
+        scratch,
+        text("written"),
+    )
+
+    await story.require("fs")
+    await story.type("write outside the workspace")
+    await story.answer("y")
+    await story.answer("y")
+    await story.finished()
+
+    assert any("new_temporary_workspace ok: temporary workspace: " in line for line in story.screen())
+    assert (made[0] / "notes.txt").read_text(encoding="utf-8") == "hi", "a path under it needs no grant"
+    assert await story.stop() == 0
+
+    await story.close()
+    assert not made[0].exists(), "the scratch directory goes when the host does"
 
 
 async def test_a_write_makes_the_directories_it_needs(story_with: Scripted) -> None:

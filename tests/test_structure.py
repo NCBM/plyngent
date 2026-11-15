@@ -17,20 +17,24 @@ from typing import TYPE_CHECKING, Any, cast, get_args
 
 import pytest
 
+import plyngent
 from plyngent import boot, cli, kernel, wire
 from plyngent.cli import offers
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import render
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalog, ToolView
 from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, codec_named
+from plyngent.kernel.model import AnyMessage
 from plyngent.kernel.net.web import Web
+from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
 from plyngent.kernel.skills import NAME_PATTERN, Skills
 from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
-from plyngent.kernel.tools import fs, meta, net, skills
+from plyngent.kernel.tools import fs, meta, net, session, skills
+from plyngent.kernel.tools import lifted as lifted_path
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.kernel.toolspec import (
@@ -40,10 +44,12 @@ from plyngent.kernel.toolspec import (
     Intention,
     Mutation,
     Posture,
+    Remember,
     Res,
     ToolArgs,
     ToolSpec,
 )
+from plyngent.kernel.trail import SUMMARY_HEADING, AnyRecord, Attempt, StateChange, Summary, as_message
 from plyngent.kernel.workspace import Denied, OutsideWorkspace
 from plyngent.wire.event import Batch, Event, TurnStarted
 from tests.stories import driver
@@ -169,6 +175,59 @@ def test_the_composition_root_does_not_depend_on_a_client() -> None:
     offenders = _offenders([pathlib.Path(boot.__file__)], lambda name: name.startswith("plyngent.cli"))
 
     assert offenders == [], "boot hands a link over; what draws on it is the client's business"
+
+
+def test_the_kernel_does_not_know_how_it_was_configured() -> None:
+    """A settings value is the composition root's, and it becomes values before a kernel sees anything.
+
+    The kernel is handed a route table, a skill store, a prompt plan and three budgets; none of them is a
+    document, and a kernel that could read one would be a second place deciding what this program is
+    (§0.11, E69). The rule is asserted as an import because that is the only way it can be broken by
+    accident: a value passed down is visible in a signature, a file opened three layers in is not.
+    """
+    everywhere = [*_modules_of(kernel), pathlib.Path(boot.__file__)]
+    offenders = _offenders(everywhere, lambda name: name == "plyngent.config" or name.startswith("plyngent.config."))
+
+    assert offenders == [], "a kernel that imports the configuration is a kernel that reads a file"
+
+
+def test_only_the_loader_reads_the_environment() -> None:
+    """E76: the environment holds a secret and never a setting, so one function reads it — the loader's.
+
+    The two readers that are not configuration are named rather than merely permitted, because a name in
+    this list is a claim somebody has to write down: a child process is handed the environment its parent
+    had, and ``$EDITOR`` is how a person says which program they write in. A third reader — a
+    ``PLYNGENT_*`` override, a value that quietly changed because of how the program was launched — arrives
+    here as a failure rather than as a habit (§0.11, E70/E76).
+    """
+    readers = {found for path in _modules_of(plyngent) for found in _environment_readers(path)}
+
+    assert readers == {"config.py:load", "process.py:_environment", "line.py:_composed"}, (
+        "the loader, a child process's environment, and the person's editor — and nothing else"
+    )
+
+
+def _environment_readers(path: pathlib.Path) -> list[str]:
+    """Every function in one file that reads the process's environment, as ``file.py:function``."""
+    return [
+        f"{path.name}:{node.name}"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _reads_environment(node)
+    ]
+
+
+def _reads_environment(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether this function touches ``os.environ`` or one of the functions that change it."""
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Attribute) and inner.attr == "environ":
+            return True
+        if (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr in {"getenv", "putenv", "unsetenv"}
+        ):
+            return True
+    return False
 
 
 def test_every_event_can_be_read() -> None:
@@ -360,11 +419,11 @@ def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> No
     assert everything_shown.index() == NOBODY, "a session with every group is told one thing: nobody to ask"
     assert not everything_shown.asks, "and the sentence is the group table's answer, not a second flag"
     assert nothing_shown.index() == (
-        "5 more groups (14 tools): document(1), fs(5), net(1), process(6), session(1) — "
+        "5 more groups (16 tools): document(1), fs(7), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the index counts what *this* session cannot reach, and it is a function of the set"
     assert catalog.view({"document", "process", "session"}).index() == (
-        "2 more groups (6 tools): fs(5), net(1) — use tool_require(group=…) to add one\n" + NOBODY
+        "2 more groups (8 tools): fs(7), net(1) — use tool_require(group=…) to add one\n" + NOBODY
     ), "one group left reads as one group"
 
 
@@ -414,6 +473,39 @@ def test_a_shown_group_arrives_whole_and_leaves_the_index() -> None:
     assert shown.get("execute") == catalog.get("execute"), "and the residents did not move: both views hold it"
 
 
+def test_every_group_has_a_playbook_section() -> None:
+    """The table is the exchange rate between a group and what a model is told about its tools.
+
+    A group is the disclosure unit, so its instructions are one too: filled for every :class:`Group` and
+    for nothing else, and the section arrives exactly when a tool of that group is reachable (§10.4, E64).
+    A group with instructions and no group would be a paragraph nobody ever reads; a group without one
+    would arrive as schemas with no how-to, which is the state R9 exists to end.
+    """
+    catalog = ToolCatalog()
+    by_group = dict(catalog.groups())
+    plan = PromptPlan()
+
+    assert set(GROUP_PLAYBOOK) == set(Group), "every group has a section, and nothing else does"
+    assert all(text.strip() for text in GROUP_PLAYBOOK.values()), "an empty section is a group with no how-to"
+    assert len(set(GROUP_PLAYBOOK.values())) == len(Group), "two groups sharing a section is one section lost"
+    assert not [text for text in GROUP_PLAYBOOK.values() if text in plan.compose(catalog.view(()))], (
+        "a session that reached nothing is told no group's how-to"
+    )
+
+    for group in Group:
+        members = by_group.get(group.value, ())
+        if not members:
+            continue
+        alone = ToolView(
+            specs={name: spec for name in members if (spec := catalog.get(name)) is not None},
+            groups=catalog.groups(),
+            disclosed=frozenset({group.value}),
+        )
+        arrived = [text for text in GROUP_PLAYBOOK.values() if text in plan.compose(alone)]
+
+        assert arrived == [GROUP_PLAYBOOK[group]], f"one group's tools brought {len(arrived)} sections"
+
+
 def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> None:
     """Existence is decided where the set is assembled, so the table is a function of what was installed.
 
@@ -425,7 +517,7 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
     with_backend = ToolCatalog((*BUILTIN, *net_specs(Web(pages=_Any(), sources=(_Any(),)))))
 
     assert with_backend.view(()).index() == (
-        "5 more groups (16 tools): document(1), fs(5), net(3), process(6), session(1) — "
+        "5 more groups (18 tools): document(1), fs(7), net(3), process(6), session(1) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
     assert {"client_fetch", "builtin_websearch", "web_fetch"} <= set(with_backend.names())
@@ -516,6 +608,28 @@ def _catalog():
 # may not contradict itself.
 
 
+# -- what may enter a history as words, which is what a prompt section must never do -------
+#
+# R9's other half: a section of the prompt is not a message. The record vocabulary is the whole check,
+# because a writer can only put something in a history by carrying a record — so if every record either is
+# a message, is dropped from what a model reads, or is the summary that stands in for what was compressed,
+# no writer anywhere can put words into a person's mouth.
+
+
+def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
+    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Attempt), (
+        "a record nobody classified would be a writer nobody asked about"
+    )
+    kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
+    assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
+    assert [as_message(record) for record in (StateChange(), Attempt())] == [None, None], (
+        "what a session knows and what became of a request are not things a model reads"
+    )
+    says = as_message(Summary(text="it was settled"))
+
+    assert says is not None and says.text.startswith(SUMMARY_HEADING), "a summary is announced as one"
+
+
 def test_the_four_outcomes_are_the_words_the_contract_carries() -> None:
     """The wire spells these as plain strings, so the spelling is the contract, not our business."""
     assert [status.value for status in Status] == ["ok", "refused", "failed", "partial"]
@@ -563,23 +677,67 @@ def test_a_partial_result_is_never_retried_as_a_whole() -> None:
 
 
 def test_a_refusal_reads_the_way_the_workspace_put_it() -> None:
-    """One template per kind of refusal: a second wording at the tool layer is a second answer to fix."""
+    """One template per kind of refusal: a second wording at the tool layer is a second answer to fix.
+
+    What a hint may carry is the refusal's to say and the tool's to accept: the mode is offered to the
+    tool that takes a ``mode`` and to that one only, because a hint naming an argument a tool does not
+    have is a call the model cannot make.
+    """
     escaped = OutsideWorkspace(
         pathlib.Path("../x"),
         resolved=pathlib.Path("/elsewhere/x"),
         root=pathlib.Path("/ws"),
         need=AccessMode.EXEC,
     )
-    lifted = refusal(escaped.with_tools("request_directory_access"))
+    lifted = lifted_path(escaped)
     denied = refusal(Denied(pathlib.Path("/ws/key.pem"), "/key"))
 
     assert (lifted.status, lifted.failure, lifted.retry) == (Status.REFUSED, Failure.BLOCKED, Retry.FIX_ARGS)
     assert lifted.summary == str(escaped), "the workspace's sentence, not a rewrite of it"
-    assert lifted.hints == (Hint(tool="request_directory_access", given=(("mode", "exec"),)),), (
-        "the tool is offered as data, with the mode the call needed"
-    )
+    assert lifted.hints == (
+        Hint(tool="request_directory_access", given=(("mode", "exec"),)),
+        Hint(tool="new_temporary_workspace"),
+    ), "both ways to lift it are offered, and only the one that takes a mode is told it"
     assert "request_directory_access" not in lifted.summary, "and the kernel names no tool in prose"
     assert (denied.failure, denied.hints) == (Failure.DENIED, ()), "nothing lifts a denial, so nothing is offered"
+
+
+def test_the_two_ways_out_of_the_workspace_declare_what_they_are() -> None:
+    """Acceptance ④: the grant tool is the question itself, and a scratch directory is agreed to once.
+
+    Neither judgement is written in a handler: the posture comes off ``uses``/``mutates``, and the two
+    that cannot be derived — nothing to ask twice, and one yes per host — say why beside the field.
+    """
+    asking = ToolCatalog().get("request_directory_access")
+    scratch = ToolCatalog().get("new_temporary_workspace")
+
+    assert asking is not None and scratch is not None, "a refusal that hints at a name has to be a name"
+    assert asking.uses == Res.PATHS | Res.HUMAN, "it *is* the question, so asking it again would be a bug"
+    assert asking.approval(_given(asking)) == (Posture.AUTO, None)
+    assert asking.intention is Intention.REQUIRED, "a call that puts a question to a person says why"
+    assert sorted(next(iter(dict(_enums(asking.schema())).values()))) == ["exec", "read", "write"], (
+        "the closed set is the words a person reads, not the integers an IntEnum would give"
+    )
+    assert scratch.uses == Res.PATHS and scratch.mutates is Mutation.HOST, "a directory is the host's"
+    assert scratch.approval(_given(scratch)) == (Posture.ONCE, Remember.HOST), "one yes for this host"
+    assert not {asking.name, scratch.name} & set(RESIDENT), "neither is resident: a path is allowed per session"
+
+
+def test_waiting_is_the_third_way_a_turn_spends_a_person_s_time() -> None:
+    """Acceptance ④ for the last name: a wait *is* a question, and it is always available.
+
+    ``HUMAN`` derives both answers §10.10 asks of it — nothing to ask twice, and every call says why —
+    and ``TOOLS`` rides along because a wait has to know whether anybody is there to wait for.
+    """
+    waiting = ToolCatalog().get("wait")
+    assert waiting is not None, "a resident that names nothing would show in a view's names"
+    assert waiting.name in RESIDENT, "a model that had to be shown `wait` before it could wait cannot wait"
+    assert waiting.group is Group.SESSION, "it spends a turn, and the turn's own subject is this group"
+    assert waiting.uses == Res.HUMAN | Res.TOOLS
+    assert waiting.approval(session.WaitArgs(seconds=1.0, intention="let them read it")) == (Posture.AUTO, None), (
+        "the wait is the question, so asking it again would be a bug"
+    )
+    assert waiting.intention is Intention.REQUIRED and waiting.mutates is Mutation.NONE
 
 
 # -- the skill tools: a group that exists only when there is somewhere to look -------------

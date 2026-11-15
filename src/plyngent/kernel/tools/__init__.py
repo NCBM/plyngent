@@ -7,7 +7,8 @@ tool is one file, and nothing else has to be told about it.
 The one thing that is shared is what to say when a path escapes the workspace. Every tool that resolves
 a path means the same two answers — ask for a grant, or take a scratch directory the host will remove —
 so the names live here rather than being spelled out at each raise site, where one of them would
-eventually be forgotten.
+eventually be forgotten. So does what each answer can be told about the call that was refused: the mode
+it needed, which only one of the two tools takes.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.toolresult import hints_for, refusal
-from plyngent.kernel.workspace import OutsideWorkspace
+from plyngent.kernel.workspace import Lift, OutsideWorkspace
 
 if TYPE_CHECKING:
     from plyngent.kernel.toolresult import Hint, ToolResult
@@ -23,7 +24,14 @@ if TYPE_CHECKING:
 
 #: What can lift a path that escaped the workspace: a grant for this session, or a directory the host
 #: makes and later removes. Anything else is a denial, and nothing lifts one of those.
-LIFTS_PATH: tuple[str, ...] = ("request_directory_access", "new_temporary_workspace")
+#:
+#: Each entry names the arguments a refusal can fill in for that tool. A refusal knows the mode the
+#: call needed, so the tool that takes a ``mode`` is told it and the tool that takes none is told
+#: nothing — a hint carrying an argument a tool does not have is a call the model cannot make.
+LIFTS_PATH: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("request_directory_access", ("mode",)),
+    ("new_temporary_workspace", ()),
+)
 
 
 def lifted(exc: PathRefused) -> ToolResult:
@@ -38,4 +46,8 @@ def lifting_hints(exc: PathRefused) -> tuple[Hint, ...]:
 
 def _named(exc: PathRefused) -> PathRefused:
     """The refusal with the tools attached, since the kernel raises it without any."""
-    return exc.with_tools(*LIFTS_PATH) if isinstance(exc, OutsideWorkspace) else exc
+    if not isinstance(exc, OutsideWorkspace):
+        return exc
+    need = exc.need.name.lower()
+    lifters = tuple(Lift(name, (("mode", need),) if "mode" in fills else ()) for name, fills in LIFTS_PATH)
+    return exc.with_tools(*lifters)

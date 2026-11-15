@@ -18,22 +18,23 @@ from __future__ import annotations
 import asyncio
 import shutil
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from stat import S_IMODE
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import msgspec
 
-from plyngent.kernel.access import AccessMode
+from plyngent.kernel.access import MAX_GRANTS, AccessMode
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.listing import Entry, EnumerateArgs, Filter, Listing, walk
-from plyngent.kernel.paths import display
-from plyngent.kernel.temps import under_system_temp
+from plyngent.kernel.paths import display, normalize
+from plyngent.kernel.temps import TempWorkspaceError, TooManyWorkspacesError, under_system_temp
 from plyngent.kernel.toolresult import Effects, Hint, Meta, Text, ToolResult
 from plyngent.kernel.tools import lifted
-from plyngent.kernel.toolspec import Group, Mutation, Res, Role, ToolArgs, ToolSpec
+from plyngent.kernel.toolspec import Group, Mutation, Posture, Remember, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.trash import Kind, Trouble, to_trash
-from plyngent.kernel.workspace import PathRefused
+from plyngent.kernel.workspace import Denied, PathRefused
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -132,7 +133,7 @@ class DeleteArgs(ToolArgs, kw_only=True):
 async def glob_paths(env: Env, args: GlobArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        base = workspace.resolve(args.path)
+        base = env.resolve(args.path, AccessMode.READ)
     except PathRefused as exc:
         return lifted(exc)
     if not base.is_dir():
@@ -156,7 +157,7 @@ async def glob_paths(env: Env, args: GlobArgs) -> ToolResult:
 async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        target = workspace.resolve(args.path)
+        target = env.resolve(args.path, AccessMode.READ)
     except PathRefused as exc:
         return lifted(exc)
     if not target.is_dir():
@@ -172,7 +173,7 @@ async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
 async def tree(env: Env, args: TreeArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        origin = workspace.resolve(args.path)
+        origin = env.resolve(args.path, AccessMode.READ)
     except PathRefused as exc:
         return lifted(exc)
     if not origin.is_dir():
@@ -189,15 +190,15 @@ async def tree(env: Env, args: TreeArgs) -> ToolResult:
 async def copy_path(env: Env, args: CopyArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        source = workspace.resolve(args.src, AccessMode.READ)
-        destination = workspace.resolve(args.dst, AccessMode.WRITE)
+        source = env.resolve(args.src, AccessMode.READ)
+        destination = env.resolve(args.dst, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if not _present(source):
         return ToolResult.of(Failure.MISSING, f"source does not exist: {args.src}")
 
     try:
-        target = _prepare(workspace, source, destination, overwrite=args.overwrite)
+        target = _prepare(env, source, destination, overwrite=args.overwrite)
     except _DestinationTakenError:
         return _taken(COPY.name, args)
     except PathRefused as exc:
@@ -218,13 +219,13 @@ async def copy_path(env: Env, args: CopyArgs) -> ToolResult:
 
 async def move_path(env: Env, args: MoveArgs) -> ToolResult:
     workspace = env.workspace
-    pair = _movable(workspace, args)
+    pair = _movable(env, args)
     if isinstance(pair, ToolResult):
         return pair
     source, destination = pair
 
     try:
-        target = _prepare(workspace, source, destination, overwrite=args.overwrite)
+        target = _prepare(env, source, destination, overwrite=args.overwrite)
     except _DestinationTakenError:
         return _taken(MOVE.name, args)
     except PathRefused as exc:
@@ -241,7 +242,7 @@ async def move_path(env: Env, args: MoveArgs) -> ToolResult:
 async def delete_path(env: Env, args: DeleteArgs) -> ToolResult:
     workspace = env.workspace
     try:
-        target = workspace.resolve(args.path, AccessMode.WRITE)
+        target = env.resolve(args.path, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if target == workspace.root:
@@ -249,6 +250,91 @@ async def delete_path(env: Env, args: DeleteArgs) -> ToolResult:
     if not _present(target):
         return ToolResult.of(Failure.MISSING, f"path does not exist: {args.path}")
     return await _deleted(env, target, args)
+
+
+# -- asking for a path that is not inside the workspace -------------------------------------------
+
+
+class Wanted(StrEnum):
+    """What a path is needed *for*, in the words the model reads.
+
+    A ``StrEnum`` and not :class:`~plyngent.kernel.access.AccessMode`: that one is an ``IntEnum``, and a
+    schema generated from it would offer the model ``1``, ``2`` and ``3``. ``exec`` is a need of its own
+    rather than a wider ``write``: the directory a command runs in is not a file that may be changed.
+    """
+
+    READ = "read"
+    WRITE = "write"
+    EXEC = "exec"
+
+
+#: The mode each spelling asks for. One row per value of the closed set, so a new one cannot be added
+#: to the schema without a decision about what it means.
+_MODES: dict[Wanted, AccessMode] = {
+    Wanted.READ: AccessMode.READ,
+    Wanted.WRITE: AccessMode.WRITE,
+    Wanted.EXEC: AccessMode.EXEC,
+}
+
+
+class AccessArgs(ToolArgs, kw_only=True):
+    """Ask to reach a path outside the workspace, for the rest of this conversation.
+
+    ``path`` is the path a call was refused on, and ``mode`` is what that call needed. The grant covers
+    that path and everything under it, and it belongs to this conversation rather than to this process —
+    so it still holds when the conversation is opened again, and it answers for nobody else. A path the
+    workspace's denylist refuses is refused here too: nothing grants one of those.
+    """
+
+    path: str
+    mode: Wanted = Wanted.READ
+
+
+async def request_directory_access(env: Env, args: AccessArgs) -> ToolResult:
+    """Ask a person to allow *path*, and remember a yes for the rest of this conversation."""
+    workspace = env.workspace
+    target = normalize(args.path, base=workspace.root)
+    denied = workspace.denied_by(target)
+    if denied is not None:
+        return lifted(Denied(target, denied))
+    need = _MODES[args.mode]
+    shown = display(target, root=workspace.root)
+    if workspace.under_roots(target) or workspace.access.covers(target, need, extra=env.grants):
+        return ToolResult.ok(f"already accessible: {shown}")
+    if len(env.grants) >= MAX_GRANTS:
+        return ToolResult.of(
+            Failure.LIMIT,
+            f"this conversation already holds {MAX_GRANTS} grants, which is the limit",
+        )
+    agreed = await env.human.confirm(
+        prompt=f"allow {args.mode.value} on {shown} for this conversation?", site=env.site()
+    )
+    if not agreed.accepted:
+        return ToolResult.of(Failure.DENIED, f"not allowed: {args.path}")
+    _ = await env.grant(target, need)
+    return ToolResult.ok(f"allowed {args.mode.value}: {shown}")
+
+
+class TemporaryArgs(ToolArgs, kw_only=True):
+    """Make a scratch directory outside the workspace, which this host removes when it stops.
+
+    ``prefix`` names it on disk (``plyngent-<prefix>-<random>``), so somebody looking at the system temp
+    directory can tell two of them apart. Paths inside it need no grant: a temporary workspace is one of
+    the roots every path tool resolves against, and the removal is the host's, not the model's.
+    """
+
+    prefix: str = ""
+
+
+async def new_temporary_workspace(env: Env, args: TemporaryArgs) -> ToolResult:
+    """Hand out one scratch directory under the system temp dir, and say where it is."""
+    try:
+        made = await env.workspace.temps.create(args.prefix)
+    except TooManyWorkspacesError as exc:
+        return ToolResult.of(Failure.LIMIT, str(exc))
+    except TempWorkspaceError as exc:
+        return ToolResult.of(Failure.LIMIT, str(exc))
+    return ToolResult.ok(f"temporary workspace: {made}")
 
 
 GLOB = ToolSpec(
@@ -309,7 +395,32 @@ DELETE_PATH = ToolSpec(
     escalates={"permanent": True},
 )
 
-SPECS: tuple[ToolSpec, ...] = (GLOB, LISTDIR, TREE, COPY, MOVE, DELETE_PATH)
+#: Asking for a path outside the workspace is not approved like a write inside it: the question *is*
+#: the tool, which is why its posture derives to ``AUTO``, and a yes is not remembered by the approvals
+#: table but by the conversation's own grant table.
+REQUEST_ACCESS = ToolSpec(
+    name="request_directory_access",
+    group=Group.FS,
+    args=AccessArgs,
+    run=request_directory_access,
+    uses=Res.PATHS | Res.HUMAN,
+)
+
+#: A scratch directory widens what is reachable without touching anything, so the posture is declared
+#: rather than derived: one "yes" for this host is enough, because the directory it hands out is the
+#: thing that was agreed to and the host removes it again.
+TEMPORARY = ToolSpec(
+    name="new_temporary_workspace",
+    group=Group.FS,
+    args=TemporaryArgs,
+    run=new_temporary_workspace,
+    uses=Res.PATHS,
+    mutates=Mutation.HOST,
+    posture=Posture.ONCE,
+    remember=Remember.HOST,
+)
+
+SPECS: tuple[ToolSpec, ...] = (GLOB, LISTDIR, TREE, COPY, MOVE, DELETE_PATH, REQUEST_ACCESS, TEMPORARY)
 
 
 # -- rendering ---------------------------------------------------------------------------------
@@ -432,7 +543,7 @@ def _meta(listing: Listing) -> Meta:
     return Meta(skipped=listing.skipped)
 
 
-def _prepare(workspace: Workspace, source: Path, destination: Path, *, overwrite: bool) -> Path:
+def _prepare(env: Env, source: Path, destination: Path, *, overwrite: bool) -> Path:
     """The path the copy or move writes to, with the destination's parents ready.
 
     A file named onto a directory lands inside it, and that child is resolved again: the destination
@@ -441,7 +552,7 @@ def _prepare(workspace: Workspace, source: Path, destination: Path, *, overwrite
     """
     target = destination
     if source.is_file() and destination.is_dir():
-        target = workspace.resolve(destination / source.name, AccessMode.WRITE)
+        target = env.resolve(destination / source.name, AccessMode.WRITE)
     if _present(target):
         if not overwrite:
             raise _DestinationTakenError
@@ -450,11 +561,12 @@ def _prepare(workspace: Workspace, source: Path, destination: Path, *, overwrite
     return target
 
 
-def _movable(workspace: Workspace, args: MoveArgs) -> ToolResult | tuple[Path, Path]:
+def _movable(env: Env, args: MoveArgs) -> ToolResult | tuple[Path, Path]:
     """The source and destination of a move, or the result that says why there is no move."""
+    workspace = env.workspace
     try:
-        source = workspace.resolve(args.src, AccessMode.WRITE)
-        destination = workspace.resolve(args.dst, AccessMode.WRITE)
+        source = env.resolve(args.src, AccessMode.WRITE)
+        destination = env.resolve(args.dst, AccessMode.WRITE)
     except PathRefused as exc:
         return lifted(exc)
     if not _present(source):

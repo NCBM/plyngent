@@ -9,7 +9,7 @@ human channel, which is not a thing to invent for one test (see ``docs/rewrite-r
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
 
+    from plyngent.kernel.access import AccessMode
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.toolresult import ToolResult
 
@@ -52,9 +53,13 @@ class _Host:
 
 @dataclass(frozen=True)
 class _Session:
-    """As much of a session as a terminal needs: the address it is opened under."""
+    """As much of a session as a terminal needs: the address it is opened under, and its grants.
+
+    No grants: nothing here was allowed a path outside the workspace, which is the ordinary case.
+    """
 
     session_id: str = "s1"
+    grants: dict[Path, AccessMode] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

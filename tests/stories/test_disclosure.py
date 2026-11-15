@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     type Scripted = Callable[..., Awaitable[Story]]
 
 
+#: The names `tool_require(group="fs")` shows, in the order the table folds them: a story that says what
+#: arrived says all of it, because a listing that lost one would still pass a check for a prefix.
+FS_TOOLS = "copy_path, delete_path, listdir, move_path, new_temporary_workspace, request_directory_access, tree"
+
+
 def _asked(tool: str, *, call: str = "", **arguments: object) -> Call:
     """One call of a batch: the model's own id for it, and its arguments as the model would spell them."""
     return Call(id=call or tool, tool=tool, arguments=json.dumps(arguments))
@@ -44,6 +49,15 @@ def _told_of(request: Request) -> str:
     return said.text
 
 
+def _index(request: Request) -> str:
+    """The last section of the prompt: what this session has not been shown, and whether anyone can be asked.
+
+    The prompt is five sections and this is the one the tool set writes (§0.10, E63), so a story about
+    disclosure reads it rather than the playbook that precedes it.
+    """
+    return request.system.rsplit("\n\n", 1)[-1]
+
+
 async def test_asking_for_a_group_brings_its_tools_in_the_next_round(story_with: Scripted) -> None:
     story = await story_with(
         calling("tool_require", {"group": "fs"}),
@@ -57,18 +71,18 @@ async def test_asking_for_a_group_brings_its_tools_in_the_next_round(story_with:
 
     first, second, last = story.requests()
     assert "listdir" not in _names(first), "a group nobody asked for is not offered"
-    assert first.system == (
-        "6 more groups (15 tools): client:c1(1), document(1), fs(5), net(1), process(6), session(1) — "
+    assert _index(first) == (
+        "6 more groups (17 tools): client:c1(1), document(1), fs(7), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one"
     ), "and the line says what is missing, because a group nobody mentions cannot be asked for"
     assert "listdir" in _names(second), "what one round asks for arrives in the next"
-    assert second.system == (
+    assert _index(second) == (
         "5 more groups (10 tools): client:c1(1), document(1), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one"
     ), "a group that has arrived is not still described as missing"
-    assert "tool_require ok: showing 5 tools from fs: copy_path, delete_path, listdir, move_path, tree" in (
-        story.screen()
-    ), "the person and the model are told what arrived, by name"
+    assert f"tool_require ok: showing 7 tools from fs: {FS_TOOLS}" in (story.screen()), (
+        "the person and the model are told what arrived, by name"
+    )
     assert "file\tnotes.txt" in _told_of(last), "and the tool it bought works in that same round"
 
 
@@ -97,7 +111,7 @@ async def test_two_asks_for_one_group_cost_one_change_of_the_tool_set(story_with
     (_, second) = story.requests()
     answers = [message.text.splitlines()[0] for message in second.messages if isinstance(message, Result)]
     assert answers == [
-        "showing 5 tools from fs: copy_path, delete_path, listdir, move_path, tree",
+        f"showing 7 tools from fs: {FS_TOOLS}",
         "fs was already shown",
     ]
 
@@ -139,7 +153,7 @@ async def test_a_group_a_conversation_asked_for_is_still_shown_after_a_restart(t
     )
     try:
         await first.type("I will need the file tools")
-        assert any(line.startswith("tool_require ok: showing 5 tools from fs") for line in first.screen()), (
+        assert any(line.startswith("tool_require ok: showing 7 tools from fs") for line in first.screen()), (
             first.screen()
         )
     finally:
@@ -158,7 +172,7 @@ async def test_a_group_a_conversation_asked_for_is_still_shown_after_a_restart(t
 
         first, last = second.requests()
         assert "listdir" in _names(first), "a conversation that asked once does not ask again in the next process"
-        assert first.system == (
+        assert _index(first) == (
             "5 more groups (10 tools): client:c1(1), document(1), net(1), process(6), session(1) — "
             "use tool_require(group=…) to add one"
         ), "and the line it is given says the same thing it would have said before the restart"

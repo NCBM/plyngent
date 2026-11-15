@@ -320,6 +320,7 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
     call named no path", and both the approval and the batch read the difference.
     """
     workspace = ctx.host.workspace
+    grants = ctx.session.grants
     held: list[Held] = []
     refused = False
     for name, role in (spec.roles or {}).items():
@@ -327,7 +328,7 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
         if role not in _ACCESS or not isinstance(value, str) or not value:
             continue
         try:
-            held.append(Held(workspace.resolve(value, _ACCESS[role]), role))
+            held.append(Held(workspace.resolve(value, _ACCESS[role], grants=grants), role))
         except PathRefused:
             refused = True
     return tuple(held), refused
