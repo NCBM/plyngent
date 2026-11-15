@@ -14,6 +14,11 @@ Two halves, both terminal business:
 * text without a slash is a message — ``Submit`` — because "say something" is the one thing a person
   does all day and should never have to spell.
 
+A line is split the way a shell splits one (``shlex``), because an argument is a value and a value may
+contain a space: ``/export --path "my notes.md"`` is one path, not two. An argument the person wrote as
+``""`` is the empty string and stays one — dropping it would turn "say nothing here" into "say nothing
+at all", which click reads as a missing option.
+
 ``/submit`` is the exception that proves the rule: it exists so a message can be composed in the
 human's editor, which is the one thing a single line cannot do. It takes no arguments; the text comes
 from the editor and the session is the one in focus.
@@ -22,6 +27,7 @@ from the editor and the session is the one in focus.
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast, get_args, override
 
@@ -181,7 +187,12 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
 
 
 def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
-    """A line that begins with the slash: a word, then whatever it was given."""
+    """A line that begins with the slash: a word, then the arguments it was given.
+
+    The arguments are split like a shell's, so a quoted value stays one argument and an unquoted one is
+    several; a line with an unclosed quote is a sentence rather than an exception, because the person is
+    still typing on the other end of it.
+    """
     said, _, rest = text.partition(" ")
     if not said:
         return Help(text=help_text(catalog))
@@ -190,7 +201,11 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     tag = catalog.word(said)
     if tag is None:
         return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
-    return _known(tag, catalog.offers[tag], rest.split(), session=session)
+    try:
+        args = shlex.split(rest)
+    except ValueError as exc:
+        return Wrong(text=f"{SLASH}{said}: {exc}")
+    return _known(tag, catalog.offers[tag], args, session=session)
 
 
 def _known(tag: str, entry: Entry, args: list[str], *, session: str) -> Intent:
@@ -393,6 +408,10 @@ class SlashCompleter(Completer):
     Derived rather than maintained: a command that gains an option gains a completion, because both
     read the catalog. A word this client cannot spell is not offered, which is the answer the parser
     gives too.
+
+    Every candidate carries the line that explains it — the command's summary for a word, the option's
+    own help for an option — because a list of bare names makes the person guess, and the guess is what
+    completion exists to save.
     """
 
     _catalog: Catalog
@@ -413,7 +432,9 @@ class SlashCompleter(Completer):
             word = head[len(SLASH) :]
             for candidate in sorted({*self._catalog.aliases, *self._catalog.offers}):
                 if candidate.startswith(word):
-                    yield Completion(f"{SLASH}{candidate}", start_position=-len(text))
+                    yield Completion(
+                        f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
+                    )
             return
         tag = self._catalog.word(head[len(SLASH) :])
         if tag is None or not tail.startswith("--"):
@@ -421,4 +442,9 @@ class SlashCompleter(Completer):
         entry = self._catalog.offers[tag]
         for param in entry.command.get_params(click.Context(entry.command)):
             if isinstance(param, click.Option) and param.opts[0].startswith(tail):
-                yield Completion(param.opts[0], start_position=-len(tail))
+                yield Completion(param.opts[0], start_position=-len(tail), display_meta=param.help or "")
+
+    def _summary(self, candidate: str) -> str:
+        """What a word does, looked up through the alias that spells it."""
+        tag = self._catalog.word(candidate)
+        return "" if tag is None else self._catalog.offers[tag].summary

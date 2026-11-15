@@ -33,16 +33,16 @@ from msgspec.structs import replace as replaced
 
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
-from plyngent.kernel.model import Assistant, ModelFailed, Picture, Reply, Request, Result, User
+from plyngent.kernel.failure import Failure
+from plyngent.kernel.model import Assistant, Delta, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES
 from plyngent.kernel.trail import Attempt
-from plyngent.wire.event import AnswerCut, AssistantText, TurnFinished, TurnStarted, Usage
+from plyngent.wire.event import AnswerCut, AssistantDelta, AssistantText, TurnFinished, TurnStarted, Usage
 
 if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolCatalog
     from plyngent.kernel.executor import ToolExecutor
-    from plyngent.kernel.failure import Failure
     from plyngent.kernel.model import AnyMessage
     from plyngent.kernel.session import TurnCtx
     from plyngent.wire.event import AnyEvent
@@ -222,8 +222,13 @@ class TurnRunner:
         What the asking cost is said outward here rather than by the model: a model answers a value, and
         every event on this lane is the kernel's to emit. An answer that stopped short is said the same
         way, because both are facts about the request that just came back and neither is the turn's end.
+
+        What the model *is saying* is said outward while it is still saying it — one event per fragment,
+        as they arrive — but the answer this returns is the whole one, because that is what the turn
+        writes down (§0.13, E94). A model that cannot stream says one thing and no fragments, so this is
+        one loop and not two.
         """
-        reply = await state.ctx.round_scope().guard(state.ctx.host.model.respond(request))
+        reply = await state.ctx.round_scope().guard(self._answered(state, request))
         if reply.usage.reported:
             self._emit(
                 Usage(
@@ -239,6 +244,19 @@ class TurnRunner:
                 AnswerCut(session=state.ctx.session.session_id, turn=state.ctx.turn_id, reason=str(reply.cut)),
             )
         return reply
+
+    async def _answered(self, state: TurnState, request: Request) -> Reply:
+        """Every fragment of the answer said outward as it arrives, and then the answer itself."""
+        async for piece in state.ctx.host.model.stream(request):
+            if isinstance(piece, Delta):
+                if piece.text:
+                    self._emit(
+                        AssistantDelta(session=state.ctx.session.session_id, turn=state.ctx.turn_id, text=piece.text),
+                    )
+                continue
+            return piece
+        msg = "the model's stream ended without the answer it was adding up to"
+        raise ModelFailed(Failure.PROTOCOL, msg)
 
     async def dispatch(self, state: TurnState, reply: Reply) -> TurnState:
         """Write what the model answered, then run every call it asked for, as one batch.

@@ -15,6 +15,10 @@ Two things this dialect cannot do, and they are said here rather than discovered
   ``messages`` carries a token budget; here a vendor invents ``reasoning`` or ``thinking`` and the next
   one spells it differently. So the flag is not written at all — a route that wants thinking out loud
   belongs on one of the other two.
+
+**The one thing it does that the others do not yet**: it reads a streamed answer (``sse``). Each frame
+carries a fragment of what the model is saying, and the calls it asks for arrive as fragments keyed by an
+index — which is why the calls are assembled at the end rather than read from one document.
 """
 
 from __future__ import annotations
@@ -23,10 +27,11 @@ from typing import TYPE_CHECKING, override
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
-from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
-from plyngent.kernel.model import Assistant, Call, ModelFailed, Reply, Result, Usage, User
+from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, document, frames, schema
+from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Reply, Result, Usage, User
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from typing import Any
 
     from plyngent.kernel.lm.caps import Caps
@@ -35,6 +40,9 @@ if TYPE_CHECKING:
 
 #: The word a route names this dialect by.
 CHAT = "chat-completions"
+
+#: What the last frame of a stream says instead of an answer: the endpoint's own full stop.
+DONE = "[DONE]"
 
 #: What a ``finish_reason`` means when it is not "it ended on its own".
 #:
@@ -49,13 +57,14 @@ class Chat(Codec):
 
     name: str = CHAT
     endpoint: str = "/chat/completions"
+    sse: bool = True
 
     @override
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
         body: Body = {
             "model": model,
             "messages": [*_system(request), *(_message(item) for item in request.messages)],
-            "stream": False,
+            "stream": caps.stream,
             "max_tokens": caps.max_output,
             "parallel_tool_calls": caps.parallel_tools,
         }
@@ -66,6 +75,11 @@ class Chat(Codec):
             ]
         if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
             body["prompt_cache_key"] = request.cache_key
+        if caps.stream:
+            # A streamed answer only carries what it cost when it is asked to: without this the last
+            # frame says nothing about tokens, and §10.5's numbers would silently disappear from every
+            # streamed turn.
+            body["stream_options"] = {"include_usage": True}
         return body
 
     @override
@@ -85,6 +99,40 @@ class Chat(Codec):
         )
 
     @override
+    async def stream(self, chunks: AsyncIterator[bytes]) -> AsyncIterator[Delta | Reply]:
+        """One streamed answer: each word as it arrives, then the reply the words add up to.
+
+        This dialect streams inside ``choices[0].delta``: a fragment of text, a fragment of a *call* (an
+        id once, a name once, and the arguments a few characters at a time), and at the end the reason it
+        stopped. So the calls are assembled here rather than read: ``index`` says which of them a
+        fragment belongs to, and a call is complete only when the stream is.
+
+        ``data: [DONE]`` is the endpoint saying it is finished, and it is a word rather than an event:
+        arriving without it is not an error — the body ending is the same thing said differently — but a
+        frame that is not JSON is.
+        """
+        said: list[str] = []
+        partial: dict[int, _Pending] = {}
+        cut: Failure | None = None
+        usage = Usage()
+        async for _event, data in frames(chunks):
+            if data.strip() == DONE:
+                break
+            frame = as_dict(document(data, where=f"{self.name} stream"))
+            usage = _usage(frame) if frame.get("usage") is not None else usage
+            choices = as_list(frame.get("choices"))
+            delta = as_dict(as_dict(choices[0]).get("delta")) if choices else {}
+            text = _said(delta)
+            if text:
+                said.append(text)
+                yield Delta(text=text)
+            _pending(partial, as_list(delta.get("tool_calls")))
+            reason = as_text(as_dict(choices[0]).get("finish_reason")) if choices else ""
+            if reason:
+                cut = _CUT.get(reason)
+        yield Reply(text="".join(said), calls=_assembled(partial), usage=usage, cut=cut)
+
+    @override
     def explain(self, payload: bytes) -> str:
         try:
             document = decoded(payload, where=self.name)
@@ -94,6 +142,42 @@ class Chat(Codec):
         if isinstance(said, str):
             return said
         return as_text(as_dict(said).get("message")) or as_text(as_dict(document).get("message"))
+
+
+class _Pending:
+    """One call of a streamed answer, as the fragments of it that have arrived so far."""
+
+    id: str
+    tool: str
+    arguments: list[str]
+
+    def __init__(self) -> None:
+        self.id = ""
+        self.tool = ""
+        self.arguments = []
+
+
+def _pending(partial: dict[int, _Pending], fragments: list[Any]) -> None:
+    """Add the fragments of this frame to the calls they belong to, by the index that names them.
+
+    An index is the only handle a stream gives: the id arrives with the first fragment and never again,
+    so a second fragment carrying one would start a *second* call if this keyed on it instead.
+    """
+    for one in fragments:
+        fragment = as_dict(one)
+        call = partial.setdefault(as_int(fragment.get("index")), _Pending())
+        function = as_dict(fragment.get("function"))
+        call.id = as_text(fragment.get("id")) or call.id
+        call.tool = as_text(function.get("name")) or call.tool
+        call.arguments.append(as_text(function.get("arguments")))
+
+
+def _assembled(partial: dict[int, _Pending]) -> tuple[Call, ...]:
+    """The calls this stream asked for, in the order it asked for them."""
+    return tuple(
+        Call(id=partial[index].id, tool=partial[index].tool, arguments="".join(partial[index].arguments))
+        for index in sorted(partial)
+    )
 
 
 def _system(request: Request) -> list[Body]:

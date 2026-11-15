@@ -49,9 +49,10 @@ if TYPE_CHECKING:
 #: connection, so what it offers is one group that arrives and leaves with it (§10.8).
 CLIENT = "client"
 
-#: The names the kernel answers a person through. All three are here although only two have a shape:
-#: the set is about *whose* the name is — a client offers one of these by name and never by schema —
-#: and ``ask_user_form`` needs a multi-field editor, which arrives with R8 (§10.8, E48).
+#: The names the kernel answers a person through. All three of them have a shape, because the set is
+#: about *whose* the name is — a client offers one of these by name and never by schema — and what a
+#: question looks like is the kernel's answer, so that a form put to a person reads the same whichever
+#: frontend puts it (§10.8, E48/E95).
 ASKING_NAMES: frozenset[str] = frozenset({"ask_user_line", "ask_user_choice", "ask_user_form"})
 
 
@@ -81,14 +82,56 @@ class AskChoice(ToolArgs, kw_only=True):
     default: str = ""
 
 
-#: The asking names whose shape this kernel has: the two it can put to a person today.
-SHAPES: dict[str, type[ToolArgs]] = {"ask_user_line": AskLine, "ask_user_choice": AskChoice}
+class AskField(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """One line of a form: what the answer is called, what to ask, and what it may be.
+
+    ``options`` non-empty makes it a menu, and then the answer has to be one of them — the same rule
+    :class:`AskChoice` puts to a person. ``allow_custom`` beside a menu is the one thing a menu cannot
+    say by itself, so such a field is put as a line with the menu written into it and the person's own
+    words are taken as they are; no options is a line either way.
+
+    ``default`` is suggested and is not the answer: an empty line takes it, and with no default an empty
+    line is not an answer at all, so the client asks again.
+    """
+
+    name: Annotated[str, msgspec.Meta(min_length=1, max_length=64)]
+    prompt: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
+    default: str = ""
+    options: Annotated[list[str], msgspec.Meta(max_length=32)] = msgspec.field(default_factory=list)
+    allow_custom: bool = False
+
+
+class AskForm(ToolArgs, kw_only=True):
+    """Put several things to the person at once, and read back one answer per field.
+
+    A form is a question like the other two rather than a new kind of thing: the person is asked one
+    field at a time and what the model reads back is one line per field, named after the field. It
+    exists because a model collecting three related answers should not have to spend three calls saying
+    they belong together — and because the fields are an array, a frontend that can draw a block of
+    labelled fields has something to draw, rather than three names this file happened to pick.
+
+    The form is one answer or none: a person who backs out of the third field has answered nothing, and
+    half a form is not something the kernel could name a field of.
+    """
+
+    title: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
+    fields: Annotated[list[AskField], msgspec.Meta(min_length=1, max_length=16)]
+
+
+#: The asking names and the shape the kernel puts to a person for each of them.
+SHAPES: dict[str, type[ToolArgs]] = {
+    "ask_user_line": AskLine,
+    "ask_user_choice": AskChoice,
+    "ask_user_form": AskForm,
+}
 
 #: Why an offer of one tool was not taken. Each is the reason an ``OfferRefused`` carries, so a client
 #: can say which of the rules it broke instead of guessing from a silent refusal.
 DUPLICATE = "a tool of this name already exists, and a name is how the model asks for one"
 NAMELESS = "a tool without a name is one nothing could call"
 NOT_YOURS = "the kernel has a shape for this name, and a client may not say what it is"
+#: Unreachable while every asking name has a shape (a test says so), and kept because the branch below
+#: indexes :data:`SHAPES`: a name added to one set and not the other has to be a refusal, not a crash.
 NO_SHAPE = "this kernel has no shape for that name yet, so there is nothing to offer"
 NOT_AN_OBJECT = "the arguments of a client's tool are a JSON object, and this schema is not one"
 

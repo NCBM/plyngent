@@ -130,6 +130,7 @@ async def story_with(tmp_path, transport):
         tools: ClientTools = TERMINAL,
         limits: Limits | None = None,
         deadline: float | None = None,
+        markdown: bool = False,
     ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
@@ -153,6 +154,7 @@ async def story_with(tmp_path, transport):
             tools=tools,
             limits=limits,
             deadline=deadline,
+            markdown=markdown,
         )
         started.append(story)
         return story

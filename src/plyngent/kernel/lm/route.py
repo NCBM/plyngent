@@ -31,15 +31,16 @@ from typing import TYPE_CHECKING, cast, override
 import msgspec
 import niquests
 from msgspec import Struct
+from msgspec.structs import replace
 
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.codec import FAILURE_STATUS, refused
-from plyngent.kernel.model import Model, ModelFailed
+from plyngent.kernel.model import Delta, Model, ModelFailed
 from plyngent.kernel.toolresult import OUTCOMES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Iterable
     from typing import Any
 
     from plyngent.kernel.lm.codec import Codec
@@ -171,6 +172,23 @@ class Posted(Model):
         and a setting that changed mid-turn takes effect at the next request — which is the boundary this
         method is called at.
         """
+        route, codec, body = self._prepared(request)
+        return await self._tried(route, codec, body)
+
+    @override
+    def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """The same request, read as it arrives — and asked without a stream when the dialect cannot.
+
+        Two gates, like a picture's: the *route's* ``stream`` says what the endpoint will do and the
+        *dialect's* ``sse`` says whether this build can read it. A route that claims one over a dialect
+        that cannot is answered as an ordinary request rather than as a body read as if it were frames —
+        the caps handed to ``encode`` are what makes that one decision, so nothing downstream has to
+        check twice.
+        """
+        return self._streamed(request)
+
+    def _prepared(self, request: Request) -> tuple[Route, Codec, bytes]:
+        """The route that answers, the words it speaks, and the body to send — or why there is none."""
         route = self._routes.resolve(request.route)
         if route is None:
             msg = f"no route answers {request.route or 'this session'}, and this kernel has none by default"
@@ -179,8 +197,8 @@ class Posted(Model):
         if codec is None:
             msg = f"route {route.name} names the dialect {route.dialect!r}, which this build does not speak"
             raise ModelFailed(Failure.ARGS, msg)
-        body = msgspec.json.encode(codec.encode(request, model=route.model, caps=route.caps))
-        return await self._tried(route, codec, body)
+        caps = replace(route.caps, stream=route.caps.stream and codec.sse)
+        return route, codec, msgspec.json.encode(codec.encode(request, model=route.model, caps=caps))
 
     async def _tried(self, route: Route, codec: Codec, body: bytes) -> Reply:
         """One attempt, and another while the kind of trouble is one the world can fix.
@@ -202,6 +220,37 @@ class Posted(Model):
         assert failure is not None, "a loop with at least one attempt either answered or failed"
         raise failure
 
+    async def _streamed(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """One attempt at a streamed answer, and another only while nothing has been said yet.
+
+        A retry after the first fragment would say the beginning of the answer twice, so the answer is
+        tried again only if it broke before it said anything — which is the same rule the non-streamed
+        path follows, applied to the one thing that changes it: text that has already been shown cannot
+        be unshown.
+        """
+        route, codec, body = self._prepared(request)
+        if not route.caps.stream or not codec.sse:
+            yield await self._tried(route, codec, body)
+            return
+        failure: ModelFailed | None = None
+        for wait in (0.0, *route.attempts):
+            if wait:
+                await asyncio.sleep(wait)
+            shown = False
+            try:
+                async for piece in self._once_streamed(route, codec, body):
+                    if isinstance(piece, Delta):
+                        shown = True
+                    yield piece
+            except ModelFailed as failed:
+                failure = failed
+                if shown or OUTCOMES[failed.failure][1] is not Retry.SAME_CALL:
+                    raise
+            else:
+                return
+        assert failure is not None, "a loop with at least one attempt either answered or failed"
+        raise failure
+
     async def _once(self, route: Route, codec: Codec, body: bytes) -> Reply:
         """One request to one endpoint, as the answer or as the kind of trouble it met."""
         url = route.base.rstrip("/") + codec.endpoint
@@ -217,11 +266,57 @@ class Posted(Model):
                 )
             except niquests.RequestException as exc:
                 raise _trouble(exc, url=url, seconds=route.timeout) from exc
-            sent = await _content(response)
-        status = int(getattr(response, "status_code", 0) or 0)
-        if status >= FAILURE_STATUS:
-            raise refused(codec, sent, status=status, where=route.name)
-        return codec.decode(sent)
+            status = int(getattr(response, "status_code", 0) or 0)
+            if status >= FAILURE_STATUS:
+                raise refused(codec, await _content(response), status=status, where=route.name)
+            return codec.decode(await _content(response))
+
+    async def _once_streamed(self, route: Route, codec: Codec, body: bytes) -> AsyncIterator[Delta | Reply]:
+        """One request, read as it arrives — the fragments first, and then the reply they make.
+
+        A streamed answer's *refusal* is still a whole body: an endpoint that would not answer says so in
+        one piece, with a status, and it is read the way a plain request's refusal is. What arrives in
+        frames is only what arrived because the request was accepted.
+        """
+        url = route.base.rstrip("/") + codec.endpoint
+        async with niquests.AsyncSession() as session:
+            try:
+                response = await session.request(
+                    "POST",
+                    url,
+                    headers=route.wired(),
+                    data=body,
+                    timeout=route.timeout,
+                    allow_redirects=False,
+                    stream=True,
+                )
+            except niquests.RequestException as exc:
+                raise _trouble(exc, url=url, seconds=route.timeout) from exc
+            status = int(getattr(response, "status_code", 0) or 0)
+            if status >= FAILURE_STATUS:
+                raise refused(codec, await _content(response), status=status, where=route.name)
+            try:
+                async for piece in codec.stream(_chunks(response)):
+                    yield piece
+            except niquests.RequestException as exc:
+                raise _trouble(exc, url=url, seconds=route.timeout) from exc
+
+
+async def _chunks(response: Any) -> AsyncIterator[bytes]:
+    """The bytes of one answer as they arrive, whichever way this client hands them over.
+
+    The same shape :func:`_content` has and for the same reason: a client that answers a streamed request
+    with an awaitable iterator should not turn into a second code path here.
+    """
+    found = response.iter_content(chunk_size=None)
+    if hasattr(found, "__await__"):
+        found = await found
+    if hasattr(found, "__aiter__"):
+        async for chunk in found:
+            yield chunk if isinstance(chunk, bytes) else bytes(chunk)
+        return
+    for chunk in found:
+        yield chunk if isinstance(chunk, bytes) else bytes(chunk)
 
 
 async def _content(response: Any) -> bytes:

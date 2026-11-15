@@ -32,7 +32,7 @@ verbs, so a turn that had to know a provider would be a turn that could not be r
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from composat import Component
 from msgspec import Struct
@@ -41,6 +41,9 @@ from msgspec import Struct
 # when the class is created, so a lazily-undefined name would make ``Reply`` unencodable.
 from plyngent.kernel.failure import Failure  # noqa: TC001
 from plyngent.kernel.toolresult import Status
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 class Call(Struct, frozen=True, kw_only=True):
@@ -218,6 +221,19 @@ class Reply(Struct, frozen=True, kw_only=True):
     cut: Failure | None = None
 
 
+class Delta(Struct, frozen=True, kw_only=True):
+    """A piece of what a model is saying, before the answer it belongs to exists.
+
+    Only words, and only ever words: a *call* is not a fragment even when a route streams its arguments
+    in pieces, because a call is not something anybody reads — it is a value the turn acts on, and half
+    a JSON argument is not a thing to act on (that is why ``Caps`` has one streaming flag and not two).
+    A stream therefore ends with the :class:`Reply` that says what the whole answer was, and a reader
+    that only wants the answer never looks at these.
+    """
+
+    text: str = ""
+
+
 class NoModel(Exception):  # noqa: N818 — a missing model is a state of the kernel, not a failure of a call
     """There is nothing to ask: a kernel brought up without a model refuses turns rather than hanging."""
 
@@ -242,16 +258,29 @@ class ModelFailed(Exception):  # noqa: N818 — the asking failed, and the turn 
 
 
 class Model(ABC):
-    """What a turn asks: one request in, one reply out.
+    """What a turn asks: one request in, one reply out — or the reply in the pieces it arrives in.
 
-    Nothing about a provider here — no dialect, no transport, no streaming. That is R11's canonical
-    encoding, and keeping it out means a scripted model in a test and a real one in a run are asked the
-    same question in the same words.
+    Nothing about a provider here — no dialect, no transport, no streaming *protocol*. That is R11's
+    canonical encoding, and keeping it out means a scripted model in a test and a real one in a run are
+    asked the same question in the same words.
+
+    Two verbs and not three kinds of model: :meth:`respond` is the answer, and :meth:`stream` is the
+    answer with the fragments that led to it. The second one's default is a single piece, so every model
+    that can only answer — a scripted one, a route whose dialect cannot read a stream — is a streaming
+    model that says one thing, and a caller has one loop rather than two (§0.13, E99).
     """
 
     @abstractmethod
     async def respond(self, request: Request) -> Reply:
         """Answer one request."""
+
+    def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """Answer one request, in the pieces it arrives in — by default, one piece: all of it."""
+        return self._whole(request)
+
+    async def _whole(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """The single piece an answer that does not stream is made of."""
+        yield await self.respond(request)
 
 
 class ModelChannel(Component, Model):
@@ -282,3 +311,17 @@ class ModelChannel(Component, Model):
             msg = "no model is installed, so nothing answered"
             raise NoModel(msg)
         return await inner.respond(request)
+
+    @override
+    def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """The same, in the pieces it arrives in — a channel forwards, it does not decide."""
+        return self._streamed(request)
+
+    async def _streamed(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """Whoever is installed, streamed; the checking is the one method above, not twice."""
+        inner = self.inner
+        if inner is None:
+            msg = "no model is installed, so nothing answered"
+            raise NoModel(msg)
+        async for piece in inner.stream(request):
+            yield piece

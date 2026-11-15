@@ -9,8 +9,9 @@ Three rules, and they are what makes the table worth its lines:
 
 * **A field is here because somebody obeys it.** ``vision`` gates a picture at assembly time,
   ``prefix_cache`` decides which cache mechanism a request carries (§10.5), ``max_output`` becomes the
-  room an answer is given, and ``parallel_tools`` / ``reasoning`` become flags the dialects write.
-  A cap nobody reads would be a comment with a default value.
+  room an answer is given, ``stream`` decides whether a request asks for one, and ``parallel_tools`` /
+  ``reasoning`` become flags the dialects write. A cap nobody reads would be a comment with a default
+  value.
 * **``max_output`` has no default.** How much room an answer gets is a decision somebody makes, and a
   dialect that must state it (``messages`` does) would otherwise invent one silently.
 * **The defaults are the conservative ones.** A route that was told nothing gets a model that cannot
@@ -42,7 +43,7 @@ class PrefixCache(StrEnum):
 
 
 class Caps(Struct, frozen=True, kw_only=True):
-    """One route's model, as the five things anything downstream has to know about it."""
+    """One route's model, as the six things anything downstream has to know about it."""
 
     #: Whether a picture reaches the model at all. False is "send the words, not the pixels", which is
     #: what a tool's handle already says in prose.
@@ -60,3 +61,8 @@ class Caps(Struct, frozen=True, kw_only=True):
     max_output: int
     #: Which cache mechanism this route's requests carry.
     prefix_cache: PrefixCache = PrefixCache.NONE
+    #: Whether an answer may arrive in pieces. It is one bit and not two: a fragment of an *argument* is
+    #: not a thing anything here acts on, so a route that streams its tool arguments into one answer is
+    #: just a route that streams. False is "ask and wait", which is what a dialect that cannot read a
+    #: stream has to be asked for anyway (:attr:`plyngent.kernel.lm.codec.Codec.sse` says which).
+    stream: bool = False

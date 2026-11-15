@@ -29,6 +29,13 @@ async def test_a_new_session_is_admitted_and_listed(story: Story) -> None:
     assert story.screen() == ("sessions: main, work",), "admission order, and no invention"
 
 
+async def test_a_name_with_a_space_in_it_is_one_argument(story: Story) -> None:
+    await story.type('/new --session "work two"')
+    await story.type("/sessions")
+
+    assert story.screen() == ("sessions: main, work two",), "the quotes are the line's, not the kernel's"
+
+
 async def test_a_closed_session_is_gone_from_the_list(story: Story) -> None:
     await story.type("/new --session work")
     await story.type("/sessions")

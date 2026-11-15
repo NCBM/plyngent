@@ -62,7 +62,7 @@ async def test_the_model_is_offered_the_residents_and_told_what_is_missing(story
     assert names == sorted(names), "the block sits in front of the prompt, so its order is the name's"
     assert set(names) == {*RESIDENT, "ask_user_line"}, "what it always has, plus what the client offers"
     assert asked.system.rsplit("\n\n", 1)[-1] == (
-        "6 more groups (17 tools): client:c1(1), document(1), fs(7), net(1), process(6), session(1) — "
+        "6 more groups (18 tools): client:c1(2), document(1), fs(7), net(1), process(6), session(1) — "
         "use tool_require(group=…) to add one"
     ), "and the last section says what it is not seeing, because a group nobody mentions cannot be asked for"
 

@@ -93,7 +93,7 @@ async def test_a_name_this_kernel_has_is_refused_and_the_table_does_not_move(sto
 
     assert f"offer refused: read — {DUPLICATE}" in story.screen(), "the refusal names the rule it broke"
     assert story.toolset_epoch == before, "a refused offer is no change at all"
-    assert "client:c1(1)" in story.requests()[0].system, "and the refused name did not join the client's group"
+    assert "client:c1(2)" in story.requests()[0].system, "and the refused name did not join the client's group"
 
 
 async def test_a_schema_that_is_not_an_object_is_refused(story_with: Scripted) -> None:
@@ -175,6 +175,61 @@ async def test_a_question_from_the_model_is_one_question(story_with: Scripted) -
     assert "calling ask_user_line: the name is the user's" in story.screen(), "the reason travels with the call"
     assert told(story.requests()[-1]).splitlines() == ["the client ran ask_user_line", "Biscuit"], (
         "and the person's line is what the model reads back, under the one line that says where it came from"
+    )
+
+
+#: A form of two fields: a line, and a menu (E95). The title and the names are the model's.
+PROFILE: dict[str, object] = {
+    "title": "Profile",
+    "intention": "the two answers belong together",
+    "fields": [
+        {"name": "owner", "prompt": "who owns it?"},
+        {"name": "tone", "prompt": "which tone?", "options": ["plain", "fancy"]},
+    ],
+}
+
+
+async def test_a_form_is_put_one_field_at_a_time_and_read_back_by_field(story_with: Scripted) -> None:
+    """E95: the kernel's shape is a set of fields, and this lane asks them one line at a time."""
+    story = await story_with(
+        calling("tool_require", {"group": "client:c1"}),
+        calling("ask_user_form", PROFILE),
+        text("thanks"),
+    )
+
+    await story.type("ask me two things")
+    await story.answer("Ada")
+    await story.answer("fancy")
+    await story.finished()
+
+    assert [type(question).__name__ for question in story.questions()] == ["FreeText", "Selection"], (
+        "a field with a menu is a menu, and the rest is a line"
+    )
+    assert [question.prompt for question in story.questions()] == ["Profile: who owns it?", "Profile: which tone?"], (
+        "the title leads every line, because there is no block to put it above"
+    )
+    assert told(story.requests()[-1]).splitlines() == [
+        "the client ran ask_user_form",
+        "owner: Ada",
+        "tone: fancy",
+    ], "one line per field, named after the field, and nothing invented"
+
+
+async def test_a_form_left_half_answered_is_answered_by_nobody(story_with: Scripted) -> None:
+    """The whole form is one answer or none: half a form is not a result with a name (§0.13, E95)."""
+    story = await story_with(
+        calling("tool_require", {"group": "client:c1"}),
+        calling("ask_user_form", PROFILE),
+        text("fine"),
+    )
+
+    await story.type("ask me two things")
+    await story.answer("Ada")
+    await story.decline()
+    await story.finished()
+
+    assert "ask_user_form was never answered" in told(story.requests()[-1]), (
+        "a field nobody answered answers nothing, and the first field is not sent on as if it were the form"
     )
 
 

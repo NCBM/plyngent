@@ -12,10 +12,28 @@ tests are: there is no boundary to stand outside of.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, override
+
 import msgspec
+import pytest
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.model import Assistant, Call, Reply, Request, Result, Usage, User
+from plyngent.kernel.model import (
+    Assistant,
+    Call,
+    Delta,
+    Model,
+    ModelChannel,
+    NoModel,
+    Reply,
+    Request,
+    Result,
+    Usage,
+    User,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 def test_a_cost_nobody_reported_is_not_a_cost_of_zero() -> None:
@@ -70,3 +88,40 @@ def test_a_reply_that_ran_out_of_room_says_which_limit_it_hit() -> None:
 
     assert cut.cut is Failure.LIMIT
     assert Reply(text="done").cut is None
+
+
+async def test_a_model_that_cannot_stream_answers_in_one_piece() -> None:
+    """The default is one fragment: all of it. So a caller has one loop, not two, and a scripted model
+    that has nothing to stream is a streaming model that says one thing (§0.13, E99)."""
+
+    class _Whole(Model):
+        @override
+        async def respond(self, request: Request) -> Reply:
+            return Reply(text="said once")
+
+    pieces = [piece async for piece in _Whole().stream(Request())]
+
+    assert pieces == [Reply(text="said once")]
+
+
+async def test_a_channel_streams_from_whoever_is_installed() -> None:
+    """A channel forwards; the one thing it adds is the refusal when nothing is installed."""
+
+    class _Pieces(Model):
+        @override
+        async def respond(self, request: Request) -> Reply:
+            return Reply(text="ab")
+
+        @override
+        def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+            return self._said()
+
+        async def _said(self) -> AsyncIterator[Delta | Reply]:
+            yield Delta(text="a")
+            yield Reply(text="ab")
+
+    pieces = [piece async for piece in ModelChannel(_Pieces()).stream(Request())]
+
+    assert pieces == [Delta(text="a"), Reply(text="ab")]
+    with pytest.raises(NoModel):
+        _ = [piece async for piece in ModelChannel().stream(Request())]

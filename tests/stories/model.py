@@ -10,7 +10,8 @@ Every request is kept, because "what the model saw" is one of the four faces a s
 
 ``Held`` is the one kind of reply that does not answer at once. It exists so a story can have a request
 in flight while it does something else — press Ctrl+C, send a second message — which is otherwise a race
-no test can win.
+no test can win. ``Streamed`` is an answer told in pieces, held between them the same way, so a story can
+read the screen while the answer is still being said.
 """
 
 from __future__ import annotations
@@ -21,10 +22,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, override
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.model import Call, Model, ModelFailed, Reply
+from plyngent.kernel.model import Call, Delta, Model, ModelFailed, Reply
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import AsyncIterator, Callable, Iterable
 
     from plyngent.kernel.model import Request
 
@@ -57,6 +58,22 @@ class Held:
 
 
 @dataclass(frozen=True, slots=True)
+class Streamed:
+    """A reply that is said in pieces, and — when the story wants to look — stops between them.
+
+    ``pieces`` are the fragments as the model says them and ``reply`` is what they add up to, which is
+    what a real streamed answer hands over too. ``ready`` belongs to the story, as it does on
+    :class:`Held`: it is what lets a story read the screen *while the answer is still coming*, which is
+    the one thing about a stream that is invisible once the turn has ended. ``None`` is a stream that
+    runs straight through, which is the ordinary case.
+    """
+
+    pieces: tuple[str, ...]
+    reply: Reply
+    ready: asyncio.Event | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Failing:
     """A step that does not answer: the model could not be asked, and how.
 
@@ -70,14 +87,14 @@ class Failing:
     says: str
 
 
-#: One step of a script: a reply, a reply that waits, a request that cannot be answered, or a reply
-#: chosen by what the model was told.
+#: One step of a script: a reply, a reply that waits, a reply in pieces, a request that cannot be
+#: answered, or a reply chosen by what the model was told.
 #:
 #: The last kind is there for the values a story cannot write down in advance. A call can hand back a
 #: name or a handle that the next call has to carry — a terminal's session, a document to continue — so
 #: the next reply is decided from the request the moment it arrives, which is the only place that value
 #: exists. The step answers a reply, so a decided reply can still be a :class:`Held` one.
-type Step = Reply | Held | Failing | Callable[[Request], Reply | Held]
+type Step = Reply | Held | Streamed | Failing | Callable[[Request], Reply | Held]
 
 
 def told(request: Request) -> str:
@@ -109,16 +126,43 @@ class ScriptedModel(Model):
     @override
     async def respond(self, request: Request) -> Reply:
         """Answer the next step of the script; a request the story did not script is a failed story."""
+        step = self._next(request)
+        if isinstance(step, Streamed):
+            # A streamed step still has an answer in it: what was said, without the pieces it was said in.
+            return step.reply
+        return await _settled(step)
+
+    @override
+    def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """Answer the next step, in the pieces it is said in — one piece for a step that is not streamed."""
+        return self._streamed(self._next(request))
+
+    async def _streamed(self, step: Reply | Held | Streamed | Failing) -> AsyncIterator[Delta | Reply]:
+        """The pieces of one step, and then the answer they add up to."""
+        if not isinstance(step, Streamed):
+            yield await _settled(step)
+            return
+        for piece in step.pieces:
+            yield Delta(text=piece)
+            if step.ready is not None:
+                await step.ready.wait()
+        yield step.reply
+
+    def _next(self, request: Request) -> Reply | Held | Streamed | Failing:
+        """The next step of the script, with a decided one read: asking past its end is a failed story."""
         self._asked.append(request)
         if not self._script:
             msg = f"the model was asked {len(self._asked)} times and the story scripted {len(self._asked) - 1} replies"
             raise AssertionError(msg)
         step = self._script.pop(0)
-        if callable(step):
-            step = step(request)
-        if isinstance(step, Held):
-            await step.ready.wait()
-            step = step.reply
-        if isinstance(step, Failing):
-            raise ModelFailed(step.failure, step.says)
-        return step
+        return step(request) if callable(step) else step
+
+
+async def _settled(step: Reply | Held | Failing) -> Reply:
+    """One step once it has arrived: a held one waits first, and one that failed raises what it said."""
+    if isinstance(step, Held):
+        await step.ready.wait()
+        step = step.reply
+    if isinstance(step, Failing):
+        raise ModelFailed(step.failure, step.says)
+    return step

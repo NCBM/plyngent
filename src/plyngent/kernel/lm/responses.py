@@ -55,6 +55,7 @@ class Responses(Codec):
         body: Body = {
             "model": model,
             "input": [item for message in request.messages for item in _items(message)],
+            # Not one this dialect can read yet (``sse`` is False), so it never asks for one.
             "stream": False,
             "max_output_tokens": caps.max_output,
             "parallel_tool_calls": caps.parallel_tools,

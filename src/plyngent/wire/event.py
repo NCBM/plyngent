@@ -217,10 +217,28 @@ class KernelLeaving(Event, tag="kernel-leaving", frozen=True, kw_only=True):
 class AssistantText(Event, tag="assistant-text", frozen=True, kw_only=True):
     """A whole thing the model said, as one message rather than a stream of pieces.
 
-    Deltas are deliberately absent: a client that resumed mid-message would have to be told where a
-    half-arrived message begins, and folding fragments would have to preserve which of them belong
-    together. One message per event answers both by not having the question. When the provider side
-    grows streaming, an event for a fragment is a second value, not a flag on this one.
+    Deltas have an event of their own (:class:`AssistantDelta`) rather than being a flag on this one,
+    because the two say different things: this is the message the turn stands behind — it is what the
+    journal wrote and what a report counts — while a fragment is only what had arrived when it arrived.
+    A client that resumed mid-message therefore has one event to wait for rather than a rule about
+    joining halves, and a route that cannot stream says nothing at all in the second vocabulary.
+    """
+
+    session: str = ""
+    turn: int = 0
+    text: str = ""
+
+
+class AssistantDelta(Event, tag="assistant-delta", frozen=True, kw_only=True):
+    """A fragment of what the model is saying, before the message it belongs to exists.
+
+    The event carries words and nothing else — no index, no "this is the last one", no cursor. Folding
+    the pieces is the client's, because the client is the only thing that knows whether it is drawing
+    them progressively or not drawing them at all, and because a fragment that never got its ending is
+    a screen problem rather than a conversation one (§0.13, E94).
+
+    Nothing here is journaled: what the turn stands behind is the :class:`AssistantText` that follows,
+    and a log of half-arrived text would be a second history that could disagree with the first.
     """
 
     session: str = ""
@@ -327,6 +345,7 @@ type AnyEvent = (
     | DocumentStored
     | KernelLeaving
     | AssistantText
+    | AssistantDelta
     | ToolCalled
     | ToolReturned
     | OfferRefused

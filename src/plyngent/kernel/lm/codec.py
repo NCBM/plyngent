@@ -28,10 +28,11 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import ModelFailed
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from typing import Any
 
     from plyngent.kernel.lm.caps import Caps
-    from plyngent.kernel.model import Reply, Request
+    from plyngent.kernel.model import Delta, Reply, Request
 
 #: One request body: the JSON object a dialect writes, before anybody serializes it.
 type Body = dict[str, object]
@@ -69,6 +70,11 @@ class Codec(ABC):
     #: ``Caps.vision``, and asking one to is answered as blind rather than as a silently dropped picture.
     pictures: bool = False
 
+    #: Whether this dialect can read an answer that arrives in pieces (server-sent events). A route whose
+    #: dialect says ``False`` cannot claim ``Caps.stream``, and asking one to is answered as an ordinary
+    #: request rather than as a body read as if it were a stream — the same two-gate rule a picture has.
+    sse: bool = False
+
     @abstractmethod
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
         """The request body this dialect wants, for this conversation and this model.
@@ -94,11 +100,22 @@ class Codec(ABC):
         trouble is not, so it is classified once by :func:`of_status` and never here.
         """
 
+    def stream(self, chunks: AsyncIterator[bytes]) -> AsyncIterator[Delta | Reply]:
+        """One answer as it arrives: the fragments, and then the reply they add up to.
+
+        Only a dialect with ``sse`` implements this, and a dialect that does not is never asked: the
+        route hands a stream to a codec that says it can read one. Its last value is always a
+        :class:`~plyngent.kernel.model.Reply` — the fragments are a preview, and the answer is what the
+        turn writes down — so a caller that ignores the pieces still gets the whole thing.
+        """
+        del chunks
+        msg = f"{self.name} cannot read a streamed answer"
+        raise ModelFailed(Failure.PROTOCOL, msg)
+
 
 #: The first status in the range that means "the server is unwell", which is the one thing trying again
 #: can fix (§10.11's one table).
 _SERVER_ERRORS = 500
-
 #: The first status that is not an answer at all: at or above it, the endpoint refused rather than replied,
 #: and what it said is the reason.
 FAILURE_STATUS = 400
@@ -186,3 +203,52 @@ def schema(declaration: str) -> Any:
     the object parses it here, so there is one parse and one place it can be wrong.
     """
     return msgspec.json.decode(declaration.encode("utf-8"))
+
+
+async def frames(chunks: AsyncIterator[bytes]) -> AsyncIterator[tuple[str, str]]:
+    """One server-sent-events body, a frame at a time: what the frame is called, and what it carries.
+
+    The framing is the same in every dialect that streams — ``field: value`` lines, a blank line ending
+    a frame, ``event:`` naming it and ``data:`` carrying it — so it is written once here and each dialect
+    reads its own JSON out of the result. What is *not* shared is what a frame means.
+
+    Lines are decoded only once they are whole, and never a chunk at a time: a chunk boundary can fall
+    inside a multi-byte character, and a stream that mangles one emoji is a stream nobody can trust.
+    ``id`` and ``retry`` are read and dropped — resuming a model call is not a thing this build does —
+    and a comment line is what a heartbeat looks like, so it is skipped rather than reported.
+    """
+    pending = b""
+    name = ""
+    data: list[str] = []
+    async for chunk in chunks:
+        pending += chunk
+        while b"\n" in pending:
+            raw, pending = pending.split(b"\n", 1)
+            line = raw.decode("utf-8", errors="replace").removesuffix("\r")
+            if not line:
+                if data:
+                    yield name or "message", "\n".join(data)
+                name, data = "", []
+            elif line.startswith(":"):
+                continue
+            else:
+                field, _, value = line.partition(":")
+                if field == "event":
+                    name = value.strip()
+                elif field == "data":
+                    data.append(value.removeprefix(" "))
+    if data:
+        yield name or "message", "\n".join(data)
+
+
+def document(data: str, *, where: str) -> Any:
+    """One frame's JSON, or a ``PROTOCOL`` failure naming the stream that could not be read.
+
+    The same answer :func:`decoded` gives for a whole body, for the one place a body arrives in pieces:
+    a frame that is not JSON means the stream is not one this build speaks, and saying which stream is
+    the difference between a report and a guess.
+    """
+    try:
+        return msgspec.json.decode(data.encode("utf-8"))
+    except msgspec.DecodeError as exc:
+        raise ModelFailed(Failure.PROTOCOL, f"{where} did not answer JSON: {exc}") from exc

@@ -60,6 +60,7 @@ class Messages(Codec):
             "model": model,
             "messages": _messages(request.messages),
             "max_tokens": caps.max_output,
+            # Not one this dialect can read yet (``sse`` is False), so it never asks for one.
             "stream": False,
         }
         if request.system:

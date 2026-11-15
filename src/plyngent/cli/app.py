@@ -20,9 +20,9 @@ Leaving has three entrances and one exit. The connection refusing a command, the
 and the other two are a normal goodbye (0). Before closing, the client says *why* it is leaving with a
 ``Cancel`` — the kernel cannot tell "left" from "slow", so it has to be told (R2.1 D15).
 
-What this file deliberately does not do: draw a prompt, decide how a line looks, decide what a tool of
-its own does, or know what a command's arguments are. Those are the editor's, the offers', and the
-grammar's, and this loop only routes.
+What this file deliberately does not do: draw a prompt, decide how a line looks, decide where on the
+terminal a line may be written, decide what a tool of its own does, or know what a command's arguments
+are. Those are the editor's, the screen's, the offers', and the grammar's, and this loop only routes.
 """
 
 from __future__ import annotations
@@ -35,7 +35,8 @@ from msgspec.structs import replace
 from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
-from plyngent.cli.render import render
+from plyngent.cli.render import Fold, notice
+from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
 from plyngent.wire.event import Compacted, SessionsListed, TurnFinished
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from plyngent.cli.line import Line, LineEditor
     from plyngent.wire.ask import AnyAnswer, AnyAsk
     from plyngent.wire.command import AnyCommand
+    from plyngent.wire.event import AnyEvent
     from plyngent.wire.link import KernelLink
 
 #: What a normal goodbye returns.
@@ -65,11 +67,11 @@ class App:
     editor: LineEditor
     catalog: Catalog
     tools: ClientTools
-    _out: TextIO
-    _err: TextIO
+    _screen: Screen
     _leaving: asyncio.Event
     _cursor: str | None
     _seeding: bool
+    _fold: Fold
 
     def __init__(
         self,
@@ -81,14 +83,19 @@ class App:
         out: TextIO,
         err: TextIO,
         tools: ClientTools = TERMINAL,
+        colour: bool = False,
+        markdown: bool = False,
     ) -> None:
         self.client = client
         self.session = session
         self.editor = editor
         self.catalog = catalog
         self.tools = tools
-        self._out = out
-        self._err = err
+        # One screen, two streams: where they go is the caller's answer — a story points both at its own
+        # buffers (E90) — and who may write through them while a prompt stands is the screen's (E91).
+        # Whether an answer may be laid out as markdown and grown in place is the caller's answer too, and
+        # it is the same fact about the terminal that decided the lane (E100).
+        self._screen = Screen(out, err, colour=colour, markdown=markdown)
         self._leaving = asyncio.Event()
         # The entry this client's conversation ends at, learned from each finished turn. Which branch a
         # frontend is looking at is the frontend's own state, so the kernel neither keeps it nor guesses
@@ -97,6 +104,10 @@ class App:
         # Whether the one listing this client asks for at startup has been answered yet: that answer is
         # state, not news, so it is read rather than drawn.
         self._seeding = False
+        # What the kernel is saying right now, until a line or a block of it is finished: only a client
+        # knows what a person has already read, so only a client can say what a message looks like when it
+        # arrives in pieces (E94), and only a client knows whether it has a screen to grow it on (E100).
+        self._fold = Fold(markdown=markdown)
 
     async def run(self) -> int:
         """Serve the connection until somebody says goodbye, then say why before closing it.
@@ -145,13 +156,17 @@ class App:
         The first listing of a connection is the exception: this client asked for it, so it answers with a
         cursor rather than a line. It is read before anything is drawn and acknowledged like everything
         else, so the transport's watermark does not depend on who wanted the answer.
+
+        What reaches the screen is not one line per event: an answer arriving in pieces is gathered until
+        a line of it is whole, and the whole message that follows those pieces is not drawn at all
+        (:meth:`_drawn`, §0.13 E94).
         """
         async for event in self.client.events():
             if self._seeding and isinstance(event, SessionsListed):
                 self._seeding = False
                 self._cursor = _ends_at(event, self.session)
             else:
-                self._say(self._out, *render(event, focus=self.session))
+                await self._drawn(event)
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
                     self._cursor = event.ends_at
                 if isinstance(event, Compacted) and event.session == self.session:
@@ -161,6 +176,17 @@ class App:
                     self._cursor = event.entry
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
+
+    async def _drawn(self, event: AnyEvent) -> None:
+        """One event on the screen, as the lines and the window it makes.
+
+        A fragment has no line in it yet, so the fold holds it — until a newline makes a line of it on a
+        stream, or a blank line makes a markdown block of it on a screen; everything else first commits
+        whatever the fold was holding, so a half-said answer is never left behind a turn. The message the
+        fragments add up to is dropped when it is the same turn's: what a person read was the pieces, and
+        saying it again would print the answer twice (§0.13, E94).
+        """
+        await self._screen.paint(self._fold.push(event, focus=self.session, width=self._screen.width))
 
     async def _questions(self) -> None:
         """Answer what the kernel asks, one at a time, through the one cursor."""
@@ -226,10 +252,10 @@ class App:
                     return None if self.client.submit(self._message(session, composed.text)) else GONE
                 return None
             case Help(text=text):
-                self._say(self._err, text)
+                await self._screen.tell(notice(text))
                 return None
             case Wrong(text=text):
-                self._say(self._err, text)
+                await self._screen.tell(notice(text))
                 return None
 
     async def _next_line(self) -> Line | None:
@@ -244,12 +270,6 @@ class App:
         _ = reading.cancel()
         _ = await asyncio.gather(reading, return_exceptions=True)
         return None
-
-    def _say(self, stream: TextIO, *lines: str) -> None:
-        """Write whole lines and flush: an event is worth showing before the next one arrives."""
-        for line in lines:
-            _ = stream.write(f"{line}\n")
-        _ = stream.flush()
 
     # -- what a message is sent as -------------------------------------------------
 

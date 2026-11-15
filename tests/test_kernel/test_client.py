@@ -11,7 +11,6 @@ from plyngent.kernel.client import (
     ASKING_NAMES,
     DUPLICATE,
     NAMELESS,
-    NO_SHAPE,
     NOT_AN_OBJECT,
     NOT_YOURS,
     SHAPES,
@@ -99,7 +98,7 @@ def test_an_offered_tool_travels_in_a_group_named_after_the_connection() -> None
         (OfferedTool(name=""), NAMELESS),
         (OfferedTool(name="read", schema=SEARCH), DUPLICATE),
         (OfferedTool(name="ask_user_line", schema=SEARCH), NOT_YOURS),
-        (OfferedTool(name="ask_user_form"), NO_SHAPE),
+        (OfferedTool(name="ask_user_form", schema=SEARCH), NOT_YOURS),
         (OfferedTool(name="search", schema="["), NOT_AN_OBJECT),
         (OfferedTool(name="search", schema="[]"), NOT_AN_OBJECT),
         (OfferedTool(name="search"), NOT_AN_OBJECT),
@@ -126,9 +125,9 @@ def test_a_second_offer_of_one_name_inside_the_same_command_is_refused_too() -> 
 
 
 def test_every_asking_name_is_refused_or_shaped_but_never_both() -> None:
-    """The three names are the kernel's; two of them have a shape and one waits for an editor (E48)."""
+    """The three names are the kernel's, and every one of them has a shape (E48, E95)."""
     assert set(SHAPES) <= ASKING_NAMES
-    assert ASKING_NAMES - set(SHAPES) == {"ask_user_form"}
+    assert set(SHAPES) == ASKING_NAMES
 
 
 def test_a_client_answers_in_prose_and_the_kernel_makes_the_result() -> None:

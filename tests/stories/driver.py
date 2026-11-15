@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import io
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from composat import Declaration, ServiceNotUpError
 
@@ -162,12 +162,16 @@ class Story:
         session: str,
         model: Model | None = None,
         tools: ClientTools = TERMINAL,
+        markdown: bool = False,
     ) -> None:
         self.kernel = kernel
         self.session = session
         self.catalog = build(kernel.client.manifest, session=session)
         self.model = model
-        self._out = io.StringIO()
+        # A story about a terminal reads what a terminal reads: the stream says it is a cursor, so lines
+        # are painted through it and the answer is laid out as markdown — and then grown in place, which
+        # a test can see as the escape codes of the window (§0.13, E100).
+        self._out = _Terminal() if markdown else io.StringIO()
         self._err = io.StringIO()
         self.editor = ScriptedHuman(focus=session, err=self._err)
         self._code = None
@@ -180,6 +184,7 @@ class Story:
             out=self._out,
             err=self._err,
             tools=tools,
+            markdown=markdown,
         )
         self._running = asyncio.create_task(self.app.run())
 
@@ -201,6 +206,7 @@ class Story:
         tools: ClientTools = TERMINAL,
         limits: Limits | None = None,
         deadline: float | None = None,
+        markdown: bool = False,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
@@ -240,6 +246,10 @@ class Story:
         the kernel is brought up by :func:`plyngent.config.install`, which is the same call ``__main__``
         makes. Everything the file decides is then the file's, so naming one of those here as well is
         refused rather than silently outvoted.
+
+        ``markdown`` says the screen is a terminal: the answer is laid out as the markdown it is and grown
+        in place while it arrives, which a story reads as the rows plus the cursor movements the screen
+        sent (§0.13, E100). It is off by default because a story that is not about that reads bytes.
         """
         root.mkdir(parents=True, exist_ok=True)
         settled: dict[str, bool] = {
@@ -273,7 +283,7 @@ class Story:
                 deadline=deadline,
             )
         )
-        story = cls(kernel, session=session, model=model, tools=tools)
+        story = cls(kernel, session=session, model=model, tools=tools, markdown=markdown)
         await story.settle()
         return story
 
@@ -516,3 +526,16 @@ class Story:
 def _drawn(text: str) -> tuple[str, ...]:
     """Captured output as the lines a person read, with the trailing blank dropped."""
     return tuple(text.splitlines())
+
+
+class _Terminal(io.StringIO):
+    """A screen a story can read: the buffer of one, and the ``isatty`` of a terminal.
+
+    prompt_toolkit makes its own output out of whatever stream it is handed, and what it makes of this one
+    is the real vt100 writer — so the bytes a story reads here are the bytes a terminal would have
+    received: the rows, the cursor movements, and the erasures (§0.13, E100).
+    """
+
+    @override
+    def isatty(self) -> bool:
+        return True

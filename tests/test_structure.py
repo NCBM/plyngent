@@ -21,14 +21,14 @@ import plyngent
 from plyngent import boot, cli, kernel, wire
 from plyngent.cli import offers
 from plyngent.cli.grammar import ALIASES, build
-from plyngent.cli.render import render
+from plyngent.cli.render import Role, render
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalog, ToolView
 from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
-from plyngent.kernel.lm import DIALECTS, codec_named
-from plyngent.kernel.model import AnyMessage
+from plyngent.kernel.lm import DIALECTS, Caps, codec_named
+from plyngent.kernel.model import AnyMessage, Request, User
 from plyngent.kernel.net.web import Web
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
 from plyngent.kernel.skills import NAME_PATTERN, Skills
@@ -171,6 +171,23 @@ def test_every_dialect_is_one_row_in_one_module() -> None:
         assert type(codec).__module__.startswith("plyngent.kernel.lm."), f"{codec.name} is filed from elsewhere"
 
 
+def test_a_dialect_that_reads_a_stream_is_the_one_that_asks_for_one() -> None:
+    """``Caps.stream`` and ``Codec.sse`` are one fact in two places, and the body is where they must agree.
+
+    A route is streamed only where both hold — the endpoint will send frames and this build can read
+    them — so a dialect that writes ``stream: true`` while saying it cannot read a stream would be a
+    request nobody can answer, and one that claims to read a stream while asking for a whole body would
+    never see one. This is the same two-gate rule a picture has: what the endpoint can do, and whether
+    the wire has a channel for it.
+    """
+    document = Request(messages=(User(text="hi"),))
+
+    for codec in DIALECTS:
+        body = codec.encode(document, model="m", caps=Caps(max_output=1, stream=True))
+
+        assert body["stream"] is codec.sse, f"{codec.name} and the body it writes disagree about streaming"
+
+
 def test_the_composition_root_does_not_depend_on_a_client() -> None:
     offenders = _offenders([pathlib.Path(boot.__file__)], lambda name: name.startswith("plyngent.cli"))
 
@@ -194,17 +211,24 @@ def test_the_kernel_does_not_know_how_it_was_configured() -> None:
 def test_only_the_loader_reads_the_environment() -> None:
     """E76: the environment holds a secret and never a setting, so one function reads it — the loader's.
 
-    The two readers that are not configuration are named rather than merely permitted, because a name in
+    The readers that are not configuration are named rather than merely permitted, because a name in
     this list is a claim somebody has to write down: a child process is handed the environment its parent
-    had, and ``$EDITOR`` is how a person says which program they write in. A third reader — a
-    ``PLYNGENT_*`` override, a value that quietly changed because of how the program was launched — arrives
-    here as a failure rather than as a habit (§0.11, E70/E76).
+    had, ``$EDITOR`` is how a person says which program they write in, and the last two are facts about
+    the stream in front of this run — there is no terminal here, and ``NO_COLOR`` says not to paint. They
+    are the exception to E76 and they are narrow on purpose: they say what the *input and output* are
+    rather than what the program does, and setting them where a terminal was reading is a worse picture,
+    not different behaviour. Any other reader — a value that quietly changed because of how the program
+    was launched — arrives here as a failure rather than as a habit (§0.11, E70/E76).
     """
     readers = {found for path in _modules_of(plyngent) for found in _environment_readers(path)}
 
-    assert readers == {"config.py:load", "process.py:_environment", "line.py:_composed"}, (
-        "the loader, a child process's environment, and the person's editor — and nothing else"
-    )
+    assert readers == {
+        "config.py:load",
+        "process.py:_environment",
+        "line.py:_composed",
+        "__main__.py:_plainly_asked",
+        "__main__.py:_colour",
+    }, "the loader, a child process's environment, the person's editor, and the two facts about a stream"
 
 
 def _environment_readers(path: pathlib.Path) -> list[str]:
@@ -235,6 +259,21 @@ def test_every_event_can_be_read() -> None:
     quiet = [type(sample).__name__ for sample in samples if not render(sample)]
 
     assert quiet == [], "an event with nothing to say is an event nobody sees"
+
+
+def test_every_line_an_event_makes_says_what_kind_of_line_it_is() -> None:
+    """E90: the roles are a closed set, so a new kind of line is a decision rather than a colour."""
+    roles = set(get_args(Role.__value__))
+    wrong = [
+        (type(sample).__name__, shown.role)
+        for cls in get_args(wire.AnyEvent.__value__)
+        for sample in (_sample(cls),)
+        for shown in render(sample)
+        if shown.role not in roles
+    ]
+
+    assert wrong == [], "a line whose role is not one of the five has no reader the frontend knows"
+    assert roles == {"assistant", "tool", "notice", "refusal", "usage"}, "and the five are the whole set"
 
 
 def _sample(cls: type[Event]) -> Event:
@@ -454,14 +493,13 @@ def test_the_asking_tools_are_an_offer_and_never_a_builtin() -> None:
     assert "ask_user_line" not in ToolCatalog().names()
 
 
-def test_the_terminal_offers_the_two_ways_to_ask_and_nothing_else() -> None:
+def test_the_terminal_offers_the_three_ways_to_ask_and_nothing_else() -> None:
     """§10.8: a client offers questions and no other privilege, and it does not shape them itself."""
     names = {tool.name for tool in offers.TERMINAL.offer}
 
-    assert names == {"ask_user_line", "ask_user_choice"} <= ASKING_NAMES
+    assert names == {"ask_user_line", "ask_user_choice", "ask_user_form"} <= ASKING_NAMES
     assert set(offers.TERMINAL.handlers) == names, "every tool it offers is one it can run"
     assert all(not tool.schema for tool in offers.TERMINAL.offer), "the shape of a question is the kernel's"
-    assert "ask_user_form" not in names, "a form needs a multi-field editor, which arrives with R8"
 
 
 def test_a_shown_group_arrives_whole_and_leaves_the_index() -> None:

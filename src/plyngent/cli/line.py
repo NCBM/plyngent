@@ -10,6 +10,11 @@ somebody is typing must take the cursor *now* rather than queue behind a line th
 finished. Queuing would turn "the human is typing" into "the approval timed out and was refused",
 which is the rule R2.1 D14 just established in the other direction.
 
+Two owners, because there are two kinds of cursor. :class:`PromptEditor` owns a terminal's; a pipe, a
+redirected file or a script's standard input has none, and :class:`PlainEditor` reads it without ever
+drawing. The loop is handed one or the other and cannot tell them apart — that is the whole point of
+the interface, and it is also the shape a daemon would take (R2.4 C2).
+
 The four cells of :data:`Line` are four different situations, and they are kept apart because the
 caller does something different with each:
 
@@ -24,21 +29,33 @@ caller does something different with each:
 :class:`~plyngent.wire.ask.Ask`. It answers ``None`` when the line did not answer the question — a
 blank line for a yes/no with no default, or a word that is not one of the options — and the caller
 asks again rather than inventing an answer.
+
+Two more things belong to a terminal rather than to a pipe, and both are about what the line *remembers*.
+A terminal has arrow keys, so what was typed last run can be called back — kept in a file of its own in
+the user's data directory, one per session, since a conversation is what a person comes back to
+(:func:`history_path`). And it has more than one row, so a message may be several lines long without
+opening an editor: ``Enter`` still sends the line, and **Alt+Enter** starts another one.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, assert_never
+from typing import TYPE_CHECKING, Protocol, assert_never, override
 
+from platformdirs import user_data_path
 from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory, History
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.output import create_output
 
 from plyngent.cli.grammar import SlashCompleter
@@ -47,6 +64,13 @@ from plyngent.cli.render import question as question_line
 from plyngent.wire.ask import Agreed, Confirmation, FreeText, Picked, Secret, Selection, Written, unanswered
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
+    from typing import TextIO
+
+    from prompt_toolkit.input import Input
+    from prompt_toolkit.key_binding import KeyPressEvent
+    from prompt_toolkit.output import Output
+
     from plyngent.cli.grammar import Catalog
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
@@ -144,10 +168,106 @@ def _picked(question: int, text: str, *, options: tuple[str, ...], default: str 
     return Picked(id=question, value=said) if said is not None and said in options else None
 
 
+#: The directory one session's history lives in, under the same root as the journal.
+HISTORY = "history"
+
+#: What a directory or a file name may keep of a session's own: lowercase words, one dash between them.
+_NOT_A_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def history_path(session: str) -> Path:
+    """Where one session's typed lines are kept between runs.
+
+    Not in the workspace: what a person typed is the person's, and a tree that grows a dotfile because
+    somebody talked to a model in it would be a tree with a surprise in it. It goes beside the journal
+    instead, in the same per-user data directory, and it is named twice over the way a journal's own
+    directory is — a slug so the file can be recognized, a digest so two sessions spelled almost alike
+    are still two files, and so that no session name can name a path outside this directory.
+
+    A pure answer: it creates nothing, and the directory appears when a run first has a line to keep.
+    """
+    return user_data_path("plyngent") / HISTORY / f"{_slug(session)}-{_digest(session)}.txt"
+
+
+def _slug(name: str) -> str:
+    """A name a file may carry, from a session's own — and a fallback for a name with nothing in it."""
+    return _NOT_A_SLUG.sub("-", name.lower()).strip("-")[:40].rstrip("-") or "session"
+
+
+def _digest(name: str) -> str:
+    """The half of the name that makes it one file: a session's own spelling, hashed."""
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
+
+
+class _Spoken(History):
+    """What this person *said* at the line: kept for this run, and in a file when there is one.
+
+    An answer is not something somebody said — it answers a question the kernel asked, and ``y`` or a
+    path coming back out of the arrow keys is noise rather than recall. The case that makes this a rule
+    instead of a preference is :class:`~plyngent.wire.ask.Secret`: a password that scrolls back is a
+    password on the screen, and a history file is a file that outlives the screen.
+
+    So whether to keep something is a switch that is off while an answer is being read, rather than a
+    filter over the text: a filter would have to *recognize* a secret, and nothing here can.
+
+    What it holds is a *path*, not an open file: the format is prompt_toolkit's ``FileHistory``, asked
+    for by the line that needs it, and nothing — not even the directory — exists until the first line
+    is kept.
+    """
+
+    _path: Path | None
+
+    #: Whether what is being read now is something to keep. One cursor, so one answer.
+    quiet: bool = False
+
+    def __init__(self, path: Path | None = None) -> None:
+        super().__init__()
+        self._path = path
+
+    @override
+    def load_history_strings(self) -> Iterable[str]:
+        """What was said in earlier runs, most recent first — none of it when there is no file."""
+        return () if self._path is None else FileHistory(self._path).load_history_strings()
+
+    @override
+    def store_string(self, string: str) -> None:
+        """Append one entry to the file — prompt_toolkit's own format, one block per message."""
+        if self._path is None or self.quiet:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        FileHistory(self._path).store_string(string)
+
+    @override
+    def append_string(self, string: str) -> None:
+        """Add a line to this run's recall, and to the file — unless it was an answer."""
+        if not self.quiet:
+            super().append_string(string)
+
+
+#: The one key this lane adds to prompt_toolkit's: ``Enter`` sends, **Alt+Enter** starts another line.
+#:
+#: ``multiline`` is on as well, so a message being typed is *drawn* as the several lines it is instead
+#: of one row that scrolls sideways — the buffer would hold the newline either way, but only the
+#: several-row layout shows the person what they are about to send.
+KEYS = KeyBindings()
+
+
+@KEYS.add("enter")
+def _sent(event: KeyPressEvent) -> None:
+    """Send the line, however many lines it turned out to have."""
+    event.current_buffer.validate_and_handle()
+
+
+@KEYS.add("escape", "enter")
+def _more(event: KeyPressEvent) -> None:
+    """Start another line of the same message."""
+    event.current_buffer.insert_text("\n")
+
+
 class PromptEditor:
     """The cursor on a real terminal, over prompt_toolkit.
 
-    Three rules are deliberate:
+    Four rules are deliberate:
 
     * **Prompts go to stderr.** Events own stdout, so the line a person is typing and the question that
       interrupted it cannot be confused with what the kernel said.
@@ -156,14 +276,20 @@ class PromptEditor:
       that starts afterwards waits for the question to finish rather than racing it for the cursor.
     * **A composed message comes back through the same four cells.** ``/submit`` opens the human's own
       editor; an empty or aborted draft is the same thing as an interrupted line.
+    * **Only what was said is remembered.** The line loop's own lines go into this session's history
+      file; a question's answer does not, and a secret never does (:class:`_Spoken`).
 
-    What is *not* here yet: colours, width handling, and redrawing over an event that arrives mid-line
-    (R8). Until then an event line and a prompt may interleave on screen — the stream is right, the
-    picture is not.
+    The two streams are found rather than handed in — a terminal is the process's own, and there is
+    exactly one — except when they are handed in, which is how a test holds a screen up to this without
+    a terminal at all (the same seam the plain lane has, and the reason ``keys`` and ``output`` exist).
+
+    What is *not* here yet: redrawing over an event that arrives mid-line (R8). Until then an event line
+    and a prompt may interleave on screen — the stream is right, the picture is not.
     """
 
     _prompt: PromptSession[str]
     _focus: str
+    _history: _Spoken
     _cursor: asyncio.Lock
     _wanted: int
     _free: asyncio.Event
@@ -173,8 +299,17 @@ class PromptEditor:
     _buffer: str
     _restore: str
 
-    def __init__(self, *, session: str, catalog: Catalog | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        session: str,
+        catalog: Catalog | None = None,
+        history: Path | None = None,
+        keys: Input | None = None,
+        output: Output | None = None,
+    ) -> None:
         self._focus = session
+        self._history = _Spoken(history)
         self._cursor = asyncio.Lock()
         self._wanted = 0
         self._free = asyncio.Event()
@@ -187,11 +322,15 @@ class PromptEditor:
         self._prompt = PromptSession[str](
             message=self._message(),
             completer=SlashCompleter(catalog) if catalog is not None else None,
-            output=create_output(sys.stderr),
+            history=self._history,
+            key_bindings=KEYS,
+            multiline=True,
+            input=keys,
+            output=create_output(sys.stderr) if output is None else output,
         )
 
     async def read_line(self) -> Line:
-        """Read one line, or say what took the cursor away from it."""
+        """Read what was typed — one line, or several — or say what took the cursor away from it."""
         await self._free_cursor()
         async with self._cursor:
             self._taken = False
@@ -237,6 +376,8 @@ class PromptEditor:
 
         A message that wants paragraphs wants an editor, and a one-line prompt would be a worse editor
         rather than a simpler command. An empty draft and a failed editor are both *nothing to send*.
+        Nothing composed here is remembered either: it was not typed at the line, and a recalled
+        message should be one that can be edited where it is recalled from.
         """
         self._wanted += 1
         try:
@@ -266,19 +407,33 @@ class PromptEditor:
             _ = await self._free.wait()
 
     async def _read_answer(self, question: AnyAsk, taken: str) -> Line:
-        """One line read *for* a question: no echo for a secret, a suggestion for the rest."""
+        """One line read *for* a question: no echo for a secret, a suggestion for the rest.
+
+        Nothing read here is remembered: an answer is not something this person said, and the one kind
+        of answer that must never be written down is the one nobody can see being typed.
+        """
         default, secret = _offer(question, taken)
         try:
-            text = await self._prompt.prompt_async(
-                message=question_line(question, focus=self._focus),
-                default=default,
-                is_password=secret,
-            )
+            with self._not_remembered():
+                text = await self._prompt.prompt_async(
+                    message=question_line(question, focus=self._focus),
+                    default=default,
+                    is_password=secret,
+                )
         except KeyboardInterrupt:
             return Cancelled()
         except EOFError:
             return EndOfInput()
         return Typed(text)
+
+    @contextmanager
+    def _not_remembered(self) -> Generator[None]:
+        """Read the next line without keeping it, in this run or in the file."""
+        self._history.quiet = True
+        try:
+            yield
+        finally:
+            self._history.quiet = False
 
     async def _composed(self) -> Line:
         """Run the human's editor on a scratch draft and read it back."""
@@ -294,6 +449,63 @@ class PromptEditor:
     def _message(self) -> str:
         """The prompt of an ordinary line: the session's name, so several of them are tellable apart."""
         return "" if self._focus == DEFAULT_FOCUS else f"[{self._focus}] "
+
+
+class PlainEditor:
+    """The cursor on something that is not a terminal: a pipe, a file, a script's standard input.
+
+    The same three verbs and the same four cells, with the drawing taken out — and taking the drawing
+    out is the whole of it: nothing here moves a cursor, so nothing here can be taken back, and two of
+    the four cells become unreachable rather than left unimplemented.
+
+    * **A question is printed, not drawn.** A file has no prompt to put it in, so the question goes to
+      the notices stream and the next line answers it. A line that does not answer it gets the question
+      again, which is the one thing this lane and a terminal do alike.
+    * **A composed message is everything left in the file.** There is no editor to open, so the input
+      itself is the draft, and an empty one is nothing to send.
+    * **:class:`Preempted` cannot happen**: a question cannot take a cursor that does not exist, so a
+      line read here is never cut short by one.
+    * **:class:`Cancelled` cannot happen**: in this lane a signal *is* leaving (§0.13, E97). A keyboard
+      is what tells an interruption apart from a goodbye, and there is no keyboard here — the program
+      exits, and the exit code says how.
+    * **Nothing is remembered**: history is what the arrow keys reach back for, and a file has no arrow
+      keys. A pipe is a thing being read, not a person being helped.
+
+    The streams are handed in rather than found: a file is a value, and the terminal's own two are the
+    process's only because there is exactly one of them.
+    """
+
+    _focus: str
+    _stream: TextIO
+    _err: TextIO
+
+    def __init__(self, *, session: str, stream: TextIO, err: TextIO) -> None:
+        self._focus = session
+        self._stream = stream
+        self._err = err
+
+    async def read_line(self) -> Line:
+        """One line off the stream, or the end of it — the same goodbye a Ctrl+D is."""
+        return _as_line(await asyncio.to_thread(self._stream.readline))
+
+    async def ask(self, question: AnyAsk) -> AnyAnswer:
+        """Print the question, and read lines until one of them answers it."""
+        while True:
+            _ = self._err.write(f"{question_line(question, focus=self._focus)}\n")
+            _ = self._err.flush()
+            answer = answer_to(question, await self.read_line())
+            if answer is not None:
+                return answer
+
+    async def compose(self) -> Line:
+        """Everything left on the stream, since there is no editor here to open."""
+        draft = (await asyncio.to_thread(self._stream.read)).strip()
+        return Typed(draft) if draft else Cancelled()
+
+
+def _as_line(text: str) -> Line:
+    """What one ``readline`` came back with: a line without its newline, or the end of the input."""
+    return EndOfInput() if not text else Typed(text.removesuffix("\n").removesuffix("\r"))
 
 
 def _offer(question: AnyAsk, taken: str) -> tuple[str, bool]:
