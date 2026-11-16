@@ -87,6 +87,25 @@ async def test_a_listing_says_where_each_conversation_ends(story_with: Scripted)
     )
 
 
+async def test_a_conversation_that_was_closed_is_still_listed(story_with: Scripted) -> None:
+    """Closing is "this kernel stops serving it", not "it is gone": the journal still holds it.
+
+    The set a listing answers is the file's, so a conversation somebody closed an hour ago is still the
+    one they are looking for — and it still says where it ends, because that is what the file has.
+    """
+    story = await story_with(text("one"))
+    await story.type("a thought")
+    await story.type("/new --session work --seed-from main --seed-from e3")
+    await story.type("/close --session work")
+
+    await story.type("/sessions")
+
+    listed = story.screen()[-1]
+    assert re.fullmatch(r"sessions: main \(.+?\), work \(.+?\)", listed), (
+        f"both are in the file, and both say where they end: {listed!r}"
+    )
+
+
 async def test_a_conversation_nobody_meant_to_keep_leaves_nothing(tmp_path: Path, transport: str) -> None:
     story = await Story.start(
         tmp_path / "workspace", transport=transport, model=ScriptedModel([text("noted")]), journal=MEMORY_JOURNAL

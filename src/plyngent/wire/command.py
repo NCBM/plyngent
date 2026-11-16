@@ -114,7 +114,7 @@ class Resume(Command, tag="resume", frozen=True, kw_only=True):
 
 
 class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
-    """List the conversations this kernel is serving."""
+    """List the conversations this journal holds."""
 
 
 class Export(Command, tag="export", frozen=True, kw_only=True):

@@ -55,7 +55,9 @@ async def test_a_name_with_a_space_in_it_is_one_argument(story: Story) -> None:
     assert story.screen() == ("sessions: main, work two",), "the quotes are the line's, not the kernel's"
 
 
-async def test_a_closed_session_is_gone_from_the_list(story: Story) -> None:
+async def test_a_closed_conversation_nothing_was_said_in_leaves_the_list(story: Story) -> None:
+    """What a listing answers is the journal's, so a conversation nothing was written in is closed *and*
+    gone: closing stops this kernel serving it, and the journal never held it."""
     await story.type("/new --session work")
     await story.type("/sessions")
     await story.type("/close --session work")

@@ -81,7 +81,7 @@ EXPECTED: dict[str, str] = {
     "  --session TEXT  the conversation to act on  [default: main]",
     "list-sessions": "Usage: list-sessions [OPTIONS]\n"
     "\n"
-    "  List the conversations this kernel is serving.\n"
+    "  List the conversations this journal holds.\n"
     "\n"
     "Options:\n"
     "  --session TEXT  the conversation to act on  [default: main]",

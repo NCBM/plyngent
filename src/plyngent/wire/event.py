@@ -128,12 +128,12 @@ class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
 
 
 class ListedSession(Struct, frozen=True, kw_only=True):
-    """One session a kernel serves, and where its conversation ends.
+    """One conversation this journal holds, and where it ends.
 
     ``head`` is the id of the entry nothing continues from yet — the place a turn may grow — and it is
-    empty for a session whose journal holds nothing, which is the truth rather than a placeholder. It is
-    the id and not a transcript: a client that wants the conversation says which entry it continues, and
-    the kernel answers with the history up to there (D5).
+    empty for a conversation nothing has been written in, which is the truth rather than a placeholder. It
+    is the id and not a transcript: a client that wants the conversation says which entry it continues,
+    and the kernel answers with the history up to there (D5).
     """
 
     session: str = ""
@@ -141,7 +141,8 @@ class ListedSession(Struct, frozen=True, kw_only=True):
 
 
 class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
-    """The sessions this kernel serves — the answer to ``ListSessions``, not a receipt."""
+    """The conversations this journal holds, and the ones opened but not yet used — the answer to
+    ``ListSessions``, not a receipt."""
 
     sessions: tuple[ListedSession, ...] = ()
 

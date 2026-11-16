@@ -99,6 +99,7 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.toolspec import ToolSpec
+    from plyngent.kernel.trail import Trail
     from plyngent.wire.command import AnyCommand, OfferedTool
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyQuery, AnyReply
@@ -794,28 +795,34 @@ class Serving:
         return tuple(session for session in found if isinstance(session, Session))
 
     async def _served(self) -> tuple[ListedSession, ...]:
-        """The sessions this kernel is serving, in the order they were admitted, and where each ends.
+        """Every conversation this journal holds, and where each one ends.
 
-        A listing answers two questions at once because a client has both: which conversations exist, and
-        which entry each of them can be continued from. A session with an empty journal has no entry to
-        name, and says so with an empty ``head`` rather than by being left out.
+        A listing answers two questions at once because a person has both: which conversations exist, and
+        which entry each of them can be continued from. The set is the **journal's**, not this process's:
+        a conversation outlives the connection, the process and the turn, and one nobody has opened since
+        is exactly the one somebody is looking for.
+
+        What the journal has nothing for is a conversation that has been opened and not yet used, and it
+        is listed too, at the end, with no head — "I am here" is a fact about a conversation before
+        anything is said in it, and a listing that hid it would hide the session a person just made.
         """
-        identity = Declaration(Session).identity
-        declared = self.assembly.keys()
-        names = [key.instance.rpartition("/")[2] for key in declared if key.identity == identity]
-        return tuple([ListedSession(session=name, head=await self._head(name)) for name in names])
+        host = self._host()
+        if host is None:
+            return ()
+        held = await host.trail.sessions()
+        listed = [(name, await self._head(host.trail, name)) for name in held]
+        listed.extend((session.session_id, "") for session in self._sessions() if session.session_id not in set(held))
+        return tuple(ListedSession(session=name, head=head) for name, head in listed)
 
-    async def _head(self, session: str) -> str:
-        """Where one session's conversation ends: the newest entry, or nothing for an empty journal.
+    @staticmethod
+    async def _head(trail: Trail, session: str) -> str:
+        """Where one conversation ends: the newest entry a turn may grow from, or nothing.
 
         The newest entry is always a leaf — a child would have arrived after it — so this is a place a
         turn may grow, not a guess at where a person was looking. Which branch a frontend is reading stays
         the frontend's own state (R2.1 D22).
         """
-        found = self._session(session)
-        if found is None:
-            return ""
-        entry = await found.host.trail.head(session)
+        entry = await trail.head(session)
         return "" if entry is None else entry.id
 
 
