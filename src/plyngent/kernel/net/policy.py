@@ -30,6 +30,8 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, get_args
 from urllib.parse import urljoin, urlparse, urlunparse
 
+from plyngent.wire.ask import SEVERITIES, Severity
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -116,6 +118,23 @@ class ReasonKind(StrEnum):
 
 #: One reason: its kind, and the sentence a person is shown beside the others.
 type Reason = tuple[ReasonKind, str]
+
+#: How heavy each kind of reason makes the question (§0.15, the appendix to E109 to E118).
+#:
+#: Two of them are about where the request goes and cannot be taken back: reaching the machine's own
+#: network is the SSRF side of this policy, and a cleartext request has already left by the time anybody
+#: could regret it. The third is about this request alone — a body can be sent again, differently — so it
+#: is the ordinary "is this the one you meant".
+WEIGHT: Mapping[ReasonKind, Severity] = {
+    ReasonKind.PRIVATE_HOST: Severity.DANGER,
+    ReasonKind.CLEARTEXT: Severity.DANGER,
+    ReasonKind.PAYLOAD: Severity.CONFIRM,
+}
+
+
+def weight(reasons: tuple[Reason, ...]) -> Severity:
+    """The heaviest reason in one question: a person is asked once, so once is at the level that matters."""
+    return max((WEIGHT[kind] for kind, _ in reasons), default=Severity.CONFIRM, key=SEVERITIES.index)
 
 
 @dataclass(frozen=True, slots=True)

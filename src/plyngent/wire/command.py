@@ -118,10 +118,15 @@ class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
 
 
 class Export(Command, tag="export", frozen=True, kw_only=True):
-    """Write one chain out as a document. A projection, so it changes nothing."""
+    """Write one chain out as a document: what a model would be given, kept under a handle.
+
+    A projection, so it changes nothing. Where the text lands is the store's answer rather than the
+    caller's: the kernel writes no files of its own, because a path in a command would be a write behind
+    the policy every tool goes through — so the answer is a handle, and the handle is how a person (or a
+    tool) reads it back.
+    """
 
     begin_after: str | None = None
-    path: str = ""
 
 
 class OfferedTool(Struct, frozen=True, kw_only=True):

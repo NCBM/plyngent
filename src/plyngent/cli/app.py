@@ -35,11 +35,12 @@ from msgspec.structs import replace
 from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
+from plyngent.cli.policy import Policy, Tally
 from plyngent.cli.render import Fold, notice
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
-from plyngent.wire.event import Compacted, SessionsListed, TurnFinished
+from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished
 from plyngent.wire.flow import Ack
 from plyngent.wire.scope import CancelReason
 
@@ -67,7 +68,9 @@ class App:
     editor: LineEditor
     catalog: Catalog
     tools: ClientTools
+    policy: Policy
     _screen: Screen
+    _tally: Tally
     _leaving: asyncio.Event
     _cursor: str | None
     _seeding: bool
@@ -83,6 +86,7 @@ class App:
         out: TextIO,
         err: TextIO,
         tools: ClientTools = TERMINAL,
+        policy: Policy | None = None,
         colour: bool = False,
         markdown: bool = False,
     ) -> None:
@@ -91,6 +95,10 @@ class App:
         self.editor = editor
         self.catalog = catalog
         self.tools = tools
+        # What this client answers by itself, and the count of what it has (§0.15, E114). Both are the
+        # frontend's own: the kernel asks and is answered, and never learns which of the two answered.
+        self.policy = Policy() if policy is None else policy
+        self._tally = Tally()
         # One screen, two streams: where they go is the caller's answer — a story points both at its own
         # buffers (E90) — and who may write through them while a prompt stands is the screen's (E91).
         # Whether an answer may be laid out as markdown and grown in place is the caller's answer too, and
@@ -131,19 +139,36 @@ class App:
         self._seeding = self.client.submit(ListSessions())
         if not self.client.submit(Offer(tools=self.tools.offer)):
             return GONE
+        if self.policy.away_danger:
+            # Once, before anything is asked: a program that will answer the heaviest questions with a
+            # yes says so rather than being discovered to have done it (§0.15, E115).
+            await self._screen.tell(notice(self.policy.opening()))
         background = [
             asyncio.create_task(self._events()),
             asyncio.create_task(self._questions()),
             asyncio.create_task(self._invocations()),
         ]
         try:
-            return await self._lines()
+            code = await self._lines()
         finally:
             for task in background:
                 _ = task.cancel()
             _ = await asyncio.gather(*background, return_exceptions=True)
             _ = self.client.submit(Cancel(session=self.session, scope=None, reason=CancelReason.CLIENT_GONE))
             self.client.close()
+        await self._closing()
+        return code
+
+    async def _closing(self) -> None:
+        """One line about what the policies answered, because nothing else will say it.
+
+        The lines during the run are what the person reads while it happens; this is what they read
+        when it stops, and for an ``--away`` run it is the only place the shape of the whole stretch
+        can be seen as a number (§0.15, E116).
+        """
+        said = self._tally.said()
+        if said:
+            await self._screen.tell(notice(said))
 
     # -- what the kernel says ------------------------------------------------------
 
@@ -174,6 +199,11 @@ class App:
                     # written after a compaction goes past it rather than beside it. A compaction of
                     # another session says nothing about where this one stands.
                     self._cursor = event.entry
+                if isinstance(event, Pruned) and event.session == self.session:
+                    # Same reason, opposite direction: a prune hides what it names from the branch that
+                    # continues past it, so a client that stayed on the entry before it would be handed
+                    # the stretch the person just asked to stop seeing.
+                    self._cursor = event.entry
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
 
@@ -196,12 +226,22 @@ class App:
     async def _answered(self, question: AnyAsk) -> AnyAnswer:
         """What one question gets back: what the person said, or the value for nobody having said it.
 
+        A policy this client was started with is consulted first: an answered question never reaches
+        the cursor, and it leaves a line on the screen saying which policy answered and which way
+        (§0.15, E116). Everything else is the person's — in front of the machine, or absent, in which
+        case the deadline is theirs too.
+
         A question may carry its own deadline, and it is always the number the kernel is counting down
         to as well — the connection resolved the two before the question was sent. When it passes, the
         cursor is let go and the answer is :func:`~plyngent.wire.ask.unanswered`: the kernel is told
         nobody answered instead of waiting on a prompt that nobody is typing into, and the prompt comes
         down rather than standing there until the person happens to press Enter.
         """
+        answered = self.policy.answers(question)
+        if answered is not None:
+            self._tally.keep(answered)
+            await self._screen.tell(notice(self.policy.said(answered)))
+            return answered.reply(question)
         if question.timeout is None:
             return await self.editor.ask(question)
         try:

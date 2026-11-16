@@ -221,13 +221,21 @@ class PtyRegistry(Component):
 
     # -- verbs ---------------------------------------------------------------------
 
-    async def open(self, command: list[str], *, cwd: Path, owner: str = "") -> PtySession:
+    def over_its_room(self, owner: str) -> bool:
+        """Whether this conversation already holds as many terminals as it is given without asking."""
+        return bool(owner) and self.count_for(owner) >= self.max_per_session
+
+    async def open(self, command: list[str], *, cwd: Path, owner: str = "", beyond: bool = False) -> PtySession:
         """Ask the broker for a terminal running ``command``, in ``cwd`` (already resolved by the caller).
 
-        ``owner`` is the session address the terminal is opened *for*. It is checked against the
-        per-session budget first, because that is the smaller number and the one the caller can act
-        on: "this conversation already has two terminals" is a refusal a session can answer by closing
-        one, while "the host has eight" is not.
+        ``owner`` is the session address the terminal is opened *for*. Its own budget is checked
+        first, because that is the smaller number and the one the caller can act on: "this
+        conversation already has two terminals" is a refusal a session can answer by closing one,
+        while "the host has eight" is not.
+
+        ``beyond`` is that budget having been asked about and allowed for this conversation
+        (:meth:`~plyngent.kernel.pty.policy.PtyPolicy.may_exceed`). It lifts the per-session check and
+        nothing else: the host's own limit is not a person's to raise.
 
         ``async`` because this call now ends in a round trip — the child exists when the broker says
         it does — and because it must run on the loop the registry (and so the broker's channel)
@@ -246,7 +254,7 @@ class PtyRegistry(Component):
         if not self.broker.available:
             msg = f"PTY is not available: {self.broker.reason or 'the PTY broker is not running'}"
             raise PtyUnavailable(msg)
-        if owner and self.count_for(owner) >= self.max_per_session:
+        if owner and not beyond and self.count_for(owner) >= self.max_per_session:
             msg = (
                 f"this session already has {self.max_per_session} PTY sessions "
                 f"({owner}); close one before opening another"

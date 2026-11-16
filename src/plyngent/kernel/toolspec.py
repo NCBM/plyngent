@@ -14,7 +14,7 @@ Three rules the shape enforces:
 * **Argument packages live next to their handler.** There is no central table of tools: a module
   defines ``Args`` and the handler that takes it, and declares the spec beside them.
 * **A tool states what it is, never how this one call should be judged.** Approval is derived from
-  the declarations (:meth:`ToolSpec.approval`), and the only way to ask for more is to declare it —
+  the declarations (:meth:`ToolSpec.asking`), and the only way to ask for more is to declare it —
   there is no hook that looks at a call and answers "less than the baseline", because that is the
   one shape that turns a dangerous call into an automatic one.
 """
@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 import msgspec
 from msgspec import Struct
+
+from plyngent.wire.ask import SEVERITIES, Severity
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -115,7 +117,7 @@ class Posture(StrEnum):
 
     ``AUTO`` runs without asking. ``ONCE`` asks the first time and then remembers, by whatever
     :class:`Remember` says. ``ALWAYS`` asks every time. The level is derived from what a tool
-    declares (:meth:`ToolSpec.approval`), and policies may only raise it.
+    declares (:meth:`ToolSpec.asking`), and policies may only raise it.
     """
 
     AUTO = "auto"
@@ -134,6 +136,22 @@ class Remember(StrEnum):
     PROGRAM = "program"
     SESSION = "session"
     HOST = "host"
+
+
+@dataclass(frozen=True, slots=True)
+class Asking:
+    """What one call asks of a person: whether to ask at all, remembered by what, and how heavily.
+
+    These travel together because they are decided together (:meth:`ToolSpec.asking`), and because
+    every reader needs the same three: the executor puts the question, the approvals table decides
+    whether it has been answered before *at this level*, and the client shows the level and falls
+    back to it when nobody is there. ``remember`` is ``None`` for anything that is not ``ONCE`` —
+    the word only means something where an answer is kept.
+    """
+
+    posture: Posture
+    remember: Remember | None
+    severity: Severity
 
 
 class ArgsError(Exception):
@@ -218,10 +236,11 @@ class ToolSpec:
     (``mcp:<server>``, ``client:<id>``) and its own lifetime, which is why the field is a plain
     string rather than :class:`Group`.
 
-    The three approval fields are declarations, not judgements: ``posture`` overrides the derived
+    The four approval fields are declarations, not judgements: ``posture`` overrides the derived
     baseline for a tool whose reach is not expressed by ``uses``/``mutates`` (a temporary workspace
-    widens what is reachable), ``remember`` overrides what an ``ONCE`` is keyed on, and ``escalates``
-    says which argument values make the ordinary use of the tool irreversible.
+    widens what is reachable), ``remember`` overrides what an ``ONCE`` is keyed on, ``severity``
+    overrides the level the baseline would give it, and ``escalates`` says which argument values make
+    the ordinary use of the tool irreversible — and how heavy that use is.
     """
 
     name: str
@@ -234,7 +253,11 @@ class ToolSpec:
     intention: Intention | None = None
     posture: Posture | None = None
     remember: Remember | None = None
-    escalates: Mapping[str, object] | None = None
+    severity: Severity | None = None
+    #: Which of the tool's boolean arguments make a call heavier than its ordinary use, and the level
+    #: it becomes. Set, the argument means "this time it is not the ordinary use": the question is put
+    #: every time (there is nothing to remember) and the level is at least the one named here.
+    escalates: Mapping[str, Severity] | None = None
     #: What this tool asks of a package beyond its types. A rule two arguments make *together* — one
     #: locator and not the other — is not something a JSON Schema can say about either field alone, and
     #: checking it in the handler would mean the rule is skipped by every caller that does not reach the
@@ -249,6 +272,8 @@ class ToolSpec:
             if name not in declared:
                 msg = f"{self.name}: names an argument {name!r} that {self._args_name()} does not have"
                 raise ValueError(msg)
+        for name, level in escalates.items():
+            self._check_escalation(name, level)
         if self.intention is None:
             object.__setattr__(self, "intention", _asked_for(self.uses, self.mutates))
         named = {name for name, role in roles.items() if role in _PATH_ROLES}
@@ -293,22 +318,27 @@ class ToolSpec:
         if self.guard is not None:
             self.guard(args)
 
-    def approval(self, args: Any) -> tuple[Posture, Remember | None]:
-        """The posture this call is approved at, and what the approval is remembered by.
+    def level(self) -> Severity:
+        """How heavy this tool's ordinary use is, before any argument or policy is read."""
+        return self.severity if self.severity is not None else _grade(self.uses, self.mutates)
 
-        ``Remember`` is only meaningful for ``ONCE`` and is ``None`` otherwise. What a *policy*
-        answers about this call (:class:`~plyngent.kernel.command.CommandPolicy`, the network policy,
-        a grant for a path outside the root) is not here: it arrives at the executor and may only
-        raise this value.
+    def asking(self, args: Any) -> Asking:
+        """What this call asks of a person: whether to ask, remembered by what, and how heavily.
+
+        An argument that escalates answers all three at once — the question is put every time and the
+        level is the one the declaration names — because the thing agreed to was the ordinary use and
+        this call is not it. What a *policy* says above this (:class:`~plyngent.kernel.command.CommandPolicy`,
+        the network policy, a grant for a path outside the root) is not here: it arrives at the
+        executor and may only raise what this returns.
         """
+        for name, level in (self.escalates or {}).items():
+            if argument(args, name):
+                return Asking(Posture.ALWAYS, None, level)
         posture, remembers = _baseline(self.uses, self.mutates)
         if self.posture is not None:
             posture = self.posture
-        for name, value in (self.escalates or {}).items():
-            if argument(args, name) == value:
-                return Posture.ALWAYS, None
         remember = self.remember if self.remember is not None else remembers
-        return posture, remember if posture is Posture.ONCE else None
+        return Asking(posture, remember if posture is Posture.ONCE else None, self.level())
 
     def _read(self, arguments: str | bytes) -> Any:
         """The arguments as a package, in whichever of the two kinds this tool's are."""
@@ -343,6 +373,23 @@ class ToolSpec:
 
     def _args_name(self) -> str:
         return type(self.args).__name__ if isinstance(self.args, ExternalArgs) else self.args.__name__
+
+    def _check_escalation(self, name: str, level: object) -> None:
+        """One ``escalates`` entry: it names a level, and that level is not lighter than the tool's own.
+
+        The second half is the rule this module is built around — a call may be declared heavier than
+        the baseline and never lighter — so an escalation that would lighten it is a mistake in the
+        declaration and is refused when the tool is declared rather than when it is called.
+        """
+        if not isinstance(level, Severity):
+            msg = f"{self.name}: {name!r} escalates to what? name a Severity, not {level!r}"
+            raise TypeError(msg)
+        if _rank(level) < _rank(self.level()):
+            msg = (
+                f"{self.name}: {name!r} would lighten the call to {level} — an argument may raise "
+                "the level and never lower it"
+            )
+            raise ValueError(msg)
 
 
 def _asked_for(uses: Res, mutates: Mutation) -> Intention:
@@ -384,6 +431,42 @@ def _baseline(uses: Res, mutates: Mutation) -> tuple[Posture, Remember | None]:
     else:
         outcome = (Posture.AUTO, None)  # reading, and the bookkeeping a session does for itself
     return outcome
+
+
+def _grade(uses: Res, mutates: Mutation) -> Severity:
+    """How heavy a tool's ordinary use is, from its declarations alone.
+
+    A second table rather than a third column of :func:`_baseline`, because the two rows that matter
+    fall in different places: ``DESTRUCTIVE`` is heavy without changing the posture (a move is asked
+    once per path either way), so it has a row of its own here and none there. Read top to bottom and
+    the first match wins, as there.
+
+    The order is the one thing to keep straight: ``HUMAN`` is the heaviest because its effect is a
+    person's decision, ``CLIENT`` and ``EXEC`` follow because nothing here can check what they did,
+    and everything that reaches past the workspace is next.
+    """
+    if uses & Res.HUMAN:
+        level = Severity.DANGER  # the effect is a person's, and the call has no undo
+    elif uses & Res.CLIENT:
+        level = Severity.DANGER  # it happens in somebody else's process
+    elif uses & Res.EXEC:
+        level = Severity.DANGER  # argv can point anywhere
+    elif mutates & Mutation.OUTSIDE:
+        level = Severity.DANGER  # past the workspace, and unverifiable here
+    elif mutates & Mutation.DESTRUCTIVE:
+        level = Severity.DANGER  # it takes away something that was already there
+    elif uses & Res.PTY and mutates & Mutation.HOST:
+        level = Severity.CONFIRM  # writing into a live process cannot be taken back
+    elif mutates & Mutation.WORKSPACE:
+        level = Severity.CONFIRM  # overwriting, renaming, deleting
+    else:
+        level = Severity.ROUTINE  # reading, and the bookkeeping a session does for itself
+    return level
+
+
+def _rank(severity: Severity) -> int:
+    """Where a level sits in :data:`~plyngent.wire.ask.SEVERITIES`, so "heavier" is one comparison."""
+    return SEVERITIES.index(severity)
 
 
 def argument(args: Any, name: str) -> Any:

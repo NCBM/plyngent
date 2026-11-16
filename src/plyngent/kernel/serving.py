@@ -1,3 +1,8 @@
+# As in `render`: the `case _ as never: assert_never(never)` at the end of the command match is the
+# assertion that a new command must be handled here. pyright calls that pattern redundant because it has
+# itself proved the union is covered. The redundancy *is* the assertion.
+# pyright: reportUnnecessaryComparison=false
+
 """The kernel's half of one connection: what a client asked for, done, and what happened said back.
 
 A connection is a client's intent and the kernel's answer, one command at a time. This is the answer
@@ -16,17 +21,18 @@ Two rules shape it:
   detaches it — a client that is gone cannot answer, so the host goes back to "nobody to ask", which
   answers "no" rather than hanging.
 
-What the commands do not yet have: ``Prune`` / ``Resume`` / ``Export`` have no meaning
-until the rest of the history store and the route component exist, so they are accepted and do nothing.
-``Compact`` is no longer one of them — it writes the summary entry that is a place a conversation can
-continue from (:meth:`Serving._compact`) — and it is a command rather than a turn because a summary is
-one row: nothing about it has to be exclusive.
+What the commands do not yet have: ``Resume`` answers with what it is missing, because reattaching a
+session to a stored trajectory needs a store this build does not have — the same one ``Open(seed_from=)``
+waits for. Nothing is accepted in silence any more: each command is answered, even where the answer is a
+refusal. ``Compact``, ``Prune`` and ``Export`` are not turns — the first two write one bookkeeping row
+where the conversation ends, the third writes a document and moves nothing — so none of them takes the
+session's single turn slot.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from composat import Declaration
 from composat.errors import KeyInTransitError
@@ -37,15 +43,32 @@ from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.session import Session
-from plyngent.kernel.trail import Summary
+from plyngent.kernel.trail import Summary, Withheld, transcript
 from plyngent.kernel.turn import TurnRunner
-from plyngent.wire.command import Cancel, Close, Compact, ListSessions, Offer, Open, SetRoute, Submit
+from plyngent.wire.command import (
+    Cancel,
+    Close,
+    Compact,
+    Export,
+    ListSessions,
+    Offer,
+    Open,
+    Prune,
+    Resume,
+    SetRoute,
+    Submit,
+)
 from plyngent.wire.event import (
     Compacted,
     CompactRefused,
+    DocumentStored,
+    ExportRefused,
     KernelLeaving,
     ListedSession,
     OfferRefused,
+    Pruned,
+    PruneRefused,
+    ResumeRefused,
     Routed,
     RouteRefused,
     SessionsListed,
@@ -53,7 +76,7 @@ from plyngent.wire.event import (
     TurnRefused,
 )
 from plyngent.wire.manifest import CLIENT_OFFER
-from plyngent.wire.scope import CancelScope
+from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -146,29 +169,76 @@ class Serving:
     async def _handle(self, command: AnyCommand) -> None:
         """Do what one command asks, or say why it cannot be done yet."""
         match command:
-            case Open(session=session, seed_from=seed):
-                await self._open(session, seed)
-            case Close(session=session):
-                await self._close(session)
+            case Open() | Close():
+                await self._serving(command)
             case ListSessions():
                 self.link.emit(SessionsListed(sessions=await self._served()))
             case Cancel(session=session, scope=scope, reason=reason, detail=detail):
-                found = self._session(session)
-                if found is not None:
-                    _ = found.cancel(CancelScope.parse(scope) if scope is not None else None, reason, detail)
+                await self._cancel(session, scope, reason, detail)
             case Submit(session=session, text=text, kind=kind, begin_after=begin_after):
                 await self._submit(session, text, kind, begin_after)
             case Offer(tools=tools):
                 await self._offer(tools)
-            case Compact(session=session, begin_after=begin_after, replaces=replaces, text=text):
-                await self._compact(session, begin_after, replaces, text)
+            case Compact() | Prune():
+                await self._bookkeeping(command)
+            case Export(session=session, begin_after=begin_after):
+                await self._export(session, begin_after)
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
-            case _:
-                # Prune / Resume / Export: accepted, and nothing to do until the rest of the history
-                # store exists. Silence is the contract's answer for a command with no outcome to
-                # report (D5), not an oversight.
-                return
+            case Resume(session=session, store=store):
+                await self._resume(session, store)
+            case _ as never:
+                # Every command a client may send has an answer here, even where the answer is "there is
+                # nowhere to resume from": a new command must be a decision at this match, not silence.
+                assert_never(never)
+
+    async def _serving(self, command: Open | Close) -> None:
+        """The two commands that say which conversations this kernel serves: admit one, or evict one."""
+        match command:
+            case Open(session=session, seed_from=seed):
+                await self._open(session, seed)
+            case Close(session=session):
+                await self._close(session)
+
+    async def _cancel(self, session: str, scope: str | None, reason: CancelReason, detail: str) -> None:
+        """Stop what one session is doing, as narrowly as the scope says.
+
+        A cancel naming a session this kernel does not serve is a message that arrived too late or from a
+        frontend that guessed, and both are answered by doing nothing — which is why the check is here
+        rather than a refusal on the wire.
+        """
+        found = self._session(session)
+        if found is not None:
+            _ = found.cancel(CancelScope.parse(scope) if scope is not None else None, reason, detail)
+
+    async def _resume(self, session: str, store: str) -> None:
+        """Rebind this session to a stored trajectory — which there is not, so say what is missing.
+
+        The command's shape is R4's: replacing what a session reads from invalidates the history basis of
+        anything already running, so nothing about it may happen beside a live turn. What it waits for is
+        the store ``Open(seed_from=)`` waits for. Until then the answer is a refusal naming the missing
+        piece, which is more use than the silence this command used to keep: a person who typed it learns
+        that the conversation in front of them is still the one they were reading.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(ResumeRefused(session=session, reason=NO_SESSION))
+            return
+        self.link.emit(ResumeRefused(session=session, reason=_no_trajectory(store)))
+
+    async def _bookkeeping(self, command: Compact | Prune) -> None:
+        """The two commands that write one row where the conversation ends, and nothing else.
+
+        Neither is a turn, and neither is exclusive: a row does not take the session's single turn slot, so
+        a compaction or a prune can be written while a chat is running — which is the same rule the
+        summary's arrival already rests on. They are read apart from the rest because they are the same
+        shape: a command whose whole outcome is one entry plus one event.
+        """
+        match command:
+            case Compact(session=session, begin_after=begin_after, replaces=replaces, text=text):
+                await self._compact(session, begin_after, replaces, text)
+            case Prune(session=session, targets=targets, reason=reason):
+                await self._prune(session, targets, reason)
 
     async def _open(self, session: str, seed_from: tuple[str, str] | None) -> None:
         """Start serving a session, unless it is already served.
@@ -323,6 +393,69 @@ class Serving:
             return
         _ = await found.note_compaction()
         self.link.emit(Compacted(session=session, entry=entry.id, chars=len(text)))
+
+    async def _export(self, session: str, begin_after: str | None) -> None:
+        """Write this conversation out as a document, or say why nothing was written.
+
+        A projection, so nothing moves: the messages the next turn would be given are written to the
+        document store and answered with the handle that reaches them back. ``begin_after`` names where
+        to read from — ``None`` is the end of the conversation — and the kernel writes no files of its
+        own, because a path in a command would be a write behind the policy every tool goes through.
+
+        What a person gets is :class:`DocumentStored`, the same event a tool result earns when it is too
+        long to send: a document was kept, and its handle is the way back to it.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(ExportRefused(session=session, reason=NO_SESSION))
+            return
+        trail = found.host.trail
+        end = begin_after
+        if end is None:
+            head = await trail.head(session)
+            end = None if head is None else head.id
+        try:
+            messages = await trail.derive(session, end)
+        except ValueError as exc:
+            self.link.emit(ExportRefused(session=session, reason=str(exc)))
+            return
+        if not messages:
+            self.link.emit(ExportRefused(session=session, reason=NOTHING_TO_EXPORT))
+            return
+        kept = await found.host.documents.put(
+            session, transcript(messages), summary=f"conversation exported ({len(messages)} messages)"
+        )
+        self.link.emit(DocumentStored(session=session, document=kept.id, chars=kept.chars))
+
+    async def _prune(self, session: str, targets: tuple[str, ...], reason: str) -> None:
+        """Write one entry saying these entries are no longer shown, or say why nothing was written.
+
+        The prune goes where the conversation ends — its parent is the current head — because that is the
+        only placement a projection can honour: a turn continues from the entry it is given and walks up
+        from there, so a prune written anywhere else would hide nothing from the turn that follows it.
+        That also makes the prune the new head, which is what a client's cursor moves to.
+
+        Every target is checked before anything is written: a list naming one entry this session does not
+        have writes nothing at all rather than hiding the half of it that did exist, because a prune that
+        half happened is a history nobody can account for.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(PruneRefused(session=session, reason=NO_SESSION))
+            return
+        if not targets:
+            self.link.emit(PruneRefused(session=session, reason=NOTHING_TO_PRUNE))
+            return
+        trail = found.host.trail
+        for target in targets:
+            if await trail.entry(session, target) is None:
+                self.link.emit(PruneRefused(session=session, reason=_no_such_prune(target, session)))
+                return
+        head = await trail.head(session)
+        entry = await trail.append(
+            session, Withheld(targets=targets, reason=reason), begin_after=None if head is None else head.id
+        )
+        self.link.emit(Pruned(session=session, entry=entry.id, targets=targets, reason=reason))
 
     # -- turns ---------------------------------------------------------------------
 
@@ -486,6 +619,24 @@ NO_FOREST = "seeding a session needs the history store, which does not exist yet
 
 #: Why a ``Compact`` wrote nothing: an empty summary would stand for everything and say nothing.
 NOTHING_TO_KEEP = "a summary with no text compresses nothing"
+
+#: Why a ``Prune`` wrote nothing: there is nothing to stop showing.
+NOTHING_TO_PRUNE = "a prune with no entries hides nothing"
+
+#: Why an ``Export`` wrote nothing: there is no conversation to write down.
+NOTHING_TO_EXPORT = "there is nothing to export: this conversation has no messages yet"
+
+
+def _no_trajectory(store: str) -> str:
+    """Why a resume did nothing: there is nowhere to read a trajectory from, and which one was asked for."""
+    if store:
+        return f"no stored trajectory named {store!r}: this build has no store to read one from"
+    return "resuming needs a stored trajectory, and this build has no store to read one from"
+
+
+def _no_such_prune(target: str, session: str) -> str:
+    """Why a prune named nothing that exists: a prune can only hide an entry this session has."""
+    return f"no entry {target!r} in session {session}: a prune can only hide an entry that exists"
 
 
 def _resident(offered: Iterable[OfferedTool], attached: tuple[ToolSpec, ...]) -> frozenset[str]:

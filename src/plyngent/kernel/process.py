@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.kernel.cancel import Scope
-    from plyngent.kernel.toolresult import Hint
+    from plyngent.kernel.toolresult import DenialKind, Hint
 
 #: What a node gets when it does not ask for a deadline of its own.
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -163,6 +163,10 @@ class Refused:
     failure: Failure
     message: str
     hints: tuple[Hint, ...] = ()
+    #: Why, machine-readably, when the failure is a denial: this engine refuses a *command* and answers
+    #: with its own value rather than a result, so the kind travels here and becomes a
+    #: :meth:`~plyngent.kernel.toolresult.ToolResult.denied` at the end (§0.15, E118).
+    denial: DenialKind | None = None
 
 
 @dataclass(frozen=True, slots=True)

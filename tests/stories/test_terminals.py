@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from plyngent.kernel.pty.registry import Limits
+from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
@@ -211,26 +212,49 @@ async def test_a_denylisted_program_is_asked_about_before_a_terminal_starts(stor
     assert [question.prompt for question in story.questions()] == [
         "run 'rm' on a terminal? it is on the command denylist"
     ], "the program decides whether anybody is asked, and it is asked before anything starts"
-    assert told(refused) == "the command denylist refused 'rm'", told(refused)
+    assert story.questions()[0].severity is Severity.DANGER, "a program that is on a denylist is not asked lightly"
+    assert told(refused) == "the human did not allow running 'rm'", told(refused)
 
 
-async def test_a_session_that_already_has_its_terminals_says_so(story_with: Scripted) -> None:
+async def test_a_conversation_s_own_room_is_a_question_asked_once(story_with: Scripted) -> None:
+    """The third terminal is a question, and one yes is remembered for the conversation (§0.15, E115)."""
     story = await story_with(
         calling("open_pty", {"command": ["cat"], "intention": "the first one"}),
         calling("open_pty", {"command": ["cat"], "intention": "the second one"}),
-        calling("open_pty", {"command": ["cat"], "intention": "and one too many"}),
+        calling("open_pty", {"command": ["cat"], "intention": "and one more than its room"}),
+        calling("open_pty", {"command": ["cat"], "intention": "and one after that"}),
+        text("four terminals, one question"),
+    )
+
+    await story.require("process")
+
+    await story.type("open four terminals")
+    await story.answer("y")
+    await story.finished()
+
+    assert [question.prompt for question in story.questions()] == [
+        "open another PTY session? this one already has 2"
+    ], "the third was asked about and the fourth was not: the yes is the conversation's, not the call's"
+    (_, first, second, third, fourth) = story.requests()
+    assert len({_session_id(first), _session_id(second), _session_id(third), _session_id(fourth)}) == 4
+
+
+async def test_refusing_the_third_terminal_is_a_refusal_with_a_kind(story_with: Scripted) -> None:
+    story = await story_with(
+        calling("open_pty", {"command": ["cat"], "intention": "the first one"}),
+        calling("open_pty", {"command": ["cat"], "intention": "the second one"}),
+        calling("open_pty", {"command": ["cat"], "intention": "and one more than its room"}),
         text("two is what there is room for"),
     )
 
     await story.require("process")
 
     await story.type("open three terminals")
+    await story.answer("n")
     await story.finished()
 
-    (_, first, second, too_many) = story.requests()
-    assert _session_id(first) != _session_id(second), "the first two were opened, one after the other"
-    said = "this session already has 2 PTY sessions (main); close one before opening another"
-    assert told(too_many) == said, told(too_many)
+    (_, _, _, too_many) = story.requests()
+    assert told(too_many) == "the human did not allow another PTY session for this conversation"
 
 
 async def test_a_host_with_room_for_one_terminal_says_which_number_it_hit(story_with: Scripted) -> None:

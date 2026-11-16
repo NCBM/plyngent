@@ -28,12 +28,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
     from plyngent.cli.offers import ClientTools
+    from plyngent.cli.policy import Policy
     from plyngent.config import Settings
     from plyngent.kernel.lm.route import Route
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.skills import Skills
+    from plyngent.wire.ask import Grades
     from tests.loopback import Site
     from tests.stories.model import Step
 
@@ -130,6 +132,8 @@ async def story_with(tmp_path, transport):
         tools: ClientTools = TERMINAL,
         limits: Limits | None = None,
         deadline: float | None = None,
+        grades: Grades | None = None,
+        policy: Policy | None = None,
         markdown: bool = False,
     ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
@@ -154,6 +158,8 @@ async def story_with(tmp_path, transport):
             tools=tools,
             limits=limits,
             deadline=deadline,
+            grades=grades,
+            policy=policy,
             markdown=markdown,
         )
         started.append(story)

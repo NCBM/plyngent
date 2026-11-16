@@ -269,6 +269,7 @@ async def test_a_numbered_edit_of_a_file_that_changed_since_it_was_read_is_refus
 
     await story.type("read it, rewrite it, then edit by the old numbers")
     await story.answer("y")
+    await story.answer("y")
     await story.finished()
 
     assert (await _told(story)).splitlines() == [

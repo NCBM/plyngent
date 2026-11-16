@@ -44,6 +44,7 @@ from plyngent.kernel.trail import (
     ATTEMPT_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
+    WITHHELD_TAG,
     AnyRecord,
     Attempt,
     Entry,
@@ -51,6 +52,7 @@ from plyngent.kernel.trail import (
     StateChange,
     Summary,
     Trail,
+    Withheld,
     as_message,
 )
 
@@ -137,15 +139,20 @@ MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2)
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
 #: rebuildable and may therefore be dropped rather than migrated. Version 2 reads a ``summary`` as the
 #: message it stands for; version 1 skipped it, and nothing it wrote can be true of a chain that has one.
-PROJECTOR = 2
+#: Version 3 honours a prune (:class:`~plyngent.kernel.trail.Withheld`): a chain that carries one no
+#: longer projects to what version 2 wrote down for it.
+PROJECTOR = 3
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 
 #: The tags a conversation continues from: what a model reads, plus the summary that stands in for what
-#: it read before. One set, two uses — the placeholder list for the one query that names them (:meth:`head`)
-#: and the filter a projection applies — so what a turn may continue and what a model is shown cannot
-#: drift.
-_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG}
+#: it read before, plus the prune that says what of it is not shown. One set, two uses — the placeholder
+#: list for the one query that names them (:meth:`head`) and the filter a projection applies — so what a
+#: turn may continue and what a model is shown cannot drift. A prune belongs here and not among the model
+#: tags: nothing reads a prune *as a message*, and it must still be the place a turn grows from — a prune
+#: that did not become the head would hide nothing from the next turn, which is the same bug a summary
+#: that did not become the head has (E53).
+_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG, WITHHELD_TAG}
 _CONVERSATION = tuple(sorted(_CONVERSATION_TAGS))
 _CONVERSATION_IN = ", ".join("?" for _ in _CONVERSATION)
 
@@ -179,7 +186,7 @@ WITH RECURSIVE chain(id, parent, tag, payload, depth) AS (
     SELECT e.id, e.parent, e.tag, e.payload, c.depth + 1
       FROM entry e JOIN chain c ON e.id = c.parent
 )
-SELECT tag, payload FROM chain ORDER BY depth DESC
+SELECT id, tag, payload FROM chain ORDER BY depth DESC
 """
 
 
@@ -340,7 +347,9 @@ class SqliteTrail(Trail):
         The walk is the database's own recursion: one query returns the chain and the order it is read
         in, because a parent is a row and a chain is a join. Rows carrying a tag no model reads are
         dropped here rather than refused, so a file written by a build that keeps more than a
-        conversation still projects to one.
+        conversation still projects to one. A prune is the one bookkeeping record that is read before it
+        is dropped: what it names is not handed over, and everything else is — which is why the
+        projector's version moved when it arrived.
 
         What came out is kept under ``(session, entry, projector)``, because a projection is a function
         of the chain and a chain never changes: nothing rewrites a row, so a cached answer stays true
@@ -361,8 +370,16 @@ class SqliteTrail(Trail):
         chain = await self._read_all(_CHAIN, (session, row))
         if not chain:
             raise ValueError(_broken_chain(begin_after, session))
-        records = (_decode(tag, payload) for tag, payload in chain if tag in _CONVERSATION_TAGS)
-        messages = tuple(message for record in records if (message := as_message(record)) is not None)
+        records = [(f"e{entry}", _decode(tag, payload)) for entry, tag, payload in chain if tag in _CONVERSATION_TAGS]
+        # What a prune takes away is decided in one pass before anything is read out of the chain: a
+        # prune is a row like any other and its targets are older than it, but the entry it hides may sit
+        # anywhere below, so the answer has to be known before the first message is handed over.
+        withheld = {target for _entry, record in records if isinstance(record, Withheld) for target in record.targets}
+        messages = tuple(
+            message
+            for entry, record in records
+            if entry not in withheld and (message := as_message(record)) is not None
+        )
         remembered = msgspec.json.encode(list(messages)).decode()
         _ = await self._execute(
             "INSERT OR REPLACE INTO projection (session, entry, projector, messages) VALUES (?, ?, ?, ?)",
@@ -563,6 +580,8 @@ def _decode(tag: str, payload: str) -> AnyRecord:
         return msgspec.json.decode(payload, type=Summary)
     if tag == ATTEMPT_TAG:
         return msgspec.json.decode(payload, type=Attempt)
+    if tag == WITHHELD_TAG:
+        return msgspec.json.decode(payload, type=Withheld)
     return _message(payload)
 
 

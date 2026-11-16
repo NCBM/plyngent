@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
 
 from plyngent.cli import markdown
-from plyngent.wire.ask import Confirmation, FreeText, Secret, Selection
+from plyngent.wire.ask import Confirmation, FreeText, Secret, Selection, Severity
 from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
@@ -40,8 +40,12 @@ from plyngent.wire.event import (
     Compacted,
     CompactRefused,
     DocumentStored,
+    ExportRefused,
     KernelLeaving,
     OfferRefused,
+    Pruned,
+    PruneRefused,
+    ResumeRefused,
     Routed,
     RouteRefused,
     SessionsListed,
@@ -96,12 +100,32 @@ class Shown:
 type _Said = AssistantText | AssistantDelta | ToolCalled | ToolReturned
 
 #: What the kernel says about a turn: when it began, how it ended, and what it reported meanwhile.
-type _Turned = TurnStarted | TurnFinished | TurnRefused | DocumentStored | OfferRefused
+type _Turned = TurnStarted | TurnFinished | TurnRefused | OfferRefused
 
 #: What the kernel reports about itself and the session it serves — every event that is not a turn's own
 #: content, a fact about one asking, or a turn's shape. Written out rather than inferred from ``AnyEvent``
 #: so that a new kind of news fails at the branch that has to read it, in whichever third it belongs to.
-type _Reported = KernelLeaving | SessionsListed | Compacted | CompactRefused | Routed | RouteRefused
+type _Reported = (
+    KernelLeaving
+    | SessionsListed
+    | Compacted
+    | Pruned
+    | DocumentStored
+    | Routed
+    | CompactRefused
+    | PruneRefused
+    | ExportRefused
+    | ResumeRefused
+    | RouteRefused
+)
+
+#: What a session is now, said as one line: its summary, its route, what it stopped showing, and what it
+#: kept. A document belongs here and not to a turn because the thing kept may have been kept outside one.
+type _Settled = Compacted | Pruned | DocumentStored | Routed
+
+#: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
+#: for and the reason it did not happen — which is why they are read apart from what *is* true.
+type _Declined = CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused
 
 #: What one request to a model cost, and whether the answer it brought stopped short.
 type _Asked = Usage | AnswerCut
@@ -133,7 +157,7 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS) -> tuple[Shown, ...]:
             rows = _said(event)
         case Usage() | AnswerCut():
             rows = _asking(event)
-        case TurnStarted() | TurnFinished() | TurnRefused() | DocumentStored() | OfferRefused():
+        case TurnStarted() | TurnFinished() | TurnRefused() | OfferRefused():
             rows = _turned(event)
         case _ as rest:
             rows = _reported(rest)
@@ -321,8 +345,6 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
         case TurnRefused(session=session, reason=reason, holder=holder):
             holder_note = f" (turn {holder} is in the way)" if holder else ""
             return ((session, Shown(f"turn refused: {reason}{holder_note}", "refusal")),)
-        case DocumentStored(session=session, document=document, chars=chars):
-            return ((session, Shown(f"document {document} kept ({chars} chars)", "notice")),)
         case OfferRefused(name=name, reason=reason):
             said = f"offer refused: {name} — {reason}" if name else f"offer refused: {reason}"
             return (("", Shown(said, "refusal")),)
@@ -333,22 +355,61 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
 def _reported(event: _Reported) -> tuple[_Row, ...]:
     """What the kernel says about itself and the session it is serving, rather than about a turn.
 
-    A claim with no session of its own — the kernel leaving, a listing — answers the empty session, which
-    :func:`_named` reads as "nothing to name". The rest are the settings a session has: what its
-    conversation was compressed into, and which route answers it.
+    Three subjects, read apart because they are three different claims: what the *connection* is doing
+    (the kernel leaving, the sessions there are), what the session *is now* (its summary, its route, what
+    it stopped showing, what it kept), and what it would not do and why. A claim with no session of its
+    own answers the empty session, which :func:`_named` reads as "nothing to name".
     """
+    match event:
+        case KernelLeaving() | SessionsListed():
+            return _connection(event)
+        case Compacted() | Pruned() | DocumentStored() | Routed():
+            return _setting(event)
+        case CompactRefused() | PruneRefused() | ExportRefused() | ResumeRefused() | RouteRefused():
+            return _declined(event)
+        case _ as never:
+            assert_never(never)
+
+
+def _connection(event: KernelLeaving | SessionsListed) -> tuple[_Row, ...]:
+    """The connection itself: the kernel going away, and which conversations it is serving."""
     match event:
         case KernelLeaving(reason=reason):
             return (("", Shown(f"the kernel is leaving{': ' + reason if reason else ''}", "notice")),)
         case SessionsListed(sessions=sessions):
             said = f"sessions: {', '.join(_listed(item) for item in sessions) if sessions else 'none'}"
             return (("", Shown(said, "notice")),)
+        case _ as never:
+            assert_never(never)
+
+
+def _setting(event: _Settled) -> tuple[_Row, ...]:
+    """What one of this session's settings is now: what it was compressed into, what it hides, what it
+    kept, and which route answers it."""
+    match event:
         case Compacted(session=session, entry=entry, chars=chars):
             return ((session, Shown(f"summary {entry} written ({chars} chars)", "notice")),)
-        case CompactRefused(session=session, reason=reason):
-            return ((session, Shown(f"compact refused: {reason}", "refusal")),)
+        case Pruned(session=session, entry=entry, targets=targets):
+            return ((session, Shown(f"prune {entry} written ({len(targets)} withheld)", "notice")),)
+        case DocumentStored(session=session, document=document, chars=chars):
+            return ((session, Shown(f"document {document} kept ({chars} chars)", "notice")),)
         case Routed(session=session, route=route, epoch=epoch):
             return ((session, Shown(f"route: {route or 'none'} (epoch {epoch})", "notice")),)
+        case _ as never:
+            assert_never(never)
+
+
+def _declined(event: _Declined) -> tuple[_Row, ...]:
+    """What the kernel would not do, and why: the same sentence with a different word at the front."""
+    match event:
+        case CompactRefused(session=session, reason=reason):
+            return ((session, Shown(f"compact refused: {reason}", "refusal")),)
+        case PruneRefused(session=session, reason=reason):
+            return ((session, Shown(f"prune refused: {reason}", "refusal")),)
+        case ExportRefused(session=session, reason=reason):
+            return ((session, Shown(f"export refused: {reason}", "refusal")),)
+        case ResumeRefused(session=session, reason=reason):
+            return ((session, Shown(f"resume refused: {reason}", "refusal")),)
         case RouteRefused(session=session, reason=reason):
             return ((session, Shown(f"route refused: {reason}", "refusal")),)
         case _ as never:
@@ -392,7 +453,7 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
     """
     match ask:
         case Confirmation(prompt=prompt, default=default):
-            return _joined(ask.session, focus, f"{prompt} [{_offered(default=default)}]")
+            return _joined(ask.session, focus, f"{prompt} [{_offered(default=default)}]{_weighed(ask)}")
         case Selection(prompt=prompt, options=options, default=default):
             choices = "/".join(options)
             return _joined(ask.session, focus, f"{prompt} ({choices})" + _suggested(default))
@@ -402,6 +463,24 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
             return _joined(ask.session, focus, prompt)
         case _ as never:
             assert_never(never)
+
+
+def _weighed(ask: Confirmation) -> str:
+    """How heavy this yes-or-no question is, and what its own silence means.
+
+    Both are things the person deciding needs in front of them and neither can be read off the sentence:
+    a ``danger`` question is the one nothing here can undo, and a ``routine`` one is the only question
+    whose silence is a yes — which is exactly the fact somebody must not discover afterwards. The
+    ordinary level says nothing, because putting a word on every write teaches the person to stop
+    reading the line.
+    """
+    match ask.severity:
+        case Severity.DANGER:
+            return " [danger]"
+        case Severity.ROUTINE if ask.timeout_default:
+            return " [no answer is a yes]"
+        case _:
+            return ""
 
 
 def notice(text: str) -> Shown:

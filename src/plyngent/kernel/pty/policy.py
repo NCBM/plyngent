@@ -9,9 +9,10 @@ Two questions live here, both of them about run state rather than about a declar
 * **Does this write or close need agreement?** Writing into a live process cannot be taken back, so the
   first one is asked and the answer is remembered by session. Closing a session that already ended
   changes nothing at all — there is no process and no descriptor left — so it is not a question.
-* **Is there room for another session?** The limit is not a question either: it is swept first, because
-  "may I open one" almost always means "one of yours is finished", and the finished ones are exactly
-  what the sweep takes.
+* **Is there room for another session?** The host's limit is not a question either: it is swept first,
+  because "may I open one" almost always means "one of yours is finished", and the finished ones are
+  exactly what the sweep takes. A *conversation's* room is the one that is asked about, and that is
+  the tool's business: it asks, and records the answer here (:meth:`PtyPolicy.allow_more`).
 """
 
 from __future__ import annotations
@@ -23,17 +24,25 @@ if TYPE_CHECKING:
 
 
 class PtyPolicy:
-    """Which terminal sessions this host has already been allowed to change.
+    """Which terminal sessions this host has already been allowed to change, and which conversations
+    have been allowed to hold more terminals than their own room.
 
-    Remembered by session id and by nothing else: an approval to type into one shell says nothing about
-    another, and a session id is never reused (the registry only counts up), so a stale entry cannot
-    come to mean a different process.
+    Remembered by session id for the first, because an approval to type into one shell says nothing
+    about another, and a session id is never reused (the registry only counts up), so a stale entry
+    cannot come to mean a different process. Remembered by the conversation's own address for the
+    second, because that is what the limit it is exceeding is counted by.
+
+    **A conversation's room is soft** (§0.15, E115): a session that is at its limit is asked once, and
+    a yes is remembered for that conversation rather than for that call. The host's limit is not soft
+    and lives in the registry: no answer of a person's changes how many terminals the machine carries.
     """
 
     _approved: set[int]
+    _beyond: set[str]
 
     def __init__(self, *, approved: tuple[int, ...] = ()) -> None:
         self._approved = set(approved)
+        self._beyond = set()
 
     def needs_consent(self, session: PtySession) -> bool:
         """Whether changing this session has to be agreed to first.
@@ -56,6 +65,18 @@ class PtyPolicy:
     def approvals(self) -> tuple[int, ...]:
         """The sessions allowed so far, oldest first."""
         return tuple(sorted(self._approved))
+
+    def needs_room(self, owner: str) -> bool:
+        """Whether this conversation has to be asked before it may open one more terminal."""
+        return owner not in self._beyond
+
+    def allow_more(self, owner: str) -> None:
+        """Remember that this conversation may hold more terminals than its own room, for this run."""
+        self._beyond.add(owner)
+
+    def may_exceed(self, owner: str) -> bool:
+        """Whether the registry should let this conversation past its room without refusing."""
+        return owner in self._beyond
 
 
 async def room_for_session(registry: PtyRegistry) -> str | None:

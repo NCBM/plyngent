@@ -30,6 +30,7 @@ from plyngent.kernel.toolresult import Effects, Meta, Text, ToolResult
 from plyngent.kernel.tools import lifted
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import PathRefused
+from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -133,11 +134,13 @@ async def open_pty(env: Env, args: OpenPtyArgs) -> ToolResult:
     refused = await _allowed(env, args.command)
     if isinstance(refused, ToolResult):
         return refused
-    room = await room_for_session(env.pty)
-    if room is not None:
-        return ToolResult.of(Failure.LIMIT, room)
+    full = await _room(env)
+    if full is not None:
+        return full
     try:
-        session = await env.pty.open(args.command, cwd=cwd, owner=env.session)
+        session = await env.pty.open(
+            args.command, cwd=cwd, owner=env.session, beyond=env.pty_policy.may_exceed(env.session)
+        )
     except PtyError as exc:
         return ToolResult.of(exc.failure, str(exc))
     command = shlex.join(session.command)
@@ -246,14 +249,21 @@ async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
 
 
 async def _consent(env: Env, session: PtySession) -> ToolResult | None:
-    """Ask before changing a live session, once per session; ``None`` when nothing has to be asked."""
+    """Ask before changing a live session, once per session; ``None`` when nothing has to be asked.
+
+    It carries the ``confirm`` level the PTY-write row of the table derives (:func:`_grade`), and says
+    so rather than leaning on the default: a write into a running process cannot be taken back, and that
+    is the level whose silence is still a no.
+    """
     if not env.pty_policy.needs_consent(session):
         return None
     agreed = await env.human.confirm(
-        prompt=f"change PTY session {session.session_id}, which is still running?", site=env.site("consent")
+        prompt=f"change PTY session {session.session_id}, which is still running?",
+        severity=Severity.CONFIRM,
+        site=env.site("consent"),
     )
     if not agreed.accepted:
-        return ToolResult.of(Failure.DENIED, f"the human did not allow changing PTY session {session.session_id}")
+        return ToolResult.unagreed(agreed, about=f"changing PTY session {session.session_id}")
     env.pty_policy.approve(session.session_id)
     return None
 
@@ -270,13 +280,39 @@ async def _allowed(env: Env, command: list[str]) -> ToolResult | tuple[str, ...]
     approvals: list[str] = []
     for program in verdict.programs:
         agreed = await env.human.confirm(
-            prompt=f"run {program!r} on a terminal? it is on the command denylist", site=env.site("gate")
+            prompt=f"run {program!r} on a terminal? it is on the command denylist",
+            severity=Severity.DANGER,
+            site=env.site("gate"),
         )
         if not agreed.accepted:
-            return ToolResult.of(Failure.DENIED, f"the command denylist refused {program!r}")
+            return ToolResult.unagreed(agreed, about=f"running {program!r}")
         env.workspace.commands.approve(program)
         approvals.append(program)
     return tuple(approvals)
+
+
+async def _room(env: Env) -> ToolResult | None:
+    """Whether there is room for one more terminal, asked in the order the two limits are decided.
+
+    The host's own budget first, because it is nobody's to raise and because it is the number that
+    needs a sweep before it refuses (§0.11, E72). Then the conversation's, which is *soft*
+    (§0.15, E115): the third terminal in one conversation is a question, and the answer is remembered
+    for that conversation rather than for the call, so the fourth does not ask again.
+    """
+    reached = await room_for_session(env.pty)
+    if reached is not None:
+        return ToolResult.of(Failure.LIMIT, reached)
+    if not env.pty.over_its_room(env.session) or not env.pty_policy.needs_room(env.session):
+        return None
+    agreed = await env.human.confirm(
+        prompt=f"open another PTY session? this one already has {env.pty.max_per_session}",
+        severity=Severity.CONFIRM,
+        site=env.site("room"),
+    )
+    if not agreed.accepted:
+        return ToolResult.unagreed(agreed, about="another PTY session for this conversation")
+    env.pty_policy.allow_more(env.session)
+    return None
 
 
 def _state(session_id: int, *, alive: bool, exit_code: int | None) -> str:

@@ -19,9 +19,9 @@ Four rules the shape is built around:
   asked (:class:`~plyngent.kernel.command.CommandPolicy`, the PTY policy, the workspace's grants);
   the tool that was refused asks, and records the answer back into the policy. A policy that asked
   would be a callback into the CLI, which is the seam this package does not have.
-* **Nobody to ask is not the same as an unanswered question.** :class:`NoSink` answers immediately,
-  and with :func:`plyngent.wire.ask.unanswered`'s values: a confirmation is refused, the rest are
-  unset. That is what headless and ``--yes`` runs mean.
+* **Nobody to ask is not the same as an unanswered question.** :class:`NoSink` answers immediately
+  and says ``by=NOBODY``: a confirmation is refused whatever its level, the rest are unset. That is
+  what a headless run means, and it is why a level's silence fallback is not reachable there.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, override
 
 from composat import Component
 
-from plyngent.wire.ask import Agreed, AskSite, Picked, Written
+from plyngent.wire.ask import Agreed, AskSite, By, Picked, Severity, Written
 
 if TYPE_CHECKING:
     from plyngent.wire.event import AnyEvent
@@ -52,6 +52,10 @@ class Human(ABC):
     ``timeout`` is how long *this* question is worth waiting for; ``None`` is the connection's own
     deadline. It is an argument for the same reason ``site`` is: "wait a minute" is the caller's
     promise, and the channel is one per host rather than one per promise.
+
+    ``severity`` is only on :meth:`confirm`, because that is the one question whose silence means
+    something: the level says how long it waits and what an unanswered one becomes, and the channel
+    passes it on without deciding either.
     """
 
     @abstractmethod
@@ -64,13 +68,14 @@ class Human(ABC):
         *,
         prompt: str,
         default: bool | None = None,
+        severity: Severity = Severity.CONFIRM,
         site: AskSite | None = None,
         timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
     ) -> Agreed:
         """Ask yes or no; ``default`` is the answer suggested to the human, if any.
 
-        An unanswered question is a ``False``, so a question nobody answered can never be mistaken
-        for consent.
+        Silence is not consent unless the level says it is: a ``routine`` question falls back to yes
+        when its deadline arrives, and the two heavier levels never do.
         """
 
     @abstractmethod
@@ -116,7 +121,8 @@ class NoSink(Human):
 
     This is what a headless run and ``--yes`` mean: the questions still have answers
     (:func:`plyngent.wire.ask.unanswered`), so the tool that wanted to ask reports that it was
-    blocked instead of hanging.
+    blocked instead of hanging. Every answer says ``NOBODY`` rather than ``TIMEOUT``: nothing was
+    waited for, and a level's fallback is an answer to a deadline arriving, not to there being nobody.
     """
 
     @override
@@ -129,12 +135,13 @@ class NoSink(Human):
         *,
         prompt: str,
         default: bool | None = None,
+        severity: Severity = Severity.CONFIRM,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
-        """Answer "no", with nothing attached."""
-        _ = (prompt, default, site, timeout)
-        return Agreed()
+        """Answer "no", with nothing attached and nobody named."""
+        _ = (prompt, default, severity, site, timeout)
+        return Agreed(by=By.NOBODY)
 
     @override
     async def choose(
@@ -148,7 +155,7 @@ class NoSink(Human):
     ) -> Picked:
         """Answer "nothing was picked"."""
         _ = (prompt, options, default, site, timeout)
-        return Picked()
+        return Picked(by=By.NOBODY)
 
     @override
     async def text(
@@ -161,7 +168,7 @@ class NoSink(Human):
     ) -> Written:
         """Answer "nothing was written"."""
         _ = (prompt, default, site, timeout)
-        return Written()
+        return Written(by=By.NOBODY)
 
     @override
     async def secret(
@@ -173,7 +180,7 @@ class NoSink(Human):
     ) -> Written:
         """Answer "nothing was written", and offer nothing to suggest it."""
         _ = (prompt, site, timeout)
-        return Written()
+        return Written(by=By.NOBODY)
 
 
 class HumanChannel(Component, Human):
@@ -213,11 +220,14 @@ class HumanChannel(Component, Human):
         *,
         prompt: str,
         default: bool | None = None,
+        severity: Severity = Severity.CONFIRM,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().confirm(prompt=prompt, default=default, site=site, timeout=timeout)
+        return await self._human().confirm(
+            prompt=prompt, default=default, severity=severity, site=site, timeout=timeout
+        )
 
     @override
     async def choose(

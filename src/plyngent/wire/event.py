@@ -171,6 +171,56 @@ class CompactRefused(Event, tag="compact-refused", frozen=True, kw_only=True):
     reason: str = ""
 
 
+class Pruned(Event, tag="pruned", frozen=True, kw_only=True):
+    """A prune was written: these entries are no longer shown to the model, and where it sits.
+
+    ``entry`` is the prune itself, and a frontend needs it for the reason a compaction's entry is needed:
+    the prune is where the conversation now continues from, so a client that kept writing to the entry it
+    was on before would grow a branch that never saw the prune — and would be shown the very stretch the
+    person just asked to stop seeing.
+
+    ``targets`` is what was hidden, in the order it was named, and ``reason`` is whatever the person gave.
+    Nothing was deleted: a turn pointed back at an older entry still reads those messages, which is the
+    whole of "reversible" here.
+    """
+
+    session: str = ""
+    entry: str = ""
+    targets: tuple[str, ...] = ()
+    reason: str = ""
+
+
+class PruneRefused(Event, tag="prune-refused", frozen=True, kw_only=True):
+    """A prune wrote nothing, and why — a target this session does not have, or nothing named at all."""
+
+    session: str = ""
+    reason: str = ""
+
+
+class ExportRefused(Event, tag="export-refused", frozen=True, kw_only=True):
+    """An export wrote nothing, and why: there is no such conversation to write, or nothing in it.
+
+    An export that worked is said with :class:`DocumentStored`, because that is what happened — a
+    document was kept — and the handle it names is the way back to it.
+    """
+
+    session: str = ""
+    reason: str = ""
+
+
+class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
+    """A resume did nothing, and why.
+
+    A refusal rather than silence: the command is answered, so a person who typed it learns that the
+    conversation they are looking at is still the one they were reading. What it waits for is a stored
+    trajectory — the same store ``Open(seed_from=)`` waits for — and until there is one there is nothing
+    to reattach a session to.
+    """
+
+    session: str = ""
+    reason: str = ""
+
+
 class Routed(Event, tag="routed", frozen=True, kw_only=True):
     """This session now asks *route*, and which epoch that is.
 
@@ -342,6 +392,10 @@ type AnyEvent = (
     | SessionsListed
     | Compacted
     | CompactRefused
+    | Pruned
+    | PruneRefused
+    | ExportRefused
+    | ResumeRefused
     | DocumentStored
     | KernelLeaving
     | AssistantText

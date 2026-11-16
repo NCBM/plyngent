@@ -62,7 +62,7 @@ async def test_the_model_is_offered_the_residents_and_told_what_is_missing(story
     assert names == sorted(names), "the block sits in front of the prompt, so its order is the name's"
     assert set(names) == {*RESIDENT, "ask_user_line"}, "what it always has, plus what the client offers"
     assert asked.system.rsplit("\n\n", 1)[-1] == (
-        "6 more groups (18 tools): client:c1(2), document(1), fs(7), net(1), process(6), session(1) — "
+        "7 more groups (23 tools): client:c1(2), document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one"
     ), "and the last section says what it is not seeing, because a group nobody mentions cannot be asked for"
 
@@ -146,9 +146,8 @@ async def test_a_denylisted_program_is_put_to_the_person_before_it_runs(story_wi
     assert question.scope.startswith("1/r0/tool-1"), "and it belongs to the call that asked it"
     assert story.screen()[1:3] == (
         "calling execute: clear the note",
-        "execute refused: the command denylist refused 'rm'",
+        "execute refused: the human did not allow running 'rm'",
     ), "the model's own reason is shown, and the refusal is what came of the call"
-
     (_, second) = story.requests()
     refusal = second.messages[-1]
     assert isinstance(refusal, Result) and refusal.tool == "execute"

@@ -30,6 +30,7 @@ from plyngent.kernel.tools import lifted
 from plyngent.kernel.tools.fs import LISTDIR
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, Role, ToolArgs, ToolSpec, argument
 from plyngent.kernel.workspace import PathRefused
+from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -487,6 +488,11 @@ WRITE_FILE = ToolSpec(
     uses=Res.PATHS,
     mutates=Mutation.WORKSPACE,
     roles={"path": Role.WRITE},
+    # Created or replaced are two different asks: without ``overwrite`` this call can only make a
+    # path that was not there, so it is the lightest thing a write can be. With it, it is a replace,
+    # and it is asked every time — an approval to create a file says nothing about overwriting one.
+    severity=Severity.ROUTINE,
+    escalates={"overwrite": Severity.CONFIRM},
 )
 
 

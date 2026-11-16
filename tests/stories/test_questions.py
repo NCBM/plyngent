@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from plyngent.wire.ask import Confirmation, Written
+from plyngent.wire.ask import By, Confirmation, Grades, Severity, Written
 from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
@@ -95,21 +95,73 @@ async def test_an_answer_that_arrives_too_late_is_refused(story: Story) -> None:
     question = story.questions()[0]
 
     assert (await asked).text is None
-    assert story.kernel.client.answer(Written(id=question.id, text="late")) is False, (
+    assert story.kernel.client.answer(Written(id=question.id, text="late", by=By.HUMAN)) is False, (
         "the kernel stopped waiting, so the late line is not an answer to anything"
     )
 
 
-async def test_a_question_with_no_deadline_of_its_own_gets_the_connections(story_with: Scripted) -> None:
-    """Acceptance ③: the connection's deadline is the default, and the client counts to the same one."""
-    story = await story_with(deadline=0.01)
+async def test_a_question_with_no_deadline_of_its_own_gets_its_levels_grade(story_with: Scripted) -> None:
+    """Acceptance ③: the level is where a question's deadline comes from, and the client counts to it."""
+    story = await story_with(grades=Grades(confirm=0.01))
 
     asked = asyncio.ensure_future(story.human.text(prompt="what next?"))
     await story.settle()
     question = story.questions()[0]
 
     assert (await asked).text is None
-    assert question.timeout == 0.01, "the connection's deadline, resolved before the question was sent"
+    assert question.timeout == 0.01, "the level's grade, resolved before the question was sent"
+
+
+async def test_a_level_with_no_grade_of_its_own_gets_the_connections_deadline(story_with: Scripted) -> None:
+    """Acceptance ③ for the last resort: no number from the caller and none from the level either."""
+    story = await story_with(deadline=0.01, grades=Grades(confirm=None))
+
+    asked = asyncio.ensure_future(story.human.text(prompt="what next?"))
+    await story.settle()
+    question = story.questions()[0]
+
+    assert (await asked).text is None
+    assert question.timeout == 0.01, "the connection's own clock, and there is only one of them"
+
+
+async def test_the_light_question_is_answered_by_its_own_silence(story_with: Scripted) -> None:
+    """A ``routine`` question nobody answers is a yes, and the work happens without anybody there.
+
+    This is what makes it true that a program can run unattended: the lightest level is a question, but
+    not one worth stopping for.
+    """
+    story = await story_with(
+        calling("write_file", {"path": "notes.txt", "content": "hi"}),
+        text("done"),
+        grades=Grades(routine=0.01),
+    )
+
+    await story.type("write a note")
+    await story.finished()
+
+    question = story.questions()[0]
+    assert question.severity is Severity.ROUTINE, "a new file in the workspace is the lightest ask"
+    assert question.timeout_default is True, "and the question itself says what its silence means"
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "hi", "silence was a yes"
+
+
+async def test_the_ordinary_question_is_refused_by_its_own_silence(story_with: Scripted) -> None:
+    """The level above it is not: nobody answering a ``confirm`` question means the call does not happen."""
+    story = await story_with(
+        calling("edit_replace", {"path": "notes.txt", "old_string": "one", "new_string": "two"}),
+        text("done"),
+        grades=Grades(confirm=0.01),
+    )
+    _ = (story.workspace / "notes.txt").write_text("one", encoding="utf-8")
+
+    await story.type("change the note")
+    await story.finished()
+
+    question = story.questions()[0]
+    assert question.severity is Severity.CONFIRM
+    assert question.timeout_default is False, "the question says so before the deadline, not after"
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "one", "silence is not consent"
+    assert "edit_replace refused: nobody answered in time, so this call did not happen" in story.screen()
 
 
 # -- waiting for a person, which is the same question with a deadline ------------------------------

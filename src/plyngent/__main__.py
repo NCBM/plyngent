@@ -30,6 +30,7 @@ from plyngent import config
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path
+from plyngent.cli.policy import Policy
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -67,7 +68,24 @@ INTERRUPTED = 130
     help=f"the file to read settings from; {config.CONFIG_FILE} in the user's data directory by default",
 )
 @click.option("--no-colour", "no_colour", is_flag=True, help="write plain text, with no colour")
-def main(session: str, workspace: Path | None, config_path: Path | None, *, no_colour: bool) -> None:
+@click.option("--yolo", "yolo", is_flag=True, help="answer the light and ordinary questions with a yes")
+@click.option("--away", "away", is_flag=True, help="answer each question as its own silence would have")
+@click.option(
+    "--away-danger",
+    "away_danger",
+    is_flag=True,
+    help="and answer the heaviest questions with a yes too; implies --away",
+)
+def main(
+    session: str,
+    workspace: Path | None,
+    config_path: Path | None,
+    *,
+    no_colour: bool,
+    yolo: bool,
+    away: bool,
+    away_danger: bool,
+) -> None:
     """Talk to a kernel over one connection."""
     # Read before anything is started, and before a terminal is taken: a file this program will not run
     # with is a sentence and an exit code, not half a kernel (§0.11, E72).
@@ -75,17 +93,22 @@ def main(session: str, workspace: Path | None, config_path: Path | None, *, no_c
         settings = config.load(config_path)
     except config.ConfigError as exc:
         raise click.ClickException(str(exc)) from exc
+    # What this client answers by itself is a flag and not a setting: a policy is about *this* run,
+    # while the file says how the program starts (§0.15, E114).
+    policy = Policy(yolo=yolo, away=away or away_danger, away_danger=away_danger)
     # A signal is a way out of this program, not a way into it: the loop has already told the kernel
     # why the connection is closing from inside ``App.run``'s ``finally``, so what is left is an exit
     # code and no traceback (§0.13, E97).
     try:
-        code = asyncio.run(_serve(session=session, root=workspace, settings=settings, no_colour=no_colour))
+        code = asyncio.run(
+            _serve(session=session, root=workspace, settings=settings, no_colour=no_colour, policy=policy)
+        )
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
     sys.exit(code)
 
 
-async def _serve(*, session: str, root: Path | None, settings: config.Settings, no_colour: bool) -> int:
+async def _serve(*, session: str, root: Path | None, settings: config.Settings, no_colour: bool, policy: Policy) -> int:
     """Bring the kernel up, talk to it, and take it down — in that order, whatever happened."""
     workspace = Path.cwd() if root is None else root
     # What this kernel is was decided by the file, and it is handed over as one value: which routes exist,
@@ -100,6 +123,7 @@ async def _serve(*, session: str, root: Path | None, settings: config.Settings, 
             editor=_editor(session=session, catalog=catalog, history=history_path(session)),
             out=sys.stdout,
             err=sys.stderr,
+            policy=policy,
             colour=_colour(asked=no_colour, stream=sys.stdout),
             markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         )

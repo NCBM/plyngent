@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 
 from plyngent.cli.line import Cancelled, EndOfInput, PlainEditor, Typed
-from plyngent.wire.ask import Agreed, Confirmation, FreeText, Written
+from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Written
 
 
 def _editor(reading: str) -> tuple[PlainEditor, io.StringIO]:
@@ -37,7 +37,7 @@ async def test_a_question_is_printed_and_asked_again_until_a_line_answers_it() -
 
     answer = await editor.ask(Confirmation(prompt="carry on?"))
 
-    assert answer == Agreed(accepted=True), "the second line is the answer; the first one answered nothing"
+    assert answer == Agreed(accepted=True, by=By.HUMAN), "the second line is the answer; the first one answered nothing"
     assert notices.getvalue() == "carry on? [y/n]\ncarry on? [y/n]\n", "a file has no prompt, so it is a line"
 
 
@@ -46,14 +46,16 @@ async def test_a_question_left_with_no_line_to_answer_it_is_answered_as_unanswer
 
     answer = await editor.ask(FreeText(prompt="what now?"))
 
-    assert answer == Written(text=None), "the end of the input is not an answer, and the kernel is told so"
+    assert answer == Written(text=None, by=By.NOBODY), (
+        "the end of the input is not an answer, and the kernel is told so"
+    )
     assert notices.getvalue() == "what now?\n"
 
 
 async def test_a_suggested_answer_is_taken_by_a_blank_line() -> None:
     editor, _ = _editor("\n")
 
-    assert await editor.ask(FreeText(prompt="name?", default="main")) == Written(text="main")
+    assert await editor.ask(FreeText(prompt="name?", default="main")) == Written(text="main", by=By.HUMAN)
 
 
 async def test_a_composed_message_is_everything_left_on_the_stream() -> None:

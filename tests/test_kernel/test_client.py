@@ -64,9 +64,9 @@ def test_a_question_is_not_approved_like_a_call_to_a_client() -> None:
     assert asked is not None
     assert called is not None
     assert asked.uses == Res.CLIENT | Res.HUMAN, "the question is the kernel's, the answer somebody else's"
-    assert asked.approval({"question": "why?", "default": "", "intention": "because"}) == (Posture.AUTO, None)
+    assert asked.asking({"question": "why?", "default": "", "intention": "because"}).posture is Posture.AUTO
     assert called.uses == Res.CLIENT
-    assert called.approval({"query": "x"}) == (Posture.ALWAYS, None), "an effect nobody here can verify"
+    assert called.asking({"query": "x"}).posture is Posture.ALWAYS, "an effect nobody here can verify"
 
 
 def test_a_clients_schema_cannot_be_asked_to_say_why() -> None:

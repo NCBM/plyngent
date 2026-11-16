@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from msgspec.structs import replace as placed
 
-from plyngent.wire.ask import Agreed, FreeText, Invocation, Picked, Returned, Selection, Written
+from plyngent.wire.ask import Agreed, By, FreeText, Invocation, Picked, Returned, Selection, Written
 from plyngent.wire.command import OfferedTool
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ async def _ask_line(editor: LineEditor, invocation: Invocation) -> Returned:
     fields = _fields(invocation.arguments)
     question = FreeText(prompt=_text(fields, "question"), default=_text(fields, "default") or None)
     answer = await editor.ask(_where(question, invocation))
-    written = answer if isinstance(answer, Written) else Written()
+    written = answer if isinstance(answer, Written) else Written(by=By.NOBODY)
     return Returned(id=invocation.id, ok=written.text is not None, text=written.text or "")
 
 
@@ -99,7 +99,7 @@ async def _ask_choice(editor: LineEditor, invocation: Invocation) -> Returned:
         default=_text(fields, "default") or None,
     )
     answer = await editor.ask(_where(question, invocation))
-    picked = answer if isinstance(answer, Picked) else Picked()
+    picked = answer if isinstance(answer, Picked) else Picked(by=By.NOBODY)
     return Returned(id=invocation.id, ok=picked.value is not None, text=picked.value or "")
 
 

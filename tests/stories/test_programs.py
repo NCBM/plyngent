@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ async def test_a_denylisted_program_is_asked_about_once_and_then_remembered(stor
     assert [question.prompt for question in story.questions()] == ["run 'rm'? it is on the command denylist"], (
         "one program, one question: the yes is remembered for the host, not for the call"
     )
+    assert story.questions()[0].severity is Severity.DANGER, "and it is asked at the level a program is"
     assert told(first).count("cmd=") == 2, told(first)
     assert told(second).count("cmd=") == 1, "the second call ran its command without asking again"
     assert not any((story.workspace / name).exists() for name in ("a.txt", "b.txt", "c.txt"))
@@ -63,8 +65,8 @@ async def test_a_denied_program_stops_the_call_and_nothing_runs(story_with: Scri
     await story.finished()
 
     (_, refused) = story.requests()
-    assert told(refused) == "the command denylist refused 'rm'", told(refused)
-    assert "execute refused: the command denylist refused 'rm'" in story.screen(), story.screen()
+    assert told(refused) == "the human did not allow running 'rm'", told(refused)
+    assert "execute refused: the human did not allow running 'rm'" in story.screen(), story.screen()
     assert (story.workspace / "keep.txt").exists(), "a no means the program never started"
 
 

@@ -25,9 +25,10 @@ import msgspec
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.net import client, policy, web
-from plyngent.kernel.toolresult import Effects, Hint, Part, Text, ToolResult
+from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Part, Text, ToolResult, kind_of
 from plyngent.kernel.tools.document import kept, kept_bytes
 from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
+from plyngent.wire.ask import Agreed, By
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,6 +86,13 @@ async def client_fetch(env: Env, args: ClientFetchArgs) -> ToolResult:
     questions = _Questions(env)
     outcome = await client.fetch(request, gate=questions)
     if isinstance(outcome, client.Stopped):
+        if outcome.denial is not None:
+            return ToolResult.denied(
+                outcome.denial,
+                outcome.message,
+                hints=() if outcome.fix is None else (_hint(outcome.fix),),
+                effects=Effects(approvals=tuple(questions.approvals)),
+            )
         return ToolResult.of(
             outcome.failure,
             outcome.message,
@@ -148,18 +156,24 @@ class _Questions:
         if assessment.kind is policy.HostClass.FORBIDDEN:
             addresses = ", ".join(assessment.addresses)
             return client.Stopped(
-                Failure.DENIED, f"{leg.url.host} resolves to {addresses}, which this build never contacts"
+                Failure.DENIED,
+                f"{leg.url.host} resolves to {addresses}, which this build never contacts",
+                denial=DenialKind.NEVER_ALLOWED,
             )
         reasons = self.env.net.needs(assessment, method=leg.method, has_body=leg.has_body)
         if not reasons:
             return None
-        agreed = await self.env.human.confirm(prompt=_asked(leg, reasons), site=self.env.site("gate"))
+        agreed = await self.env.human.confirm(
+            prompt=_asked(leg, reasons), severity=policy.weight(reasons), site=self.env.site("gate")
+        )
         if not agreed.accepted:
-            return _unagreed(leg)
-        if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons):
+            return _unagreed(leg, agreed)
+        if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons) and agreed.by is not By.POLICY:
             # The one reason that is about the machine rather than about this request, so agreeing to it is
             # agreeing to that host and port and it is not asked about again. Cleartext and a payload are
             # facts about *this* request: remembering one of them would agree to a request nobody described.
+            # A policy's yes is not one of these either: it is what the program was started to do, so it
+            # grants nothing for later (§0.15, the fourth commit).
             self.approvals.append(self.env.net.approve(leg.url))
         return None
 
@@ -169,15 +183,20 @@ def _asked(leg: client.Leg, reasons: tuple[policy.Reason, ...]) -> str:
     return f"may I send {leg.method} to {leg.url.url}? {'; '.join(text for _kind, text in reasons)}"
 
 
-def _unagreed(leg: client.Leg) -> client.Stopped:
-    """What an unanswered request is worth: a read may be tried again, a write may not (§0.9, E33).
+def _unagreed(leg: client.Leg, answer: Agreed) -> client.Stopped:
+    """What a request that was not agreed to is worth, given who did not agree (§0.15, E118).
 
-    A read is idempotent, so "nobody answered" is the world being unavailable rather than a refusal, and
-    the same call a minute later may well go through. A write that nobody agreed to is not replayed: it
-    would be the same unagreed request, and a model told "try again" would ask the same question again.
+    A person saying no — or a policy the program was started with — is a decision, and it is the same
+    decision for a read and a write: asking again asks them again. Silence is not a decision, so it is
+    read by what the request would cost to repeat: a read is idempotent, so nobody answering is the
+    world being unavailable and the same call a minute later may well go through; a write that nobody
+    agreed to is not replayed, because it would be the same unagreed request and a model told "try
+    again" would ask the same question again.
     """
     message = f"nobody agreed to contact {policy.grant_key(leg.url.host, leg.url.port)}, so the request was not sent"
-    return client.Stopped(Failure.BUSY if leg.method in policy.READ_ONLY else Failure.DENIED, message)
+    if answer.by in {By.HUMAN, By.POLICY} or leg.method not in policy.READ_ONLY:
+        return client.Stopped(Failure.DENIED, message, denial=kind_of(answer))
+    return client.Stopped(Failure.BUSY, message)
 
 
 async def _answered(env: Env, fetched: client.Fetched, *, approvals: tuple[str, ...]) -> ToolResult:

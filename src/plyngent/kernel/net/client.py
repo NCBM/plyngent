@@ -26,6 +26,7 @@ import niquests
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.net import policy
+from plyngent.kernel.toolresult import DenialKind
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -108,6 +109,9 @@ class Stopped:
     failure: Failure
     message: str
     fix: Fix | None = None
+    #: Why, machine-readably, when the failure is a denial — the same reason
+    #: :class:`~plyngent.kernel.process.Refused` carries one (§0.15, E118).
+    denial: DenialKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +250,7 @@ def _next_hop(
                 f"{current.url} redirects to {following.url}, which is cleartext http, and "
                 "allow_http_downgrade is not set",
                 fix=Fix.ALLOW_DOWNGRADE,
+                denial=DenialKind.RULE,
             )
         notes.append(f"https-to-http redirect to {following.url}")
     elif following.scheme == "http":

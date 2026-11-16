@@ -34,9 +34,10 @@ from msgspec import Struct
 
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.workspace import OutsideWorkspace, PathRefused
+from plyngent.wire.ask import Agreed, By
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
 
@@ -52,6 +53,60 @@ class Status(StrEnum):
     REFUSED = "refused"
     FAILED = "failed"
     PARTIAL = "partial"
+
+
+class DenialKind(StrEnum):
+    """Why a call that never ran was refused, as a word rather than a sentence (§0.15, E118).
+
+    A refusal used to be one word plus prose, so a frontend could not tell "the person said no" from
+    "the deadline passed" without parsing English. The answers a question can get give four of these,
+    and the fifth is the rule this build has that no question and no grant lifts.
+
+    It is not the whole of refusal, and it is not meant to be: a path outside the root and a budget that
+    was reached are ``BLOCKED`` and ``LIMIT`` with a hint attached, because those are fixable and a
+    fixable refusal is not a denial. ``RULE`` is the one denial that is still fixable — a rule of this
+    build refusing a call the message says how to change — and ``NEVER_ALLOWED`` is the one no argument
+    and no question lifts.
+    """
+
+    HUMAN = "human"
+    POLICY = "policy"
+    TIMEOUT = "timeout"
+    NOBODY = "nobody"
+    RULE = "rule"
+    NEVER_ALLOWED = "never-allowed"
+
+
+#: What each kind says, with ``{about}`` the thing that was refused and ``{policy}`` the policy's name.
+#:
+#: One table because the word and the sentence are the same decision read by two readers: a model reads
+#: the sentence, and a client, a benchmark or a log reads the kind.
+DENIAL_SAYS: Mapping[DenialKind, str] = {
+    DenialKind.HUMAN: "the human did not allow {about}",
+    DenialKind.POLICY: "this program's {policy} policy did not allow {about}",
+    DenialKind.TIMEOUT: "nobody answered in time, so {about} did not happen",
+    DenialKind.NOBODY: "there was nobody to ask, so {about} did not happen",
+    DenialKind.RULE: "{about} is refused by this build's own rules",
+    DenialKind.NEVER_ALLOWED: "{about} is on a list this build never allows",
+}
+
+
+def kind_of(answer: Agreed) -> DenialKind:
+    """Which refusal an answer amounts to when it is not a yes: its author is the kind."""
+    match answer.by:
+        case By.HUMAN:
+            return DenialKind.HUMAN
+        case By.POLICY:
+            return DenialKind.POLICY
+        case By.TIMEOUT:
+            return DenialKind.TIMEOUT
+        case By.NOBODY:
+            return DenialKind.NOBODY
+
+
+def denial_says(kind: DenialKind, *, about: str, policy: str = "") -> str:
+    """The sentence a refusal of this kind says; ``about`` is what was refused, in the caller's words."""
+    return DENIAL_SAYS[kind].format(about=about, policy=policy or "approval")
 
 
 #: What a status and a retry are, given the kind of failure — the one place either is decided.
@@ -221,6 +276,10 @@ class ToolResult:
     effects: Effects = field(default_factory=Effects)
     meta: Meta = field(default_factory=Meta)
     failure: Failure | None = None
+    #: Why, when the failure is :attr:`~plyngent.kernel.failure.Failure.DENIED` — and never otherwise:
+    #: the two are one fact told to two readers, so a result that has one and not the other is a bug
+    #: (`__post_init__` refuses it) rather than a refusal somebody has to read the sentence to classify.
+    denial: DenialKind | None = None
 
     def __post_init__(self) -> None:
         stopped = self.status in {Status.REFUSED, Status.FAILED}
@@ -229,6 +288,9 @@ class ToolResult:
             raise ValueError(msg)
         if not stopped and self.failure is not None:
             msg = f"{self.status}: a result that finished cannot also carry {self.failure}"
+            raise ValueError(msg)
+        if (self.failure is Failure.DENIED) != (self.denial is not None):
+            msg = "a denial is a kind, not a sentence: Failure.DENIED and DenialKind are set together"
             raise ValueError(msg)
         object.__setattr__(self, "body", parts(self.body))
         if self.meta.chars == 0 and self.body:
@@ -325,18 +387,57 @@ class ToolResult:
             meta=meta if meta is not None else Meta(),
         )
 
+    @classmethod
+    def denied(
+        cls,
+        kind: DenialKind,
+        summary: str,
+        *,
+        body: BodyLike | None = None,
+        hints: tuple[Hint, ...] = (),
+        effects: Effects | None = None,
+        meta: Meta | None = None,
+    ) -> ToolResult:
+        """The call was refused and never ran; ``kind`` says by what.
+
+        The only door to :attr:`~plyngent.kernel.failure.Failure.DENIED`, which is why the kind cannot be
+        forgotten: every refusal in this tree comes through here, and a bare ``DENIED`` with a sentence
+        beside it is a shape the result itself refuses to be. The sentence stays the caller's, because a
+        refusal has to name what was refused and only the caller knows which.
+        """
+        return cls(
+            Status.REFUSED,
+            summary,
+            body=parts(body) + hints,
+            effects=effects if effects is not None else Effects(),
+            meta=meta if meta is not None else Meta(),
+            failure=Failure.DENIED,
+            denial=kind,
+        )
+
+    @classmethod
+    def unagreed(cls, answer: Agreed, *, about: str) -> ToolResult:
+        """A refusal built from a question's answer: the author of the answer is the kind of refusal.
+
+        ``about`` is what was asked for — ``"this call"``, ``"running 'rm'"`` — and the sentence is
+        :data:`DENIAL_SAYS`'. A question whose silence is a yes never gets here, so silence reaching this
+        point was a no.
+        """
+        kind = kind_of(answer)
+        return cls.denied(kind, denial_says(kind, about=about, policy=answer.policy))
+
 
 def refusal(exc: PathRefused) -> ToolResult:
     """A path refusal as a result: refused, and — for the liftable kind — what would lift it.
 
     The tools travel as hints, never inside the summary: the kernel does not name tools in prose, and
     a caller that composes the message can decide how loud to make the suggestion. ``Denied`` says
-    nothing about tools, because nothing lifts it.
+    nothing about tools, because nothing lifts it — and that is the refusal that is a ``never-allowed``
+    rather than a hint, so it comes with a kind and an ``OutsideWorkspace`` does not.
     """
-    failure = Failure.DENIED
     if isinstance(exc, OutsideWorkspace):
-        failure = Failure.BLOCKED
-    return ToolResult.of(failure, str(exc), hints=hints_for(exc))
+        return ToolResult.of(Failure.BLOCKED, str(exc), hints=hints_for(exc))
+    return ToolResult.denied(DenialKind.NEVER_ALLOWED, str(exc))
 
 
 def hints_for(exc: PathRefused) -> tuple[Hint, ...]:

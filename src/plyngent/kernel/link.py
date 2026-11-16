@@ -38,18 +38,22 @@ from msgspec.structs import replace
 from plyngent.kernel.events import Human
 from plyngent.wire.ask import (
     DEFAULT_ASK_TIMEOUT_SECONDS,
+    SILENCE,
     Agreed,
     AnyAnswer,
     AnyAsk,
     Ask,
     AskSite,
+    By,
     Confirmation,
     FreeText,
+    Grades,
     Invocation,
     Picked,
     Returned,
     Secret,
     Selection,
+    Severity,
     Written,
     answer_kind,
     unanswered,
@@ -274,6 +278,7 @@ class LinkHuman(Human):
         *,
         prompt: str,
         default: bool | None = None,
+        severity: Severity = Severity.CONFIRM,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
@@ -282,9 +287,9 @@ class LinkHuman(Human):
         The deadline is the question's, and ``None`` is the connection's own: whoever owns the clock
         (R2.1 D13) is still the connection, and this adds nothing of its own to it.
         """
-        question = Confirmation(prompt=prompt, default=default, timeout=timeout)
+        question = Confirmation(prompt=prompt, default=default, severity=severity, timeout=timeout)
         answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Agreed) else Agreed(accepted=False)
+        return answer if isinstance(answer, Agreed) else Agreed(by=By.NOBODY)
 
     @override
     async def choose(
@@ -299,7 +304,7 @@ class LinkHuman(Human):
         """Ask for one of ``options`` and wait for the one answer by id."""
         question = Selection(prompt=prompt, options=options, default=default, timeout=timeout)
         answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Picked) else Picked()
+        return answer if isinstance(answer, Picked) else Picked(by=By.NOBODY)
 
     @override
     async def text(
@@ -313,7 +318,7 @@ class LinkHuman(Human):
         """Ask for a line, with ``default`` suggested, and wait for the one answer by id."""
         question = FreeText(prompt=prompt, default=default, timeout=timeout)
         answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Written) else Written()
+        return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
 
     @override
     async def secret(
@@ -325,7 +330,7 @@ class LinkHuman(Human):
     ) -> Written:
         """Ask for a line that is not echoed, offering no suggestion, and wait for the one answer."""
         answer = await self._link.ask(_placed(Secret(prompt=prompt, timeout=timeout), site))
-        return answer if isinstance(answer, Written) else Written()
+        return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
 
 
 def _placed[Q: Ask](question: Q, site: AskSite | None) -> Q:
@@ -366,6 +371,10 @@ class InProcLink:
     questions still in flight are refused. Being *presumed gone* (:attr:`dead`) is the failure case
     and does the same thing — it only differs in that the kernel gets told it was silence, not a
     decision.
+
+    ``timeout`` is this connection's own clock for a question or a call that named no budget, and
+    ``grades`` is what each level of question gets instead: the two are read together in
+    :meth:`_patience`, because "how long does this wait" has one answer and it is not a session's.
     """
 
     manifest: KernelManifest
@@ -376,6 +385,7 @@ class InProcLink:
     _waiting: dict[int, _Waiting]
     _running: dict[int, asyncio.Future[Returned]]
     _timeout: float | None
+    _grades: Grades
     _next_id: int
     _closed: bool
     _dead: bool
@@ -387,6 +397,7 @@ class InProcLink:
         backlog: int = DEFAULT_BACKLOG,
         batch_items: int = DEFAULT_BATCH_ITEMS,
         timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
+        grades: Grades | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.manifest = manifest if manifest is not None else KernelManifest()
@@ -402,6 +413,7 @@ class InProcLink:
         self._waiting = {}
         self._running = {}
         self._timeout = timeout
+        self._grades = Grades() if grades is None else grades
         self._next_id = 1
         self._closed = False
         self._dead = False
@@ -424,22 +436,25 @@ class InProcLink:
         arrives before the wait is armed is not lost, because the waiter exists before the question
         is handed over.
 
-        ``ask.timeout`` is how long this question gets, and ``None`` is this connection's deadline. The
-        two are resolved into one number *before* the question travels, so the client counts down to
-        the same moment the kernel does rather than to a default of its own.
+        Two things are resolved here and nowhere else: how long this question gets
+        (:meth:`_patience`, from its level and from the caller's own number) and what it answers if
+        that moment arrives unanswered (:data:`~plyngent.wire.ask.SILENCE`). Both travel *with* the
+        question, so the client counts down to the same moment the kernel does and can say what
+        silence will mean — and neither is something the caller chooses.
 
         The answer is of the kind the question admits (:func:`~plyngent.wire.ask.answer_kind`); a
-        wrong kind is refused at :meth:`answer` and leaves this wait running. Nobody answering — a
-        deadline, or a connection that closed — answers as :func:`~plyngent.wire.ask.unanswered`
-        says, which is a "no" for a confirmation and "nothing" for the rest.
+        wrong kind is refused at :meth:`answer` and leaves this wait running. Nobody answering is two
+        answers rather than one (:func:`~plyngent.wire.ask.unanswered`): a deadline falls back to the
+        level's answer, and a connection that closed is never a yes.
         """
         if self._closed:
-            return unanswered(ask)
+            return unanswered(ask, by=By.NOBODY)
         id_ = ask.id or self._next_id
         self._next_id = max(self._next_id, id_) + 1
-        patience = self._timeout if ask.timeout is None else ask.timeout
-        if ask.id != id_ or ask.timeout != patience:
-            ask = replace(ask, id=id_, timeout=patience)
+        patience = self._patience(ask)
+        falls_back = SILENCE[ask.severity]
+        if ask.id != id_ or ask.timeout != patience or ask.timeout_default != falls_back:
+            ask = replace(ask, id=id_, timeout=patience, timeout_default=falls_back)
         waiter: asyncio.Future[AnyAnswer] = asyncio.get_running_loop().create_future()
         self._waiting[id_] = _Waiting(question=ask, future=waiter)
         self._questions.put(ask)
@@ -449,6 +464,22 @@ class InProcLink:
             return unanswered(ask)
         finally:
             _ = self._waiting.pop(id_, None)
+
+    def _patience(self, ask: AnyAsk) -> float | None:
+        """How long this question waits: its level's grade, and never more than the caller asked.
+
+        ``None`` anywhere means "the connection's own clock" — a level with no grade and a caller with
+        no number both fall back to it, so there is one deadline and it belongs to whoever owns the
+        clock (R2.1 D13). A caller may ask for less than its level's grade, because a tool that
+        promised to wait a minute means a minute; asking for more is not shortening a question, and it
+        is not honoured.
+        """
+        ceiling = self._grades.patience(ask.severity)
+        if ceiling is None:
+            ceiling = self._timeout
+        if ask.timeout is None:
+            return ceiling
+        return ask.timeout if ceiling is None else min(ask.timeout, ceiling)
 
     def commands(self) -> AsyncIterator[AnyCommand]:
         """Read what the client asked for, oldest first, until the connection ends."""
@@ -563,7 +594,7 @@ class InProcLink:
         self._events.close()
         for waiting in tuple(self._waiting.values()):
             if not waiting.future.done():
-                waiting.future.set_result(unanswered(waiting.question))
+                waiting.future.set_result(unanswered(waiting.question, by=By.NOBODY))
         self._waiting.clear()
 
     # -- being gone ----------------------------------------------------------------

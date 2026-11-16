@@ -61,7 +61,7 @@ from prompt_toolkit.output import create_output
 from plyngent.cli.grammar import SlashCompleter
 from plyngent.cli.render import DEFAULT_FOCUS
 from plyngent.cli.render import question as question_line
-from plyngent.wire.ask import Agreed, Confirmation, FreeText, Picked, Secret, Selection, Written, unanswered
+from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Picked, Secret, Selection, Written, unanswered
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -122,30 +122,33 @@ class LineEditor(Protocol):
 def answer_to(question: AnyAsk, line: Line) -> AnyAnswer | None:
     """What this line answers, or ``None`` when it did not answer the question at all.
 
-    A question the human ended or interrupted is answered as *unanswered*: nobody is about to offer a
-    better line, and the kernel's own deadline is for a client that says nothing. A preempted line
-    answers nothing here — a question never reads the line it took the cursor from.
+    A question the human ended is answered as *unanswered by nobody*: the input closed, so there is
+    no one left to ask. One they interrupted is answered as a person's no — a ``Ctrl+C`` during a
+    question is a decision, not silence. A preempted line answers nothing here: a question never
+    reads the line it took the cursor from.
     """
     match line:
         case Typed(text=text):
             return _from_text(question, text)
-        case EndOfInput() | Cancelled():
-            return unanswered(question)
+        case EndOfInput():
+            return unanswered(question, by=By.NOBODY)
+        case Cancelled():
+            return unanswered(question, by=By.HUMAN)
         case Preempted():
             return None
 
 
 def _from_text(question: AnyAsk, text: str) -> AnyAnswer | None:
-    """The answer a line of text gives to this kind of question."""
+    """The answer a line of text gives to this kind of question — always by the person typing it."""
     match question:
         case Confirmation(default=default):
             return _agreed(question.id, text, default=default)
         case Selection(options=options, default=default):
             return _picked(question.id, text, options=options, default=default)
         case FreeText(default=default):
-            return Written(id=question.id, text=text or (default or ""))
+            return Written(id=question.id, text=text or (default or ""), by=By.HUMAN)
         case Secret():
-            return Written(id=question.id, text=text)
+            return Written(id=question.id, text=text, by=By.HUMAN)
         case _ as never:
             assert_never(never)
 
@@ -154,18 +157,20 @@ def _agreed(question: int, text: str, *, default: bool | None) -> Agreed | None:
     """A yes, a no, the suggested answer, or nothing at all when the line said none of them."""
     said = text.strip().lower()
     if not said:
-        return None if default is None else Agreed(id=question, accepted=default)
+        return None if default is None else Agreed(id=question, accepted=default, by=By.HUMAN)
     if said in {"y", "yes"}:
-        return Agreed(id=question, accepted=True)
+        return Agreed(id=question, accepted=True, by=By.HUMAN)
     if said in {"n", "no"}:
-        return Agreed(id=question, accepted=False)
+        return Agreed(id=question, accepted=False, by=By.HUMAN)
     return None
 
 
 def _picked(question: int, text: str, *, options: tuple[str, ...], default: str | None) -> Picked | None:
     """One of the options, the suggested one, or nothing when the line named no option."""
     said = text.strip() or default
-    return Picked(id=question, value=said) if said is not None and said in options else None
+    if said is None or said not in options:
+        return None
+    return Picked(id=question, value=said, by=By.HUMAN)
 
 
 #: The directory one session's history lives in, under the same root as the journal.

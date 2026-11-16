@@ -85,8 +85,7 @@ _INTERPRETERS: frozenset[str] = frozenset(
 _VERSION_SUFFIX = re.compile(r"[0-9][0-9.]*$")
 
 # Privilege escalation: these run with rights the session itself does not have,
-# so a call that reaches one is never approved on the caller's behalf
-# (``danger._command_reason`` keeps the confirm whatever YOLO mode says).
+# so a call that reaches one is refused outright rather than put to the person.
 ESCALATION_PROGRAMS: frozenset[str] = frozenset({"doas", "pkexec", "run0", "su", "sudo", "systemd-run"})
 # ``FOO=bar`` in front of a program (env/sudo style).
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")

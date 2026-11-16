@@ -466,6 +466,7 @@ async def test_replacing_a_file_is_refused_with_the_one_value_that_allows_it(sto
 
     await story.type("replace the note")
     await story.answer("y")
+    await story.answer("y")
     await story.finished()
 
     (_, refused, replaced) = story.requests()
@@ -474,8 +475,8 @@ async def test_replacing_a_file_is_refused_with_the_one_value_that_allows_it(sto
     )
     assert existing.read_text(encoding="utf-8") == "new"
     assert _told_of(replaced).startswith("wrote 3 chars to notes.txt")
-    assert [question.prompt for question in story.questions()] == ["allow write_file on notes.txt?"], (
-        "one path was agreed to once, so the second call to it was not asked about again"
+    assert [question.prompt for question in story.questions()] == ["allow write_file on notes.txt?"] * 2, (
+        "the second call replaces a file that was already there, and a replacement is not an ordinary write"
     )
 
 
@@ -491,6 +492,7 @@ async def test_a_copy_takes_a_whole_directory_and_will_not_land_on_one_unless_to
     await story.require("fs")
 
     await story.type("copy the tree")
+    await story.answer("y")
     await story.answer("y")
     await story.finished()
 

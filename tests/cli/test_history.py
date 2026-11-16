@@ -27,7 +27,7 @@ from prompt_toolkit.output.plain_text import PlainTextOutput
 
 from plyngent.cli import line
 from plyngent.cli.line import PromptEditor, Typed, history_path
-from plyngent.wire.ask import FreeText, Secret, Written
+from plyngent.wire.ask import By, FreeText, Secret, Written
 
 if TYPE_CHECKING:
     from prompt_toolkit.input import PipeInput
@@ -95,11 +95,11 @@ async def test_what_a_question_gets_is_not_what_this_person_said(tmp_path: Path)
 
         keys.send_text("hunter2\r")
         assert await asyncio.wait_for(editor.ask(Secret(prompt="the api key?")), timeout=PATIENCE) == Written(
-            text="hunter2"
+            text="hunter2", by=By.HUMAN
         )
         keys.send_text("a path\r")
         assert await asyncio.wait_for(editor.ask(FreeText(prompt="which file?")), timeout=PATIENCE) == Written(
-            text="a path"
+            text="a path", by=By.HUMAN
         )
 
     written = kept.read_text(encoding="utf-8")

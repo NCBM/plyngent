@@ -64,10 +64,10 @@ from msgspec import Struct
 
 # Not a type-only import: ``type AnyRecord`` evaluates its members at runtime, and a lazily-undefined
 # name would make a row that carries a message undecodable.
-from plyngent.kernel.model import AnyMessage, User
+from plyngent.kernel.model import AnyMessage, Assistant, User
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 
 #: The tag a session's own facts carry, so a projection can skip one unread — the same trick the
@@ -153,9 +153,30 @@ class Attempt(Struct, tag=ATTEMPT_TAG, frozen=True, kw_only=True):
     says: str = ""
 
 
+#: The tag a prune carries. Spelled here because it is half of the record's identity.
+WITHHELD_TAG = "prune"
+
+
+class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
+    """Entries a conversation has stopped showing a model, without taking them out of the log.
+
+    A prune is written **where the conversation ends**, not as a root, and that placement is its whole
+    meaning: a projection walks from the entry it was given up to a root, so it sees this record exactly
+    when it would have read what this record hides. A branch taken from below the prune still reads the
+    whole stretch — which is what "reversible" means here: nothing was rewritten, so pointing a turn at
+    an older entry gets the text back.
+
+    It is not a message: nobody is told which words were taken away. It is bookkeeping that *changes a
+    projection*, which is why the projector's own version moved the day it arrived.
+    """
+
+    targets: tuple[str, ...] = ()
+    reason: str = ""
+
+
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
-#: compressed into, and what became of a request that was never answered.
-type AnyRecord = AnyMessage | StateChange | Summary | Attempt
+#: compressed into, what it has stopped showing, and what became of a request that was never answered.
+type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
@@ -165,13 +186,39 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
     the heading saying what it is, because a model handed an unannounced block of prose as its own history
     would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
-    arrived, and a model told about it would be reading a conversation that did not happen.
+    arrived, and a model told about it would be reading a conversation that did not happen. A prune is
+    bookkeeping of the other kind — it does not speak, it decides what of the rest is spoken
+    (:meth:`~plyngent.kernel.trail.Trail.derive` applies it).
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange | Attempt):
+    if isinstance(record, StateChange | Attempt | Withheld):
         return None
     return record
+
+
+def transcript(messages: Iterable[AnyMessage]) -> str:
+    """The conversation as one text, with who said what, for a reader who wants it back later.
+
+    It is the projection — the same messages a model would be given — written down rather than sent, which
+    is why it lives beside :func:`as_message` and not beside the event that carries it. A result is named
+    by its tool and its status, because a person reading an export has no turn to tell them which call
+    produced that block, and a model reading the same text does not need a second rendering of it.
+    """
+    blocks: list[str] = []
+    for message in messages:
+        who = _speaker(message)
+        blocks.append(f"## {who}\n\n{message.text}" if message.text else f"## {who}")
+    return "\n\n".join(blocks)
+
+
+def _speaker(message: AnyMessage) -> str:
+    """What to call the one who said this, in the words a person reads an export in."""
+    if isinstance(message, User):
+        return "person"
+    if isinstance(message, Assistant):
+        return "assistant"
+    return f"tool: {message.tool} ({message.status})"
 
 
 @dataclass(frozen=True, slots=True)

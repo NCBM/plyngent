@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.client import CLIENT
 from plyngent.kernel.model import ToolDecl
-from plyngent.kernel.tools import document, fs, meta, net, process, session, skills
+from plyngent.kernel.tools import document, fs, meta, net, process, session, skills, vcs
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping
@@ -54,6 +54,7 @@ BUILTIN: tuple[ToolSpec, ...] = (
     *net.SPECS,
     *process.SPECS,
     *session.SPECS,
+    *vcs.SPECS,
 )
 
 #: Every tool this build declares, installed or not: ``BUILTIN`` plus the ones a kernel serves only when

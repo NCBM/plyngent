@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import TextIO
 
+    from plyngent.cli.policy import Policy
     from plyngent.config import Settings
     from plyngent.kernel.events import Human
     from plyngent.kernel.lm.route import Route
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.skills import Skills
-    from plyngent.wire.ask import AnyAnswer, AnyAsk
+    from plyngent.wire.ask import AnyAnswer, AnyAsk, Grades
     from plyngent.wire.command import OfferedTool
     from plyngent.wire.link import KernelLink
 
@@ -162,6 +163,7 @@ class Story:
         session: str,
         model: Model | None = None,
         tools: ClientTools = TERMINAL,
+        policy: Policy | None = None,
         markdown: bool = False,
     ) -> None:
         self.kernel = kernel
@@ -184,6 +186,7 @@ class Story:
             out=self._out,
             err=self._err,
             tools=tools,
+            policy=policy,
             markdown=markdown,
         )
         self._running = asyncio.create_task(self.app.run())
@@ -206,6 +209,8 @@ class Story:
         tools: ClientTools = TERMINAL,
         limits: Limits | None = None,
         deadline: float | None = None,
+        grades: Grades | None = None,
+        policy: Policy | None = None,
         markdown: bool = False,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
@@ -240,6 +245,10 @@ class Story:
 
         ``deadline`` is the connection's deadline for a question or a call that nobody answers, which is
         how a story about one lost call costs a hundredth of a second instead of half a minute.
+        ``grades`` is how long a question of each level gets instead of that one deadline: a story about
+        a question timing out says the level's hundredth of a second here, and a level left ``None`` is
+        the connection's ``deadline`` — which is what makes "the connection's clock" observable without
+        sleeping through a real one (§0.15, E112).
 
         ``config`` is a settings value — the answer :func:`plyngent.config.load` gives a file — and it is
         the program's own door: a story that hands one is a story about a program started from a file, and
@@ -261,6 +270,7 @@ class Story:
             "journal": journal is not None,
             "limits": limits is not None,
             "deadline": deadline is not None,
+            "grades": grades is not None,
         }
         if config is not None and any(settled.values()):
             also = ", ".join(name for name, given in settled.items() if given)
@@ -281,9 +291,10 @@ class Story:
                 journal=journal,
                 limits=limits,
                 deadline=deadline,
+                grades=grades,
             )
         )
-        story = cls(kernel, session=session, model=model, tools=tools, markdown=markdown)
+        story = cls(kernel, session=session, model=model, tools=tools, policy=policy, markdown=markdown)
         await story.settle()
         return story
 
@@ -519,7 +530,7 @@ class Story:
             if self.editor.waiting:
                 return
             await asyncio.sleep(SETTLE_PAUSE)
-        msg = "the kernel never asked the question this story answers"
+        msg = f"the kernel never asked the question this story answers; the screen shows {self.screen()!r}"
         raise AssertionError(msg)
 
 

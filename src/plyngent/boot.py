@@ -37,7 +37,7 @@ from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
-from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS
+from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.manifest import CLIENT_OFFER, KernelManifest, command_specs
 
 if TYPE_CHECKING:
@@ -133,6 +133,7 @@ async def install(
     journal: Path | str | None = None,
     limits: Limits | None = None,
     deadline: float | None = None,
+    grades: Grades | None = None,
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
@@ -191,6 +192,12 @@ async def install(
     ``deadline`` is how long a question to a person, or a call to one of the client's own tools, may
     wait before it counts as unanswered. It belongs to the connection and not to a session, so it is
     set where the connection is built, and ``None`` is the transport's own default.
+
+    ``grades`` is how long a question of each level gets instead of that one deadline, and what each
+    level's silence means. ``None`` is the three numbers this tree ships with — five seconds for the
+    light question, thirty for the ordinary one, and the connection's own clock for the heaviest — so
+    a program started with no configuration is the program it always was, and a story that wants a
+    timeout without sleeping says so here (§0.15, E112).
     """
     if transport not in KERNEL_TRANSPORTS:
         msg = f"{transport!r} is not a transport this kernel can open; it knows {KERNEL_TRANSPORTS}"
@@ -230,6 +237,7 @@ async def install(
     link = InProcLink(
         manifest=KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,)),
         timeout=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
+        grades=Grades() if grades is None else grades,
     )
     # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What

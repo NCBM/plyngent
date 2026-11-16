@@ -30,11 +30,12 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.listing import Entry, EnumerateArgs, Filter, Listing, walk
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.temps import TempWorkspaceError, TooManyWorkspacesError, under_system_temp
-from plyngent.kernel.toolresult import Effects, Hint, Meta, Text, ToolResult
+from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Meta, Text, ToolResult
 from plyngent.kernel.tools import lifted
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Remember, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.trash import Kind, Trouble, to_trash
 from plyngent.kernel.workspace import Denied, PathRefused
+from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -246,7 +247,7 @@ async def delete_path(env: Env, args: DeleteArgs) -> ToolResult:
     except PathRefused as exc:
         return lifted(exc)
     if target == workspace.root:
-        return ToolResult.of(Failure.DENIED, "cannot delete the workspace root")
+        return ToolResult.denied(DenialKind.NEVER_ALLOWED, "cannot delete the workspace root")
     if not _present(target):
         return ToolResult.of(Failure.MISSING, f"path does not exist: {args.path}")
     return await _deleted(env, target, args)
@@ -307,10 +308,14 @@ async def request_directory_access(env: Env, args: AccessArgs) -> ToolResult:
             f"this conversation already holds {MAX_GRANTS} grants, which is the limit",
         )
     agreed = await env.human.confirm(
-        prompt=f"allow {args.mode.value} on {shown} for this conversation?", site=env.site()
+        prompt=f"allow {args.mode.value} on {shown} for this conversation?",
+        # A grant reaches past the workspace, which is the row of the table that says ``danger``: what it
+        # hands out outlives this call, and nothing here can check what is done through it.
+        severity=Severity.DANGER,
+        site=env.site(),
     )
     if not agreed.accepted:
-        return ToolResult.of(Failure.DENIED, f"not allowed: {args.path}")
+        return ToolResult.unagreed(agreed, about=f"{args.mode.value} on {shown}")
     _ = await env.grant(target, need)
     return ToolResult.ok(f"allowed {args.mode.value}: {shown}")
 
@@ -372,6 +377,9 @@ COPY = ToolSpec(
     uses=Res.PATHS,
     mutates=Mutation.WORKSPACE,
     roles={"src": Role.READ, "dst": Role.WRITE},
+    # Landing on something that is already there is not the ordinary copy: it replaces, so it is asked
+    # every time and at the level a replacement carries.
+    escalates={"overwrite": Severity.CONFIRM},
 )
 
 MOVE = ToolSpec(
@@ -382,6 +390,8 @@ MOVE = ToolSpec(
     uses=Res.PATHS,
     mutates=Mutation.WORKSPACE | Mutation.DESTRUCTIVE,
     roles={"src": Role.WRITE, "dst": Role.WRITE},
+    # The ordinary move is already as heavy as a call gets; the argument only takes away the memory.
+    escalates={"overwrite": Severity.DANGER},
 )
 
 DELETE_PATH = ToolSpec(
@@ -392,7 +402,7 @@ DELETE_PATH = ToolSpec(
     uses=Res.PATHS,
     mutates=Mutation.WORKSPACE | Mutation.DESTRUCTIVE,
     roles={"path": Role.WRITE},
-    escalates={"permanent": True},
+    escalates={"permanent": Severity.DANGER},
 )
 
 #: Asking for a path outside the workspace is not approved like a write inside it: the question *is*
@@ -572,7 +582,7 @@ def _movable(env: Env, args: MoveArgs) -> ToolResult | tuple[Path, Path]:
     if not _present(source):
         return ToolResult.of(Failure.MISSING, f"source does not exist: {args.src}")
     if source == workspace.root:
-        return ToolResult.of(Failure.DENIED, "cannot move the workspace root")
+        return ToolResult.denied(DenialKind.NEVER_ALLOWED, "cannot move the workspace root")
     if destination.is_relative_to(source):
         return ToolResult.of(Failure.ARGS, f"cannot move {args.src} inside itself")
     return source, destination

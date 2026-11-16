@@ -32,7 +32,17 @@ from plyngent.kernel.model import AnyMessage, Request, User
 from plyngent.kernel.net.web import Web
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
 from plyngent.kernel.skills import NAME_PATTERN, Skills
-from plyngent.kernel.toolresult import OUTCOMES, Effects, Hint, Status, Text, ToolResult, refusal
+from plyngent.kernel.toolresult import (
+    DENIAL_SAYS,
+    OUTCOMES,
+    DenialKind,
+    Effects,
+    Hint,
+    Status,
+    Text,
+    ToolResult,
+    refusal,
+)
 from plyngent.kernel.tools import fs, meta, net, session, skills
 from plyngent.kernel.tools import lifted as lifted_path
 from plyngent.kernel.tools.net import net_specs
@@ -49,8 +59,9 @@ from plyngent.kernel.toolspec import (
     ToolArgs,
     ToolSpec,
 )
-from plyngent.kernel.trail import SUMMARY_HEADING, AnyRecord, Attempt, StateChange, Summary, as_message
+from plyngent.kernel.trail import SUMMARY_HEADING, AnyRecord, Attempt, StateChange, Summary, Withheld, as_message
 from plyngent.kernel.workspace import Denied, OutsideWorkspace
+from plyngent.wire.ask import SEVERITIES, Severity
 from plyngent.wire.event import Batch, Event, TurnStarted
 from tests.stories import driver
 
@@ -458,11 +469,11 @@ def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> No
     assert everything_shown.index() == NOBODY, "a session with every group is told one thing: nobody to ask"
     assert not everything_shown.asks, "and the sentence is the group table's answer, not a second flag"
     assert nothing_shown.index() == (
-        "5 more groups (16 tools): document(1), fs(7), net(1), process(6), session(1) — "
+        "6 more groups (21 tools): document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the index counts what *this* session cannot reach, and it is a function of the set"
     assert catalog.view({"document", "process", "session"}).index() == (
-        "2 more groups (8 tools): fs(7), net(1) — use tool_require(group=…) to add one\n" + NOBODY
+        "3 more groups (13 tools): fs(7), net(1), vcs(5) — use tool_require(group=…) to add one\n" + NOBODY
     ), "one group left reads as one group"
 
 
@@ -555,7 +566,7 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
     with_backend = ToolCatalog((*BUILTIN, *net_specs(Web(pages=_Any(), sources=(_Any(),)))))
 
     assert with_backend.view(()).index() == (
-        "5 more groups (18 tools): document(1), fs(7), net(3), process(6), session(1) — "
+        "6 more groups (23 tools): document(1), fs(7), net(3), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
     assert {"client_fetch", "builtin_websearch", "web_fetch"} <= set(with_backend.names())
@@ -655,13 +666,13 @@ def _catalog():
 
 
 def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
-    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Attempt), (
+    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Withheld, Attempt), (
         "a record nobody classified would be a writer nobody asked about"
     )
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
     assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
-    assert [as_message(record) for record in (StateChange(), Attempt())] == [None, None], (
-        "what a session knows and what became of a request are not things a model reads"
+    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt())] == [None, None, None], (
+        "what a session knows, what it stopped showing, and what became of a request are not things a model reads"
     )
     says = as_message(Summary(text="it was settled"))
 
@@ -678,9 +689,50 @@ def test_every_kind_of_trouble_is_one_row_of_one_table() -> None:
     assert set(OUTCOMES) == set(Failure)
 
     for failure, (status, retry) in OUTCOMES.items():
-        result = ToolResult.of(failure, "something went wrong")
+        result = (
+            ToolResult.denied(DenialKind.NEVER_ALLOWED, "something went wrong")
+            if failure is Failure.DENIED
+            else ToolResult.of(failure, "something went wrong")
+        )
 
         assert (result.status, result.retry) == (status, retry), "the table decides, never the raise site"
+
+
+def test_a_denial_is_a_kind_and_never_a_bare_word() -> None:
+    """``DENIED`` with a sentence beside it is the shape that made a refusal unreadable (§0.15, E118)."""
+    with pytest.raises(ValueError, match="a denial is a kind"):
+        _ = ToolResult.of(Failure.DENIED, "not allowed")
+
+    with pytest.raises(ValueError, match="a denial is a kind"):
+        _ = ToolResult(Status.OK, "all good", denial=DenialKind.HUMAN)
+
+    refused = ToolResult.denied(DenialKind.TIMEOUT, "nobody answered in time")
+    assert (refused.status, refused.failure, refused.denial) == (Status.REFUSED, Failure.DENIED, DenialKind.TIMEOUT)
+
+
+def test_every_denial_kind_has_one_sentence() -> None:
+    """The word is for a client and the sentence is for a model: a kind with neither is unreadable."""
+    assert set(DENIAL_SAYS) == set(DenialKind), "a kind of refusal with no sentence says nothing at all"
+
+    for kind, says in DENIAL_SAYS.items():
+        assert "{about}" in says, f"{kind} does not say what was refused"
+
+
+def test_the_kernel_does_not_know_the_names_of_the_policies() -> None:
+    """A policy is a frontend's business — a kernel that knew either word would be a kernel with a mode.
+
+    ``--yolo`` and ``--away`` are what a *client* answers with (§0.15, E114). The kernel asks and is
+    answered, so the words cannot appear below the boundary: a tool, a policy or the wire that knew
+    them could act on "what mode is this run in", which is the coupling this rewrite exists to end.
+    """
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "plyngent"
+    named = [path for package in ("kernel", "wire") for path in (root / package).rglob("*.py")]
+
+    assert named, "the walk found no modules, so this asserts nothing"
+    for path in named:
+        written = path.read_text(encoding="utf-8").lower()
+        assert "yolo" not in written, f"{path} names a client's policy"
+        assert "afk" not in written, f"{path} names a client's policy"
 
 
 def test_the_world_can_fix_two_of_them_by_itself_and_the_rest_ask_for_something() -> None:
@@ -751,13 +803,15 @@ def test_the_two_ways_out_of_the_workspace_declare_what_they_are() -> None:
 
     assert asking is not None and scratch is not None, "a refusal that hints at a name has to be a name"
     assert asking.uses == Res.PATHS | Res.HUMAN, "it *is* the question, so asking it again would be a bug"
-    assert asking.approval(_given(asking)) == (Posture.AUTO, None)
+    assert _posed(asking, _given(asking)) == (Posture.AUTO, None)
+    assert asking.level() is Severity.DANGER, "the effect is a person's, and there is no undo for it"
     assert asking.intention is Intention.REQUIRED, "a call that puts a question to a person says why"
     assert sorted(next(iter(dict(_enums(asking.schema())).values()))) == ["exec", "read", "write"], (
         "the closed set is the words a person reads, not the integers an IntEnum would give"
     )
     assert scratch.uses == Res.PATHS and scratch.mutates is Mutation.HOST, "a directory is the host's"
-    assert scratch.approval(_given(scratch)) == (Posture.ONCE, Remember.HOST), "one yes for this host"
+    assert _posed(scratch, _given(scratch)) == (Posture.ONCE, Remember.HOST), "one yes for this host"
+    assert scratch.level() is Severity.ROUTINE, "handing out a scratch directory changes nothing of yours"
     assert not {asking.name, scratch.name} & set(RESIDENT), "neither is resident: a path is allowed per session"
 
 
@@ -772,7 +826,7 @@ def test_waiting_is_the_third_way_a_turn_spends_a_person_s_time() -> None:
     assert waiting.name in RESIDENT, "a model that had to be shown `wait` before it could wait cannot wait"
     assert waiting.group is Group.SESSION, "it spends a turn, and the turn's own subject is this group"
     assert waiting.uses == Res.HUMAN | Res.TOOLS
-    assert waiting.approval(session.WaitArgs(seconds=1.0, intention="let them read it")) == (Posture.AUTO, None), (
+    assert _posed(waiting, session.WaitArgs(seconds=1.0, intention="let them read it")) == (Posture.AUTO, None), (
         "the wait is the question, so asking it again would be a bug"
     )
     assert waiting.intention is Intention.REQUIRED and waiting.mutates is Mutation.NONE
@@ -791,6 +845,38 @@ def _given(spec: ToolSpec) -> object:
     required: list[str] = spec.schema().get("required", [])
     assert isinstance(spec.args, type), "a builtin tool's arguments are a package, not somebody else's schema"
     return spec.args(**dict.fromkeys(required, "x"))
+
+
+def _posed(spec: ToolSpec, args: object) -> tuple[Posture, Remember | None]:
+    """Whether one call is put to a person, and by what an answer is remembered."""
+    asking = spec.asking(args)
+    return asking.posture, asking.remember
+
+
+def test_every_tool_states_how_heavy_its_ordinary_use_is() -> None:
+    """One level per tool, read off ``uses``/``mutates`` — with one declared exception and its reason."""
+    declared = {spec.name: spec.severity for spec in EVERY if spec.severity is not None}
+
+    assert declared == {"write_file": Severity.ROUTINE}, (
+        "creating a path is lighter than replacing one, and both are writes into the workspace"
+    )
+    for spec in EVERY:
+        reaches = spec.uses & (Res.HUMAN | Res.CLIENT | Res.EXEC) or spec.mutates & (
+            Mutation.OUTSIDE | Mutation.DESTRUCTIVE
+        )
+        if reaches:
+            assert spec.level() is Severity.DANGER, f"{spec.name} can do what nothing here can undo"
+        elif spec.mutates is Mutation.NONE:
+            assert spec.level() is Severity.ROUTINE, f"{spec.name} changes nothing"
+
+
+def test_an_argument_that_makes_a_call_heavier_never_makes_it_lighter() -> None:
+    """``escalates`` raises the level and takes the memory away; the other direction is a bug."""
+    for spec in EVERY:
+        for name, level in (spec.escalates or {}).items():
+            assert SEVERITIES.index(level) >= SEVERITIES.index(spec.level()), (
+                f"{spec.name}({name}=true) would be lighter than the tool's own use"
+            )
 
 
 def test_a_kernel_with_no_skills_directory_has_no_skill_tools() -> None:
@@ -820,7 +906,7 @@ def test_the_skill_reading_tools_are_reads() -> None:
     for spec in skills.SPECS:
         if spec.mutates is not Mutation.NONE:
             continue
-        assert spec.approval(_given(spec)) == (Posture.AUTO, None), f"{spec.name} only reads"
+        assert _posed(spec, _given(spec)) == (Posture.AUTO, None), f"{spec.name} only reads"
         assert spec.intention is Intention.OPTIONAL, "a read that asks why teaches a model to write 'read it'"
 
 
@@ -844,7 +930,7 @@ def test_the_skill_writing_tools_ask_every_time() -> None:
     """
     for spec in (skills.SKILL_CREATE, skills.SKILL_EDIT):
         assert spec.mutates is Mutation.OUTSIDE, "the effect is in somebody else's directory"
-        assert spec.approval(_given(spec)) == (Posture.ALWAYS, None), f"{spec.name} asks every single time"
+        assert _posed(spec, _given(spec)) == (Posture.ALWAYS, None), f"{spec.name} asks every single time"
         assert spec.intention is Intention.REQUIRED, "and every call says why it is being made"
 
 

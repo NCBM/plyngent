@@ -24,6 +24,7 @@ from plyngent.kernel.toolspec import (
     ToolSpec,
     schema_of,
 )
+from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -81,8 +82,9 @@ def _spec(
     mutates: Mutation = Mutation.NONE,
     posture: Posture | None = None,
     remember: Remember | None = None,
+    severity: Severity | None = None,
     intention: Intention | None = None,
-    escalates: Mapping[str, object] | None = None,
+    escalates: Mapping[str, Severity] | None = None,
 ) -> ToolSpec:
     """A tool with one declaration changed, for asking the derivation what it makes of it."""
     return ToolSpec(
@@ -94,9 +96,16 @@ def _spec(
         mutates=mutates,
         posture=posture,
         remember=remember,
+        severity=severity,
         intention=intention,
         escalates=escalates,
     )
+
+
+def _asking(spec: ToolSpec, args: ToolArgs | None = None) -> tuple[Posture, Remember | None, Severity]:
+    """What one call asks: whether to, remembered by what, and how heavily."""
+    asking = spec.asking(Probe() if args is None else args)
+    return asking.posture, asking.remember, asking.severity
 
 
 def test_the_schema_is_generated_from_the_argument_package() -> None:
@@ -251,41 +260,69 @@ def test_a_role_that_names_no_field_is_refused_when_the_tool_is_declared() -> No
 
 
 def test_the_approval_is_derived_from_what_the_tool_declares() -> None:
-    assert _spec().approval(Probe()) == (Posture.AUTO, None), "a read asks nobody"
-    assert _spec(uses=Res.HUMAN).approval(Probe()) == (Posture.AUTO, None), "asking the human is not a reason to ask"
-    assert _spec(uses=Res.CLIENT).approval(Probe()) == (Posture.ALWAYS, None), "the effect is in another process"
-    assert _spec(mutates=Mutation.OUTSIDE).approval(Probe()) == (Posture.ALWAYS, None)
-    assert _spec(uses=Res.EXEC).approval(Probe()) == (Posture.AUTO, None), "the command policy judges the program"
-    assert _spec(uses=Res.PTY, mutates=Mutation.HOST).approval(Probe()) == (Posture.ONCE, Remember.SESSION)
-    assert _spec(mutates=Mutation.WORKSPACE).approval(Probe()) == (Posture.ONCE, Remember.PATH)
-    assert _spec(mutates=Mutation.HOST).approval(Probe()) == (Posture.AUTO, None), "bookkeeping is not a change"
+    assert _asking(_spec()) == (Posture.AUTO, None, Severity.ROUTINE), "a read asks nobody"
+    assert _asking(_spec(uses=Res.HUMAN)) == (Posture.AUTO, None, Severity.DANGER), (
+        "asking the human is not a reason to ask, but it is the heaviest thing there is"
+    )
+    assert _asking(_spec(uses=Res.CLIENT)) == (Posture.ALWAYS, None, Severity.DANGER), (
+        "the effect is in another process"
+    )
+    assert _asking(_spec(mutates=Mutation.OUTSIDE)) == (Posture.ALWAYS, None, Severity.DANGER)
+    assert _asking(_spec(uses=Res.EXEC)) == (Posture.AUTO, None, Severity.DANGER), (
+        "the command policy judges the program"
+    )
+    assert _asking(_spec(uses=Res.PTY, mutates=Mutation.HOST)) == (Posture.ONCE, Remember.SESSION, Severity.CONFIRM)
+    assert _asking(_spec(mutates=Mutation.WORKSPACE)) == (Posture.ONCE, Remember.PATH, Severity.CONFIRM)
+    assert _asking(_spec(mutates=Mutation.HOST)) == (Posture.AUTO, None, Severity.ROUTINE), (
+        "bookkeeping is not a change"
+    )
+
+
+def test_what_cannot_be_taken_back_is_heavy_even_where_the_posture_does_not_move() -> None:
+    """``DESTRUCTIVE`` has no row of its own in the posture table and one of its own in the level table."""
+
+    assert _asking(_spec(mutates=Mutation.WORKSPACE | Mutation.DESTRUCTIVE)) == (
+        Posture.ONCE,
+        Remember.PATH,
+        Severity.DANGER,
+    ), "a move is asked once per path, and it is still the heaviest thing a file call can be"
 
 
 def test_a_wide_reach_is_declared_and_a_remembered_key_can_be_chosen() -> None:
     wide = _spec(mutates=Mutation.HOST, posture=Posture.ONCE, remember=Remember.HOST)
 
-    assert wide.approval(Probe()) == (Posture.ONCE, Remember.HOST), "a temporary workspace widens what is reachable"
+    assert _asking(wide) == (Posture.ONCE, Remember.HOST, Severity.ROUTINE), (
+        "a temporary workspace widens what is reachable"
+    )
+
+
+def test_a_light_call_inside_a_heavy_declaration_says_so_itself() -> None:
+    """``write_file`` is the one place this is needed: creating is not replacing, and both write."""
+
+    makes = _spec(mutates=Mutation.WORKSPACE, severity=Severity.ROUTINE)
+
+    assert _asking(makes) == (Posture.ONCE, Remember.PATH, Severity.ROUTINE), "the posture does not follow the level"
 
 
 @pytest.mark.parametrize(
     ("uses", "mutates", "expected"),
     [
-        (Res.HUMAN | Res.PATHS, Mutation.NONE, (Posture.AUTO, None)),
-        (Res.CLIENT | Res.NET, Mutation.OUTSIDE, (Posture.ALWAYS, None)),
-        (Res.EXEC | Res.PATHS, Mutation.OUTSIDE | Mutation.WORKSPACE, (Posture.AUTO, None)),
-        (Res.EXEC | Res.PTY, Mutation.HOST, (Posture.AUTO, None)),
-        (Res.PATHS, Mutation.OUTSIDE, (Posture.ALWAYS, None)),
-        (Res.PTY, Mutation.HOST, (Posture.ONCE, Remember.SESSION)),
-        (Res.PTY, Mutation.NONE, (Posture.AUTO, None)),
-        (Res.PATHS, Mutation.WORKSPACE, (Posture.ONCE, Remember.PATH)),
-        (Res.PATHS, Mutation.HOST, (Posture.AUTO, None)),
-        (Res.PATHS | Res.DOCUMENT, Mutation.NONE, (Posture.AUTO, None)),
+        (Res.HUMAN | Res.PATHS, Mutation.NONE, (Posture.AUTO, None, Severity.DANGER)),
+        (Res.CLIENT | Res.NET, Mutation.OUTSIDE, (Posture.ALWAYS, None, Severity.DANGER)),
+        (Res.EXEC | Res.PATHS, Mutation.OUTSIDE | Mutation.WORKSPACE, (Posture.AUTO, None, Severity.DANGER)),
+        (Res.EXEC | Res.PTY, Mutation.HOST, (Posture.AUTO, None, Severity.DANGER)),
+        (Res.PATHS, Mutation.OUTSIDE, (Posture.ALWAYS, None, Severity.DANGER)),
+        (Res.PTY, Mutation.HOST, (Posture.ONCE, Remember.SESSION, Severity.CONFIRM)),
+        (Res.PTY, Mutation.NONE, (Posture.AUTO, None, Severity.ROUTINE)),
+        (Res.PATHS, Mutation.WORKSPACE, (Posture.ONCE, Remember.PATH, Severity.CONFIRM)),
+        (Res.PATHS, Mutation.HOST, (Posture.AUTO, None, Severity.ROUTINE)),
+        (Res.PATHS | Res.DOCUMENT, Mutation.NONE, (Posture.AUTO, None, Severity.ROUTINE)),
     ],
 )
 def test_the_baseline_is_one_row_of_the_table_per_declaration(
-    uses: Res, mutates: Mutation, expected: tuple[Posture, Remember | None]
+    uses: Res, mutates: Mutation, expected: tuple[Posture, Remember | None, Severity]
 ) -> None:
-    assert _spec(uses=uses, mutates=mutates).approval(Probe()) == expected
+    assert _asking(_spec(uses=uses, mutates=mutates)) == expected
 
 
 def test_a_tool_that_runs_programs_is_judged_per_command_and_not_always_asked() -> None:
@@ -294,8 +331,8 @@ def test_a_tool_that_runs_programs_is_judged_per_command_and_not_always_asked() 
     runs = _spec(uses=Res.EXEC | Res.PATHS, mutates=Mutation.OUTSIDE | Mutation.WORKSPACE)
     elsewhere = _spec(uses=Res.PATHS, mutates=Mutation.OUTSIDE)
 
-    assert runs.approval(Probe()) == (Posture.AUTO, None), "the command policy answers per argv"
-    assert elsewhere.approval(Probe()) == (Posture.ALWAYS, None), "nothing can judge this one call"
+    assert _asking(runs)[:2] == (Posture.AUTO, None), "the command policy answers per argv"
+    assert _asking(elsewhere)[:2] == (Posture.ALWAYS, None), "nothing can judge this one call"
 
 
 def test_a_once_only_posture_has_to_say_what_it_remembers() -> None:
@@ -304,17 +341,31 @@ def test_a_once_only_posture_has_to_say_what_it_remembers() -> None:
 
 
 def test_the_ordinary_use_of_a_tool_can_be_declared_irreversible() -> None:
-    spec = _spec(args=Sweep, mutates=Mutation.WORKSPACE | Mutation.DESTRUCTIVE, escalates={"permanent": True})
+    spec = _spec(
+        args=Sweep,
+        mutates=Mutation.WORKSPACE | Mutation.DESTRUCTIVE,
+        escalates={"permanent": Severity.DANGER},
+    )
 
-    assert spec.approval(Sweep(path="x")) == (Posture.ONCE, Remember.PATH)
-    assert spec.approval(Sweep(path="x", permanent=True)) == (Posture.ALWAYS, None), (
+    assert _asking(spec, Sweep(path="x")) == (Posture.ONCE, Remember.PATH, Severity.DANGER), "the ordinary use"
+    assert _asking(spec, Sweep(path="x", permanent=True)) == (Posture.ALWAYS, None, Severity.DANGER), (
         "this much cannot be undone, so it is not remembered"
     )
 
 
+def test_an_argument_may_raise_the_level_and_never_lower_it() -> None:
+    with pytest.raises(ValueError, match="never lower it"):
+        _ = _spec(args=Sweep, mutates=Mutation.DESTRUCTIVE, escalates={"permanent": Severity.CONFIRM})
+
+
+def test_an_escalation_says_how_heavy_and_not_merely_that_it_is_heavier() -> None:
+    with pytest.raises(TypeError, match="name a Severity"):
+        _ = _spec(args=Sweep, escalates={"permanent": True})  # type: ignore[dict-item]
+
+
 def test_an_escalation_that_names_no_field_is_refused_when_the_tool_is_declared() -> None:
     with pytest.raises(ValueError, match="does not have"):
-        _ = _spec(escalates={"permanant": True})
+        _ = _spec(escalates={"permanant": Severity.DANGER})
 
 
 def test_the_tool_set_talks_about_itself_in_its_own_group() -> None:

@@ -29,7 +29,7 @@ import msgspec
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.skills import NAME_PATTERN, SKILL_FILE, Skill, Skills, resolve_inside, validate_name
-from plyngent.kernel.toolresult import Effects, Hint, Text, ToolResult
+from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Text, ToolResult
 from plyngent.kernel.tools.document import Source, clipped, compile_lines, matches, window
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, ToolArgs, ToolSpec
 
@@ -284,7 +284,7 @@ def _denied(env: Env, target: Path) -> ToolResult | None:
     pattern = env.workspace.denied_by(target)
     if pattern is None:
         return None
-    return ToolResult.of(Failure.DENIED, f"path denied by policy (matched {pattern!r}): {target}")
+    return ToolResult.denied(DenialKind.NEVER_ALLOWED, f"path denied by policy (matched {pattern!r}): {target}")
 
 
 def _no_skill(name: str) -> ToolResult:

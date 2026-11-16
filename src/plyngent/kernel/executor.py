@@ -59,6 +59,7 @@ from plyngent.kernel.paths import display, key
 from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
+from plyngent.wire.ask import By
 from plyngent.wire.event import DocumentStored, ToolCalled, ToolReturned
 
 if TYPE_CHECKING:
@@ -243,18 +244,23 @@ class ToolExecutor:
         """
         spec, args = node.spec, node.args
         assert spec is not None
-        posture, remember = spec.approval(args)
-        if posture is Posture.AUTO or node.refused:
+        asking = spec.asking(args)
+        if asking.posture is Posture.AUTO or node.refused:
             return None
-        subjects, scoped = _subjects(ctx, spec, remember, node.held)
+        subjects, scoped = _subjects(ctx, spec, asking.remember, node.held)
         approvals = ctx.host.approvals
-        if not approvals.needs(posture, remember=remember, key=scoped):
+        if not approvals.needs(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity):
             return None
         question = f"allow {spec.name}" + (f" on {subjects}" if subjects else "") + "?"
-        agreed = await ctx.host.human.confirm(prompt=question, site=ctx.site(node.call, "approve"))
+        agreed = await ctx.host.human.confirm(
+            prompt=question, severity=asking.severity, site=ctx.site(node.call, "approve")
+        )
         if not agreed.accepted:
-            return ToolResult.of(Failure.DENIED, "this call was not allowed")
-        approvals.agree(posture, remember=remember, key=scoped)
+            return ToolResult.unagreed(agreed, about="this call")
+        if agreed.by is not By.POLICY:
+            # A policy's yes is not a person's: it is what this program was started to do, so it says
+            # nothing about the next call and is not written into what this host has been told.
+            approvals.agree(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity)
         return None
 
     def _emit(self, ctx: TurnCtx, event: AnyEvent) -> None:

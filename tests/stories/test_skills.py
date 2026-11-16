@@ -344,7 +344,7 @@ async def test_a_kernel_with_no_skills_directory_has_no_skill_tools(story_with: 
     await story.type("what skills are there?")
 
     assert (await _told(story)).splitlines() == [
-        "no group named 'skills'; there are: client:c1, document, fs, net, process, session"
+        "no group named 'skills'; there are: client:c1, document, fs, net, process, session, vcs"
     ]
     assert told(story.requests()[1]) == "no tool is named 'skill_list'", "a name nothing has, answered as such"
     assert "skills" not in story.requests()[0].system, "and the line a model is given never mentions it"
@@ -459,7 +459,7 @@ async def test_a_create_nobody_agreed_to_writes_nothing(story_with: Scripted, tm
         "the question names the call; the skill's name is in the arguments a person can already see"
     )
     assert not (store.roots[0].path / "fresh").exists(), "a decline wrote nothing at all"
-    assert await _told(story) == "this call was not allowed"
+    assert await _told(story) == "the human did not allow this call"
     assert _result(story.requests()[-1]).status is Status.REFUSED
 
 
@@ -620,13 +620,12 @@ async def test_two_edits_are_two_questions_and_one_write_is_one(story_with: Scri
         calling("skill_edit", {"name": "alpha", "append": "two\n", **_intent("first change")}),
         calling("skill_edit", {"name": "alpha", "append": "three\n", "intention": "second change"}),
         calling("write_file", {"path": "notes.txt", "content": "x"}),
-        calling("write_file", {"path": "notes.txt", "content": "y", "overwrite": True}),
         text("done"),
         skills=store,
     )
 
     await story.require("skills")
-    await story.type("change the skill twice and the note twice")
+    await story.type("change the skill twice, then the note")
     for _ in range(3):
         await story.answer("y")
     await story.finished()
@@ -636,7 +635,7 @@ async def test_two_edits_are_two_questions_and_one_write_is_one(story_with: Scri
         "allow skill_edit?",
         "allow write_file on notes.txt?",
     ], "a skill write is never remembered, and a path write is remembered by its path"
-    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "y", "the second write needed no question"
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "x"
     assert (store.roots[0].path / "alpha" / SKILL_FILE).read_text(encoding="utf-8") == "one\ntwo\nthree\n"
 
 

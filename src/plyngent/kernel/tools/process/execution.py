@@ -1,16 +1,11 @@
 """The tool that runs programs: one call, one tree, and the parts a reader needs.
 
 The engine (:mod:`plyngent.kernel.process`) knows how to run a tree and nothing about policy; this
-module is the other half. It is where the three questions a command raises are actually answered:
+module is the other half. Two of the three questions a command raises are answered by
+:class:`~plyngent.kernel.tools.process.gate.CommandGate` — where a node may run, and whether its argv
+has to be agreed to — because the tool that runs one read-only program asks exactly the same two. What
+is left here is the third, and the one only a tree has:
 
-* **Where may this run?** Every path in a call — the call's directory, a node's own, the file a
-  ``pipe`` string redirects into, the file an input is read from — is resolved by the workspace, which
-  is the only place that can refuse one. A refusal stops the call where it happened, having run
-  whatever ran before it.
-* **May this argv run?** The command policy reads each node's argv *at the moment that node is about to
-  start*: ``failfast`` skips nodes, so asking at the entrance would ask about commands that never run
-  and still miss the ones that do. A denylisted program is put to the human through ``Host.human``, and
-  a yes is remembered by program — an approval to run one command says nothing about another.
 * **What does the caller see?** One :class:`~plyngent.kernel.toolresult.ProcessControl` per command that
   actually started, in the order they started, plus the effects they caused. A program exiting non-zero
   is in that record, not in the status: the call did what it was asked.
@@ -31,15 +26,15 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.cancel import Cancelled
-from plyngent.kernel.command import NeedsHuman
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
-from plyngent.kernel.process import Batch, Execution, Failfast, FromFile, Permit, Ran, Refused, validate
+from plyngent.kernel.process import Batch, Execution, Failfast, Ran, validate
 from plyngent.kernel.process import run as run_tree
 from plyngent.kernel.toolresult import Effects, Hint, Meta, ProcessControl, ToolResult
-from plyngent.kernel.tools import lifted, lifting_hints
+from plyngent.kernel.tools import lifted
+from plyngent.kernel.tools.process.gate import CommandGate
 from plyngent.kernel.toolspec import Group, Mutation, Res, Role, ToolArgs, ToolSpec
-from plyngent.kernel.workspace import Denied, PathRefused
+from plyngent.kernel.workspace import PathRefused
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -99,7 +94,7 @@ async def execute(env: Env, args: ExecuteArgs) -> ToolResult:
     if not base.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.cwd}")
 
-    gate = _Questions(workspace, env)
+    gate = CommandGate(workspace, env)
     try:
         batch = await run_tree(
             args.steps,
@@ -117,62 +112,6 @@ async def execute(env: Env, args: ExecuteArgs) -> ToolResult:
 
     elapsed = int((time.monotonic() - started) * 1000)
     return _result(batch, workspace=workspace, approvals=gate.approvals, nodes=count, elapsed_ms=elapsed)
-
-
-class _Questions:
-    """One call's gate: where a node runs, what it may touch, and whether it has to be agreed to.
-
-    The approvals are kept here rather than read back out of the command policy: the policy remembers
-    programs for the life of the host, and the effect record is about *this* call.
-    """
-
-    workspace: Workspace
-    env: Env
-    approvals: list[str]
-
-    def __init__(self, workspace: Workspace, env: Env) -> None:
-        self.workspace = workspace
-        self.env = env
-        self.approvals = []
-
-    async def __call__(self, node: Execution, inherited: Path) -> Permit | Refused:
-        """Where this node runs and what it may touch, or why it does not run."""
-        here = node.cwd if node.cwd is not None else str(inherited)
-        try:
-            cwd = self.env.resolve(here, AccessMode.EXEC)
-        except PathRefused as exc:
-            return Refused(_kind(exc), str(exc), lifting_hints(exc))
-        if not cwd.is_dir():
-            return Refused(Failure.MISSING, f"not a directory: {here}")
-        try:
-            sink = self.env.resolve(node.pipe, AccessMode.WRITE) if isinstance(node.pipe, str) else None
-            source = self.env.resolve(node.stdin.path, AccessMode.READ) if isinstance(node.stdin, FromFile) else None
-        except PathRefused as exc:
-            return Refused(_kind(exc), str(exc), lifting_hints(exc))
-        refused = await self._allowed(node.argv)
-        if refused is not None:
-            return refused
-        return Permit(cwd=cwd, sink=sink, source=source)
-
-    async def _allowed(self, argv: list[str]) -> Refused | None:
-        """Whether this argv may run — from the policy, and from the human when the policy asks."""
-        verdict = self.workspace.commands.verdict(argv)
-        if not isinstance(verdict, NeedsHuman):
-            return None
-        for program in verdict.programs:
-            agreed = await self.env.human.confirm(
-                prompt=f"run {program!r}? it is on the command denylist", site=self.env.site("gate")
-            )
-            if not agreed.accepted:
-                return Refused(Failure.DENIED, f"the command denylist refused {program!r}")
-            self.workspace.commands.approve(program)
-            self.approvals.append(program)
-        return None
-
-
-def _kind(exc: PathRefused) -> Failure:
-    """Which kind of failure a refusal is: the denylist is final, a missing grant is not."""
-    return Failure.DENIED if isinstance(exc, Denied) else Failure.BLOCKED
 
 
 def _result(batch: Batch, *, workspace: Workspace, approvals: list[str], nodes: int, elapsed_ms: int) -> ToolResult:
@@ -194,6 +133,8 @@ def _result(batch: Batch, *, workspace: Workspace, approvals: list[str], nodes: 
                 hints=hints,
                 meta=meta,
             )
+        if batch.stopped.denial is not None:
+            return ToolResult.denied(batch.stopped.denial, batch.stopped.message, body=body, meta=meta)
         return ToolResult.of(batch.stopped.failure, batch.stopped.message, body=body, hints=hints, meta=meta)
     if not batch.ran:
         return ToolResult.of(Failure.BUG, "a call that ran nothing did not say why", meta=meta)

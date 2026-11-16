@@ -24,6 +24,7 @@ import pytest
 from plyngent.kernel.model import Result
 from plyngent.kernel.net.web import Hit, Page, SourceFailed, Web
 from plyngent.kernel.toolresult import Status
+from plyngent.wire.ask import Grades, Severity
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text, told
 
@@ -191,7 +192,11 @@ async def test_a_private_host_is_asked_about_once_and_then_remembered(story_with
     assert site.asked == [("GET", "/index.html"), ("GET", "/index.html")], "and both calls went out"
 
 
-async def test_a_declined_read_asks_again_later_and_sends_nothing(story_with: Scripted, serve: Scripted) -> None:
+async def test_a_declined_read_is_a_refusal_and_sends_nothing(story_with: Scripted, serve: Scripted) -> None:
+    """Acceptance of §0.15's E118: a person saying no is the same decision for a read and a write.
+
+    Nothing was unavailable, so trying the same call again would ask the same person the same question.
+    """
     site = serve()
     page = site.serve("/index.html", "hello")
     story = await story_with(calling("client_fetch", _call(page)), text("fair"))
@@ -204,10 +209,45 @@ async def test_a_declined_read_asks_again_later_and_sends_nothing(story_with: Sc
     assert told(story.requests()[-1]) == (
         f"nobody agreed to contact 127.0.0.1:{site.port}, so the request was not sent"
     ), "a request nobody agreed to is not made, and the model is told why"
-    assert _result(story.requests()[-1]).status is Status.FAILED, (
-        "a read is idempotent: the same call may be tried again"
-    )
+    assert _result(story.requests()[-1]).status is Status.REFUSED, "a refusal is not a bad minute for the world"
     assert site.asked == [], "and nothing reached the server"
+
+
+async def test_a_read_nobody_answered_is_worth_trying_again(story_with: Scripted, serve: Scripted) -> None:
+    """Silence is not a decision: an unanswered read is the world being unavailable (§0.15, E118)."""
+    site = serve()
+    page = site.serve("/index.html", "hello")
+    story = await story_with(calling("client_fetch", _call(page)), text("fair"), grades=Grades(danger=0.01))
+
+    await story.require("net")
+    await story.type("go and read the page")
+    await story.finished()
+
+    (question,) = story.questions()
+    assert question.severity is Severity.DANGER, "an unanswered question is the one the level governs"
+    assert _result(story.requests()[-1]).status is Status.FAILED, "nothing was refused: nobody spoke"
+    assert site.asked == [], "and nothing reached the server"
+
+
+async def test_a_write_nobody_answered_is_a_refusal_not_a_bad_minute(story_with: Scripted, serve: Scripted) -> None:
+    """The other half of the pair: a write nobody agreed to is not replayed (§0.15, E118)."""
+    site = serve()
+    _ = site.serve("/echo", "said it back")
+    story = await story_with(
+        calling("client_fetch", _call(f"https://127.0.0.1:{site.port}/echo", method="POST")),
+        text("fair"),
+        grades=Grades(confirm=0.01),
+    )
+    story.host.net.assume_public = (ipaddress.ip_network("127.0.0.0/8"),)
+
+    await story.require("net")
+    await story.type("send it")
+    await story.finished()
+
+    assert _result(story.requests()[-1]).status is Status.REFUSED, (
+        "asking the same question again is what a retry would do, and nobody is going to answer it"
+    )
+    assert site.asked == [], "a write nobody agreed to is not sent"
 
 
 async def test_the_metadata_address_is_never_asked_about(story_with: Scripted) -> None:
@@ -247,6 +287,9 @@ async def test_every_hop_is_a_destination_of_its_own(story_with: Scripted, serve
         f"may I send GET to {start}",
         f"may I send GET to {landing}",
     ], "a redirect is a second machine at a second port, so it is a second question"
+    assert {question.severity for question in story.questions()} == {Severity.DANGER}, (
+        "reaching the machine's own network is the level nothing here can undo"
+    )
     assert story.host.net.grants == {f"127.0.0.1:{first.port}", f"127.0.0.1:{second.port}"}
     assert first.asked == [("GET", "/jump")], "the first server was asked once"
     assert second.asked == [("GET", "/land")], "and the one it pointed at, once"
@@ -474,6 +517,9 @@ async def test_a_public_https_write_is_still_asked_about(story_with: Scripted, s
     assert [question.prompt.split("? ")[-1] for question in story.questions()] == [
         "POST changes something on the other end"
     ], "everything about this request would have been exempt but the verb"
+    assert story.questions()[0].severity is Severity.CONFIRM, (
+        "a body is a fact about this request and it can be sent again, so it is the ordinary level"
+    )
     assert _result(story.requests()[-1]).status is Status.REFUSED
     assert site.asked == [], "a declined write is not sent"
 
@@ -488,6 +534,9 @@ async def test_cleartext_is_asked_about_every_time(story_with: Scripted, serve: 
 
     assert len(story.questions()) == 2, (
         "plain http is a fact about this request and not about that machine, so it is never remembered"
+    )
+    assert {question.severity for question in story.questions()} == {Severity.DANGER}, (
+        "what leaves in cleartext has already gone by the time anybody could regret it"
     )
     assert story.host.net.grants == set(), "nothing was granted: the only reason was the transport"
     assert site.asked == [("GET", "/index.html"), ("GET", "/index.html")]
