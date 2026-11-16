@@ -14,7 +14,8 @@ from pathlib import Path
 import click
 import pytest
 
-from plyngent.__main__ import _claim, _editor, _markdown
+from plyngent.__main__ import _address, _claim, _editor, _markdown
+from plyngent.boot import endpoint_for
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
 
@@ -90,3 +91,25 @@ def test_the_workspace_next_to_connect_is_a_claim_and_not_a_wish(tmp_path: Path)
 
 def test_connect_without_a_workspace_claims_nothing(tmp_path: Path) -> None:
     assert _claim(None, said=str(tmp_path)) is None, "a run that named no directory reads what it finds"
+
+
+def test_an_address_a_run_named_is_the_one_it_serves_on(tmp_path: Path) -> None:
+    assert _address(Path("somewhere.sock"), workspace=tmp_path) == Path("somewhere.sock")
+
+
+def test_a_run_that_named_no_address_serves_this_workspace_own(tmp_path: Path) -> None:
+    """``--serve`` with no path is "this tree", and the name it uses is the one the tree already has."""
+    named = _address("", workspace=tmp_path)
+
+    assert named == endpoint_for(tmp_path), "the default is the workspace's own address, not a guess"
+    assert named.name.endswith(".sock"), "a socket, named so a person looking at the directory can tell"
+    assert not named.exists(), "asking where a kernel would listen is not something that happens on disk"
+
+
+def test_two_workspaces_with_one_name_are_still_two_addresses(tmp_path: Path) -> None:
+    mine = tmp_path / "one" / "project"
+    yours = tmp_path / "two" / "project"
+    mine.mkdir(parents=True)
+    yours.mkdir(parents=True)
+
+    assert _address("", workspace=mine) != _address("", workspace=yours), "a shared directory name is not an address"

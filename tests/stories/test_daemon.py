@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from plyngent.boot import NoKernelError, connect, serve
+from plyngent.boot import NoKernelError, connect, endpoint_for, serve
 from plyngent.kernel.local import temporary_endpoint
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, text
@@ -32,8 +32,8 @@ async def daemon(tmp_path: Path):
     """A kernel serving one address, with a scripted model and nothing else of the person's own."""
     serving: list[Daemon] = []
 
-    async def start(*script, model: bool = True) -> str:
-        endpoint = temporary_endpoint()
+    async def start(*script, model: bool = True, where: str | None = None) -> str:
+        endpoint = temporary_endpoint() if where is None else where
         asked = ScriptedModel(script) if model else None
         daemon = await serve(
             tmp_path / "workspace",
@@ -131,3 +131,27 @@ async def test_an_address_nobody_is_serving_says_so(tmp_path: Path) -> None:
     """A frontend pointed at a path with nothing behind it is a sentence, not a traceback."""
     with pytest.raises(NoKernelError):
         _ = await connect(temporary_endpoint())
+
+
+async def test_a_workspace_carries_the_name_another_program_reaches_it_by(daemon, tmp_path: Path) -> None:
+    """The address is a fact about the workspace, so neither program has to be told one (§5 B).
+
+    ``--serve`` and ``--connect`` with no path both mean "this tree", and what they mean has to be one
+    name: a kernel listening at the workspace's own address, and a frontend that only knows the
+    directory, are enough between them to have a conversation.
+    """
+    named = endpoint_for(tmp_path / "workspace")
+    endpoint = await daemon(text("reached without a path"), where=str(named))
+
+    assert endpoint == str(named), "the kernel listened where the workspace's own name says"
+    client = await connect(endpoint_for(tmp_path / "workspace"))
+    story = await Story.connected(client)
+    try:
+        await story.type("hello")
+        await story.finished()
+
+        assert "reached without a path" in story.screen()
+    finally:
+        await story.close()
+        client.close()
+        await client.finished()

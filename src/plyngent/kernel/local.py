@@ -251,8 +251,14 @@ class Listening:
 
     @classmethod
     async def at(cls, endpoint: Path) -> Listening:
-        """Bind ``endpoint``, taking it over if nobody is answering there any more."""
+        """Bind ``endpoint``, taking it over if nobody is answering there any more.
+
+        The directory the address lives in is made on the way, because a name this program computed is a
+        name nobody has created yet: where a kernel listens is decided by a pure function, and the
+        listening is what puts it on the disk.
+        """
         await _claim(endpoint)
+        await asyncio.to_thread(endpoint.parent.mkdir, parents=True, exist_ok=True)
         bound = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         bound.bind(str(endpoint))
         bound.listen(CONNECTIONS_WAITING)

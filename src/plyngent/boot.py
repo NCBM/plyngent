@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 from msgspec.structs import replace
+from platformdirs import user_runtime_path
 
 from plyngent.kernel import local
 from plyngent.kernel.catalog import BUILTIN
@@ -69,6 +70,23 @@ KERNEL_TRANSPORTS = ("inproc", "local") if local.AVAILABLE else ("inproc",)
 #: How often the composition root looks at the one component it may have to replace. It is a poll
 #: rather than a callback because the thing being watched is a child process: nothing tells us it died.
 BROKER_WATCH_SECONDS = 0.5
+
+
+def endpoint_for(root: Path | str) -> Path:
+    """Where this workspace's own kernel listens, when nobody names an address.
+
+    The name a workspace already carries is the one its journal's directory has — a slug from the tree,
+    a digest of the resolved path — put in the directory this machine keeps its sockets in. One
+    workspace is therefore one name wherever a person looks for it, and two workspaces that share a
+    directory name are still two addresses. ``--serve`` and ``--connect`` both take this as their
+    default, which is what makes "serve this tree" and "attach to the tree somebody is serving" two
+    commands with no path in either (§5 B).
+
+    A pure answer, like :func:`~plyngent.kernel.journal.journal_path`'s: it creates nothing, so asking
+    where a kernel *would* listen leaves the file system as it found it.
+    """
+    resolved = Path(root).expanduser().resolve()
+    return user_runtime_path("plyngent") / f"{journal_path(resolved).parent.name}.sock"
 
 
 #: How long a client waits for a kernel to say what it is. A greeting is the first thing on the stream,

@@ -76,16 +76,22 @@ INTERRUPTED = 130
 @click.option(
     "--serve",
     "serve_at",
-    type=click.Path(dir_okay=False, path_type=Path),
+    type=click.Path(dir_okay=False),
+    is_flag=False,
+    flag_value="",
+    metavar="[ADDRESS]",
     default=None,
-    help="serve a kernel at this address, for other programs to talk to",
+    help="serve a kernel at this address, or at this workspace's own address when no path is given",
 )
 @click.option(
     "--connect",
     "connect_at",
-    type=click.Path(dir_okay=False, path_type=Path),
+    type=click.Path(dir_okay=False),
+    is_flag=False,
+    flag_value="",
+    metavar="[ADDRESS]",
     default=None,
-    help="talk to the kernel already serving at this address",
+    help="talk to the kernel serving at this address, or at this workspace's own address",
 )
 @click.option("--yolo", "yolo", is_flag=True, help="answer the light and ordinary questions with a yes")
 @click.option("--away", "away", is_flag=True, help="answer each question as its own silence would have")
@@ -99,8 +105,8 @@ def main(
     session: str,
     workspace: Path | None,
     config_path: Path | None,
-    serve_at: Path | None,
-    connect_at: Path | None,
+    serve_at: Path | str | None,
+    connect_at: Path | str | None,
     *,
     no_colour: bool,
     no_diff: bool,
@@ -150,8 +156,8 @@ async def _serve(
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
-    serve_at: Path | None,
-    connect_at: Path | None,
+    serve_at: Path | str | None,
+    connect_at: Path | str | None,
 ) -> int:
     """Be one of this program's three shapes, and take down whatever it started.
 
@@ -161,13 +167,13 @@ async def _serve(
     """
     workspace = Path.cwd() if root is None else root
     if serve_at is not None:
-        return await _serving(workspace=workspace, settings=settings, endpoint=serve_at)
+        return await _serving(workspace=workspace, settings=settings, endpoint=_address(serve_at, workspace=workspace))
     if connect_at is not None:
         return await _connected(
             session=session,
             workspace=workspace,
             claimed=root,
-            at=connect_at,
+            at=_address(connect_at, workspace=workspace),
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
@@ -246,6 +252,16 @@ async def _talk(
         mark=mark_path(session),
     )
     return await app.run()
+
+
+def _address(asked: Path | str, *, workspace: Path) -> Path:
+    """The address a run named, or this workspace's own when it named none.
+
+    ``--serve`` and ``--connect`` take an optional path, and the empty string is click's way of saying
+    "the flag was given and no value was": one command per shape, and no run that has to spell out a
+    name it does not care about (§5 B).
+    """
+    return boot.endpoint_for(workspace) if not asked else Path(asked)
 
 
 async def _serving(*, workspace: Path, settings: config.Settings, endpoint: Path) -> int:
