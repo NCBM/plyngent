@@ -345,7 +345,28 @@ class Link:
 
     async def _settling(self) -> None:
         """Read the three lanes a client answers on, until the connection ends."""
-        _ = await asyncio.gather(self._acknowledging(), self._answering(), self._completing())
+        try:
+            _ = await asyncio.gather(self._acknowledging(), self._answering(), self._completing())
+        finally:
+            self._vanished()
+
+    def _vanished(self) -> None:
+        """What the end of those lanes means: the client stopped being there, so no answer is coming.
+
+        It is the same statement as :meth:`close` and a different cause — the kernel did not decide this
+        one. Every wait for an answer is refused, because nobody can give one; a call in flight keeps its
+        own deadline instead, since the work may still be going on somewhere (§10.8).
+
+        In one process the two ends are one object, so the lanes end here only when :meth:`close` ends
+        them; over a socket they end when the far end's stream does, and that is the whole difference.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        for waiting in tuple(self._waiting.values()):
+            if not waiting.future.done():
+                waiting.future.set_result(unanswered(waiting.question, by=By.NOBODY))
+        self._waiting.clear()
 
     async def _acknowledging(self) -> None:
         """Move the client's watermark into the lane that judges silence."""

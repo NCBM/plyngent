@@ -101,6 +101,29 @@ async def test_a_result_the_kernel_stopped_waiting_for_is_dropped() -> None:
         link.close()
 
 
+async def test_a_connection_that_ends_refuses_the_question_that_was_waiting() -> None:
+    """The far end going away is not a deadline: nobody can answer it, so the wait ends there and then.
+
+    Over a socket this is the ordinary way a wait ends — the client left — and it is the lane ending
+    rather than the link being closed that says so, which is why the refusal belongs to whoever reads
+    those lanes to the end.
+    """
+    channel = InProcChannel()
+    link = Link(channel, timeout=30.0)
+    link.start()
+    try:
+        asking = asyncio.create_task(link.ask(FreeText(prompt="what next?")))
+        _ = await anext(link.questions())
+
+        channel.close()
+
+        refused = await asyncio.wait_for(asking, 1.0)
+        assert isinstance(refused, Written)
+        assert (refused.text, refused.by) == (None, By.NOBODY), "refused, and not by the clock"
+    finally:
+        link.close()
+
+
 async def _settled(link: Link, *, want: int) -> bool:
     """Whether the connection read the ack it was sent, waiting a bounded number of turns for it."""
     for _ in range(200):
