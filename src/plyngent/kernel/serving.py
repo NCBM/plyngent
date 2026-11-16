@@ -22,11 +22,12 @@ Two rules shape it:
   answers "no" rather than hanging.
 
 What the commands do not yet have: ``Resume`` answers with what it is missing, because reattaching a
-session to a stored trajectory needs a store this build does not have — the same one ``Open(seed_from=)``
-waits for. Nothing is accepted in silence any more: each command is answered, even where the answer is a
-refusal. ``Compact``, ``Prune`` and ``Export`` are not turns — the first two write one bookkeeping row
-where the conversation ends, the third writes a document and moves nothing — so none of them takes the
-session's single turn slot.
+session to another journal needs a *second* store and this build keeps one per workspace — so a
+conversation is resumed by opening it, and ``Open(seed_from=)`` is the other thing that reads one
+conversation into another. Nothing is accepted in silence any more: each command is answered, even where
+the answer is a refusal. ``Compact``, ``Prune`` and ``Export`` are not turns — the first two write one
+bookkeeping row where the conversation ends, the third writes a document and moves nothing — so none of
+them takes the session's single turn slot.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from plyngent.kernel.documents import refuses
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.history import Unreadable, Unwilling
+from plyngent.kernel.host import Host
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
@@ -80,6 +82,8 @@ from plyngent.wire.event import (
     RolledBack,
     Routed,
     RouteRefused,
+    Seeded,
+    SeedRefused,
     SessionsListed,
     TurnKind,
     TurnRefused,
@@ -313,19 +317,21 @@ class Serving:
             _ = found.cancel(CancelScope.parse(scope) if scope is not None else None, reason, detail)
 
     async def _resume(self, session: str, store: str) -> None:
-        """Rebind this session to a stored trajectory — which there is not, so say what is missing.
+        """Reattach this session to another journal, which this build has none of, so say what is missing.
 
         The command's shape is R4's: replacing what a session reads from invalidates the history basis of
         anything already running, so nothing about it may happen beside a live turn. What it waits for is
-        the store ``Open(seed_from=)`` waits for. Until then the answer is a refusal naming the missing
-        piece, which is more use than the silence this command used to keep: a person who typed it learns
-        that the conversation in front of them is still the one they were reading.
+        a *second* store — another journal a conversation could be pointed at — and this build keeps one
+        per workspace, so "resume" is what opening a conversation already does. Until there is a second
+        one the answer is a refusal naming the missing piece, which is more use than the silence this
+        command used to keep: a person who typed it learns that the conversation in front of them is
+        still the one they were reading.
         """
         found = self._session(session)
         if found is None:
             self.link.emit(ResumeRefused(session=session, reason=NO_SESSION))
             return
-        self.link.emit(ResumeRefused(session=session, reason=_no_trajectory(store)))
+        self.link.emit(ResumeRefused(session=session, reason=_no_other_store(store)))
 
     async def _past(self, command: Resume | Rollback) -> None:
         """The two commands about what this session and its workspace already were.
@@ -382,24 +388,63 @@ class Serving:
                 await self._prune(session, targets, reason)
 
     async def _open(self, session: str, seed_from: tuple[str, str] | None) -> None:
-        """Start serving a session, unless it is already served.
+        """Start serving a session, unless it is already served — and, if asked, from another's text.
 
         ``Open`` is idempotent because a frontend that reattaches has the same session in mind; what it
-        may not have is a second copy of it. Seeding is the one form that needs entries to point at, so
-        it waits for the forest.
+        may not have is a second copy of it. Seeding is the one form that needs entries to point at, so it
+        is done first: a copy that refused has written nothing, and the session is not admitted either,
+        because an empty conversation would be a worse answer than the reason.
 
         The opening answers with the route this session stands at, whether or not it was already
         served: a client that has just attached is told where it is rather than having to ask, and the
         answer is the same one ``SetRoute`` gives so a client reads both lines with one rule.
         """
-        if seed_from is not None:
-            self.link.emit(TurnRefused(session=session, reason=NO_FOREST, holder=0))
+        if seed_from is not None and not await self._seed(session, *seed_from):
             return
         declaration = self._declaration(session)
         declared = self.assembly.keys()
         if declaration.key not in declared:
             _ = await self.assembly.admit(declaration)
         self._say_route(session)
+
+    async def _seed(self, session: str, source: str, entry: str) -> bool:
+        """Fill a conversation with another one's text, and answer whether it happened.
+
+        **The text travels and nothing else.** ``derive`` is the projection — the messages a model would
+        have been given from that entry to its root — and each of those is appended here as a row of its
+        own, chained in order. No pointer to the other session, no grants, no todo, no route, no name: a
+        new conversation inheriting another's approvals would be a privilege escalation dressed as
+        convenience, and one that inherited its todo list would be a session somebody else is holding.
+
+        Three refusals, and each is a different sentence: an entry this session does not have, a source
+        that projects to nothing, and a conversation this kernel is already serving — where copying again
+        would either duplicate what is there or interleave with a turn that is using it.
+        """
+        if self._session(session) is not None:
+            self.link.emit(SeedRefused(session=session, reason=_already_open(session)))
+            return False
+        host = self._host()
+        if host is None:
+            self.link.emit(SeedRefused(session=session, reason=NO_HOST))
+            return False
+        trail = host.trail
+        if await trail.entry(source, entry) is None:
+            self.link.emit(SeedRefused(session=session, reason=_no_such_seed(entry, source)))
+            return False
+        try:
+            carried = await trail.derive(source, entry)
+        except ValueError as exc:
+            self.link.emit(SeedRefused(session=session, reason=str(exc)))
+            return False
+        if not carried:
+            self.link.emit(SeedRefused(session=session, reason=NOTHING_TO_CARRY))
+            return False
+        parent: str | None = None
+        for message in carried:
+            parent = (await trail.append(session, message, begin_after=parent)).id
+        assert parent is not None
+        self.link.emit(Seeded(session=session, source=source, from_entry=entry, entry=parent, count=len(carried)))
+        return True
 
     def _say_route(self, session: str) -> None:
         """Say which route answers *session*, resolved the way a route change resolves one."""
@@ -718,6 +763,16 @@ class Serving:
         """How a session with this id is declared: under the host, with the id as its tail."""
         return Declaration(Session, instance=f"{self.host}/{session}", kwargs={"session_id": session})
 
+    def _host(self) -> Host | None:
+        """The host this kernel serves under, or ``None`` when the assembly has it down.
+
+        What a read of another conversation needs and a served session does not: seeding writes rows for
+        a session this kernel has not admitted, so the journal is reached through the host rather than
+        through the session that would have pointed at it.
+        """
+        found = self.assembly.instance(Declaration(Host, instance=self.host).key)
+        return found if isinstance(found, Host) else None
+
     def _session(self, session: str) -> Session | None:
         """The live session with this id, or ``None``.
 
@@ -774,8 +829,12 @@ NO_MODEL = "this kernel has no model installed, so it cannot run a turn"
 #: Why a ``Submit`` was refused while a turn was live: one turn at a time, and ``holder`` names the one.
 BUSY = "a turn is already running in this session"
 
-#: Why an ``Open`` could not seed a new session: there is no history to copy from yet.
-NO_FOREST = "seeding a session needs the history store, which does not exist yet"
+#: Why an ``Open`` could not seed a new session: this kernel's own host is not up, so nothing can be
+#: written down for a conversation it is not serving.
+NO_HOST = "this kernel's host is not up, so there is nowhere to write a conversation"
+
+#: Why an ``Open`` could not seed a new session: the source projects to no messages at all.
+NOTHING_TO_CARRY = "there is nothing to copy: that conversation has no messages to carry"
 
 #: Why a ``Rollback`` did nothing: this kernel keeps no versions, so there is nothing to go back to.
 NO_VERSIONS = "this kernel keeps no versions of this workspace"
@@ -793,11 +852,21 @@ NOTHING_TO_PRUNE = "a prune with no entries hides nothing"
 NOTHING_TO_EXPORT = "there is nothing to export: this conversation has no messages yet"
 
 
-def _no_trajectory(store: str) -> str:
-    """Why a resume did nothing: there is nowhere to read a trajectory from, and which one was asked for."""
+def _no_other_store(store: str) -> str:
+    """Why a resume did nothing: a conversation here is opened rather than pointed at another journal."""
     if store:
-        return f"no stored trajectory named {store!r}: this build has no store to read one from"
-    return "resuming needs a stored trajectory, and this build has no store to read one from"
+        return f"no store named {store!r}: this workspace keeps one journal, and nothing else to point at"
+    return "a conversation here is resumed by opening it: this workspace keeps one journal, and no second one"
+
+
+def _already_open(session: str) -> str:
+    """Why a conversation was not seeded: it is being served, so copying into it would land beside a turn."""
+    return f"{session} is already open here, so nothing was copied into it"
+
+
+def _no_such_seed(entry: str, source: str) -> str:
+    """Why a conversation was not seeded: only a row that exists has text to carry."""
+    return f"no entry {entry!r} in session {source}: only a row that exists can be copied from"
 
 
 def _no_such_prune(target: str, session: str) -> str:

@@ -212,9 +212,36 @@ class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
     """A resume did nothing, and why.
 
     A refusal rather than silence: the command is answered, so a person who typed it learns that the
-    conversation they are looking at is still the one they were reading. What it waits for is a stored
-    trajectory — the same store ``Open(seed_from=)`` waits for — and until there is one there is nothing
-    to reattach a session to.
+    conversation they are looking at is still the one they were reading. What it waits for is a *second*
+    store — another journal this session could be pointed at — and this build keeps one journal per
+    workspace, so there is nothing for the name to be.
+    """
+
+    session: str = ""
+    reason: str = ""
+
+
+class Seeded(Event, tag="seeded", frozen=True, kw_only=True):
+    """A new conversation was given another one's text, and how much of it.
+
+    ``entry`` is where the copy ends, so a client that seeded a session and then said something knows
+    what to continue from; ``source`` and ``from_entry`` say what it was copied out of, which is the only
+    way a person can tell which conversation this one stands for. ``count`` is the number of rows that
+    travelled — the messages a model would have been given, which is fewer than the journal holds.
+    """
+
+    session: str = ""
+    source: str = ""
+    from_entry: str = ""
+    entry: str = ""
+    count: int = 0
+
+
+class SeedRefused(Event, tag="seed-refused", frozen=True, kw_only=True):
+    """A conversation was not seeded, and why — nothing to copy, or nowhere to put it.
+
+    The copy is one act and it either happened whole or not at all: a session half-filled with another
+    one's text is a conversation nobody can account for, and the reason says which end refused.
     """
 
     session: str = ""
@@ -477,6 +504,8 @@ type AnyEvent = (
     | PruneRefused
     | ExportRefused
     | ResumeRefused
+    | Seeded
+    | SeedRefused
     | RolledBack
     | RollbackRefused
     | GrantRevoked

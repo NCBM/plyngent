@@ -93,6 +93,8 @@ from plyngent.wire.event import ResumeRefused as ResumeRefused
 from plyngent.wire.event import RollbackRefused as RollbackRefused
 from plyngent.wire.event import RolledBack as RolledBack
 from plyngent.wire.event import RouteRefused as RouteRefused
+from plyngent.wire.event import Seeded as Seeded
+from plyngent.wire.event import SeedRefused as SeedRefused
 from plyngent.wire.event import SessionsListed as SessionsListed
 from plyngent.wire.event import ToolCalled as ToolCalled
 from plyngent.wire.event import ToolReturned as ToolReturned

@@ -54,6 +54,8 @@ from plyngent.wire.event import (
     RolledBack,
     Routed,
     RouteRefused,
+    Seeded,
+    SeedRefused,
     SessionsListed,
     ToolCalled,
     ToolReturned,
@@ -127,6 +129,8 @@ type _Reported = (
     | RolledBack
     | RollbackRefused
     | GrantRevoked
+    | Seeded
+    | SeedRefused
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
@@ -136,11 +140,13 @@ type _Diffed = Changed
 
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, and what it
 #: kept. A document belongs here and not to a turn because the thing kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked
+type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
-type _Declined = CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused | RollbackRefused
+type _Declined = (
+    CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused | RollbackRefused | SeedRefused
+)
 
 #: What one request to a model cost, and whether the answer it brought stopped short.
 type _Asked = Usage | AnswerCut
@@ -615,9 +621,17 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     match event:
         case KernelLeaving() | SessionsListed():
             return _connection(event)
-        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked():
+        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked() | Seeded():
             return _setting(event)
-        case CompactRefused() | PruneRefused() | ExportRefused() | ResumeRefused() | RouteRefused() | RollbackRefused():
+        case (
+            CompactRefused()
+            | PruneRefused()
+            | ExportRefused()
+            | ResumeRefused()
+            | RouteRefused()
+            | RollbackRefused()
+            | SeedRefused()
+        ):
             return _declined(event)
         case _ as never:
             assert_never(never)
@@ -635,10 +649,12 @@ def _connection(event: KernelLeaving | SessionsListed) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def _setting(event: _Settled) -> tuple[_Row, ...]:
+def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line per kind of news, on purpose
     """What one of this session's settings is now: what it was compressed into, what it hides, what it
-    kept, and which route answers it."""
+    kept, which route answers it, and what was copied into it."""
     match event:
+        case Seeded(session=session, source=source, count=count):
+            return ((session, Shown(f"seeded {count} messages from {source}", "notice")),)
         case Compacted(session=session, entry=entry, chars=chars):
             return ((session, Shown(f"summary {entry} written ({chars} chars)", "notice")),)
         case Pruned(session=session, entry=entry, targets=targets):
@@ -695,7 +711,7 @@ def _difference(line: str) -> Role:
     return "assistant"
 
 
-def _declined(event: _Declined) -> tuple[_Row, ...]:
+def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one word per refusal, on purpose
     """What the kernel would not do, and why: the same sentence with a different word at the front."""
     match event:
         case CompactRefused(session=session, reason=reason):
@@ -706,6 +722,8 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:
             return ((session, Shown(f"export refused: {reason}", "refusal")),)
         case ResumeRefused(session=session, reason=reason):
             return ((session, Shown(f"resume refused: {reason}", "refusal")),)
+        case SeedRefused(session=session, reason=reason):
+            return ((session, Shown(f"seed refused: {reason}", "refusal")),)
         case RouteRefused(session=session, reason=reason):
             return ((session, Shown(f"route refused: {reason}", "refusal")),)
         case RollbackRefused(session=session, reason=reason):

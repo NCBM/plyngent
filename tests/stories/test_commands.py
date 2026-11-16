@@ -24,14 +24,19 @@ async def test_the_sessions_are_listed_with_the_one_in_focus(story: Story) -> No
 
 async def test_resume_says_what_it_is_missing(story: Story) -> None:
     """A command this build cannot carry out is answered, not swallowed: what a person typed it for is
-    the one thing they need back."""
+    the one thing they need back.
+
+    What it is missing is a *second* journal to point the conversation at. One journal per workspace means
+    getting a conversation back is opening it, which is a different word and already exists.
+    """
     await story.type("/resume")
     await story.type("/resume --store elsewhere")
     await story.type("/resume --session nowhere")
 
     assert story.screen() == (
-        "resume refused: resuming needs a stored trajectory, and this build has no store to read one from",
-        "resume refused: no stored trajectory named 'elsewhere': this build has no store to read one from",
+        "resume refused: a conversation here is resumed by opening it: this workspace keeps one journal, "
+        "and no second one",
+        "resume refused: no store named 'elsewhere': this workspace keeps one journal, and nothing else to point at",
         "[nowhere] resume refused: no such session here: open one first",
     ), "each answer names the thing it lacks, and the last one is about the session rather than the store"
 
