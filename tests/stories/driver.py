@@ -39,8 +39,9 @@ from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.cli.render import question as question_line
 from plyngent.cli.render import workspace_label
 from plyngent.kernel.catalog import BUILTIN
+from plyngent.kernel.channel import InProcChannel
 from plyngent.kernel.host import Host
-from plyngent.kernel.link import InProcLink
+from plyngent.kernel.link import Link
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.session import Session
 from plyngent.wire.command import Offer
@@ -401,7 +402,7 @@ class Story:
         has one approval owner — so what it can be used for is what a client *without* those rights
         can still do, which is exactly the case.
         """
-        link = InProcLink(manifest=KernelManifest(commands=command_specs(), caps=caps))
+        link = Link(InProcChannel(), manifest=KernelManifest(commands=command_specs(), caps=caps))
         serving = Serving(self.kernel.assembly, host=DEFAULT_HOST, link=link, specs=BUILTIN)
         self._others.append(asyncio.create_task(serving.run()))
         return link

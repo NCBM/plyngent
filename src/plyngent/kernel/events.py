@@ -198,7 +198,7 @@ class HumanChannel(Component, Human):
     Nobody attached is not the same as no channel. Questions still get an answer, and the answer is
     "no" (:class:`NoSink`), so a tool reports that it was blocked instead of hanging — the same answer
     a headless run gives. A question already out when its client went away is refused by the transport
-    that carried it (:meth:`plyngent.kernel.link.InProcLink.close`), and the turn it belongs to runs
+    that carried it (:meth:`plyngent.kernel.link.Link.close`), and the turn it belongs to runs
     on: a client disappearing is a refusal, not a verdict (R2.1 D14).
     """
 

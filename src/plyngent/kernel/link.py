@@ -19,22 +19,25 @@ The streams differ in exactly one thing, and it is the reason they are separate 
   answered. Never dropped either, and it differs from ``questions`` in exactly one rule — a
   disconnect does not answer a call that is in flight, it lets the deadline do it (§10.8).
 
+The queues themselves are not here: they are a :class:`~plyngent.kernel.channel.Channel`, and this file
+holds what both ends *do* with them — the lanes, the numbering, the watermark, and who is waiting on
+what. That is what makes a socket a channel rather than a second connection: the four lanes travel one
+way each, and what crosses them is the channel's business (:mod:`plyngent.kernel.channel`).
+
 What is *not* here yet: replay. ``Ack`` carries the watermark a replay would start from, and the
 watermark already drives folding and liveness, but replaying means keeping the messages a client
-missed — and that ring belongs to whoever owns the bytes, so it arrives with the local transport.
-The same goes for a codec: in one process a value *is* the frame, and serializing is the writer's
-step, not the queue's.
+missed — and that ring belongs to whoever owns the bytes, so it arrives with a channel that has bytes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, NamedTuple, cast, override
 
 from msgspec.structs import replace
 
+from plyngent.kernel.channel import Channel, Wire
 from plyngent.kernel.events import Human
 from plyngent.wire.ask import (
     DEFAULT_ASK_TIMEOUT_SECONDS,
@@ -58,11 +61,10 @@ from plyngent.wire.ask import (
     answer_kind,
     unanswered,
 )
-from plyngent.wire.event import Batch
 from plyngent.wire.manifest import KernelManifest
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterable
+    from collections.abc import AsyncIterator, Callable
 
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent
@@ -75,78 +77,6 @@ DEFAULT_BACKLOG = 64
 DEFAULT_BATCH_ITEMS = 8
 
 
-class Stream[T]:
-    """One lane's queue: writable without waiting, readable by its single consumer.
-
-    What to do when it overflows is deliberately absent. A buffer cannot know whether its values may
-    be dropped, folded, or must be waited for — that is the difference between the lanes, so the rule
-    stays with the lane and the buffer only says whether it is over budget.
-
-    One consumer, and the buffer enforces it by handing out **one** reader rather than a way to start
-    reading: :meth:`reader` answers the same object however often it is asked for, so a lane cannot
-    be split. That matters because :meth:`get` arms one wake-up, and a second consumer would sleep
-    through a value meant for it — the quietest failure this file could have. Every lane here has
-    exactly one reader by construction, which is the same rule the PTY registry follows.
-    """
-
-    capacity: int | None
-    _items: deque[T]
-    _wake: asyncio.Event
-    _closed: bool
-    _reader: AsyncIterator[T] | None
-
-    def __init__(self, *, capacity: int | None = None) -> None:
-        self.capacity = capacity
-        self._items = deque()
-        self._wake = asyncio.Event()
-        self._closed = False
-        self._reader = None
-
-    def full(self) -> bool:
-        """Whether the queue is over its budget — ``put`` never refuses, it only lets this happen."""
-        return self.capacity is not None and len(self._items) > self.capacity
-
-    def put(self, item: T) -> None:
-        """Append without waiting: the writer is synchronous by contract (R2.1 D11)."""
-        self._items.append(item)
-        self._wake.set()
-
-    def items(self) -> tuple[T, ...]:
-        """Everything queued, oldest first — for a lane that is about to rewrite its own backlog."""
-        return tuple(self._items)
-
-    def replace(self, items: Iterable[T]) -> None:
-        """Swap the whole backlog: folding is a change of granularity, never of content."""
-        self._items.clear()
-        self._items.extend(items)
-
-    def close(self) -> None:
-        """End the lane. What is already queued stays readable, so a leaving kernel can be drained."""
-        self._closed = True
-        self._wake.set()
-
-    def reader(self) -> AsyncIterator[T]:
-        """The lane's only consumer: the same iterator however often it is asked for."""
-        if self._reader is None:
-            self._reader = self._read()
-        return self._reader
-
-    async def get(self) -> T | None:
-        """The oldest value, waiting for one to arrive; ``None`` once the lane is closed and drained."""
-        while True:
-            if self._items:
-                return self._items.popleft()
-            if self._closed:
-                return None
-            self._wake.clear()
-            _ = await self._wake.wait()
-
-    async def _read(self) -> AsyncIterator[T]:
-        """Everything the lane will ever carry, in order, ending when it ends."""
-        while (item := await self.get()) is not None:
-            yield item
-
-
 class EventLane:
     """The outgoing lane: emission order, folding, and the judgement about silence.
 
@@ -154,16 +84,19 @@ class EventLane:
     post office: the number says what order the *client* may render in, and only the transport knows
     what it has handed over.
 
-    Folding is bounded twice — a message may carry at most ``batch_items`` items, and the backlog may
-    hold at most ``capacity`` messages — so "pack it up" cannot go on forever and the second line of
-    defence stays reachable: a client that is over the budget and has not acked for ``dead_after`` is
-    presumed gone. A fold never nests a batch, because "how deep is this message" must have one
-    answer.
+    The queue is the channel's, so "is the client behind" is a question to the channel
+    (:meth:`~plyngent.kernel.channel.Channel.backlog`) rather than a count of a buffer this class owns: a
+    socket is behind in a way an in-process pair never is, and a lane that measured only its own buffer
+    would measure one transport and guess at the other. Folding is bounded twice — a message may carry
+    at most ``batch_items`` items, and the backlog may hold ``capacity`` before it is packed — so "pack
+    it up" cannot go on forever and the second line of defence stays reachable: a client that is over
+    the budget and has not acked for ``dead_after`` is presumed gone.
     """
 
     batch_items: int
+    capacity: int
     dead_after: float
-    _stream: Stream[AnyEvent]
+    _channel: Channel
     _clock: Callable[[], float]
     _seq: int
     _acked: int
@@ -171,6 +104,7 @@ class EventLane:
 
     def __init__(
         self,
+        channel: Channel,
         *,
         capacity: int = DEFAULT_BACKLOG,
         batch_items: int = DEFAULT_BATCH_ITEMS,
@@ -178,8 +112,9 @@ class EventLane:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.batch_items = batch_items
+        self.capacity = capacity
         self.dead_after = dead_after
-        self._stream = Stream(capacity=capacity)
+        self._channel = channel
         self._clock = clock
         self._seq = 0
         self._acked = 0
@@ -193,9 +128,10 @@ class EventLane:
     def emit(self, event: AnyEvent) -> None:
         """Stamp the emission order, queue it, and fold the backlog if it is over budget."""
         self._seq += 1
-        self._stream.put(replace(event, seq=self._seq))
-        if self._stream.full():
-            self._fold()
+        if not self._channel.send(Wire.EVENT, replace(event, seq=self._seq)):
+            return
+        if self._behind():
+            self._channel.fold(Wire.EVENT, self.batch_items)
 
     def ack(self, ack: Ack) -> None:
         """Take the client's watermark. A late ack never moves it backwards, so a reordered one is harmless."""
@@ -208,43 +144,15 @@ class EventLane:
         Both halves matter: a quiet client with nothing queued is simply idle, and a client that is
         behind but still acking is slow — neither is gone.
         """
-        return self._stream.full() and self._clock() - self._last_ack > self.dead_after
-
-    def close(self) -> None:
-        """End the lane; what is queued stays readable so a client can drain a kernel that is leaving."""
-        self._stream.close()
+        return self._behind() and self._clock() - self._last_ack > self.dead_after
 
     def reader(self) -> AsyncIterator[AnyEvent]:
         """The lane's only consumer: the same iterator however often it is asked for."""
-        return self._stream.reader()
+        return cast("AsyncIterator[AnyEvent]", self._channel.read(Wire.EVENT))
 
-    def _fold(self) -> None:
-        """Hand the backlog over in fewer, larger messages, preserving every item and its ``seq``.
-
-        Runs of adjacent events are grouped up to ``batch_items`` and a batch is never folded into
-        another one. Kind plays no part: the batch *carries* its items with their own ``seq``, so what
-        a client receives is unchanged apart from how many messages it arrived in.
-        """
-        pending = self._stream.items()
-        packed: list[AnyEvent] = []
-        index = 0
-        while index < len(pending):
-            first = pending[index]
-            index += 1
-            if isinstance(first, Batch):
-                packed.append(first)
-                continue
-            run: list[AnyEvent] = [first]
-            while index < len(pending) and len(run) < self.batch_items and not isinstance(pending[index], Batch):
-                run.append(pending[index])
-                index += 1
-            packed.append(_folded(run) if len(run) > 1 else first)
-        self._stream.replace(packed)
-
-
-def _folded(run: list[AnyEvent]) -> AnyEvent:
-    """One message carrying ``run``, numbered by its last item so an ack of it covers all of them."""
-    return Batch(seq=run[-1].seq, items=tuple(run))
+    def _behind(self) -> bool:
+        """Whether more is waiting than this connection allows to pile up."""
+        return self._channel.backlog(Wire.EVENT) > self.capacity
 
 
 class LinkHuman(Human):
@@ -356,16 +264,20 @@ class _Waiting(NamedTuple):
         return answer_kind(self.question)
 
 
-class InProcLink:
-    """A kernel and one client, in one process, over four streams on one object.
+class Link:
+    """A kernel and one client over a channel: the four lanes, two tables, and one watermark.
 
     The kernel side is :meth:`emit`, :meth:`ask` and :meth:`invoke`; the client side is
     :meth:`submit`, :meth:`events`, :meth:`questions`, :meth:`answer`, :meth:`invocations`,
     :meth:`completed` and :meth:`ack` — the two halves of
     :class:`~plyngent.wire.link.KernelSide` and :class:`~plyngent.wire.link.KernelLink`. Holding both
-    is the point: an in-process client is not allowed a shortcut past the lanes, because a shortcut
-    is an API that no other transport can honour and that no later change can remove. What a client
-    must never hold is this *class*: it is handed the link face, and the type says which verbs it has.
+    is the point: a client is not allowed a shortcut past the lanes, because a shortcut is an API that
+    no other transport can honour and that no later change can remove. What a client must never hold is
+    this *class*: it is handed the link face, and the type says which verbs it has.
+
+    ``channel`` is what the values travel on, and the only thing that differs between one process and a
+    socket (:mod:`plyngent.kernel.channel`). Nothing here asks which one it was given — which is the
+    whole of "``inproc`` and ``local`` are one implementation, and the difference is a codec".
 
     ``close`` is a shutdown, not a failure: the lanes end, what is queued can still be drained, and
     questions still in flight are refused. Being *presumed gone* (:attr:`dead`) is the failure case
@@ -378,10 +290,8 @@ class InProcLink:
     """
 
     manifest: KernelManifest
-    _commands: Stream[AnyCommand]
+    _channel: Channel
     _events: EventLane
-    _questions: Stream[AnyAsk]
-    _invocations: Stream[Invocation]
     _waiting: dict[int, _Waiting]
     _running: dict[int, asyncio.Future[Returned]]
     _timeout: float | None
@@ -392,6 +302,7 @@ class InProcLink:
 
     def __init__(
         self,
+        channel: Channel,
         *,
         manifest: KernelManifest | None = None,
         backlog: int = DEFAULT_BACKLOG,
@@ -401,10 +312,9 @@ class InProcLink:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.manifest = manifest if manifest is not None else KernelManifest()
-        self._commands = Stream()
-        self._questions = Stream()
-        self._invocations = Stream()
+        self._channel = channel
         self._events = EventLane(
+            channel,
             capacity=backlog,
             batch_items=batch_items,
             dead_after=self.manifest.dead_after,
@@ -457,7 +367,7 @@ class InProcLink:
             ask = replace(ask, id=id_, timeout=patience, timeout_default=falls_back)
         waiter: asyncio.Future[AnyAnswer] = asyncio.get_running_loop().create_future()
         self._waiting[id_] = _Waiting(question=ask, future=waiter)
-        self._questions.put(ask)
+        _ = self._channel.send(Wire.QUESTION, ask)
         try:
             return await asyncio.wait_for(waiter, patience)
         except TimeoutError:
@@ -483,7 +393,7 @@ class InProcLink:
 
     def commands(self) -> AsyncIterator[AnyCommand]:
         """Read what the client asked for, oldest first, until the connection ends."""
-        return self._commands.reader()
+        return cast("AsyncIterator[AnyCommand]", self._channel.read(Wire.COMMAND))
 
     async def invoke(self, invocation: Invocation) -> Returned:
         """Ask the client to run one of its tools, and wait for that one answer — or for the deadline.
@@ -504,7 +414,7 @@ class InProcLink:
             invocation = replace(invocation, id=id_)
         waiter: asyncio.Future[Returned] = asyncio.get_running_loop().create_future()
         self._running[id_] = waiter
-        self._invocations.put(invocation)
+        _ = self._channel.send(Wire.INVOCATION, invocation)
         try:
             return await asyncio.wait_for(waiter, self._timeout)
         except TimeoutError:
@@ -518,8 +428,7 @@ class InProcLink:
         """Hand a command over; ``False`` when this connection is already gone."""
         if self._closed:
             return False
-        self._commands.put(command)
-        return True
+        return self._channel.send(Wire.COMMAND, command)
 
     def ack(self, ack: Ack) -> None:
         """Say how far this client has rendered: the resume point and the heartbeat, in one number."""
@@ -544,11 +453,11 @@ class InProcLink:
 
     def questions(self) -> AsyncIterator[AnyAsk]:
         """Read what the kernel is waiting on, oldest first — the lane that is never folded."""
-        return self._questions.reader()
+        return cast("AsyncIterator[AnyAsk]", self._channel.read(Wire.QUESTION))
 
     def invocations(self) -> AsyncIterator[Invocation]:
         """Read what the kernel wants this client to run, oldest first — the same lane as questions."""
-        return self._invocations.reader()
+        return cast("AsyncIterator[Invocation]", self._channel.read(Wire.INVOCATION))
 
     def completed(self, returned: Returned) -> bool:
         """Deliver what one of this client's tools came back with; ``False`` when that call is over.
@@ -586,12 +495,12 @@ class InProcLink:
         if self._closed:
             return
         self._closed = True
-        self._commands.close()
-        self._questions.replace(())
-        self._questions.close()
-        self._invocations.replace(())
-        self._invocations.close()
-        self._events.close()
+        # A question that is still waiting is dropped rather than handed over, so the two lanes that
+        # carry one are emptied before they are ended; the command lane is only ended, because what a
+        # client already said is still the kernel's to read.
+        self._channel.drop(Wire.QUESTION)
+        self._channel.drop(Wire.INVOCATION)
+        self._channel.close()
         for waiting in tuple(self._waiting.values()):
             if not waiting.future.done():
                 waiting.future.set_result(unanswered(waiting.question, by=By.NOBODY))

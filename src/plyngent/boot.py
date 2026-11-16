@@ -22,13 +22,14 @@ from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, Ser
 from composat.std.root import ancestors, answering_from_the_root
 
 from plyngent.kernel.catalog import BUILTIN
+from plyngent.kernel.channel import InProcChannel
 from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.history import History, available, history_path
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
-from plyngent.kernel.link import InProcLink
+from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.net.web import Web, WebChannel
@@ -73,7 +74,7 @@ class Installed:
 
     assembly: Assembly
     serving: Serving
-    _link: InProcLink
+    _link: Link
     _task: asyncio.Task[None]
     _watch: asyncio.Task[None] | None
 
@@ -81,7 +82,7 @@ class Installed:
         self,
         assembly: Assembly,
         serving: Serving,
-        link: InProcLink,
+        link: Link,
         task: asyncio.Task[None],
         watch: asyncio.Task[None] | None = None,
     ) -> None:
@@ -247,7 +248,8 @@ async def install(
         msg = f"the host at {root!r} did not come up: {started.failed}"
         raise RuntimeError(msg)
 
-    link = InProcLink(
+    link = Link(
+        InProcChannel(),
         manifest=KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,)),
         timeout=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         grades=Grades() if grades is None else grades,
