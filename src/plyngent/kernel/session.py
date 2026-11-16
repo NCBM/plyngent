@@ -385,6 +385,23 @@ class Session(Component):
 
         return await self.change(GRANTS, mutate)
 
+    async def revoke(self, path: Path) -> bool:
+        """Take back this conversation's permission for *path*; ``False`` when it held nothing.
+
+        The row is removed rather than narrowed, because a grant is one row and "how far" is the whole
+        of it: a person who says "not any more" is not asking for a smaller permission. One path and not
+        a prefix — a directory's entries are not separate rows, so nothing else is left behind.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, bool]:
+            held = _grants(before)
+            if path not in held:
+                return None, False
+            del held[path]
+            return _grants_value(held), True
+
+        return await self.change(GRANTS, mutate)
+
     @property
     def prefix_epoch(self) -> tuple[int, int]:
         """The two numbers a provider's prefix cache is keyed on, in one value (§10.5).

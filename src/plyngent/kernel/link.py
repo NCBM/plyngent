@@ -66,6 +66,7 @@ from plyngent.wire.ask import (
 )
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import KernelManifest
+from plyngent.wire.query import AnyQuery, AnyReply, Unanswered
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -297,6 +298,8 @@ class Link:
     _events: EventLane
     _waiting: dict[int, _Waiting]
     _running: dict[int, asyncio.Future[Returned]]
+    _reads: dict[int, asyncio.Future[AnyReply]]
+    _watching: asyncio.Task[None] | None
     _timeout: float | None
     _grades: Grades
     _next_id: int
@@ -331,6 +334,8 @@ class Link:
         )
         self._waiting = {}
         self._running = {}
+        self._reads = {}
+        self._watching = None
         self._timeout = timeout
         self._grades = Grades() if grades is None else grades
         self._next_id = 1
@@ -375,6 +380,14 @@ class Link:
             if not waiting.future.done():
                 waiting.future.set_result(unanswered(waiting.question, by=By.NOBODY))
         self._waiting.clear()
+        self._unanswered()
+
+    def _unanswered(self) -> None:
+        """Every read still waiting is one nobody will answer: the lane it was waiting on has ended."""
+        for waiting in tuple(self._reads.values()):
+            if not waiting.done():
+                waiting.set_exception(Unanswered())
+        self._reads.clear()
 
     async def _acknowledging(self) -> None:
         """Move the client's watermark into the lane that judges silence, and answer one claim."""
@@ -405,6 +418,27 @@ class Link:
         """Give each arriving result to the call waiting on it."""
         async for returned in cast("AsyncIterator[Returned]", self._channel.read(Wire.RETURNED)):
             self._take_returned(returned)
+
+    async def _replying(self) -> None:
+        """Give each arriving answer to the read waiting on it.
+
+        Started by the first question rather than by :meth:`start`, because the two faces are not
+        started the same way: ``start`` is what the *kernel* does with a connection it opened, and a
+        client over a socket has one without ever calling it.
+        """
+        try:
+            async for reply in cast("AsyncIterator[AnyReply]", self._channel.read(Wire.REPLY)):
+                self._take_reply(reply)
+        finally:
+            self._unanswered()
+
+    def _take_reply(self, reply: AnyReply) -> None:
+        """Hand one answer to the read that asked, or drop it because that client gave up waiting."""
+        waiting = self._reads.get(reply.id)
+        if waiting is None or waiting.done():
+            return
+        del self._reads[reply.id]
+        waiting.set_result(reply)
 
     def _take_answer(self, answer: AnyAnswer) -> None:
         """Hand one answer to its question, or drop it because that wait is over.
@@ -497,6 +531,19 @@ class Link:
         """Read what the client asked for, oldest first, until the connection ends."""
         return cast("AsyncIterator[AnyCommand]", self._channel.read(Wire.COMMAND))
 
+    def queries(self) -> AsyncIterator[AnyQuery]:
+        """Read what the client asked to be told, oldest first — one answer owed per query."""
+        return cast("AsyncIterator[AnyQuery]", self._channel.read(Wire.QUERY))
+
+    def replied(self, reply: AnyReply) -> bool:
+        """Answer the query whose number it carries; ``False`` when nothing is waiting or the lane is gone.
+
+        Answering is one value on the reply lane and no table: which read it belongs to is the number,
+        and the client's own reader is where that is settled (:meth:`_take_reply`). Nothing here is kept
+        about a query the kernel has answered.
+        """
+        return self._channel.send(Wire.REPLY, reply)
+
     async def invoke(self, invocation: Invocation) -> Returned:
         """Ask the client to run one of its tools, and wait for that one answer — or for the deadline.
 
@@ -561,6 +608,30 @@ class Link:
         """Read what the kernel wants this client to run, oldest first — the same lane as questions."""
         return cast("AsyncIterator[Invocation]", self._channel.read(Wire.INVOCATION))
 
+    async def query(self, query: AnyQuery) -> AnyReply:
+        """Ask the kernel to tell this client something, and wait for that one answer.
+
+        The reply lane is read by a task this starts, not by the one ``start`` starts: a client over a
+        socket holds a link nobody called ``start`` on, and a question that opened its own reader is a
+        question that cannot be forgotten. A connection that ends with one out raises
+        :class:`~plyngent.wire.query.Unanswered` rather than waiting for an answer that will not come.
+        """
+        if self._closed:
+            raise Unanswered
+        if self._watching is None:
+            self._watching = asyncio.get_running_loop().create_task(self._replying())
+        number = self._next_id
+        self._next_id += 1
+        answered: asyncio.Future[AnyReply] = asyncio.get_running_loop().create_future()
+        self._reads[number] = answered
+        if not self._channel.send(Wire.QUERY, replace(query, id=number)):
+            del self._reads[number]
+            raise Unanswered
+        try:
+            return await answered
+        finally:
+            _ = self._reads.pop(number, None)
+
     def completed(self, returned: Returned) -> bool:
         """Hand what one of this client's tools came back with over; ``False`` when the connection is gone.
 
@@ -615,6 +686,7 @@ class Link:
             if not waiting.future.done():
                 waiting.future.set_result(unanswered(waiting.question, by=By.NOBODY))
         self._waiting.clear()
+        self._unanswered()
 
     # -- being gone ----------------------------------------------------------------
 

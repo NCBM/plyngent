@@ -12,9 +12,10 @@ from __future__ import annotations
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from plyngent.cli.grammar import Catalog, Runs, SlashCompleter, Wrong, build, decode
+from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Wrong, build, decode, help_text
 from plyngent.wire.command import Rollback, SetRoute
 from plyngent.wire.manifest import KernelManifest, command_specs
+from plyngent.wire.query import Grants
 
 
 def _catalog() -> Catalog:
@@ -76,3 +77,25 @@ def test_a_command_whose_argument_no_line_can_carry_is_withheld() -> None:
     assert isinstance(decode("/offer --tools x", catalog, session="main"), Wrong), (
         "a half-parsed argument is worse than no word at all"
     )
+
+
+def test_a_read_word_asks_instead_of_asking_for_something() -> None:
+    """A word that reads comes back as a query, and its one argument is which conversation it means."""
+    assert decode("/grants", _catalog(), session="main") == Reads(query=Grants(session="main"))
+    assert decode("/grants --session other", _catalog(), session="main") == Reads(query=Grants(session="other"))
+
+
+def test_a_read_word_takes_an_argument_it_cannot_and_nothing_else() -> None:
+    """The shape is the query's own: a read that grew a second argument would be a command."""
+    intent = decode("/grants --path somewhere", _catalog(), session="main")
+
+    assert isinstance(intent, Wrong)
+    assert "--session" in intent.text
+
+
+def test_the_listing_names_the_words_that_read() -> None:
+    """A word a person cannot find is a word that does not exist, and the listing is where they look."""
+    listed = help_text(_catalog())
+
+    assert "/grants" in listed
+    assert "Which paths outside its workspace" in listed, "and it says what asking it will tell them"

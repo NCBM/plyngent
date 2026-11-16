@@ -44,6 +44,7 @@ from plyngent.wire.event import (
     CompactRefused,
     DocumentStored,
     ExportRefused,
+    GrantRevoked,
     KernelLeaving,
     OfferRefused,
     Pruned,
@@ -61,6 +62,7 @@ from plyngent.wire.event import (
     TurnStarted,
     Usage,
 )
+from plyngent.wire.query import AnyReply, GrantTable
 
 if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAsk
@@ -124,6 +126,7 @@ type _Reported = (
     | RouteRefused
     | RolledBack
     | RollbackRefused
+    | GrantRevoked
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
@@ -133,7 +136,7 @@ type _Diffed = Changed
 
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, and what it
 #: kept. A document belongs here and not to a turn because the thing kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack
+type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
@@ -574,6 +577,22 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
             assert_never(never)
 
 
+def held(answer: AnyReply) -> tuple[str, ...]:
+    """What one read's answer says, as the lines this client prints for it.
+
+    A row per path with the permission on it, because that is what a person has to be able to check
+    against a question they once answered; and "nothing" rather than nothing when the table is empty,
+    because an empty screen is indistinguishable from a read that never happened.
+    """
+    match answer:
+        case GrantTable(reached=reached):
+            if not reached:
+                return ("nothing outside this workspace is allowed",)
+            return tuple(f"{one.path}: {one.mode}" for one in reached)
+        case _ as never:
+            assert_never(never)
+
+
 def _reported(event: _Reported) -> tuple[_Row, ...]:
     """What the kernel says about itself and the session it is serving, rather than about a turn.
 
@@ -585,7 +604,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     match event:
         case KernelLeaving() | SessionsListed():
             return _connection(event)
-        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack():
+        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked():
             return _setting(event)
         case CompactRefused() | PruneRefused() | ExportRefused() | ResumeRefused() | RouteRefused() | RollbackRefused():
             return _declined(event)
@@ -620,6 +639,9 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:
         case RolledBack(session=session, revision=revision, target=target, restored=restored):
             counted = "1 path" if len(restored) == 1 else f"{len(restored)} paths"
             said = f"rolled back to {target[:8]}: {counted} put back ({revision[:8]})"
+            return ((session, Shown(said, "notice")),)
+        case GrantRevoked(session=session, path=path, revoked=revoked):
+            said = f"{path} is no longer allowed" if revoked else f"{path} was not allowed"
             return ((session, Shown(said, "notice")),)
         case _ as never:
             assert_never(never)

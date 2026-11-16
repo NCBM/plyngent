@@ -15,16 +15,22 @@ what                          direction       what a transport may do
 :class:`AnyAsk` / :class:`AnyAnswer`  both            never dropped, correlated, has a deadline
 :class:`Invocation` / :class:`Returned`  both         the same lane and the same rules, for a tool
 :class:`Ack`                  client → kernel never dropped; it *is* the resume point
+:class:`Query` / :class:`Reply`  both            correlated by a number, and answered once
 ============================  ==============  ===========================================
 
 A question and an invocation travel on one lane because they are one thing asked of two different
 people, and the rule they share is the rule that matters: neither may be dropped. What they carry is
 not shared, which is why they are two pairs of values and not one.
 
+A **query** is the same shape a third time, in the one direction that had none: a client asking the
+kernel to *tell* it something. It belongs on its own lane rather than on the event lane, because the
+event lane is allowed to coalesce what it carries and a read whose answer was folded into a batch is a
+frontend waiting for an answer that will never come (§5, E134).
+
 Deliberately absent: a ``Fork`` command. Branching is "the next ``begin_after`` points somewhere
 else", which is a client's view state, so the kernel has nothing to execute. Also absent: any query
-command — reads are methods on the link (:mod:`plyngent.wire.link`), which is why no command needs a
-reply id.
+*command* — a read is a method on the link (:mod:`plyngent.wire.link`) and travels as a ``Query``, which
+is why no command needs a reply id.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ from plyngent.wire.command import Resume as Resume
 from plyngent.wire.command import Rollback as Rollback
 from plyngent.wire.command import SetRoute as SetRoute
 from plyngent.wire.command import Submit as Submit
+from plyngent.wire.command import Ungrant as Ungrant
 from plyngent.wire.event import AnswerCut as AnswerCut
 from plyngent.wire.event import AnyEvent as AnyEvent
 from plyngent.wire.event import AssistantText as AssistantText
@@ -76,6 +83,7 @@ from plyngent.wire.event import DocumentStored as DocumentStored
 from plyngent.wire.event import Entry as Entry
 from plyngent.wire.event import Event as Event
 from plyngent.wire.event import ExportRefused as ExportRefused
+from plyngent.wire.event import GrantRevoked as GrantRevoked
 from plyngent.wire.event import KernelLeaving as KernelLeaving
 from plyngent.wire.event import ListedSession as ListedSession
 from plyngent.wire.event import OfferRefused as OfferRefused
@@ -101,5 +109,12 @@ from plyngent.wire.manifest import PROTOCOL_VERSION as PROTOCOL_VERSION
 from plyngent.wire.manifest import CommandSpec as CommandSpec
 from plyngent.wire.manifest import KernelManifest as KernelManifest
 from plyngent.wire.manifest import command_specs as command_specs
+from plyngent.wire.query import AnyQuery as AnyQuery
+from plyngent.wire.query import AnyReply as AnyReply
+from plyngent.wire.query import Grants as Grants
+from plyngent.wire.query import GrantTable as GrantTable
+from plyngent.wire.query import Query as Query
+from plyngent.wire.query import Reached as Reached
+from plyngent.wire.query import Reply as Reply
 from plyngent.wire.scope import CancelReason as CancelReason
 from plyngent.wire.scope import CancelScope as CancelScope

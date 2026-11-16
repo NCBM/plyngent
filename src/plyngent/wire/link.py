@@ -16,11 +16,10 @@ One process satisfies both at once (that is what an in-process transport *is*), 
 tells you nothing: every reader of a connection can tick both boxes. The check that matters is the
 static type of the value in hand.
 
-What is deliberately *not* here: the read methods (``trajectory`` / ``artifact`` / ``pty`` /
-``status``). They belong on the link rather than in the command union — a command changes the world,
-a link method reads it — but each waits for the store behind it (the forest, the artifact store, the
-PTY broker, the session projection). A protocol carrying a method nobody implements is a lie no type
-checker can catch.
+What is deliberately *not* here: the read methods (``artifact`` / ``pty`` / ``status``). They belong on
+the link rather than in the command union — a command changes the world, a link method reads it — and
+:meth:`KernelLink.query` is the lane they will travel on, which arrived with the first of them
+(``grants``, §5 E134). Each still waits for the store behind it.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from plyngent.wire.event import AnyEvent
     from plyngent.wire.flow import Ack
     from plyngent.wire.manifest import KernelManifest
+    from plyngent.wire.query import AnyQuery, AnyReply
 
 
 class KernelLink(Protocol):
@@ -84,6 +84,16 @@ class KernelLink(Protocol):
 
     def invocations(self) -> AsyncIterator[Invocation]:
         """Read what the kernel wants this client to run, oldest first — the same lane as questions."""
+        ...
+
+    async def query(self, query: AnyQuery) -> AnyReply:
+        """Ask the kernel to tell this client something, and wait for that one answer.
+
+        A read rather than a command: nothing changes, the answer is of the kind the query names, and
+        the number that pairs the two is this connection's own (an ``id`` of ``0`` means "name this one
+        for me"). A connection that ended while a query was out answers with what it has — which is
+        nothing, so the wait ends in an error the caller can see rather than in silence.
+        """
         ...
 
     def close(self) -> None:
@@ -143,6 +153,19 @@ class KernelSide(Protocol):
 
     def commands(self) -> AsyncIterator[AnyCommand]:
         """Read what the client asked for, oldest first, until the connection ends."""
+        ...
+
+    def queries(self) -> AsyncIterator[AnyQuery]:
+        """Read what the client asked to be told, oldest first — one answer owed per query."""
+        ...
+
+    def replied(self, reply: AnyReply) -> bool:
+        """Answer the query whose number it carries; ``False`` when nothing is waiting for that one.
+
+        Nothing waiting is not a failure here: a client that went away, or one that gave up, has no
+        future to fill, and a kernel that raised over it would be reporting the client's departure as
+        its own mistake.
+        """
         ...
 
     def close(self) -> None:

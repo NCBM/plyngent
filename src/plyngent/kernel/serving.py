@@ -44,6 +44,7 @@ from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.history import Unreadable, Unwilling
 from plyngent.kernel.link import LinkHuman
+from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import Summary, Withheld, transcript
 from plyngent.kernel.turn import TurnRunner
@@ -60,12 +61,14 @@ from plyngent.wire.command import (
     Rollback,
     SetRoute,
     Submit,
+    Ungrant,
 )
 from plyngent.wire.event import (
     Compacted,
     CompactRefused,
     DocumentStored,
     ExportRefused,
+    GrantRevoked,
     KernelLeaving,
     ListedSession,
     OfferRefused,
@@ -81,6 +84,7 @@ from plyngent.wire.event import (
     TurnRefused,
 )
 from plyngent.wire.manifest import CLIENT_OFFER
+from plyngent.wire.query import Grants, GrantTable, Reached
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
@@ -92,6 +96,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.wire.command import AnyCommand, OfferedTool
     from plyngent.wire.link import KernelSide
+    from plyngent.wire.query import AnyQuery, AnyReply
 
 
 class Serving:
@@ -149,13 +154,45 @@ class Serving:
         The loop ends for one of two reasons and both mean the same thing here: the client closed the
         connection, or :meth:`stop` did. Either way the questions in flight have already been refused
         by the link, and the only thing left to undo is who answers them.
+
+        Reads are on their own task, because they are on their own lane and because a read must not wait
+        behind a turn: a client asking what it may reach is answered while a model is still thinking,
+        and neither question is the other's business.
         """
         await self._attach()
+        reading = asyncio.create_task(self._reading())
         try:
             async for command in self.link.commands():
                 await self._handle(command)
         finally:
+            _ = reading.cancel()
+            _ = await asyncio.gather(reading, return_exceptions=True)
             await self._detach()
+
+    async def _reading(self) -> None:
+        """Answer every query this client asks, until its lane ends."""
+        async for query in self.link.queries():
+            _ = self.link.replied(await self._answered(query))
+
+    async def _answered(self, query: AnyQuery) -> AnyReply:
+        """What one read is told.
+
+        A read is never refused with an event: its answer is the same kind as the question. The one case
+        with nothing to say — a session this kernel does not serve — answers with the empty value, which
+        is the truth about a conversation that holds no grants.
+        """
+        match query:
+            case Grants(session=session):
+                found = self._session(session)
+                held = (
+                    ()
+                    if found is None
+                    else tuple(
+                        Reached(path=display(path, root=found.host.workspace.root), mode=mode.name.lower())
+                        for path, mode in found.grants.items()
+                    )
+                )
+                return GrantTable(id=query.id, reached=held)
 
     async def stop(self, reason: str = "") -> None:
         """Leave: say so, then close the lane the loop is reading.
@@ -188,8 +225,8 @@ class Serving:
                 await self._bookkeeping(command)
             case Export(session=session, begin_after=begin_after):
                 await self._export(session, begin_after)
-            case SetRoute(session=session, route=route):
-                await self._route(session, route)
+            case SetRoute() | Ungrant():
+                await self._setting(command)
             case Resume() | Rollback():
                 await self._past(command)
             case _ as never:
@@ -204,6 +241,31 @@ class Serving:
                 await self._open(session, seed)
             case Close(session=session):
                 await self._close(session)
+
+    async def _setting(self, command: SetRoute | Ungrant) -> None:
+        """The two commands that move one of a session's own settings rather than touching the world."""
+        match command:
+            case SetRoute(session=session, route=route):
+                await self._route(session, route)
+            case Ungrant(session=session, path=path):
+                await self._ungrant(session, path)
+
+    async def _ungrant(self, session: str, path: str) -> None:
+        """Take back one path this conversation was allowed, and say which of the two happened.
+
+        The path is resolved the way every path tool resolves one, against the workspace the session's
+        host works in, because that is what the tool that granted it wrote down: a grant is a row keyed
+        by an absolute path, and "the same path spelled differently" is not a second row.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(GrantRevoked(session=session, path=path, revoked=False))
+            return
+        target = normalize(path, base=found.host.workspace.root)
+        taken = await found.revoke(target)
+        self.link.emit(
+            GrantRevoked(session=session, path=display(target, root=found.host.workspace.root), revoked=taken)
+        )
 
     async def _cancel(self, session: str, scope: str | None, reason: CancelReason, detail: str) -> None:
         """Stop what one session is doing, as narrowly as the scope says.

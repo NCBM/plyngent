@@ -249,6 +249,19 @@ class RollbackRefused(Event, tag="rollback-refused", frozen=True, kw_only=True):
     reason: str = ""
 
 
+class GrantRevoked(Event, tag="grant-revoked", frozen=True, kw_only=True):
+    """One path this conversation was allowed is allowed no longer — or was never allowed at all.
+
+    ``revoked`` says which of the two happened, because they are different facts about the world and one
+    of them is worth acting on: a path somebody thought they had taken away, and had not, is a permission
+    they believe is gone while it is still there.
+    """
+
+    session: str = ""
+    path: str = ""
+    revoked: bool = False
+
+
 class Routed(Event, tag="routed", frozen=True, kw_only=True):
     """This session now asks *route*, and which epoch that is.
 
@@ -466,6 +479,7 @@ type AnyEvent = (
     | ResumeRefused
     | RolledBack
     | RollbackRefused
+    | GrantRevoked
     | DocumentStored
     | Changed
     | KernelLeaving

@@ -28,6 +28,7 @@ from plyngent.wire.command import AnyCommand
 from plyngent.wire.event import AnyEvent, Batch
 from plyngent.wire.flow import Ack
 from plyngent.wire.manifest import KernelManifest
+from plyngent.wire.query import AnyQuery, AnyReply
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,6 +63,11 @@ class Wire(StrEnum):
     QUESTION = "question"
     #: Kernel to client, the other kind of asking: one of *this* client's tools to run.
     INVOCATION = "invocation"
+    #: Client to kernel: a question it is waiting for an answer to. Not a command — nothing here changes
+    #: the world, and the answer cannot be folded or dropped the way an event may be.
+    QUERY = "query"
+    #: Kernel to client: the answer to one :attr:`QUERY`, carrying that query's number.
+    REPLY = "reply"
 
 
 #: The width of the length in front, in bytes.
@@ -78,6 +84,8 @@ KINDS: dict[Wire, int] = {
     Wire.EVENT: 5,
     Wire.QUESTION: 6,
     Wire.INVOCATION: 7,
+    Wire.QUERY: 8,
+    Wire.REPLY: 9,
 }
 
 _LANES: dict[int, Wire] = {kind: wire for wire, kind in KINDS.items()}
@@ -95,6 +103,8 @@ _DECODERS: dict[Wire, msgspec.msgpack.Decoder[Any]] = {
     Wire.EVENT: msgspec.msgpack.Decoder(AnyEvent),
     Wire.QUESTION: msgspec.msgpack.Decoder(AnyAsk),
     Wire.INVOCATION: msgspec.msgpack.Decoder(Invocation),
+    Wire.QUERY: msgspec.msgpack.Decoder(AnyQuery),
+    Wire.REPLY: msgspec.msgpack.Decoder(AnyReply),
 }
 
 

@@ -1,9 +1,9 @@
 """What a client asks the kernel to do.
 
-A command is an *intent*, never a query: everything a client wants to read is a method on the link
-(``describe`` / ``trajectory`` / ``artifact``), so there is no command that answers a question and
-therefore no request ids to correlate. ``submit`` returns ``None``; whether a turn began is reported
-back as an event.
+A command is an *intent*, never a query: everything a client wants to **read** is a method on the link
+(``query`` / ``trajectory`` / ``artifact``), which travels on its own lane with its own number
+(:mod:`plyngent.wire.query`). So no command here answers a question, and no command needs a reply id —
+which is why there is no table of outstanding commands anywhere in this package.
 
 Every command names a ``session`` except the ones about the set of sessions, and ``Offer`` — a command
 about the connection itself. Nothing here is a callback and nothing here carries a callable: the kernel
@@ -147,6 +147,22 @@ class Rollback(Command, tag="rollback", frozen=True, kw_only=True):
     force: bool = False
 
 
+class Ungrant(Command, tag="ungrant", frozen=True, kw_only=True):
+    """Take back this conversation's permission to reach one path outside its workspace.
+
+    The other half of the one question a person answers about a path. What was allowed can be read
+    (:class:`~plyngent.wire.query.Grants`) and taken away here, so a "yes" is not permanent merely
+    because the path was never written down again — which is what "you may allow a directory for this
+    conversation" means if nothing can ever stop it.
+
+    ``path`` is spelled the way the tools spell a path: expanded, and resolved against the workspace
+    when it is relative. A path this conversation holds nothing for changes nothing, and the answer says
+    which of the two happened rather than pretending they are one.
+    """
+
+    path: str = ""
+
+
 class OfferedTool(Struct, frozen=True, kw_only=True):
     """One tool a client offers: its name, the shape of its arguments, and whether it is always there.
 
@@ -180,5 +196,17 @@ class Offer(Command, tag="offer", frozen=True, kw_only=True):
 
 #: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
 type AnyCommand = (
-    Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export | Offer | Rollback
+    Open
+    | Close
+    | Submit
+    | Cancel
+    | SetRoute
+    | Compact
+    | Prune
+    | Resume
+    | ListSessions
+    | Export
+    | Offer
+    | Rollback
+    | Ungrant
 )

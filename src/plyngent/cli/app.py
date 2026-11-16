@@ -41,16 +41,17 @@ import msgspec
 from msgspec import Struct
 from msgspec.structs import replace
 
-from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
+from plyngent.cli.grammar import Catalog, Composes, Help, Reads, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.policy import Policy, Tally
-from plyngent.cli.render import Stage, notice
+from plyngent.cli.render import Stage, held, notice
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
 from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished
 from plyngent.wire.flow import Ack
+from plyngent.wire.query import AnyQuery, Unanswered
 from plyngent.wire.scope import CancelReason
 
 if TYPE_CHECKING:
@@ -406,12 +407,30 @@ class App:
                 if isinstance(composed, Typed):
                     return None if self.client.submit(self._message(session, composed.text)) else GONE
                 return None
+            case Reads(query=query):
+                return await self._read(query)
             case Help(text=text):
                 await self._screen.tell(notice(text))
                 return None
             case Wrong(text=text):
                 await self._screen.tell(notice(text))
                 return None
+
+    async def _read(self, query: AnyQuery) -> int | None:
+        """Put one question to the kernel and print the answer.
+
+        The answer is this client's own row rather than an event, because it is not something the kernel
+        said to everybody: it is what one client asked for, so it goes where this client's own lines go
+        — the same place ``/help`` writes. A connection that ended while the question was out is the same
+        departure any other command would have found.
+        """
+        try:
+            answer = await self.client.query(query)
+        except Unanswered:
+            return GONE
+        for row in held(answer):
+            await self._screen.tell(notice(row))
+        return None
 
     async def _next_line(self) -> Line | None:
         """One line, or ``None`` when the kernel left while the human was still typing."""

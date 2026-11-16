@@ -35,6 +35,7 @@ import click
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
+from plyngent.wire.query import AnyQuery, Grants, Query
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,6 +49,16 @@ if TYPE_CHECKING:
 #: reason; ``tests/test_structure.py`` holds those rules together.
 ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": "set-route"}
 
+#: The words that *read* rather than ask for anything: each names one query, and none is in the manifest.
+#: A manifest lists what a client may ask the kernel to **do**; these ask it to say something and travel
+#: on their own lane (§5, E134), so the table is this adapter's — the word is the query's tag the same way
+#: a command's word is its tag, and ``tests/test_structure.py`` holds the two tables to one shape.
+#:
+#: Every read so far is about one session, which is why the table says so: a read that was about nothing
+#: in particular would be a second shape here, and naming it today would be a dict of ``Query`` that no
+#: read could be built from.
+READS: dict[str, type[Grants]] = {"grants": Grants}
+
 #: The one word whose text is written in an editor rather than on the line.
 COMPOSED = "submit"
 
@@ -57,6 +68,9 @@ COMPOSE_NOTE = "Write the message in your editor, then send it."
 
 #: How a slash line is spelled.
 SLASH = "/"
+
+#: The only argument a read word takes: which conversation to ask about, and nothing else.
+READ_USAGE = "[--session TEXT]"
 
 #: How many entries an option that stands for a tuple takes, when the schema fixes its length.
 PAIR_LENGTH = 2
@@ -131,8 +145,19 @@ class Wrong:
     text: str
 
 
-#: What one line came to. Four outcomes, four different things for the loop to do.
-type Intent = Runs | Composes | Help | Wrong
+@dataclass(frozen=True)
+class Reads:
+    """A question to put to the kernel, whose answer this client prints and does not forward.
+
+    It is not a ``Runs``: a command changes the world and its outcome arrives as an event, while a read
+    asks for a value and gets it back on the lane that promised one (§5, E134).
+    """
+
+    query: AnyQuery
+
+
+#: What one line came to. Five outcomes, five different things for the loop to do.
+type Intent = Runs | Composes | Reads | Help | Wrong
 
 
 def build(manifest: KernelManifest, *, session: str) -> Catalog:
@@ -171,11 +196,16 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
     """The listing, or one command's own help, from the same table the parser is built from."""
     if word is not None:
         tag = catalog.word(word)
-        return f"no command {SLASH}{word} here" if tag is None else _help_of(catalog.offers[tag])
+        if tag is not None:
+            return _help_of(catalog.offers[tag])
+        if word in READS:
+            return f"{SLASH}{word} {READ_USAGE}\n\n  {_read_summary(READS[word])}"
+        return f"no command {SLASH}{word} here"
     spelled = [
         (f"{SLASH}{tag}" + (" <editor>" if entry.composes else _usage(entry)), entry.summary)
         for tag, entry in catalog.offers.items()
     ]
+    spelled.extend((f"{SLASH}{word} {READ_USAGE}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
     lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
     lines.append(
@@ -201,6 +231,9 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
         return Help(text=help_text(catalog))
     if said == "help":
         return Help(text=help_text(catalog, rest.strip() or None))
+    reading = READS.get(said)
+    if reading is not None:
+        return _reading(said, reading, rest, session=session)
     tag = catalog.word(said)
     if tag is None:
         return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
@@ -209,6 +242,33 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     except ValueError as exc:
         return Wrong(text=f"{SLASH}{said}: {exc}")
     return _known(tag, catalog.offers[tag], args, session=session)
+
+
+def _reading(word: str, kind: type[Grants], rest: str, *, session: str) -> Intent:
+    """A read word: the query it names, and the session it is about — the one argument there is.
+
+    Click is not used here and that is not a shortcut: there is no command behind this word to derive a
+    parser from, and a read that grew a second argument would be a read that should have been a command.
+    ``--help`` is answered from the query's own docstring, the way a command's help is answered from its.
+    """
+    try:
+        parts = shlex.split(rest)
+    except ValueError as exc:
+        return Wrong(text=f"{SLASH}{word}: {exc}")
+    if parts in (["--help"], ["-h"]):
+        return Help(text=help_text(Catalog(), word))
+    match parts:
+        case []:
+            return Reads(query=kind(session=session))
+        case ["--session", asked]:
+            return Reads(query=kind(session=asked))
+        case _:
+            return Wrong(text=f"{SLASH}{word} takes {READ_USAGE} and nothing else")
+
+
+def _read_summary(kind: type[Query]) -> str:
+    """What one read is for: the first line of its own docstring, as a command's summary is its own."""
+    return (kind.__doc__ or "").strip().splitlines()[0]
 
 
 def _known(tag: str, entry: Entry, args: list[str], *, session: str) -> Intent:
@@ -448,7 +508,7 @@ class SlashCompleter(Completer):
         head, _, tail = text.partition(" ")
         if not tail:
             word = head[len(SLASH) :]
-            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers}):
+            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS}):
                 if candidate.startswith(word):
                     yield Completion(
                         f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
@@ -464,5 +524,7 @@ class SlashCompleter(Completer):
 
     def _summary(self, candidate: str) -> str:
         """What a word does, looked up through the alias that spells it."""
+        if candidate in READS:
+            return _read_summary(READS[candidate])
         tag = self._catalog.word(candidate)
         return "" if tag is None else self._catalog.offers[tag].summary
