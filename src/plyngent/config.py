@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 import tomlkit
@@ -36,6 +36,7 @@ from platformdirs import user_data_path
 from tomlkit.exceptions import ParseError
 
 from plyngent.boot import install as install_kernel
+from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
 
     from tomlkit.toml_document import TOMLDocument
 
-    from plyngent.boot import Installed
+    from plyngent.boot import Daemon, Installed
     from plyngent.kernel.model import Model
 
 #: What the file is called under the user's data directory — the same root the journals live in.
@@ -328,20 +329,35 @@ async def install(
     a frontend reaches it is the frontend's business — but it is here so that a story about a file still
     runs over every transport the kernel can open.
     """
+    return await install_kernel(root, transport=transport, model=model, **_from_the_file(root, settings))
+
+
+async def serve(root: Path | str, settings: Settings, *, endpoint: Path | str, model: Model | None = None) -> Daemon:
+    """Bring a kernel up configured by *settings* and serve it at one address (``--serve``).
+
+    The same translation as :func:`install` and the same host, with an address instead of a client: a
+    daemon has nobody in front of it, so the only thing this program still decides is where it listens.
+    """
+    return await serve_kernel(root, endpoint=endpoint, model=model, **_from_the_file(root, settings))
+
+
+def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
+    """Everything a settings value says, as the keywords a kernel is brought up with.
+
+    It is one function so that the two ways a program starts — one frontend, or an address — cannot
+    disagree about what the file means; the list of names is the list of what the file may say (§0.11).
+    """
     skills = settings.skills(root)
     plan = PromptPlan.of(skills)
     if settings.persona is not None:
         plan = replace(plan, persona=settings.persona)
     if settings.directives is not None:
         plan = replace(plan, directives=settings.directives)
-    return await install_kernel(
-        root,
-        transport=transport,
-        model=model,
-        routes=settings.routes.routes,
-        route=settings.routes.default,
-        skills=skills,
-        prompt=plan,
-        journal=settings.journal,
-        limits=settings.limits,
-    )
+    return {
+        "routes": settings.routes.routes,
+        "route": settings.routes.default,
+        "skills": skills,
+        "prompt": plan,
+        "journal": settings.journal,
+        "limits": settings.limits,
+    }

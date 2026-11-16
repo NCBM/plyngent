@@ -9,10 +9,12 @@ of the test is that nothing else decides it.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
+import click
 import pytest
 
-from plyngent.__main__ import _editor, _markdown
+from plyngent.__main__ import _claim, _editor, _markdown
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
 
@@ -74,3 +76,17 @@ def test_the_plain_lane_reads_markdown_as_the_text_it_is(monkeypatch: pytest.Mon
     monkeypatch.setenv("PLYNGENT_PLAIN", "1")
 
     assert _markdown(reading=_Terminal(), written=_Terminal()) is False
+
+
+def test_the_workspace_next_to_connect_is_a_claim_and_not_a_wish(tmp_path: Path) -> None:
+    """E123: a kernel that works somewhere else is refused before this program sends anything."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    assert _claim(tmp_path, said=str(tmp_path)) is None, "the directory the kernel names is the one asked for"
+    with pytest.raises(click.ClickException):
+        _claim(tmp_path, said=str(elsewhere))
+
+
+def test_connect_without_a_workspace_claims_nothing(tmp_path: Path) -> None:
+    assert _claim(None, said=str(tmp_path)) is None, "a run that named no directory reads what it finds"
