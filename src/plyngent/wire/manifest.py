@@ -55,6 +55,10 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
 
     protocol_version: int = PROTOCOL_VERSION
     kernel: str = "plyngent"
+    #: Which run of this kernel this is. A client that remembered how far it had read on a *previous*
+    #: run is holding a number from another count, so it compares this first and claims nothing when it
+    #: differs (§5 B).
+    epoch: str = ""
     #: The directory this kernel works in, as it resolved it. A client that was told which workspace to
     #: work in compares rather than assumes: two programs in different directories are two kernels, and
     #: finding that out here is a sentence instead of a session that edits the wrong tree (§5 B, E123).

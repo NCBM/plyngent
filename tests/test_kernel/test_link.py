@@ -12,18 +12,22 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import pytest
+
 from plyngent.kernel.channel import InProcChannel
+from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.wire.ask import Agreed, By, FreeText, Invocation, Returned, Written
+from plyngent.wire.event import TurnStarted
 from plyngent.wire.flow import Ack
 
 if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 
-def _link() -> Link:
+def _link(ledger: Ledger | None = None) -> Link:
     """One connection to nothing in particular: a channel, and the link the kernel's half would hold."""
-    link = Link(InProcChannel(), timeout=0.5)
+    link = Link(InProcChannel(), ledger=ledger, timeout=0.5)
     link.start()
     return link
 
@@ -124,7 +128,30 @@ async def test_a_connection_that_ends_refuses_the_question_that_was_waiting() ->
         link.close()
 
 
+async def test_a_claim_is_answered_once_and_never_again() -> None:
+    """The ring answers the one claim a connection makes about the past; a second claim is just an ack.
+
+    A number this kernel did not say is the same nothing: it names a count somebody else made.
+    """
+    ledger = Ledger()
+    link = _link(ledger)
+    try:
+        link.emit(TurnStarted())
+        link.emit(TurnStarted())
+        _ = [await anext(link.events()) for _ in range(2)]
+
+        link.ack(Ack(seq=1, resume=True))
+        link.ack(Ack(seq=40, resume=True))
+
+        assert (await asyncio.wait_for(anext(link.events()), 1.0)).seq == 2, "the first claim was answered"
+        with pytest.raises(TimeoutError):
+            _ = await asyncio.wait_for(anext(link.events()), 0.05)
+    finally:
+        link.close()
+
+
 async def _settled(link: Link, *, want: int) -> bool:
+    """Whether the connection read the ack it was sent, waiting a bounded number of turns for it."""
     """Whether the connection read the ack it was sent, waiting a bounded number of turns for it."""
     for _ in range(200):
         if link.acked == want:

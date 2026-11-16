@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -31,6 +32,7 @@ from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.history import History, available, history_path
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
+from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
@@ -85,6 +87,7 @@ class _Kernel(NamedTuple):
     host: str
     specs: tuple[ToolSpec, ...]
     manifest: KernelManifest
+    ledger: Ledger
     patience: float | None
     graded: Grades
 
@@ -119,6 +122,7 @@ class Installed:
     serving: Serving
     host: str
     manifest: KernelManifest
+    ledger: Ledger
     _link: Link
     _client: KernelLink
     _task: asyncio.Task[None]
@@ -135,6 +139,7 @@ class Installed:
         task: asyncio.Task[None],
         manifest: KernelManifest,
         *,
+        ledger: Ledger,
         host: str = DEFAULT_HOST,
         client: KernelLink | None = None,
         watch: asyncio.Task[None] | None = None,
@@ -145,6 +150,7 @@ class Installed:
         self.serving = serving
         self.host = host
         self.manifest = manifest
+        self.ledger = ledger
         self._link = link
         self._client = link if client is None else client
         self._task = task
@@ -173,16 +179,16 @@ class Installed:
         """
         manifest = replace(self.manifest, caps=caps)
         if self._listening is None:
-            link = _opened(InProcChannel(), manifest)
+            link = _opened(InProcChannel(), manifest, ledger=self.ledger)
             serving, task = _served(self.assembly, self.host, link, BUILTIN)
             self._others.append(_Held(serving, link, task))
             return link
         far = await local.connect(self._listening.endpoint)
         near = await self._listening.accept()
         _greeted(manifest, near)
-        link = _opened(near, manifest)
+        link = _opened(near, manifest, ledger=self.ledger)
         serving, task = _served(self.assembly, self.host, link, BUILTIN)
-        client = Link(far, manifest=await _greeting(far))
+        client = Link(far, manifest=await _greeting(far), ledger=self.ledger)
         self._others.append(_Held(serving, link, task, (near, far), client))
         return client
 
@@ -347,11 +353,13 @@ async def install(
         channel = await local.connect(named)
         near = await listening.accept()
         _greeted(kernel.manifest, near)
-        link = _opened(near, kernel.manifest, timeout=kernel.patience, grades=kernel.graded)
-        client: KernelLink = Link(channel, manifest=await _greeting(channel))
+        link = _opened(near, kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded)
+        client: KernelLink = Link(channel, manifest=await _greeting(channel), ledger=kernel.ledger)
         streams = (near, channel)
     else:
-        link = _opened(InProcChannel(), kernel.manifest, timeout=kernel.patience, grades=kernel.graded)
+        link = _opened(
+            InProcChannel(), kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded
+        )
         client = link
     serving, task = _served(kernel.assembly, host, link, kernel.specs)
     watch = asyncio.create_task(_replace_the_broker(kernel.assembly, Declaration(PtyBroker).key))
@@ -361,6 +369,7 @@ async def install(
         link,
         task,
         kernel.manifest,
+        ledger=kernel.ledger,
         host=host,
         client=client,
         watch=watch,
@@ -426,7 +435,13 @@ class Daemon:
         while not self._stopped:
             near = await self.listening.accept()
             _greeted(self._kernel.manifest, near)
-            link = _opened(near, self._kernel.manifest, timeout=self._kernel.patience, grades=self._kernel.graded)
+            link = _opened(
+                near,
+                self._kernel.manifest,
+                ledger=self._kernel.ledger,
+                timeout=self._kernel.patience,
+                grades=self._kernel.graded,
+            )
             serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
             self._held.append(_Held(serving, link, task, (near,)))
 
@@ -589,12 +604,18 @@ async def _assembled(
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
     specs = (*BUILTIN, *net_specs(web), *skill_specs(skills))
-    manifest = KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,), workspace=str(_workspace_of(root)))
+    manifest = KernelManifest(
+        commands=command_specs(),
+        caps=(CLIENT_OFFER,),
+        epoch=secrets.token_hex(8),
+        workspace=str(_workspace_of(root)),
+    )
     return _Kernel(
         assembly,
         host,
         specs,
         manifest,
+        Ledger(),
         DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         Grades() if grades is None else grades,
     )
@@ -629,15 +650,17 @@ def _opened(
     channel: Channel,
     manifest: KernelManifest,
     *,
+    ledger: Ledger,
     timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
     grades: Grades | None = None,
 ) -> Link:
     """The kernel's half of one connection: the link it reads, started, ready to be served.
 
     Starting it here rather than by whichever caller remembered to is what makes "an answer is settled
-    where the answer lane is read" true of every connection this program opens, however it got one.
+    where the answer lane is read" true of every connection this program opens, however it got one. The
+    ledger is the host's, so the numbers a client reads do not restart when its connection does.
     """
-    link = Link(channel, manifest=manifest, timeout=timeout, grades=grades)
+    link = Link(channel, manifest=manifest, ledger=ledger, timeout=timeout, grades=grades)
     link.start()
     return link
 

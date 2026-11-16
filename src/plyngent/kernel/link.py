@@ -10,8 +10,9 @@ The streams differ in exactly one thing, and it is the reason they are separate 
 * ``commands`` — client to kernel, never dropped and never reordered. Unbounded here because a client
   that cannot keep up is stopped by the transport it writes through, not by losing an instruction.
 * ``events`` — kernel to client, may be **folded** into fewer, larger messages when the client falls
-  behind (:class:`EventLane`). Every event carries a ``seq`` assigned here, at emission, because the
-  order a client has to render is the transport's fact and not the emitter's.
+  behind (:class:`EventLane`). Every event carries a ``seq`` already: the host numbers what it says once
+  (:class:`~plyngent.kernel.ledger.Ledger`), because a client that comes back holds a number and it has
+  to mean the same thing on the other side of a break.
 * ``questions`` — kernel to client and the answer back, never dropped. A question that disappeared
   would leave the kernel waiting on an answer nobody can give, and its deadline would turn that into
   a silent refusal. So it is not an event and it is not folded.
@@ -20,13 +21,15 @@ The streams differ in exactly one thing, and it is the reason they are separate 
   disconnect does not answer a call that is in flight, it lets the deadline do it (§10.8).
 
 The queues themselves are not here: they are a :class:`~plyngent.kernel.channel.Channel`, and this file
-holds what both ends *do* with them — the lanes, the numbering, the watermark, and who is waiting on
-what. That is what makes a socket a channel rather than a second connection: the four lanes travel one
-way each, and what crosses them is the channel's business (:mod:`plyngent.kernel.channel`).
+holds what both ends *do* with them — the lanes, the watermark, who is waiting on what, and what a claim
+about the past is answered with. That is what makes a socket a channel rather than a second connection:
+the lanes travel one way each, and what crosses them is the channel's business
+(:mod:`plyngent.kernel.channel`).
 
-What is *not* here yet: replay. ``Ack`` carries the watermark a replay would start from, and the
-watermark already drives folding and liveness, but replaying means keeping the messages a client
-missed — and that ring belongs to whoever owns the bytes, so it arrives with a channel that has bytes.
+Replay is here and in the ledger, split the way the two questions split: the *number* and the window are
+the host's (:class:`~plyngent.kernel.ledger.Ledger`), and which connection hears an answer to its claim
+is this file's (:meth:`Link._answer`). One client's claim is answered once, and never at the expense of
+what the connection is already holding.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast, override
 from msgspec.structs import replace
 
 from plyngent.kernel.events import Human
+from plyngent.kernel.ledger import Ledger
 from plyngent.wire.ask import (
     DEFAULT_ASK_TIMEOUT_SECONDS,
     SILENCE,
@@ -81,9 +85,9 @@ DEFAULT_BATCH_ITEMS = 8
 class EventLane:
     """The outgoing lane: emission order, folding, and the judgement about silence.
 
-    ``seq`` is assigned here rather than by whoever emits, for the reason a letter is stamped at the
-    post office: the number says what order the *client* may render in, and only the transport knows
-    what it has handed over.
+    The *number* on an event is not assigned here: it is the host's, and it is already on the value when
+    it arrives (:class:`~plyngent.kernel.ledger.Ledger`), because a client that reconnects compares a
+    number it read before with the numbers of a connection it had not met yet.
 
     The queue is the channel's, so "is the client behind" is a question to the channel
     (:meth:`~plyngent.kernel.channel.Channel.backlog`) rather than a count of a buffer this class owns: a
@@ -99,7 +103,6 @@ class EventLane:
     dead_after: float
     _channel: Channel
     _clock: Callable[[], float]
-    _seq: int
     _acked: int
     _last_ack: float
 
@@ -117,7 +120,6 @@ class EventLane:
         self.dead_after = dead_after
         self._channel = channel
         self._clock = clock
-        self._seq = 0
         self._acked = 0
         self._last_ack = clock()
 
@@ -127,9 +129,8 @@ class EventLane:
         return self._acked
 
     def emit(self, event: AnyEvent) -> None:
-        """Stamp the emission order, queue it, and fold the backlog if it is over budget."""
-        self._seq += 1
-        if not self._channel.send(Wire.EVENT, replace(event, seq=self._seq)):
+        """Queue one already-numbered event, and fold the backlog if it is over budget."""
+        if not self._channel.send(Wire.EVENT, event):
             return
         if self._behind():
             self._channel.fold(Wire.EVENT, self.batch_items)
@@ -292,6 +293,7 @@ class Link:
 
     manifest: KernelManifest
     _channel: Channel
+    _ledger: Ledger
     _events: EventLane
     _waiting: dict[int, _Waiting]
     _running: dict[int, asyncio.Future[Returned]]
@@ -300,6 +302,7 @@ class Link:
     _next_id: int
     _closed: bool
     _dead: bool
+    _claimed: bool
     _pump: asyncio.Task[None] | None
 
     def __init__(
@@ -307,6 +310,7 @@ class Link:
         channel: Channel,
         *,
         manifest: KernelManifest | None = None,
+        ledger: Ledger | None = None,
         backlog: int = DEFAULT_BACKLOG,
         batch_items: int = DEFAULT_BATCH_ITEMS,
         timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
@@ -315,6 +319,9 @@ class Link:
     ) -> None:
         self.manifest = manifest if manifest is not None else KernelManifest()
         self._channel = channel
+        # A connection made on its own numbers its own events: it is what a story or a test needs, and it
+        # is the same rule a host's ledger follows, one degree smaller.
+        self._ledger = Ledger() if ledger is None else ledger
         self._events = EventLane(
             channel,
             capacity=backlog,
@@ -329,6 +336,7 @@ class Link:
         self._next_id = 1
         self._closed = False
         self._dead = False
+        self._claimed = False
         self._pump = None
 
     def start(self) -> None:
@@ -369,9 +377,24 @@ class Link:
         self._waiting.clear()
 
     async def _acknowledging(self) -> None:
-        """Move the client's watermark into the lane that judges silence."""
+        """Move the client's watermark into the lane that judges silence, and answer one claim."""
         async for ack in cast("AsyncIterator[Ack]", self._channel.read(Wire.ACK)):
+            self._answer(ack)
             self._events.ack(ack)
+
+    def _answer(self, ack: Ack) -> None:
+        """Hand over what a client missed, for the one claim it makes about a connection that is gone.
+
+        A claim is a number to read *from*, and it is answered once: every later ack on this connection is
+        what it has rendered here, and answering those would send it what it is already holding. A claim
+        this kernel is not the author of — a number beyond anything it said — answers nothing, because
+        replaying a stranger's count would be replaying somebody else's words.
+        """
+        if not ack.resume or self._claimed:
+            return
+        self._claimed = True
+        for event in self._ledger.since(ack.seq):
+            self._events.emit(event)
 
     async def _answering(self) -> None:
         """Give each arriving answer to the question waiting on it."""
@@ -413,7 +436,7 @@ class Link:
         """Say something outward without waiting for anyone to see it."""
         if self._closed:
             return
-        self._events.emit(event)
+        self._events.emit(self._ledger.next(event))
         if self._events.silent():
             self._hang_up()
 
