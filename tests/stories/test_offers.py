@@ -252,9 +252,14 @@ async def test_a_client_tool_is_called_and_its_answer_is_only_prose(story_with: 
 
 
 async def test_a_client_that_never_answers_is_a_failure_and_not_a_verdict(story_with: Scripted) -> None:
-    """Acceptance ⑤: a call nobody answers waits out its own deadline, and the turn goes on after it."""
+    """Acceptance ⑤: a call nobody answers waits out its own deadline, and the turn goes on after it.
+
+    The deadline is short enough to keep the story cheap and long enough for the question *before* the
+    call — a client's tool is approved by the person first, and an approval that ran out while the story
+    was still looking at the screen would be a different story (a policy's silence, not a lost call).
+    """
     story = await story_with(
-        calling("lookup", {"query": "biscuit"}), text("fine"), tools=_with_lookup(_never), deadline=0.01
+        calling("lookup", {"query": "biscuit"}), text("fine"), tools=_with_lookup(_never), deadline=0.1
     )
 
     await story.type("find it")

@@ -71,7 +71,9 @@ SETTLE_TURNS = 64
 #: A turn of the loop is only half of what a step costs now: the journal writes on a thread, so a step
 #: hands the work over and waits for it to report back, and a spin of ``sleep(0)`` never lets that thread
 #: run. A short real pause is not a story about a clock — it is the same "let the work happen" as
-#: :data:`SETTLE_PAUSE`, and it is small enough that a story still costs about what its work costs.
+#: :data:`SETTLE_PAUSE`, and it is small enough that a story still costs about what its work costs. It is
+#: a count of pauses rather than a deadline, which is why it can afford to be generous: what is being
+#: waited for is a thread being scheduled, and that is a fact about the machine this suite runs on.
 SETTLE_ROUNDS = 8
 SETTLE_TICK = 0.0005
 
@@ -79,7 +81,7 @@ SETTLE_TICK = 0.0005
 #:
 #: A bounded count of short pauses rather than a timeout: the loop has to give the OS a chance to run
 #: the thread, and a spin of ``sleep(0)`` never does.
-SETTLE_TRIES = 400
+SETTLE_TRIES = 1000
 SETTLE_PAUSE = 0.005
 
 #: The session a story starts in unless it says otherwise.

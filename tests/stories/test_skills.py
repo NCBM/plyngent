@@ -196,6 +196,7 @@ async def test_a_body_too_long_to_send_is_a_handle_and_the_handle_is_the_way_bac
     await story.require("skills")
     await story.require("document")
     await story.type("read the whole thing")
+    await story.finished()
 
     kept = told(story.requests()[1])
     assert re.search(r"\[d\d+\] alpha/SKILL\.md", kept), (
