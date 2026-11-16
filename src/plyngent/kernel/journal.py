@@ -428,6 +428,28 @@ class SqliteTrail(Trail):
         )
 
     @override
+    async def entries(self, session: str) -> tuple[Entry, ...]:
+        """Every row this session has, in arrival order — one query, one decode per row.
+
+        Arrival order is ``seq`` and not the row number, because a row number is this file's business:
+        two journals that grew in the same order number their rows the same way today and nothing
+        promises they will tomorrow. Nothing is filtered here, so a caller sees the bookkeeping a
+        projection drops, which is the whole difference between "what happened" and "what was said".
+        """
+        rows = await self._read_all(_COLUMNS + " WHERE session = ? ORDER BY seq", (session,))
+        return tuple(_entry(session, row) for row in rows)
+
+    @override
+    async def sessions(self) -> tuple[str, ...]:
+        """Every conversation this file holds, in the order the first entry of each arrived.
+
+        ``MIN(id)`` rather than ``MIN(seq)``: a sequence number is per session — every session's first
+        entry is number one — so only the row number is comparable across sessions.
+        """
+        rows = await self._read_all("SELECT session FROM entry GROUP BY session ORDER BY MIN(id)", ())
+        return tuple(str(session) for (session,) in rows)
+
+    @override
     async def next_turn(self, session: str) -> int:
         """The next turn id for this session, allocated here so a stored log resumes it (D17).
 
@@ -549,6 +571,16 @@ class Journal(Component, Trail):
     async def shape(self, session: str) -> Shape:
         """This session's heads and roots, in arrival order."""
         return await self._backend.shape(session)
+
+    @override
+    async def entries(self, session: str) -> tuple[Entry, ...]:
+        """Every row this session has, in arrival order, as the backend holds it."""
+        return await self._backend.entries(session)
+
+    @override
+    async def sessions(self) -> tuple[str, ...]:
+        """Every conversation this journal holds, in the order each one's first entry arrived."""
+        return await self._backend.sessions()
 
     @override
     async def next_turn(self, session: str) -> int:

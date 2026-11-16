@@ -45,7 +45,7 @@ they hold whichever backend is behind this protocol:
 5. **One append is one insert and one number.** A refused append leaves neither half behind, so no
    reader ever sees an entry that half arrived.
 
-**Why the six methods are async.** A backend that keeps the log in a file does its I/O on the loop's
+**Why every method here is async.** A backend that keeps the log in a file does its I/O on the loop's
 own thread, and a read that blocked there would stall every other task the kernel is running — a child
 on a terminal among them. What the protocol costs is one ``await`` per call and no thread of its own.
 
@@ -297,10 +297,10 @@ class Shape:
 class Trail(ABC):
     """The journal, as everything that appends to it or projects it sees it.
 
-    Seven business methods and the pair of hooks that open and close a backend: the lifecycle is the
-    component's which holds it, and a second backend (a database file, with a projection cache beside
-    it) implements this and is installed there. Nothing outside allocates a number, and nothing outside
-    reads a row without going through an id it was given.
+    Seven business methods, the two reads that answer "what is in this journal", and the pair of hooks
+    that open and close a backend: the lifecycle is the component's which holds it, and a second backend
+    (a database file, with a projection cache beside it) implements this and is installed there. Nothing
+    outside allocates a number, and nothing outside reads a row without going through an id it was given.
     """
 
     @abstractmethod
@@ -374,6 +374,26 @@ class Trail(ABC):
     @abstractmethod
     async def shape(self, session: str) -> Shape:
         """This session's heads and roots, in arrival order."""
+
+    @abstractmethod
+    async def entries(self, session: str) -> tuple[Entry, ...]:
+        """Every row this session has, in arrival order — the whole log, bookkeeping and all.
+
+        What a *conversation* is, is :meth:`derive`: a projection reads one chain and the tags a model
+        understands. This is the other question, and the one a person asks — what happened here, in what
+        order, and what continues what — so it answers every record, including the ones no model reads.
+        The forest is these rows: a parent is an id in this same tuple, and an entry nothing names is a
+        head, which is why nothing here composes a tree a caller would then have to un-compose.
+        """
+
+    @abstractmethod
+    async def sessions(self) -> tuple[str, ...]:
+        """Every conversation this journal holds, in the order the first one of each arrived.
+
+        Not "the sessions this process has served": a journal outlives the process that wrote it, and a
+        conversation nobody has opened since is exactly the one somebody is looking for. Order is first
+        arrival rather than name, because a name sorts into a list of names and a log does not.
+        """
 
     @abstractmethod
     async def next_turn(self, session: str) -> int:
