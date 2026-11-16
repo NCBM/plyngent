@@ -22,6 +22,10 @@ at all", which click reads as a missing option.
 ``/submit`` is the exception that proves the rule: it exists so a message can be composed in the
 human's editor, which is the one thing a single line cannot do. It takes no arguments; the text comes
 from the editor and the session is the one in focus.
+
+``/travel`` is the second word this adapter owns, and the only one that sends nothing at all: where a
+frontend is looking is its own state, so standing somewhere else is a change here rather than a request
+to the kernel. Everything else on a line is either a command from the manifest or a read.
 """
 
 from __future__ import annotations
@@ -65,6 +69,23 @@ COMPOSED = "submit"
 #: What that word does, said in its own terms: the wire's summary describes a ``submit`` whose text is
 #: an argument, and this client withholds that argument in favour of an editor.
 COMPOSE_NOTE = "Write the message in your editor, then send it."
+
+#: The word that moves where this client stands in the forest. It is the adapter's and has no command
+#: behind it at all: which branch a frontend is reading is the frontend's own state, so there is nothing
+#: to ask the kernel — the entry becomes the next message's ``begin_after``, and the kernel validates it
+#: when that message arrives (R2.1 D22, §5 P5).
+TRAVELLED = "travel"
+
+#: What standing somewhere means, in the words a person reads: nothing about this program, and nothing
+#: about what it avoids.
+TRAVEL_NOTE = "Continue this conversation from an earlier entry."
+
+#: The only argument that word takes: which entry to stand at.
+TRAVEL_USAGE = "--entry ENTRY"
+
+#: The word that asks what the words are. It is the adapter's, like the two above: the manifest lists the
+#: commands, and the sentence about them is this client's.
+HELP = "help"
 
 #: How a slash line is spelled.
 SLASH = "/"
@@ -156,8 +177,19 @@ class Reads:
     query: AnyQuery
 
 
-#: What one line came to. Five outcomes, five different things for the loop to do.
-type Intent = Runs | Composes | Reads | Help | Wrong
+@dataclass(frozen=True)
+class Travels:
+    """A place in the forest to stand at from now on: what the next message will continue.
+
+    It is not a ``Runs`` either, and for the opposite reason to a read: nothing is sent at all. The
+    kernel keeps no "current branch", so where this frontend is looking is this frontend's business.
+    """
+
+    entry: str
+
+
+#: What one line came to. Six outcomes, six different things for the loop to do.
+type Intent = Runs | Composes | Reads | Travels | Help | Wrong
 
 
 def build(manifest: KernelManifest, *, session: str) -> Catalog:
@@ -200,12 +232,15 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
             return _help_of(catalog.offers[tag])
         if word in READS:
             return f"{SLASH}{word} {READ_USAGE}\n\n  {_read_summary(READS[word])}"
+        if word == TRAVELLED:
+            return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
         return f"no command {SLASH}{word} here"
     spelled = [
         (f"{SLASH}{tag}" + (" <editor>" if entry.composes else _usage(entry)), entry.summary)
         for tag, entry in catalog.offers.items()
     ]
     spelled.extend((f"{SLASH}{word} {READ_USAGE}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
+    spelled.append((f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}", TRAVEL_NOTE))
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
     lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
     lines.append(
@@ -220,28 +255,20 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
 
 
 def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
-    """A line that begins with the slash: a word, then the arguments it was given.
-
-    The arguments are split like a shell's, so a quoted value stays one argument and an unquoted one is
-    several; a line with an unclosed quote is a sentence rather than an exception, because the person is
-    still typing on the other end of it.
-    """
+    """A line that begins with the slash: a word, then the arguments it was given."""
     said, _, rest = text.partition(" ")
-    if not said:
-        return Help(text=help_text(catalog))
-    if said == "help":
-        return Help(text=help_text(catalog, rest.strip() or None))
+    if not said or said == HELP:
+        # A bare slash asks what the word for asking does, so both are the same answer.
+        return Help(text=help_text(catalog, (rest.strip() or None) if said else None))
     reading = READS.get(said)
     if reading is not None:
         return _reading(said, reading, rest, session=session)
+    if said == TRAVELLED:
+        return _travelling(rest)
     tag = catalog.word(said)
     if tag is None:
         return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
-    try:
-        args = shlex.split(rest)
-    except ValueError as exc:
-        return Wrong(text=f"{SLASH}{said}: {exc}")
-    return _known(tag, catalog.offers[tag], args, session=session)
+    return _known(tag, catalog.offers[tag], rest, session=session)
 
 
 def _reading(word: str, kind: type[Grants | Trajectory], rest: str, *, session: str) -> Intent:
@@ -271,8 +298,34 @@ def _read_summary(kind: type[Query]) -> str:
     return (kind.__doc__ or "").strip().splitlines()[0]
 
 
-def _known(tag: str, entry: Entry, args: list[str], *, session: str) -> Intent:
-    """A word this client can spell: either it wants an editor, or click does the parsing."""
+def _travelling(rest: str) -> Intent:
+    """Where to stand: one entry id, spelled as the option a person can see in the listing.
+
+    One argument and no second: an entry is a name the kernel minted, so there is nothing here to
+    interpret — and an empty one is a line that forgot its value rather than a place to stand.
+    """
+    try:
+        parts = shlex.split(rest)
+    except ValueError as exc:
+        return Wrong(text=f"{SLASH}{TRAVELLED}: {exc}")
+    match parts:
+        case ["--entry", entry] if entry:
+            return Travels(entry=entry)
+        case _:
+            return Wrong(text=f"{SLASH}{TRAVELLED} takes {TRAVEL_USAGE} and nothing else")
+
+
+def _known(tag: str, entry: Entry, rest: str, *, session: str) -> Intent:
+    """A word this client can spell: either it wants an editor, or click does the parsing.
+
+    The arguments are split like a shell's, so a quoted value stays one argument and an unquoted one is
+    several; a line with an unclosed quote is a sentence rather than an exception, because the person is
+    still typing on the other end of it.
+    """
+    try:
+        args = shlex.split(rest)
+    except ValueError as exc:
+        return Wrong(text=f"{SLASH}{tag}: {exc}")
     if entry.composes:
         if args:
             return Wrong(text=f"{SLASH}{tag} takes no argument: it opens an editor for the text")
@@ -508,7 +561,7 @@ class SlashCompleter(Completer):
         head, _, tail = text.partition(" ")
         if not tail:
             word = head[len(SLASH) :]
-            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS}):
+            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED}):
                 if candidate.startswith(word):
                     yield Completion(
                         f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
@@ -526,5 +579,7 @@ class SlashCompleter(Completer):
         """What a word does, looked up through the alias that spells it."""
         if candidate in READS:
             return _read_summary(READS[candidate])
+        if candidate == TRAVELLED:
+            return TRAVEL_NOTE
         tag = self._catalog.word(candidate)
         return "" if tag is None else self._catalog.offers[tag].summary

@@ -90,3 +90,45 @@ async def test_a_conversation_this_kernel_is_not_serving_has_no_rows(story_with:
     await story.finished()
 
     assert await story.client.trajectory("elsewhere") == ()
+
+
+async def test_travelling_moves_where_the_next_message_continues(story_with: Scripted) -> None:
+    """Standing on an entry an earlier answer grew from: the next message goes past it, not past the end.
+
+    Nothing is asked of the kernel to do this — which branch a frontend reads is its own business — so
+    what the story can see is the consequence: the conversation the model is given is the one that ends
+    at that entry, plus what was just said.
+    """
+    story = await story_with(text("first"), text("second"))
+    await story.type("one")
+    await story.finished()
+    read_from = len(story.notices())
+
+    await story.type("/travel --entry e2")
+    await story.settle()
+    assert story.notices()[read_from:] == ("continuing from e2",), "the cursor moved, and says where to"
+
+    await story.type("two")
+    await story.finished(turn=2)
+
+    assert [message.text for message in story.requests()[-1].messages] == ["one", "two"], (
+        "the answer that grew from e2 is not on the chain the new message continues"
+    )
+
+
+async def test_travelling_to_an_entry_that_is_not_there_says_so_and_stays(story_with: Scripted) -> None:
+    """A name typed by a person is a guess: a place this conversation does not have is a line, not a cursor."""
+    story = await story_with(text("first"), text("second"))
+    await story.type("one")
+    await story.finished()
+    read_from = len(story.notices())
+
+    await story.type("/travel --entry e99")
+    await story.settle()
+    assert story.notices()[read_from:] == ("no entry e99 in this conversation; /history lists the ones there are",)
+
+    await story.type("two")
+    await story.finished(turn=2)
+    assert [message.text for message in story.requests()[-1].messages] == ["one", "first", "two"], (
+        "and the conversation still continues from where it did"
+    )

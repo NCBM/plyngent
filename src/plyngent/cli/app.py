@@ -41,7 +41,7 @@ import msgspec
 from msgspec import Struct
 from msgspec.structs import replace
 
-from plyngent.cli.grammar import Catalog, Composes, Help, Reads, Runs, Wrong, decode
+from plyngent.cli.grammar import Catalog, Composes, Help, Reads, Runs, Travels, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.policy import Policy, Tally
@@ -407,12 +407,24 @@ class App:
                 if isinstance(composed, Typed):
                     return None if self.client.submit(self._message(session, composed.text)) else GONE
                 return None
+            case _ as other:
+                return await self._otherwise(other)
+
+    async def _otherwise(self, intent: Reads | Travels | Help | Wrong) -> int | None:
+        """The lines that neither send a command nor compose one: a read, a place to stand, or a word.
+
+        Three answers rather than three kinds of answer, and the same exit code: a connection that ended
+        while a read was out is the departure any other command would have found, and a word is a line
+        this client writes for itself. The parameter is the whole of the last three members of
+        :data:`~plyngent.cli.grammar.Intent`, so a new one fails to type-check at the call above rather
+        than falling through to nothing here.
+        """
+        match intent:
             case Reads(query=query):
                 return await self._read(query)
-            case Help(text=text):
-                await self._screen.tell(notice(text))
-                return None
-            case Wrong(text=text):
+            case Travels(entry=entry):
+                return await self._travel(entry)
+            case Help(text=text) | Wrong(text=text):
                 await self._screen.tell(notice(text))
                 return None
 
@@ -430,6 +442,28 @@ class App:
             return GONE
         for row in held(answer):
             await self._screen.tell(notice(row))
+        return None
+
+    async def _travel(self, entry: str) -> int | None:
+        """Stand somewhere else in this conversation: what the next message will continue.
+
+        Nothing is asked of the kernel to *do* anything — which branch a frontend reads is the frontend's
+        own state (R2.1 D22) — but the entry is checked against the forest first, because a name typed by
+        a person is a guess and a message written from a place that does not exist would be refused a turn
+        later with a sentence about an entry rather than about the line they typed.
+
+        The row says where they now stand: a cursor that moved silently is a person who finds out by
+        reading the answer to a message they meant to write somewhere else.
+        """
+        try:
+            rows = await self.client.trajectory(self.session)
+        except Unanswered:
+            return GONE
+        if not any(row.id == entry for row in rows):
+            await self._screen.tell(notice(f"no entry {entry} in this conversation; /history lists the ones there are"))
+            return None
+        self._cursor = entry
+        await self._screen.tell(notice(f"continuing from {entry}"))
         return None
 
     async def _next_line(self) -> Line | None:

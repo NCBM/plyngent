@@ -12,7 +12,7 @@ from __future__ import annotations
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Wrong, build, decode, help_text
+from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Travels, Wrong, build, decode, help_text
 from plyngent.wire.command import Rollback, SetRoute
 from plyngent.wire.manifest import KernelManifest, command_specs
 from plyngent.wire.query import Grants, Trajectory
@@ -86,6 +86,12 @@ def test_a_read_word_asks_instead_of_asking_for_something() -> None:
     assert decode("/history", _catalog(), session="main") == Reads(query=Trajectory(session="main")), (
         "two reads, one shape: the word is the query's tag and the session is what it is about"
     )
+
+
+def test_the_word_that_moves_where_this_client_stands_sends_nothing() -> None:
+    """Where a frontend is reading is its own state, so this word is a value here and no command at all."""
+    assert decode("/travel --entry e7", _catalog(), session="main") == Travels(entry="e7")
+    assert isinstance(decode("/travel", _catalog(), session="main"), Wrong), "a place has to be named"
 
 
 def test_a_read_word_takes_an_argument_it_cannot_and_nothing_else() -> None:
