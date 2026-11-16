@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final, override
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
 
 
 # The address and the reasons are values: they cross the boundary, so they live in the contract
@@ -171,6 +171,30 @@ class CancelToken:
             self._drop(waiter)
             self._release(scope, task)
 
+    async def blocking[T](self, scope: CancelScope, work: Callable[..., T], /, *args: object, **kwargs: object) -> T:
+        """Run one blocking call off the loop, on this token's books.
+
+        A blocking call has to leave the loop — a directory walk of a checkout, a file read, a git that
+        shells out — and a thread is the only way to do that here. It is also the one thing a
+        cancellation cannot reach: the *task* stops waiting and the thread goes on working. So what the
+        token remembers is the thread, and :meth:`settle` waits for that — a turn that was stopped still
+        owes its history the results of the calls that were mid-flight, and "mid-flight" for a file
+        read means a thread nobody had joined (§0.13, E97).
+
+        A scope that is already stopped never starts the thread at all: the call has not begun, so
+        there is nothing to wait for and nothing to report.
+        """
+        reason = self.reason_for(scope)
+        if reason is not None:
+            raise Cancelled(scope, reason, self.detail_for(scope))
+        running: asyncio.Task[T] = asyncio.ensure_future(asyncio.to_thread(work, *args, **kwargs))
+        self._hold(scope, running)
+        running.add_done_callback(lambda done, *, at=scope: self._release(at, done))
+        # Shielded, and that is the whole of the trick: a task cancelled while awaiting another cancels
+        # what it awaits, which would take this thread off the books at the exact moment somebody wants
+        # to wait for it. What the caller's cancellation ends is its own waiting, and nothing else.
+        return await asyncio.shield(running)
+
     # -- bookkeeping ---------------------------------------------------------------
 
     def _nearest(self, scope: CancelScope) -> tuple[CancelReason, str] | None:
@@ -246,6 +270,10 @@ class Scope:
 
     async def guard[T](self, work: Awaitable[T]) -> T:
         return await self.token.guarded(self.path, work)
+
+    async def blocking[T](self, work: Callable[..., T], /, *args: object, **kwargs: object) -> T:
+        """Run one blocking call in a thread, and be sure :meth:`settle` waits for it."""
+        return await self.token.blocking(self.path, work, *args, **kwargs)
 
     async def settle(self) -> int:
         return await self.token.settle(self.path)
