@@ -261,9 +261,15 @@ async def test_an_attempt_beside_the_chain_does_not_move_where_the_conversation_
 
 
 async def _read_a_picture(story: Story) -> Result:
-    """Put a picture in the workspace, read it, and answer the message the model was left with."""
+    """Put a picture in the workspace, read it, and answer the message the model was left with.
+
+    Waits for the turn to end rather than for the loop to have got somewhere: reading a picture is a
+    file read, which a tool hands to a thread, and the request the answer belongs to is assembled after
+    that thread reports back.
+    """
     (story.workspace / "pic.png").write_bytes(PNG)
     await story.type("look at the picture")
+    await story.finished()
     last = story.requests()[-1].messages[-1]
     assert isinstance(last, Result), "the second request ends with what the read came back with"
     return last
