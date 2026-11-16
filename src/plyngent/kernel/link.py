@@ -299,6 +299,7 @@ class Link:
     _next_id: int
     _closed: bool
     _dead: bool
+    _pump: asyncio.Task[None] | None
 
     def __init__(
         self,
@@ -327,6 +328,62 @@ class Link:
         self._next_id = 1
         self._closed = False
         self._dead = False
+        self._pump = None
+
+    def start(self) -> None:
+        """Begin reading what the other end sends back: acks, answers, and what its calls came to.
+
+        Those three lanes are settled here rather than by whoever asked, because settling has to happen
+        in exactly one place: in one process the two ends are the same object, and over a socket they are
+        two, so a rule that lived where the question was asked would be written twice and could disagree
+        with itself. Doing nothing twice is what makes this safe to call from a composition root.
+        """
+        if self._pump is not None or self._closed:
+            return
+        self._pump = asyncio.get_running_loop().create_task(self._settling())
+
+    async def _settling(self) -> None:
+        """Read the three lanes a client answers on, until the connection ends."""
+        _ = await asyncio.gather(self._acknowledging(), self._answering(), self._completing())
+
+    async def _acknowledging(self) -> None:
+        """Move the client's watermark into the lane that judges silence."""
+        async for ack in cast("AsyncIterator[Ack]", self._channel.read(Wire.ACK)):
+            self._events.ack(ack)
+
+    async def _answering(self) -> None:
+        """Give each arriving answer to the question waiting on it."""
+        async for answer in cast("AsyncIterator[AnyAnswer]", self._channel.read(Wire.ANSWER)):
+            self._take_answer(answer)
+
+    async def _completing(self) -> None:
+        """Give each arriving result to the call waiting on it."""
+        async for returned in cast("AsyncIterator[Returned]", self._channel.read(Wire.RETURNED)):
+            self._take_returned(returned)
+
+    def _take_answer(self, answer: AnyAnswer) -> None:
+        """Hand one answer to its question, or drop it because that wait is over.
+
+        A wrong kind is dropped rather than accepted: it leaves the question outstanding, so a client
+        can see the refusal and answer the question it was actually asked.
+        """
+        waiting = self._waiting.get(answer.id)
+        if waiting is None or waiting.future.done() or not isinstance(answer, waiting.admits):
+            return
+        del self._waiting[answer.id]
+        waiting.future.set_result(answer)
+
+    def _take_returned(self, returned: Returned) -> None:
+        """Hand one result to its call, or drop it because the kernel stopped waiting for that one.
+
+        A call the kernel gave up on is gone, and a late result is dropped rather than taken: what was
+        written when the deadline passed is the history, and a second answer would be a second one.
+        """
+        waiter = self._running.get(returned.id)
+        if waiter is None or waiter.done():
+            return
+        del self._running[returned.id]
+        waiter.set_result(returned)
 
     # -- the kernel's face ---------------------------------------------------------
 
@@ -431,21 +488,21 @@ class Link:
         return self._channel.send(Wire.COMMAND, command)
 
     def ack(self, ack: Ack) -> None:
-        """Say how far this client has rendered: the resume point and the heartbeat, in one number."""
-        self._events.ack(ack)
+        """Say how far this client has rendered: the resume point and the heartbeat, in one number.
+
+        Handed over rather than applied: the watermark is the kernel's own count, and it moves when the
+        lane that judges silence reads it (:meth:`_acknowledging`).
+        """
+        _ = self._channel.send(Wire.ACK, ack)
 
     def answer(self, answer: AnyAnswer) -> bool:
-        """Deliver an answer; ``False`` when nobody was waiting for that id, or the kind is wrong.
+        """Hand an answer over; ``False`` when this connection is already gone.
 
-        A wrong kind is not silently dropped: it leaves the question outstanding, so the client can
-        see the refusal and answer the question it was actually asked.
+        Whether anybody was still waiting for that id is not this method's answer any more, and cannot
+        be: the wait is on the other end of a socket. What a stale answer does is decided where every
+        arriving answer is decided (:meth:`_take_answer`), and what it does is nothing.
         """
-        waiting = self._waiting.get(answer.id)
-        if waiting is None or waiting.future.done() or not isinstance(answer, waiting.admits):
-            return False
-        del self._waiting[answer.id]
-        waiting.future.set_result(answer)
-        return True
+        return self._channel.send(Wire.ANSWER, answer)
 
     def events(self) -> AsyncIterator[AnyEvent]:
         """Read what the kernel says, in emission order, until it closes the lane."""
@@ -460,17 +517,13 @@ class Link:
         return cast("AsyncIterator[Invocation]", self._channel.read(Wire.INVOCATION))
 
     def completed(self, returned: Returned) -> bool:
-        """Deliver what one of this client's tools came back with; ``False`` when that call is over.
+        """Hand what one of this client's tools came back with over; ``False`` when the connection is gone.
 
-        A call the kernel stopped waiting for is gone, and a late answer is dropped rather than taken:
-        the result was written when the deadline passed, and a second one would be a second history.
+        A call the kernel stopped waiting for is not an error here either: the result is dropped where
+        every arriving result is handled (:meth:`_take_returned`), because the deadline that ended the
+        wait is what wrote the history.
         """
-        waiter = self._running.get(returned.id)
-        if waiter is None or waiter.done():
-            return False
-        del self._running[returned.id]
-        waiter.set_result(returned)
-        return True
+        return self._channel.send(Wire.RETURNED, returned)
 
     @property
     def acked(self) -> int:
@@ -495,6 +548,9 @@ class Link:
         if self._closed:
             return
         self._closed = True
+        if self._pump is not None:
+            _ = self._pump.cancel()
+            self._pump = None
         # A question that is still waiting is dropped rather than handed over, so the two lanes that
         # carry one are emptied before they are ended; the command lane is only ended, because what a
         # client already said is still the kernel's to read.

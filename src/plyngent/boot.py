@@ -254,6 +254,7 @@ async def install(
         timeout=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         grades=Grades() if grades is None else grades,
     )
+    link.start()
     # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).

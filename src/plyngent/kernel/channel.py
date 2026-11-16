@@ -1,9 +1,9 @@
 """The lanes a connection is made of, and nothing about what a value means.
 
-A connection carries four kinds of value in one direction each: a command, an event, a question, and a
-call for the client to run. This is the layer that holds *where they wait* — and only that. Nothing
-here reads a value: what a command means, and who may send one, is the kernel's business and the
-contract's.
+A connection carries seven kinds of value in one direction each: what the client asks for, what it
+answers, what it says it has read, and what the kernel says, asks, and calls. This is the layer that
+holds *where they wait* — and only that. Nothing here reads a value: what a command means, and who may
+send one, is the kernel's business and the contract's.
 
 Two implementations, differing in exactly one codec:
 
@@ -42,6 +42,12 @@ class Wire(StrEnum):
 
     #: Client to kernel, never dropped and never reordered.
     COMMAND = "command"
+    #: Client to kernel: how far this client has rendered, and the heartbeat in one number.
+    ACK = "ack"
+    #: Client to kernel, in answer to one question: the other half of :attr:`QUESTION`.
+    ANSWER = "answer"
+    #: Client to kernel, in answer to one call: the other half of :attr:`INVOCATION`.
+    RETURNED = "returned"
     #: Kernel to client, in emission order, and the one lane that may be folded.
     EVENT = "event"
     #: Kernel to client, one at a time, and never folded: a question nobody can see is a hang.

@@ -180,6 +180,7 @@ class Story:
         self.editor = ScriptedHuman(focus=session, err=self._err)
         self._code = None
         self._others = []
+        self._links: list[Link] = []
         self.app = App(
             kernel.client,
             session=session,
@@ -403,8 +404,10 @@ class Story:
         can still do, which is exactly the case.
         """
         link = Link(InProcChannel(), manifest=KernelManifest(commands=command_specs(), caps=caps))
+        link.start()
         serving = Serving(self.kernel.assembly, host=DEFAULT_HOST, link=link, specs=BUILTIN)
         self._others.append(asyncio.create_task(serving.run()))
+        self._links.append(link)
         return link
 
     # -- what the session has been shown ---------------------------------------------
@@ -473,6 +476,9 @@ class Story:
                 _ = other.cancel()
                 _ = await asyncio.gather(other, return_exceptions=True)
         self._others.clear()
+        for link in self._links:
+            link.close()
+        self._links.clear()
         if not self._running.done():
             _ = self._running.cancel()
             _ = await asyncio.gather(self._running, return_exceptions=True)

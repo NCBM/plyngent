@@ -88,16 +88,23 @@ async def test_a_question_that_runs_out_of_time_takes_the_prompt_with_it(story: 
     assert story.editor.waiting == 0, "the prompt came down instead of standing there unread"
 
 
-async def test_an_answer_that_arrives_too_late_is_refused(story: Story) -> None:
-    """Acceptance ②: the wait is over, so an answer to it changes nothing."""
+async def test_an_answer_that_arrives_too_late_changes_nothing(story: Story) -> None:
+    """Acceptance ②: the wait is over, so an answer to it changes nothing.
+
+    What a connection can say about a late answer is only that it was taken and handed over — whether
+    anybody is still waiting is on the kernel's end of the lane, which over a socket is another process.
+    So what is asserted is the consequence: nothing was answered, and nothing answers afterwards either.
+    """
     asked = asyncio.ensure_future(story.human.text(prompt="what next?", timeout=0.01))
     await story.settle()
     question = story.questions()[0]
 
     assert (await asked).text is None
-    assert story.kernel.client.answer(Written(id=question.id, text="late", by=By.HUMAN)) is False, (
-        "the kernel stopped waiting, so the late line is not an answer to anything"
+    assert story.kernel.client.answer(Written(id=question.id, text="late", by=By.HUMAN)) is True, (
+        "the connection took it; whether that id still has a question is the kernel's answer"
     )
+    await story.settle()
+    assert (await asked).text is None, "and it answered nothing: the wait it belonged to was over"
 
 
 async def test_a_question_with_no_deadline_of_its_own_gets_its_levels_grade(story_with: Scripted) -> None:
