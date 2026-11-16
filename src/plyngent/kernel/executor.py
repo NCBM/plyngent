@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from plyngent.kernel.cancel import Scope
     from plyngent.kernel.catalog import ToolCatalog, ToolView
     from plyngent.kernel.model import Call
     from plyngent.kernel.session import TurnCtx
@@ -280,13 +281,13 @@ class ToolExecutor:
                 result = await env.scope().guard(spec.run(env, args))
                 # Inside the lock on purpose: a version has to be taken while the paths still hold what
                 # this call left, and a lock released first is a file another call may have written.
-                return await self._versioned(ctx, node, result)
+                return await self._versioned(ctx, node, result, scope=env.scope())
         except Cancelled:
             # A call that was stopped still left this process, so it still declares what it sent. The
             # handler normally records that, and a stopped call never gets as far as a result of its own.
             return ToolResult.of(Failure.LIMIT, "stopped", effects=_sent(spec, node.raw))
 
-    async def _versioned(self, ctx: TurnCtx, node: _Call, result: ToolResult) -> ToolResult:
+    async def _versioned(self, ctx: TurnCtx, node: _Call, result: ToolResult, *, scope: Scope) -> ToolResult:
         """Keep what this call changed as one version, and answer the result that names it.
 
         A store that is not there, a call that changed no path, and a store that could not be written
@@ -306,15 +307,15 @@ class ToolExecutor:
         changed = result.effects.changed
         try:
             if not changed and node.spec is not None and node.spec.mutates & Mutation.WORKSPACE:
-                changed = await self._swept(ctx, store)
+                changed = await self._swept(ctx, store, scope=scope)
             if not changed:
                 return result
-            revision = await store.record(changed, says=f"{node.name} {node.call}")
+            revision = await store.record(changed, says=f"{node.name} {node.call}", scope=scope)
         except Unreadable:
             return result
         return replace(result, effects=replace(result.effects, revision=revision))
 
-    async def _swept(self, ctx: TurnCtx, store: History) -> tuple[Path, ...]:
+    async def _swept(self, ctx: TurnCtx, store: History, *, scope: Scope) -> tuple[Path, ...]:
         """What a program left behind, read off the tree because the call cannot say.
 
         The walk is the kernel's own (the same one a listing uses: its ignore rules, its hidden
@@ -326,11 +327,11 @@ class ToolExecutor:
         record that says where it stopped.
         """
         root = ctx.host.workspace.root
-        listing = await asyncio.to_thread(walk, ctx.host.workspace, root)
+        listing = await scope.blocking(walk, ctx.host.workspace, root)
         files = [root / entry.relative for entry in listing.entries if not entry.is_dir]
         if len(files) > SWEEP_PATHS:
             return ()
-        return await store.differing(await store.head(), files)
+        return await store.differing(await store.head(scope=scope), files, scope=scope)
 
     async def _approve(self, ctx: TurnCtx, node: _Call) -> ToolResult | None:
         """Put this call to a person when its posture says to; ``None`` when nothing has to be asked.

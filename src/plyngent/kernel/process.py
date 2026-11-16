@@ -519,9 +519,13 @@ class _Run:
         return {**os.environ, **(self.env or {}), **(overlay or {})}
 
     async def _write(self, sink: Path, text: str) -> Refused | None:
-        """Put a command's output where the call asked for it."""
+        """Put a command's output where the call asked for it.
+
+        On this call's scope's books, like every blocking call here: the write is in a thread, and a
+        stop that took the waiting away has not taken the writing away.
+        """
         try:
-            await asyncio.to_thread(_replace, sink, text)
+            await self.scope.blocking(_replace, sink, text)
         except OSError as exc:
             return Refused(Failure.of(exc), f"cannot write {sink}: {exc}")
         return None

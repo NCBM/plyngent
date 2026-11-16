@@ -15,7 +15,6 @@ that stalled its own turns on a directory read would be a host whose PTY reads s
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -38,6 +37,7 @@ from plyngent.kernel.workspace import Denied, PathRefused
 from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
+    from plyngent.kernel.cancel import Scope
     from plyngent.kernel.env import Env
     from plyngent.kernel.workspace import Workspace
 
@@ -140,7 +140,7 @@ async def glob_paths(env: Env, args: GlobArgs) -> ToolResult:
     if not base.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.path}")
 
-    listing = await _listed(workspace, base, show=args.filter)
+    listing = await _listed(workspace, base, show=args.filter, scope=env.scope())
     found = [
         display(base / entry.relative, root=workspace.root)
         for entry in listing.entries
@@ -164,7 +164,7 @@ async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
     if not target.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.path}")
 
-    listing = await _listed(workspace, target, show=args.filter, depth=1)
+    listing = await _listed(workspace, target, show=args.filter, depth=1, scope=env.scope())
     if not listing.entries:
         return ToolResult.ok("empty directory", meta=_meta(listing))
     lines = [_line(target, entry, args.stat) for entry in listing.entries]
@@ -180,7 +180,7 @@ async def tree(env: Env, args: TreeArgs) -> ToolResult:
     if not origin.is_dir():
         return ToolResult.of(Failure.MISSING, f"not a directory: {args.path}")
 
-    listing = await _listed(workspace, origin, show=args.filter, depth=args.max_depth)
+    listing = await _listed(workspace, origin, show=args.filter, depth=args.max_depth, scope=env.scope())
     shown, omitted = _within(listing.entries, args)
     lines = _draw(args.format, shown, label=_label(args.path), more=omitted)
     total = len(shown) + omitted
@@ -208,10 +208,10 @@ async def copy_path(env: Env, args: CopyArgs) -> ToolResult:
     try:
         if source.is_dir() and not source.is_symlink():
             kind = "directory"
-            _ = await asyncio.to_thread(shutil.copytree, source, target, symlinks=True)
+            _ = await env.scope().blocking(shutil.copytree, source, target, symlinks=True)
         else:
             kind = _kind(source)
-            _ = await asyncio.to_thread(shutil.copy2, source, target, follow_symlinks=False)
+            _ = await env.scope().blocking(shutil.copy2, source, target, follow_symlinks=False)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"copy failed: {exc}", effects=Effects(changed=(target,)))
     summary = f"copied {kind} {args.src} -> {display(target, root=workspace.root)}"
@@ -233,7 +233,7 @@ async def move_path(env: Env, args: MoveArgs) -> ToolResult:
         return lifted(exc)
 
     try:
-        moved = await asyncio.to_thread(_move, source, target)
+        moved = await env.scope().blocking(_move, source, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"move failed: {exc}", effects=Effects(changed=(target,)))
     summary = f"moved {_kind(moved)} {args.src} -> {display(moved, root=workspace.root)}"
@@ -334,7 +334,7 @@ class TemporaryArgs(ToolArgs, kw_only=True):
 async def new_temporary_workspace(env: Env, args: TemporaryArgs) -> ToolResult:
     """Hand out one scratch directory under the system temp dir, and say where it is."""
     try:
-        made = await env.workspace.temps.create(args.prefix)
+        made = await env.workspace.temps.create(args.prefix, scope=env.scope())
     except TooManyWorkspacesError as exc:
         return ToolResult.of(Failure.LIMIT, str(exc))
     except TempWorkspaceError as exc:
@@ -543,9 +543,10 @@ async def _listed(
     *,
     show: Filter,
     depth: int | None = None,
+    scope: Scope,
 ) -> Listing:
     """The walk's answer, collected in a thread: reading a tree is a blocking call."""
-    return await asyncio.to_thread(walk, workspace, base, show=show, depth=depth)
+    return await scope.blocking(walk, workspace, base, show=show, depth=depth)
 
 
 def _meta(listing: Listing) -> Meta:
@@ -592,7 +593,7 @@ async def _deleted(env: Env, target: Path, args: DeleteArgs) -> ToolResult:
     """The delete itself, once the workspace has said *target* may be touched."""
     permanent = args.permanent or not env.trash_enabled or under_system_temp(target)
     try:
-        summary = await asyncio.to_thread(_remove, target, recursive=args.recursive, permanent=permanent)
+        summary = await env.scope().blocking(_remove, target, recursive=args.recursive, permanent=permanent)
     except _NotEmptyError:
         return ToolResult.of(
             Failure.BLOCKED,

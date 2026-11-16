@@ -21,7 +21,6 @@ grant's — which is why there is no ``allow_write`` to find.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -36,6 +35,7 @@ from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, ToolArgs, 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from plyngent.kernel.cancel import Scope
     from plyngent.kernel.env import Env
 
 #: How many notes a listing prints before it says how many it is not printing. A third-party root can
@@ -147,7 +147,7 @@ async def skill_read(env: Env, args: SkillReadArgs) -> ToolResult:
     if not target.is_file():
         return ToolResult.of(Failure.MISSING, f"no such file in skill {skill.name!r}: {args.file}")
     try:
-        source = await asyncio.to_thread(_read_text, target)
+        source = await env.scope().blocking(_read_text, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"read failed: {exc}")
     return await window(
@@ -188,7 +188,7 @@ async def skill_search(env: Env, args: SkillSearchArgs) -> ToolResult:
         regex = compile_lines(args.pattern, case_insensitive=args.case_insensitive)
     except re.error as exc:
         return ToolResult.of(Failure.ARGS, f"invalid regex: {exc}")
-    found = await asyncio.to_thread(_walk, env, targets, regex, args.max_matches)
+    found = await env.scope().blocking(_walk, env, targets, regex, args.max_matches)
     lines, cut = found
     which = _which(targets, args.skill)
     if not lines:
@@ -347,7 +347,9 @@ async def skill_create(env: Env, args: SkillCreateArgs) -> ToolResult:
     refused = _denied(env, target)
     if refused is not None:
         return refused
-    return await _created(target, _skill_md(args.name, args.description, args.body), bundled, name=args.name)
+    return await _created(
+        target, _skill_md(args.name, args.description, args.body), bundled, name=args.name, scope=env.scope()
+    )
 
 
 def _new_directory(store: Skills, base: Path, name: str) -> Path | ToolResult:
@@ -380,11 +382,11 @@ def _bundled(target: Path, files: dict[str, str], *, name: str) -> dict[Path, st
     return resolved
 
 
-async def _created(target: Path, text: str, bundled: dict[Path, str], *, name: str) -> ToolResult:
+async def _created(target: Path, text: str, bundled: dict[Path, str], *, name: str, scope: Scope) -> ToolResult:
     """Write the skill and answer what landed; a write that stopped says which files it left behind."""
     landed: list[Path] = []
     try:
-        await asyncio.to_thread(_create, target, text, bundled, landed)
+        await scope.blocking(_create, target, text, bundled, landed)
     except OSError as exc:
         if not landed:
             return ToolResult.of(Failure.of(exc), f"could not create skill {name!r}: {exc}")
@@ -466,7 +468,7 @@ async def skill_edit(env: Env, args: SkillEditArgs) -> ToolResult:
         return located
     skill, target, relative = located
     try:
-        existing = await asyncio.to_thread(_text_or_none, target)
+        existing = await env.scope().blocking(_text_or_none, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"edit failed: {exc}")
     outcome = _edited(existing, args, name=skill.name, relative=relative)
@@ -474,7 +476,7 @@ async def skill_edit(env: Env, args: SkillEditArgs) -> ToolResult:
         return outcome
     text, detail = outcome
     try:
-        await asyncio.to_thread(_write_text, target, text)
+        await env.scope().blocking(_write_text, target, text)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"edit failed: {exc}")
     return ToolResult.ok(f"updated skill {skill.name!r} ({detail})", effects=Effects(changed=(target,)))

@@ -13,11 +13,14 @@ other's scratch space.
 
 from __future__ import annotations
 
-import asyncio
 import re
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from plyngent.kernel.cancel import Scope
 
 # Max concurrent temporary workspaces one host may hand out.
 MAX_TEMPORARY_WORKSPACES = 16
@@ -56,18 +59,20 @@ class TempWorkspaces:
     def __len__(self) -> int:
         return len(self._owned)
 
-    async def create(self, prefix: str = _DEFAULT_PREFIX) -> Path:
+    async def create(self, prefix: str = _DEFAULT_PREFIX, *, scope: Scope) -> Path:
         """Make a scratch directory under the system temp dir and hand it out.
 
         Making a directory is a blocking call, so it runs off the loop: a host that stalled its own
-        turns on a filesystem syscall would be a host whose PTY reads stopped too.
+        turns on a filesystem syscall would be a host whose PTY reads stopped too. It runs on *scope*'s
+        books for the same reason every other blocking call does — a turn that was stopped still waits
+        for the thread it started before its history is written.
         """
         if len(self._owned) >= self.limit:
             msg = f"too many temporary workspaces (max {self.limit})"
             raise TooManyWorkspacesError(msg)
         safe = _sanitize_prefix(prefix)
         try:
-            created = await asyncio.to_thread(lambda: Path(tempfile.mkdtemp(prefix=f"plyngent-{safe}-")).resolve())
+            created = await scope.blocking(lambda: Path(tempfile.mkdtemp(prefix=f"plyngent-{safe}-")).resolve())
         except OSError as exc:
             msg = f"failed to create temporary workspace: {exc}"
             raise TempWorkspaceError(msg) from exc

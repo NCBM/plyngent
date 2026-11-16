@@ -22,6 +22,7 @@ import pytest
 import send2trash
 
 from plyngent.kernel import trash
+from plyngent.kernel.cancel import CancelToken
 from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.kernel.access import AccessMode
+    from plyngent.kernel.cancel import Scope
     from plyngent.kernel.session import TurnCtx
 
 
@@ -45,10 +47,17 @@ class _Session:
 
 @dataclass(frozen=True)
 class _Ctx:
-    """The parts of a turn these tools touch: its host, and the session whose grants it resolves with."""
+    """The parts of a turn these tools touch: its host, and the session whose grants it resolves with.
+
+    ``scope`` is one that nothing ever cancels, because none of these tests is about a stop: what a
+    call hands to a thread is the work's own business, and the answer is all that is read here.
+    """
 
     host: Host
     session: _Session = field(default_factory=_Session)
+
+    def scope(self, *segments: str) -> Scope:
+        return CancelToken().at(*segments)
 
 
 #: What these tests let a call reach: everything, because each test is about a tool's behaviour rather

@@ -14,7 +14,6 @@ of call it was.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any
@@ -35,6 +34,7 @@ from plyngent.wire.ask import Severity
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from plyngent.kernel.cancel import Scope
     from plyngent.kernel.documents import Kept
     from plyngent.kernel.env import Env
     from plyngent.kernel.reads import Reads
@@ -81,7 +81,7 @@ async def read(env: Env, args: ReadArgs) -> ToolResult:
     if not target.is_file():
         return _nothing_there(args.path, target)
     try:
-        found = await asyncio.to_thread(_read_file, target)
+        found = await env.scope().blocking(_read_file, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"read failed: {exc}")
     if isinstance(found, _Picture):
@@ -387,11 +387,11 @@ async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
         return lifted(exc)
     if not target.is_file():
         return _nothing_there(name, target)
-    found = await _scan_text(name, target)
+    found = await _scan_text(name, target, scope=env.scope())
     return found if isinstance(found, ToolResult) else (name, found)
 
 
-async def _scan_text(name: str, target: Path) -> str | ToolResult:
+async def _scan_text(name: str, target: Path, *, scope: Scope) -> str | ToolResult:
     """This file's text, or why a line-by-line scan of it is not a thing this call will do.
 
     A search holds one file's text in memory a line at a time, so a file past what this build keeps is
@@ -400,10 +400,10 @@ async def _scan_text(name: str, target: Path) -> str | ToolResult:
     exact one after decoding.
     """
     try:
-        size = (await asyncio.to_thread(target.stat)).st_size
+        size = (await scope.blocking(target.stat)).st_size
         if size > MAX_KEPT_BYTES:
             return _too_big(name, size, "bytes")
-        source = await asyncio.to_thread(_read_file, target)
+        source = await scope.blocking(_read_file, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"search failed: {exc}")
     if isinstance(source, _Picture):
@@ -504,7 +504,7 @@ async def write_file(env: Env, args: WriteFileArgs) -> ToolResult:
         )
 
     try:
-        written = await asyncio.to_thread(_write, target, args.content)
+        written = await env.scope().blocking(_write, target, args.content)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"write failed: {exc}", effects=Effects(changed=(target,)))
     return ToolResult.ok(
@@ -559,7 +559,7 @@ async def edit_replace(env: Env, args: EditReplaceArgs) -> ToolResult:
     if not target.is_file():
         return _nothing_there(args.path, target, make_with=WRITE_FILE)
     try:
-        applied = await asyncio.to_thread(_replaced, target, args)
+        applied = await env.scope().blocking(_replaced, target, args)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"edit failed: {exc}", effects=Effects(changed=(target,)))
     if applied.found == 0:
@@ -657,7 +657,7 @@ async def edit_lineno(env: Env, args: EditLinenoArgs) -> ToolResult:
     if not target.is_file():
         return _nothing_there(args.path, target, make_with=WRITE_FILE)
     try:
-        lines = await asyncio.to_thread(_lines_of, target)
+        lines = await env.scope().blocking(_lines_of, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"edit failed: {exc}")
     unappliable = _unappliable(args, len(lines))
@@ -709,7 +709,7 @@ async def _numbered_edit(env: Env, target: Path, args: EditLinenoArgs, lines: li
             f"{args.path}: {which} not read with numbers" + _window(env, target),
             hints=(_read_hint(args.path, args.start_line, args.end_line, count),),
         )
-    before = await asyncio.to_thread(_changed_before, target, env.reads)
+    before = await env.scope().blocking(_changed_before, target, env.reads)
     if before:
         return ToolResult.of(
             Failure.BLOCKED,
@@ -717,7 +717,7 @@ async def _numbered_edit(env: Env, target: Path, args: EditLinenoArgs, lines: li
             hints=(_read_hint(args.path, args.start_line, args.end_line, count),),
         )
     try:
-        summary = await asyncio.to_thread(_applied_edit, target, args, lines)
+        summary = await env.scope().blocking(_applied_edit, target, args, lines)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"edit failed: {exc}", effects=Effects(changed=(target,)))
     return ToolResult.ok(summary, effects=Effects(changed=(target,)))

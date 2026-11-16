@@ -9,6 +9,7 @@ import pytest
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel.cancel import CancelToken
 from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents
 from plyngent.kernel.events import HumanChannel
@@ -30,12 +31,21 @@ def _assembly(*declarations: Declaration) -> Assembly:
     return Assembly(registry, up=up, rule=rule)
 
 
+async def _create(temps: TempWorkspaces, prefix: str = "") -> Path:
+    """One scratch directory, made on a call's scope.
+
+    Making one is a blocking call that belongs to a turn, so it is handed a scope like every other; what
+    this file is about is the directories themselves, so the scope here is one nothing ever stops.
+    """
+    return await temps.create(prefix, scope=CancelToken().at("turn", "call"))
+
+
 async def test_a_scratch_directory_is_under_the_system_temp_dir(tmp_path) -> None:
     assert under_system_temp(tmp_path), "the test's own directory is scratch space"
     assert not under_system_temp(Path(Path.cwd().anchor) / "plyngent-notes"), "and somewhere else is not"
     temps = TempWorkspaces()
 
-    created = await temps.create("notes")
+    created = await _create(temps, "notes")
 
     assert created.is_dir()
     assert created.parent == Path(tempfile.gettempdir()).resolve()
@@ -49,9 +59,9 @@ async def test_a_scratch_directory_is_under_the_system_temp_dir(tmp_path) -> Non
 async def test_a_prefix_from_a_model_is_made_portable() -> None:
     temps = TempWorkspaces()
     try:
-        assert (await temps.create("a/b c")).name.startswith("plyngent-a-b-c-")
-        assert (await temps.create("")).name.startswith("plyngent-ws-")
-        assert (await temps.create("x" * 64)).name.startswith(f"plyngent-{'x' * 32}-")
+        assert (await _create(temps, "a/b c")).name.startswith("plyngent-a-b-c-")
+        assert (await _create(temps)).name.startswith("plyngent-ws-")
+        assert (await _create(temps, "x" * 64)).name.startswith(f"plyngent-{'x' * 32}-")
     finally:
         _ = temps.clear()
 
@@ -59,10 +69,10 @@ async def test_a_prefix_from_a_model_is_made_portable() -> None:
 async def test_the_host_hands_out_a_bounded_number_of_them() -> None:
     temps = TempWorkspaces(limit=2)
     try:
-        _ = await temps.create()
-        _ = await temps.create()
+        _ = await _create(temps)
+        _ = await _create(temps)
         with pytest.raises(TooManyWorkspacesError, match="max 2"):
-            _ = await temps.create()
+            _ = await _create(temps)
         assert len(temps) == 2
     finally:
         _ = temps.clear()
@@ -70,7 +80,7 @@ async def test_the_host_hands_out_a_bounded_number_of_them() -> None:
 
 async def test_releasing_a_directory_stops_handing_it_out_but_keeps_it() -> None:
     temps = TempWorkspaces()
-    created = await temps.create()
+    created = await _create(temps)
 
     temps.release(created)
 
@@ -83,7 +93,7 @@ async def test_releasing_a_directory_stops_handing_it_out_but_keeps_it() -> None
 
 async def test_only_a_path_still_in_scratch_space_is_deleted(monkeypatch, tmp_path) -> None:
     temps = TempWorkspaces()
-    created = await temps.create()
+    created = await _create(temps)
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / "somewhere-else"))
 
     assert temps.clear() == 0
@@ -96,7 +106,7 @@ async def test_only_a_path_still_in_scratch_space_is_deleted(monkeypatch, tmp_pa
 async def test_a_scratch_directory_is_a_root_that_tools_may_reach(tmp_path) -> None:
     workspace = Workspace(tmp_path / "ws")
 
-    created = await workspace.temps.create()
+    created = await _create(workspace.temps)
     try:
         assert workspace.resolve(created / "scratch.txt") == created / "scratch.txt"
         assert workspace.under_roots(created)
@@ -141,8 +151,8 @@ async def test_one_host_cleans_up_its_own_scratch_space_only(tmp_path) -> None:
     b = assembly.instance(host_b)
     assert isinstance(a, Host) and isinstance(b, Host)
 
-    mine = await a.workspace.temps.create()
-    theirs = await b.workspace.temps.create()
+    mine = await _create(a.workspace.temps)
+    theirs = await _create(b.workspace.temps)
     assert a.workspace.resolve(mine / "x") == mine / "x"
     with pytest.raises(OutsideWorkspace):
         _ = b.workspace.resolve(mine / "x")

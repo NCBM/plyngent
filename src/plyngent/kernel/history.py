@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from plyngent.kernel.cancel import Scope
+
 #: The branch every version is committed to. One line, and the only ref this store writes.
 BRANCH = "workspace"
 
@@ -123,6 +125,11 @@ class History:
     Built from two absolute paths and nothing else: the tree the versions are *about*, and the store
     they are kept in. Neither has to exist yet — the store is made on the first version recorded, so a
     program that is opened and closed without changing anything leaves the data directory as it was.
+
+    Every call here starts a process, so every call runs off the loop. The three a *turn* awaits —
+    :meth:`record`, :meth:`head` and :meth:`differing` — take the call's scope, because a turn that was
+    stopped still owes its history what it was in the middle of keeping, and settling waits for it. The
+    rest answer commands and listings, which belong to no turn and so have nothing to be joined to.
     """
 
     root: Path
@@ -134,7 +141,7 @@ class History:
 
     # -- what a caller asks for -----------------------------------------------------
 
-    async def record(self, changed: Sequence[Path], *, says: str = "") -> str:
+    async def record(self, changed: Sequence[Path], *, says: str = "", scope: Scope) -> str:
         """Keep these paths as one version and answer its id, or ``""`` when there was nothing to keep.
 
         ``changed`` is absolute and may name a path that is no longer there — that is a removal, and a
@@ -151,11 +158,11 @@ class History:
         # `/tmp` is a symlink.
         if not changed:
             return ""
-        return await asyncio.to_thread(self._recorded, tuple(changed), says)
+        return await scope.blocking(self._recorded, tuple(changed), says)
 
-    async def head(self) -> str:
+    async def head(self, *, scope: Scope) -> str:
         """The version the last recorded call left, or ``""`` when nothing has been recorded."""
-        return await asyncio.to_thread(self._head)
+        return await scope.blocking(self._head)
 
     async def parent(self, revision: str) -> str:
         """The version ``revision`` continues from, or ``""`` when it is the first one."""
@@ -178,7 +185,7 @@ class History:
         """What one version holds for one path, in bytes; ``None`` when that version does not hold it."""
         return await asyncio.to_thread(self._blob, revision, path)
 
-    async def differing(self, revision: str, paths: Sequence[Path]) -> tuple[Path, ...]:
+    async def differing(self, revision: str, paths: Sequence[Path], *, scope: Scope) -> tuple[Path, ...]:
         """Which of these paths ``revision`` does not already hold, plus the paths it holds that are gone.
 
         This is for the one caller that cannot say what it changed: a program was started, and its argv
@@ -192,7 +199,7 @@ class History:
         disk — a file merely hidden from a walk keeps the version it had, because a store that deleted it
         would be a rollback that takes away a file nobody asked about.
         """
-        return await asyncio.to_thread(self._differing, revision, tuple(paths))
+        return await scope.blocking(self._differing, revision, tuple(paths))
 
     async def undo(self, *, version: str = "", paths: Sequence[str] = (), force: bool = False) -> Undone:
         """Put the workspace back to the version before ``version``, and record the putting-back.
