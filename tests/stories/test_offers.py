@@ -124,7 +124,7 @@ async def test_a_second_offer_replaces_the_first(story_with: Scripted) -> None:
 async def test_a_connection_that_did_not_say_it_takes_offers_is_refused_the_whole_one(story: Story) -> None:
     """The capability is a promise, so a kernel that did not make it does not pretend to keep it."""
     before = story.toolset_epoch
-    other = story.another_client()
+    other = await story.another_client()
     _ = other.submit(Offer(tools=(_search(),)))
 
     event = await asyncio.wait_for(anext(other.events()), 2.0)

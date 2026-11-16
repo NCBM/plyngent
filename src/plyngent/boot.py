@@ -16,13 +16,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
 
+from plyngent.kernel import local
 from plyngent.kernel.catalog import BUILTIN
-from plyngent.kernel.channel import InProcChannel
+from plyngent.kernel.channel import Channel, InProcChannel
 from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
@@ -48,20 +49,31 @@ if TYPE_CHECKING:
     from composat import Component, ComponentKey
 
     from plyngent.kernel.skills import Skills
+    from plyngent.kernel.toolspec import ToolSpec
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
 #: (``ws/s1``), so it is spelled once, here, and never guessed elsewhere.
 DEFAULT_HOST = "ws"
 
-#: The transports a kernel can be reached over. ``inproc`` is the only one that exists; ``local``
-#: arrives with the socket/pipe transport, and because the story suite is already parameterized over
-#: this tuple, every story then runs over both without a story changing (R2.1 D29).
-KERNEL_TRANSPORTS = ("inproc",)
+#: The transports a kernel can be reached over. ``local`` is the one that leaves this process — a
+#: socket at a path — and it is offered only where the platform has ``AF_UNIX``: a transport this build
+#: cannot run is not one it pretends to have. The story suite is already parameterized over this tuple,
+#: so every story runs over both without a story changing (R2.1 D29).
+KERNEL_TRANSPORTS = ("inproc", "local") if local.AVAILABLE else ("inproc",)
 
 #: How often the composition root looks at the one component it may have to replace. It is a poll
 #: rather than a callback because the thing being watched is a child process: nothing tells us it died.
 BROKER_WATCH_SECONDS = 0.5
+
+
+class _Held(NamedTuple):
+    """One connection this kernel opened for somebody else: its two faces, its loop, and its socket."""
+
+    link: Link
+    client: KernelLink
+    task: asyncio.Task[None]
+    streams: tuple[local.SocketChannel, ...] = ()
 
 
 class Installed:
@@ -70,13 +82,22 @@ class Installed:
     ``client`` is what a frontend gets: the link face, never this object, and never the assembly. A
     frontend that held the assembly could admit a session without going through a command, which is
     the in-process shortcut the boundary exists to forbid.
+
+    The two faces are one object over ``inproc`` and two over ``local``, where the client's half is the
+    far end of a socket. Nothing above this class has to know which it is holding, which is what makes
+    the transports one implementation with a different codec.
     """
 
     assembly: Assembly
     serving: Serving
+    host: str
     _link: Link
+    _client: KernelLink
     _task: asyncio.Task[None]
     _watch: asyncio.Task[None] | None
+    _listening: local.Listening | None
+    _streams: tuple[local.SocketChannel, ...]
+    _others: list[_Held]
 
     def __init__(
         self,
@@ -84,18 +105,54 @@ class Installed:
         serving: Serving,
         link: Link,
         task: asyncio.Task[None],
+        *,
+        host: str = DEFAULT_HOST,
+        client: KernelLink | None = None,
         watch: asyncio.Task[None] | None = None,
+        listening: local.Listening | None = None,
+        streams: tuple[local.SocketChannel, ...] = (),
     ) -> None:
         self.assembly = assembly
         self.serving = serving
+        self.host = host
         self._link = link
+        self._client = link if client is None else client
         self._task = task
         self._watch = watch
+        self._listening = listening
+        self._streams = streams
+        self._others = []
 
     @property
     def client(self) -> KernelLink:
         """The connection as a frontend sees it."""
-        return self._link
+        return self._client
+
+    async def attach(self, *, caps: tuple[str, ...] = ()) -> KernelLink:
+        """Open one more connection to this kernel, over the transport it was installed with.
+
+        What it is for is the rule that a capability is a promise: a connection whose manifest does not
+        carry one is refused the command that would need it, and the only honest way to be such a
+        connection is to make one the way a client does. Over ``local`` that is a socket to the address
+        this kernel is listening on; over ``inproc`` it is a channel, and there is nothing else it could
+        be — which is the same statement as "the two transports are one implementation".
+
+        The connection is served like the first one: its own command loop, its own tool table, its own
+        offer to attach. What it does not get is the one thing this kernel has one of — it answers no
+        questions while the client installed here is attached (D19).
+        """
+        manifest = KernelManifest(commands=command_specs(), caps=caps)
+        if self._listening is None:
+            link = _opened(InProcChannel(), manifest)
+            _serving, task = _served(self.assembly, self.host, link, BUILTIN)
+            self._others.append(_Held(link, link, task))
+            return link
+        far = await local.connect(self._listening.endpoint)
+        near = await self._listening.accept()
+        link = _opened(near, manifest)
+        _serving, task = _served(self.assembly, self.host, link, BUILTIN)
+        self._others.append(_Held(link, Link(far, manifest=manifest), task, (near, far)))
+        return self._others[-1].client
 
     async def settle(self) -> None:
         """Wait until the connection's loop has finished — the client left, or the kernel did.
@@ -110,7 +167,11 @@ class Installed:
 
         The loop is awaited rather than merely told to stop, because its last act is to put the human
         back — and a ``replace`` on an assembly that is already going down has nowhere to land.
+
+        Both ends of a socket are closed and waited for, which is what makes the last thing this kernel
+        says reach the client that is leaving: a stream ends after what was queued has been written.
         """
+        await self._dropped()
         if self._watch is not None:
             _ = self._watch.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -118,7 +179,23 @@ class Installed:
             self._watch = None
         await self.serving.stop("the kernel is leaving")
         await self._task
+        self._client.close()
+        for stream in self._streams:
+            await stream.flushed()
+        if self._listening is not None:
+            await self._listening.stop()
         _ = await self.assembly.stop(*self.assembly.keys())
+
+    async def _dropped(self) -> None:
+        """Close every connection this kernel opened for somebody else, and wait for its loop to end."""
+        for held in self._others:
+            held.link.close()
+            held.client.close()
+        _ = await asyncio.gather(*(held.task for held in self._others), return_exceptions=True)
+        for held in self._others:
+            for stream in held.streams:
+                await stream.flushed()
+        self._others.clear()
 
 
 async def install(
@@ -126,6 +203,7 @@ async def install(
     *,
     host: str = DEFAULT_HOST,
     transport: str = "inproc",
+    endpoint: Path | str | None = None,
     model: Model | None = None,
     routes: Iterable[Route] | None = None,
     route: str = "",
@@ -191,6 +269,9 @@ async def install(
 
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
+    ``local`` is one connection over a socket this kernel accepted, so ``endpoint`` is where it listens:
+    a path, or ``None`` for one this process invents because nobody has to find it. An address a *person*
+    names arrives from the command line and not from here (§5 B).
 
     ``deadline`` is how long a question to a person, or a call to one of the client's own tools, may
     wait before it counts as unanswered. It belongs to the connection and not to a session, so it is
@@ -248,19 +329,66 @@ async def install(
         msg = f"the host at {root!r} did not come up: {started.failed}"
         raise RuntimeError(msg)
 
-    link = Link(
-        InProcChannel(),
-        manifest=KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,)),
-        timeout=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
-        grades=Grades() if grades is None else grades,
-    )
-    link.start()
     # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
-    serving = Serving(assembly, host=host, link=link, specs=(*BUILTIN, *net_specs(web), *skill_specs(skills)))
+    specs = (*BUILTIN, *net_specs(web), *skill_specs(skills))
+    manifest = KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,))
+    patience = DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline
+    graded = Grades() if grades is None else grades
+    listening: local.Listening | None = None
+    streams: tuple[local.SocketChannel, ...] = ()
+    if transport == "local":
+        # A kernel that is reached over a socket still serves the client it was started for, and that
+        # client arrives the way any other does: at the address, over a connection this kernel accepted.
+        named = local.temporary_endpoint() if endpoint is None else Path(endpoint)
+        listening = await local.Listening.at(named)
+        channel = await local.connect(named)
+        near = await listening.accept()
+        link = _opened(near, manifest, timeout=patience, grades=graded)
+        client: KernelLink = Link(channel, manifest=manifest, timeout=patience, grades=graded)
+        streams = (near, channel)
+    else:
+        link = _opened(InProcChannel(), manifest, timeout=patience, grades=graded)
+        client = link
+    serving, task = _served(assembly, host, link, specs)
     watch = asyncio.create_task(_replace_the_broker(assembly, Declaration(PtyBroker).key))
-    return Installed(assembly, serving, link, asyncio.create_task(serving.run()), watch)
+    return Installed(
+        assembly,
+        serving,
+        link,
+        task,
+        host=host,
+        client=client,
+        watch=watch,
+        listening=listening,
+        streams=streams,
+    )
+
+
+def _opened(
+    channel: Channel,
+    manifest: KernelManifest,
+    *,
+    timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
+    grades: Grades | None = None,
+) -> Link:
+    """The kernel's half of one connection: the link it reads, started, ready to be served.
+
+    Starting it here rather than by whichever caller remembered to is what makes "an answer is settled
+    where the answer lane is read" true of every connection this program opens, however it got one.
+    """
+    link = Link(channel, manifest=manifest, timeout=timeout, grades=grades)
+    link.start()
+    return link
+
+
+def _served(
+    assembly: Assembly, host: str, link: Link, specs: tuple[ToolSpec, ...]
+) -> tuple[Serving, asyncio.Task[None]]:
+    """The command loop for one connection: the server that reads it, and the task that runs it."""
+    serving = Serving(assembly, host=host, link=link, specs=specs)
+    return serving, asyncio.create_task(serving.run())
 
 
 async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:

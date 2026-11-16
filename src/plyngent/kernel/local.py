@@ -26,6 +26,7 @@ path that cannot be run on the machine it was written on is not one this build p
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import os
 import socket
@@ -164,9 +165,14 @@ class SocketChannel:
         self._wake.set()
 
     async def flushed(self) -> None:
-        """Wait until everything queued has been written, and the stream is closed at this end."""
+        """Wait until everything queued has been written, and the stream is closed at this end.
+
+        A far end that has already gone is not a failure here: what this end had to say is exactly what
+        could not be delivered, and the client that would have read it is the one that stopped reading.
+        """
         _ = await asyncio.gather(self._writer, return_exceptions=True)
-        await self._writing.wait_closed()
+        with contextlib.suppress(OSError):
+            await self._writing.wait_closed()
 
     # -- the two directions ----------------------------------------------------------
 
@@ -201,13 +207,19 @@ class SocketChannel:
     async def _written(self) -> bool:
         """Hand over everything queued, and answer whether this channel is finished."""
         wrote = False
-        for wire in Wire:
-            out = self._outbox[wire]
-            while out:
-                self._writing.write(encode(wire, out.popleft()))
-                wrote = True
-        if wrote:
-            await self._writing.drain()
+        try:
+            for wire in Wire:
+                out = self._outbox[wire]
+                while out:
+                    self._writing.write(encode(wire, out.popleft()))
+                    wrote = True
+            if wrote:
+                await self._writing.drain()
+        except OSError:
+            # The far end is gone with something still queued: that is the end of this connection, and
+            # not something to retry — there is nobody left to hand it to.
+            self._lost()
+            return True
         return self._closed and all(not out for out in self._outbox.values())
 
     def _lost(self) -> None:

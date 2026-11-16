@@ -38,14 +38,9 @@ from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
 from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.cli.render import question as question_line
 from plyngent.cli.render import workspace_label
-from plyngent.kernel.catalog import BUILTIN
-from plyngent.kernel.channel import InProcChannel
 from plyngent.kernel.host import Host
-from plyngent.kernel.link import Link
-from plyngent.kernel.serving import Serving
 from plyngent.kernel.session import Session
 from plyngent.wire.command import Offer
-from plyngent.wire.manifest import KernelManifest, command_specs
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
@@ -155,7 +150,6 @@ class Story:
     _out: io.StringIO
     _err: io.StringIO
     _running: asyncio.Task[int]
-    _others: list[asyncio.Task[None]]
     _code: int | None
 
     def __init__(
@@ -179,8 +173,6 @@ class Story:
         self._err = io.StringIO()
         self.editor = ScriptedHuman(focus=session, err=self._err)
         self._code = None
-        self._others = []
-        self._links: list[Link] = []
         self.app = App(
             kernel.client,
             session=session,
@@ -395,19 +387,19 @@ class Story:
             raise AssertionError(msg)
         await self.settle()
 
-    def another_client(self, *, caps: tuple[str, ...] = ()) -> KernelLink:
+    async def another_client(self, *, caps: tuple[str, ...] = ()) -> KernelLink:
         """A second connection to this kernel, served, as a client with the capabilities it was given.
 
         What it is for is the rule that a capability is a promise: a connection whose manifest does not
         carry one is refused the command that would need it. It answers nothing — this kernel already
         has one approval owner — so what it can be used for is what a client *without* those rights
         can still do, which is exactly the case.
+
+        The connection is made the way any other is, over whatever transport this story runs on: a
+        second connection that took a shortcut past it would be a story about a transport nobody uses.
         """
-        link = Link(InProcChannel(), manifest=KernelManifest(commands=command_specs(), caps=caps))
-        link.start()
-        serving = Serving(self.kernel.assembly, host=DEFAULT_HOST, link=link, specs=BUILTIN)
-        self._others.append(asyncio.create_task(serving.run()))
-        self._links.append(link)
+        link = await self.kernel.attach(caps=caps)
+        await self.settle()
         return link
 
     # -- what the session has been shown ---------------------------------------------
@@ -471,14 +463,6 @@ class Story:
 
     async def close(self) -> None:
         """Take the kernel down, whether or not the story got as far as stopping it."""
-        for other in self._others:
-            if not other.done():
-                _ = other.cancel()
-                _ = await asyncio.gather(other, return_exceptions=True)
-        self._others.clear()
-        for link in self._links:
-            link.close()
-        self._links.clear()
         if not self._running.done():
             _ = self._running.cancel()
             _ = await asyncio.gather(self._running, return_exceptions=True)
