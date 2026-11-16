@@ -61,7 +61,7 @@ async def test_a_pipe_is_a_session_from_a_command_to_the_end_of_its_input(tmp_pa
             await kernel.close()
 
     assert code == 0, "the end of the input is a goodbye, not a failure"
-    assert "commands:" in err.getvalue()
+    assert "commands you can type:" in err.getvalue()
     assert out.getvalue().startswith("turn refused:"), "and the message it sent reached the kernel"
 
 

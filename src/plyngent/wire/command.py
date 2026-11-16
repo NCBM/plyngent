@@ -29,7 +29,7 @@ class Command(Struct, frozen=True, kw_only=True, tag_field="cmd"):
 
 
 class Open(Command, tag="open", frozen=True, kw_only=True):
-    """Start serving a session, optionally seeded from the tail of another chain.
+    """Start a conversation, or copy another one's text into it.
 
     ``seed_from`` is ``(session, entry)`` where ``entry`` is the **last** entry of the chain to copy.
     Only the projected text travels: no pointer, no grants, no todo, no route, no name. A new session
@@ -40,11 +40,11 @@ class Open(Command, tag="open", frozen=True, kw_only=True):
 
 
 class Close(Command, tag="close", frozen=True, kw_only=True):
-    """Stop serving a session; its PTYs go back to the host, its entries stay on disk."""
+    """Stop serving a conversation. Its entries stay on disk."""
 
 
 class Submit(Command, tag="submit", frozen=True, kw_only=True):
-    """Say something, continuing the chain that ends at ``begin_after``.
+    """Say something in this conversation. The kernel answers with a turn.
 
     ``begin_after=None`` starts a new root. The kernel validates that the named entry exists in this
     session and does nothing else with it — which branch a frontend is "on" is the frontend's view
@@ -57,7 +57,7 @@ class Submit(Command, tag="submit", frozen=True, kw_only=True):
 
 
 class Cancel(Command, tag="cancel", frozen=True, kw_only=True):
-    """Stop one scope, or the whole session when ``scope`` is ``None``.
+    """Stop one piece of work, or everything this conversation is doing.
 
     ``scope`` is a :class:`~plyngent.wire.scope.CancelScope` in its spelled form, so a scope a client
     has never seen the object for can still be named.
@@ -69,7 +69,7 @@ class Cancel(Command, tag="cancel", frozen=True, kw_only=True):
 
 
 class SetRoute(Command, tag="set-route", frozen=True, kw_only=True):
-    """Change which model serves this session.
+    """Choose which model answers this conversation.
 
     It takes effect at each live turn's **next request**, not immediately: a turn that is mid-flight
     keeps the route it started the request with, and the attempt records which epoch it used. That is
@@ -80,7 +80,7 @@ class SetRoute(Command, tag="set-route", frozen=True, kw_only=True):
 
 
 class Compact(Command, tag="compact", frozen=True, kw_only=True):
-    """Append a summary entry that continues at ``begin_after``.
+    """Write a summary into the conversation. Later turns continue from it.
 
     There is no rule tying ``begin_after`` to ``replaces``: the summary attaches where its author
     says. ``replaces`` is bookkeeping for the UI and for an audit ("this text stands for X..Y"), and
@@ -104,7 +104,7 @@ class Prune(Command, tag="prune", frozen=True, kw_only=True):
 
 
 class Resume(Command, tag="resume", frozen=True, kw_only=True):
-    """Reattach this session to a stored trajectory.
+    """Reattach this conversation to one kept in a store.
 
     The only command that has to be refused whenever a turn is live: replacing what a session reads
     from invalidates the history basis of everything already running.
@@ -114,11 +114,11 @@ class Resume(Command, tag="resume", frozen=True, kw_only=True):
 
 
 class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
-    """Ask for the set of sessions. The answer is a ``SessionsListed`` event, not a receipt."""
+    """List the conversations this kernel is serving."""
 
 
 class Export(Command, tag="export", frozen=True, kw_only=True):
-    """Write one chain out as a document: what a model would be given, kept under a handle.
+    """Keep a conversation as a document you can read back.
 
     A projection, so it changes nothing. Where the text lands is the store's answer rather than the
     caller's: the kernel writes no files of its own, because a path in a command would be a write behind
@@ -130,7 +130,7 @@ class Export(Command, tag="export", frozen=True, kw_only=True):
 
 
 class Rollback(Command, tag="rollback", frozen=True, kw_only=True):
-    """Put this workspace back to the version *before* ``version``, and record the putting-back.
+    """Put the workspace back to an earlier version. The putting-back is a version of its own.
 
     A rollback is a write, and it is a write of bytes that were already here — so it comes from the
     frontend rather than from a tool, and it is one version like any other: the history is appended to,
@@ -164,7 +164,7 @@ class OfferedTool(Struct, frozen=True, kw_only=True):
 
 
 class Offer(Command, tag="offer", frozen=True, kw_only=True):
-    """The tools this client can run, said when it connects.
+    """Say which tools this client can run.
 
     About the connection and not about a session — the inherited ``session`` is unused, as it is for
     :class:`ListSessions`. A second ``Offer`` replaces the first rather than adding to it: it is the

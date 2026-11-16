@@ -64,4 +64,15 @@ def test_completion_of_an_option_says_what_the_option_takes() -> None:
     offered = list(SlashCompleter(_catalog()).get_completions(Document("/new --ses"), CompleteEvent()))
 
     assert [one.text for one in offered] == ["--session"]
-    assert offered[0].display_meta_text == "which session"
+    assert offered[0].display_meta_text == "the conversation to act on"
+
+
+def test_a_command_whose_argument_no_line_can_carry_is_withheld() -> None:
+    """A tuple of objects has no spelling on a line, and offering it would build a value the kernel refuses."""
+    catalog = _catalog()
+
+    assert "offer" in catalog.withheld, "the shape is what makes it unspellable, not the command"
+    assert catalog.word("offer") is None, "and it is not reachable through any alias either"
+    assert isinstance(decode("/offer --tools x", catalog, session="main"), Wrong), (
+        "a half-parsed argument is worse than no word at all"
+    )

@@ -53,7 +53,7 @@ COMPOSED = "submit"
 
 #: What that word does, said in its own terms: the wire's summary describes a ``submit`` whose text is
 #: an argument, and this client withholds that argument in favour of an editor.
-COMPOSE_NOTE = "Write the message in your editor, then send it"
+COMPOSE_NOTE = "Write the message in your editor, then send it."
 
 #: How a slash line is spelled.
 SLASH = "/"
@@ -177,8 +177,11 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
         for tag, entry in catalog.offers.items()
     ]
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
-    lines = ["commands:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
-    lines.append("aliases: " + ", ".join(f"{SLASH}{word} = {SLASH}{tag}" for word, tag in catalog.aliases.items()))
+    lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
+    lines.append(
+        "the same commands, shorter: "
+        + ", ".join(f"{SLASH}{word} = {SLASH}{tag}" for word, tag in catalog.aliases.items())
+    )
     if catalog.withheld:
         refused = ", ".join(f"{SLASH}{tag} ({why})" for tag, why in catalog.withheld.items())
         lines.append(f"not from here: {refused}")
@@ -271,26 +274,30 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
         if field_name in {"cmd", "session"}:
             continue
         option, pair, why = _option(field_name, _object(schema), defs)
-        if why:
+        if option is None:
             return [], [], why
         if pair:
             pairs.append(option.name or field_name)
         options.append(option)
-    options.append(click.Option(["--session"], type=str, default=session, show_default=True, help="which session"))
+    options.append(
+        click.Option(["--session"], type=str, default=session, show_default=True, help="the conversation to act on")
+    )
     return options, pairs, ""
 
 
-def _option(name: str, schema: _Object, defs: _Object) -> tuple[click.Option, bool, str]:
-    """One field as a click option: its type, whether it is a pair, and why it cannot be spoken."""
+def _option(name: str, schema: _Object, defs: _Object) -> tuple[click.Option | None, bool, str]:
+    """One field as a click option: its type, whether it is a pair, and why it cannot be spoken.
+
+    ``None`` and a reason travel together: a field this client cannot spell has no option at all, and
+    building a placeholder one would be a click command that cannot be constructed rather than a
+    command that is withheld.
+    """
     # A default belongs to the property rather than to the type it refers to, so it is read before the
     # reference is followed — otherwise an enum with a default would silently lose it.
     offered = schema.get("default")
     branches = [_object(branch) for branch in _objects(schema.get("anyOf"))]
     nullable = any(branch.get("type") == "null" for branch in branches)
-    option, pair, why = _shaped(name, _unwrap(schema, defs), offered=offered, nullable=nullable)
-    if why:
-        return click.Option([""]), False, why
-    return option, pair, ""
+    return _shaped(name, _unwrap(schema, defs), offered=offered, nullable=nullable)
 
 
 def _unwrap(schema: _Object, defs: _Object) -> _Object:
@@ -305,13 +312,14 @@ def _unwrap(schema: _Object, defs: _Object) -> _Object:
     return schema
 
 
-def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> tuple[click.Option, bool, str]:
+def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> tuple[click.Option | None, bool, str]:
     """The option for one field, by the shape its schema has."""
     choices = [str(choice) for choice in _objects(schema.get("enum"))]
     if choices:
         default = None if nullable else offered if offered is not None else ""
-        option = click.Option([_flag(name)], type=click.Choice(choices), default=default, help="/".join(choices))
-        return option, False, ""
+        # The choices are the option's metavar, so they are already on the line: help here would say
+        # the same values a second time, in a narrower column.
+        return click.Option([_flag(name)], type=click.Choice(choices), default=default), False, ""
     kind = schema.get("type")
     if isinstance(kind, str) and kind in _BY_TYPE:
         default = None if nullable else offered if offered is not None else ""
@@ -322,16 +330,22 @@ def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> t
         # A boolean is a switch and not a value: nothing to type after it, and no default to send when
         # it is absent — which is why this is read before the table of types that take an argument.
         return click.Option([_flag(name)], is_flag=True, default=bool(offered)), False, ""
-    return click.Option([""]), False, "has a shape this client cannot put on a line"
+    return None, False, "has a shape this client cannot put on a line"
 
 
-def _listed(name: str, schema: _Object) -> tuple[click.Option, bool, str]:
+def _listed(name: str, schema: _Object) -> tuple[click.Option | None, bool, str]:
     """An array field: either a list of strings, or a pair whose length the schema fixes."""
     fixed = schema.get("minItems") == PAIR_LENGTH and schema.get("maxItems") == PAIR_LENGTH
-    parts = [_object(part) for part in _objects(schema.get("prefixItems") or schema.get("items"))]
+    # A position's shape is ``prefixItems`` (one object per position) and an element's is ``items`` (one
+    # object covering every element), and the draft-07 spelling of a fixed tuple puts a list in
+    # ``items`` instead — so both readings are taken. What matters either way: an element shaped as
+    # anything but a string is a value a line cannot carry, and offering it would build a command the
+    # kernel cannot read.
+    shapes = schema.get("prefixItems", schema.get("items"))
+    parts = [_object(part) for part in _objects(shapes)] or [_object(shapes)]
     if any(part.get("type") != "string" for part in parts):
-        return click.Option([""]), False, "is a list this client cannot put on a line"
-    help_note = "give it twice" if fixed else "may be given more than once"
+        return None, False, "is a list this client cannot put on a line"
+    help_note = "give this option twice" if fixed else "this option may be given more than once"
     return click.Option([_flag(name)], type=str, multiple=True, default=(), help=help_note), fixed, ""
 
 

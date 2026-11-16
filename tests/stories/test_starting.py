@@ -17,11 +17,11 @@ async def test_the_listing_is_the_kernels_own_table(story: Story) -> None:
     await story.type("/help")
 
     listing = story.notices()
-    assert listing[0] == "commands:"
+    assert listing[0] == "commands you can type:"
     assert listing[-1] == "anything else you type is a message"
     for word in ("/open", "/close", "/cancel", "/list-sessions", "/submit"):
         assert any(line.strip().startswith(word) for line in listing), word
-    assert "aliases: /new = /open, /sessions = /list-sessions, /model = /set-route" in listing
+    assert "the same commands, shorter: /new = /open, /sessions = /list-sessions, /model = /set-route" in listing
 
 
 async def test_one_command_can_describe_itself(story: Story) -> None:
@@ -30,7 +30,7 @@ async def test_one_command_can_describe_itself(story: Story) -> None:
     written = "\n".join(story.notices())
     assert written.startswith("Usage: open")
     assert "--session" in written, "the arguments come from the kernel's own schema"
-    assert "Start serving a session" in written
+    assert "Start a conversation" in written
 
 
 async def test_a_word_nobody_has_is_a_complaint_and_not_a_message(story: Story) -> None:
