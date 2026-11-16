@@ -15,7 +15,7 @@ from prompt_toolkit.document import Document
 from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Wrong, build, decode, help_text
 from plyngent.wire.command import Rollback, SetRoute
 from plyngent.wire.manifest import KernelManifest, command_specs
-from plyngent.wire.query import Grants
+from plyngent.wire.query import Grants, Trajectory
 
 
 def _catalog() -> Catalog:
@@ -83,6 +83,9 @@ def test_a_read_word_asks_instead_of_asking_for_something() -> None:
     """A word that reads comes back as a query, and its one argument is which conversation it means."""
     assert decode("/grants", _catalog(), session="main") == Reads(query=Grants(session="main"))
     assert decode("/grants --session other", _catalog(), session="main") == Reads(query=Grants(session="other"))
+    assert decode("/history", _catalog(), session="main") == Reads(query=Trajectory(session="main")), (
+        "two reads, one shape: the word is the query's tag and the session is what it is about"
+    )
 
 
 def test_a_read_word_takes_an_argument_it_cannot_and_nothing_else() -> None:

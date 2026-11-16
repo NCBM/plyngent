@@ -62,7 +62,7 @@ from plyngent.wire.event import (
     TurnStarted,
     Usage,
 )
-from plyngent.wire.query import AnyReply, GrantTable
+from plyngent.wire.query import AnyReply, Forest, GrantTable
 
 if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAsk
@@ -583,12 +583,23 @@ def held(answer: AnyReply) -> tuple[str, ...]:
     A row per path with the permission on it, because that is what a person has to be able to check
     against a question they once answered; and "nothing" rather than nothing when the table is empty,
     because an empty screen is indistinguishable from a read that never happened.
+
+    A conversation reads as one line per entry: which row it is, what kind of row it is, and as much of
+    what it says as fits on one. Nothing is drawn as a tree — a list of parents is a shape nobody can see
+    in a terminal — so the rows are read in the order they were written, which is the one order that
+    needs no picture.
     """
     match answer:
         case GrantTable(reached=reached):
             if not reached:
                 return ("nothing outside this workspace is allowed",)
             return tuple(f"{one.path}: {one.mode}" for one in reached)
+        case Forest(entries=entries):
+            if not entries:
+                return ("this conversation has nothing in it yet",)
+            return tuple(
+                f"{entry.id} {entry.kind}" + (f": {entry.preview}" if entry.preview else "") for entry in entries
+            )
         case _ as never:
             assert_never(never)
 

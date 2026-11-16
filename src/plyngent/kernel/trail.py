@@ -239,6 +239,36 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     return record
 
 
+def kind_of(record: AnyRecord) -> str:
+    """What kind of row this is, in the one word every reader of the journal names it by.
+
+    The tag the record carries, which is the same word the row is stored under: a message's role, or the
+    kind of bookkeeping it is. It is read from the value rather than kept beside it, so a caller that has
+    a record never has to be told what it is.
+    """
+    tag = record.__struct_config__.tag
+    return tag if isinstance(tag, str) else ""
+
+
+#: How much of a row a picker shows. One line and no more: this is which entry is which, not the entry.
+PREVIEW_CHARS = 80
+
+
+def preview(record: AnyRecord) -> str:
+    """One line of what this row says, for somebody choosing among rows rather than reading them.
+
+    A record a model reads says its own text, and a summary says the text it stands for — which is the one
+    the person looking for a place to continue from is actually looking for. Bookkeeping has no words of
+    its own (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
+    """
+    if isinstance(record, Summary):
+        said = record.text
+    else:
+        message = as_message(record)
+        said = "" if message is None else message.text
+    return " ".join(said.split())[:PREVIEW_CHARS]
+
+
 def transcript(messages: Iterable[AnyMessage]) -> str:
     """The conversation as one text, with who said what, for a reader who wants it back later.
 

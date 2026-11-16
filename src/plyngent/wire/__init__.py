@@ -111,10 +111,12 @@ from plyngent.wire.manifest import KernelManifest as KernelManifest
 from plyngent.wire.manifest import command_specs as command_specs
 from plyngent.wire.query import AnyQuery as AnyQuery
 from plyngent.wire.query import AnyReply as AnyReply
+from plyngent.wire.query import Forest as Forest
 from plyngent.wire.query import Grants as Grants
 from plyngent.wire.query import GrantTable as GrantTable
 from plyngent.wire.query import Query as Query
 from plyngent.wire.query import Reached as Reached
 from plyngent.wire.query import Reply as Reply
+from plyngent.wire.query import Trajectory as Trajectory
 from plyngent.wire.scope import CancelReason as CancelReason
 from plyngent.wire.scope import CancelScope as CancelScope

@@ -46,7 +46,7 @@ from plyngent.kernel.history import Unreadable, Unwilling
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
-from plyngent.kernel.trail import Summary, Withheld, transcript
+from plyngent.kernel.trail import Summary, Withheld, kind_of, preview, transcript
 from plyngent.kernel.turn import TurnRunner
 from plyngent.wire.command import (
     Cancel,
@@ -67,6 +67,7 @@ from plyngent.wire.event import (
     Compacted,
     CompactRefused,
     DocumentStored,
+    Entry,
     ExportRefused,
     GrantRevoked,
     KernelLeaving,
@@ -84,7 +85,7 @@ from plyngent.wire.event import (
     TurnRefused,
 )
 from plyngent.wire.manifest import CLIENT_OFFER
-from plyngent.wire.query import Grants, GrantTable, Reached
+from plyngent.wire.query import Forest, Grants, GrantTable, Reached, Trajectory
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
@@ -193,6 +194,39 @@ class Serving:
                     )
                 )
                 return GrantTable(id=query.id, reached=held)
+            case Trajectory(session=session):
+                return Forest(id=query.id, entries=await self._trajectory(session))
+
+    async def _trajectory(self, session: str) -> tuple[Entry, ...]:
+        """One conversation's rows, as the forest a person walks: what each one is, and what it continues.
+
+        The journal answers arrival order and parents, and everything else here is said *about* a row
+        rather than by it: ``kind`` is the record's own tag, ``preview`` is one line for somebody picking
+        a place to continue from, and ``children`` is a count over the same tuple — which is what makes
+        "nothing continues this one" visible without a second read (the head is the row whose count is
+        zero). A session this kernel is not serving holds no rows here, for the reason a grant table does
+        not either: it is a conversation nobody opened.
+        """
+        found = self._session(session)
+        if found is None:
+            return ()
+        rows = await found.host.trail.entries(session)
+        continued: dict[str, int] = {}
+        for row in rows:
+            if row.begin_after is not None:
+                continued[row.begin_after] = continued.get(row.begin_after, 0) + 1
+        return tuple(
+            Entry(
+                id=row.id,
+                begin_after=row.begin_after,
+                kind=kind_of(row.payload),
+                session=row.session,
+                turn=row.turn,
+                preview=preview(row.payload),
+                children=continued.get(row.id, 0),
+            )
+            for row in rows
+        )
 
     async def stop(self, reason: str = "") -> None:
         """Leave: say so, then close the lane the loop is reading.

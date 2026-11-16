@@ -35,7 +35,7 @@ import click
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
-from plyngent.wire.query import AnyQuery, Grants, Query
+from plyngent.wire.query import AnyQuery, Grants, Query, Trajectory
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -57,7 +57,7 @@ ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": 
 #: Every read so far is about one session, which is why the table says so: a read that was about nothing
 #: in particular would be a second shape here, and naming it today would be a dict of ``Query`` that no
 #: read could be built from.
-READS: dict[str, type[Grants]] = {"grants": Grants}
+READS: dict[str, type[Grants | Trajectory]] = {"grants": Grants, "history": Trajectory}
 
 #: The one word whose text is written in an editor rather than on the line.
 COMPOSED = "submit"
@@ -244,7 +244,7 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     return _known(tag, catalog.offers[tag], args, session=session)
 
 
-def _reading(word: str, kind: type[Grants], rest: str, *, session: str) -> Intent:
+def _reading(word: str, kind: type[Grants | Trajectory], rest: str, *, session: str) -> Intent:
     """A read word: the query it names, and the session it is about — the one argument there is.
 
     Click is not used here and that is not a shortcut: there is no command behind this word to derive a

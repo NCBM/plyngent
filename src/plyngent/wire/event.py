@@ -8,9 +8,9 @@ Three things live here, and they are one file because they are one vocabulary:
   belong to whoever is drawing.
 * :class:`Batch` — the coalescing itself, as a value. A batch never contains a batch: merging flattens,
   so "how deep is this message" has one answer and a client never has to recurse.
-* :class:`Entry` — what :func:`plyngent.wire.trajectory` hands back: one row of the forest. ``begin_after``
-  is the parent pointer, and ``None`` is a root, so walking from an entry to a root is the projection
-  and needs nothing else.
+* :class:`Entry` — one row of the forest, and what :class:`~plyngent.wire.query.Trajectory` hands back.
+  ``begin_after`` is the parent pointer and ``None`` is a root, so walking from an entry to a root is the
+  projection and needs nothing else.
 
 Turns are named by an integer per session, and the history they read is named by ``begin_after``. Those
 are two different things on purpose: the turn id is an address for cancellation and for "which one is

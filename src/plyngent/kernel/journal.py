@@ -56,6 +56,7 @@ from plyngent.kernel.trail import (
     Trail,
     Withheld,
     as_message,
+    kind_of,
 )
 
 if TYPE_CHECKING:
@@ -598,8 +599,7 @@ def _row_of(entry_id: str) -> int | None:
 
 def _tag_of(payload: AnyRecord) -> str:
     """What kind of record this payload is, kept in its own column so a projection can skip it unread."""
-    tag = payload.__struct_config__.tag
-    return tag if isinstance(tag, str) else ""
+    return kind_of(payload)
 
 
 def _encode(payload: AnyRecord) -> str:

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from msgspec import Struct
 
+from plyngent.wire.event import Entry  # noqa: TC001 — a `Struct` field's annotation is resolved here
+
 
 class Unanswered(Exception):  # noqa: N818 — a read nobody answered is a state, not a failed call
     """A read whose connection ended before the kernel answered it.
@@ -55,6 +57,21 @@ class Grants(Query, tag="grants", frozen=True, kw_only=True):
     session: str = ""
 
 
+class Trajectory(Query, tag="trajectory", frozen=True, kw_only=True):
+    """Every row of one conversation, in the order it was written.
+
+    A projection answers what a model is given — one chain, and only the records a model reads. This
+    answers the other question: what happened here, in what order, and what continues what. Each row
+    carries its parent, so the branches are in the answer and a client does not have to ask for them
+    one at a time, and the row nothing continues is where a turn may grow.
+
+    It is about a conversation rather than about one setting, which is why it is the first read with a
+    list in it: nothing here is a running total the kernel could have said in a flag.
+    """
+
+    session: str = ""
+
+
 class Reply(Struct, frozen=True, kw_only=True, tag_field="reply"):
     """What the kernel answers one query with: the same number, back on the lane a client is waiting on."""
 
@@ -81,5 +98,15 @@ class GrantTable(Reply, tag="grant-table", frozen=True, kw_only=True):
     reached: tuple[Reached, ...] = ()
 
 
-type AnyQuery = Grants
-type AnyReply = GrantTable
+class Forest(Reply, tag="forest", frozen=True, kw_only=True):
+    """The answer to :class:`Trajectory`: one conversation's rows, parents and all.
+
+    Empty is an answer and not a refusal: a conversation nothing has been written in yet holds no rows,
+    and so does one this kernel is not serving — which is how a person learns there is nothing to walk.
+    """
+
+    entries: tuple[Entry, ...] = ()
+
+
+type AnyQuery = Grants | Trajectory
+type AnyReply = GrantTable | Forest

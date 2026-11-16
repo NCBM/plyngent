@@ -66,14 +66,14 @@ from plyngent.wire.ask import (
 )
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import KernelManifest
-from plyngent.wire.query import AnyQuery, AnyReply, Unanswered
+from plyngent.wire.query import AnyQuery, AnyReply, Forest, Trajectory, Unanswered
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     from plyngent.kernel.channel import Channel
     from plyngent.wire.command import AnyCommand
-    from plyngent.wire.event import AnyEvent
+    from plyngent.wire.event import AnyEvent, Entry
     from plyngent.wire.flow import Ack
     from plyngent.wire.link import KernelSide
 
@@ -631,6 +631,17 @@ class Link:
             return await answered
         finally:
             _ = self._reads.pop(number, None)
+
+    async def trajectory(self, session: str) -> tuple[Entry, ...]:
+        """Read one conversation's rows, in the order they were written.
+
+        One question and one answer, so this is :meth:`query` with a shape rather than a second lane: the
+        reply a kernel sends for a ``Trajectory`` is a ``Forest`` and by nothing else, which is the rule
+        every read keeps. A kernel that answers a kind this client has no value for is not a conversation
+        to guess at, so what arrives is read only when it is one.
+        """
+        answer = await self.query(Trajectory(session=session))
+        return answer.entries if isinstance(answer, Forest) else ()
 
     def completed(self, returned: Returned) -> bool:
         """Hand what one of this client's tools came back with over; ``False`` when the connection is gone.

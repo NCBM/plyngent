@@ -18,8 +18,8 @@ static type of the value in hand.
 
 What is deliberately *not* here: the read methods (``artifact`` / ``pty`` / ``status``). They belong on
 the link rather than in the command union — a command changes the world, a link method reads it — and
-:meth:`KernelLink.query` is the lane they will travel on, which arrived with the first of them
-(``grants``, §5 E134). Each still waits for the store behind it.
+:meth:`KernelLink.query` is the lane they travel on, which arrived with the first of them: ``grants``,
+then :meth:`KernelLink.trajectory` (§5 E134). Each still waits for the store behind it.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from plyngent.wire.ask import AnyAnswer, AnyAsk, Invocation, Returned
     from plyngent.wire.command import AnyCommand
-    from plyngent.wire.event import AnyEvent
+    from plyngent.wire.event import AnyEvent, Entry
     from plyngent.wire.flow import Ack
     from plyngent.wire.manifest import KernelManifest
     from plyngent.wire.query import AnyQuery, AnyReply
@@ -93,6 +93,16 @@ class KernelLink(Protocol):
         the number that pairs the two is this connection's own (an ``id`` of ``0`` means "name this one
         for me"). A connection that ended while a query was out answers with what it has — which is
         nothing, so the wait ends in an error the caller can see rather than in silence.
+        """
+        ...
+
+    async def trajectory(self, session: str) -> tuple[Entry, ...]:
+        """Read one conversation's rows, in the order they were written.
+
+        A method rather than a command, and one that answers a *value*: the entries, with the parent each
+        one continues, so a client that wants the branches has them without a second question. A session
+        this kernel is not serving answers nothing, which is the truth about a conversation that was
+        never opened (E134).
         """
         ...
 
