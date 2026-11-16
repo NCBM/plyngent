@@ -23,6 +23,11 @@ and the other two are a normal goodbye (0). Before closing, the client says *why
 What this file deliberately does not do: draw a prompt, decide how a line looks, decide where on the
 terminal a line may be written, decide what a tool of its own does, or know what a command's arguments
 are. Those are the editor's, the screen's, the offers', and the grammar's, and this loop only routes.
+
+One thing it keeps that is nobody else's: how far it had *read* (§5 B). The kernel numbers every event
+once, so the number a client rendered up to is a number it can say again after a break — and the only
+place that survives a break is a file. It is written on the way out and claimed on the way in, and a mark
+from another run of a kernel is dropped rather than guessed at: two counts are not one.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import msgspec
+from msgspec import Struct
 from msgspec.structs import replace
 
 from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
@@ -45,6 +52,7 @@ from plyngent.wire.flow import Ack
 from plyngent.wire.scope import CancelReason
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from typing import TextIO
 
     from plyngent.cli.line import Line, LineEditor
@@ -60,12 +68,29 @@ LEFT = 0
 GONE = 1
 
 
+class Mark(Struct, frozen=True, kw_only=True):
+    """How far one client had read on one run of one kernel: a number and the count it belongs to."""
+
+    epoch: str = ""
+    seq: int = 0
+
+
+def _read_mark(path: Path) -> Mark | None:
+    """What the last run of this client left here, or ``None`` — a mark nobody can read is no mark."""
+    try:
+        return msgspec.json.decode(path.read_bytes(), type=Mark)
+    except OSError, msgspec.DecodeError:
+        return None
+
+
 class App:
     """One client of one kernel: its three tasks, and the exit code they add up to."""
 
     client: KernelLink
     session: str
     workspace: str
+    mark: Path | None
+    _seen: int
     editor: LineEditor
     catalog: Catalog
     tools: ClientTools
@@ -92,6 +117,7 @@ class App:
         colour: bool = False,
         markdown: bool = False,
         diff: bool = True,
+        mark: Path | None = None,
     ) -> None:
         self.client = client
         self.session = session
@@ -99,6 +125,11 @@ class App:
         self.catalog = catalog
         self.workspace = workspace
         self.tools = tools
+        # How far this client had read, where that is remembered, and where *this* run has got to. Both
+        # are the frontend's own: the kernel numbers what it says, and only the client knows what it drew
+        # (§5 B).
+        self.mark = mark
+        self._seen = 0
         # What this client answers by itself, and the count of what it has (§0.15, E114). Both are the
         # frontend's own: the kernel asks and is answered, and never learns which of the two answered.
         self.policy = Policy() if policy is None else policy
@@ -145,7 +176,13 @@ class App:
         Saying what this client can run is the third, and it comes after the session exists: attaching a
         tool changes what every session is shown, so the one this client just opened is one of the
         sessions that has to be told (§10.8).
+
+        The very first thing said is how far the run before this one had read, when there was one: it is
+        a claim about the past rather than progress in the present, so the kernel answers it once, and
+        everything after it is this connection's own (§5 B).
         """
+        if not self._resuming():
+            return GONE
         if not self.client.submit(Open(session=self.session)):
             return GONE
         self._seeding = self.client.submit(ListSessions())
@@ -168,8 +205,44 @@ class App:
             _ = await asyncio.gather(*background, return_exceptions=True)
             _ = self.client.submit(Cancel(session=self.session, scope=None, reason=CancelReason.CLIENT_GONE))
             self.client.close()
+            self._remember()
         await self._closing()
         return code
+
+    # -- how far this client had read -----------------------------------------------
+
+    def _resuming(self) -> bool:
+        """Say how far the last run of this client got, so the kernel can answer with what was missed.
+
+        It goes before anything else, and it is one number: the kernel answers it once, from the window it
+        keeps, and everything that arrives after it is this connection's own. A mark is dropped rather
+        than sent when the greeting names a different run of the kernel — two counts are not one, and a
+        number from another one would be a replay of somebody else's words (§5 B).
+        """
+        if self.mark is None:
+            return True
+        found = _read_mark(self.mark)
+        if found is None or found.epoch != self.client.manifest.epoch:
+            return True
+        self._seen = found.seq
+        self.client.ack(Ack(seq=found.seq, resume=True))
+        return True
+
+    def _remember(self) -> None:
+        """Write down how far this run got, so the next one can ask for what it missed.
+
+        A mark nobody can write is not a failure: the number is a convenience for the next run, and a
+        conversation that cannot keep one is a conversation that starts where it is rather than where it
+        was.
+        """
+        if self.mark is None or self._seen == 0:
+            return
+        written = Mark(epoch=self.client.manifest.epoch, seq=self._seen)
+        try:
+            self.mark.parent.mkdir(parents=True, exist_ok=True)
+            _ = self.mark.write_bytes(msgspec.json.encode(written))
+        except OSError:
+            return
 
     async def _closing(self) -> None:
         """One line about what the policies answered, because nothing else will say it.
@@ -199,6 +272,7 @@ class App:
         (:meth:`_drawn`, §0.13 E94).
         """
         async for event in self.client.events():
+            self._seen = max(self._seen, event.seq)
             if self._seeding and isinstance(event, SessionsListed):
                 self._seeding = False
                 self._cursor = _ends_at(event, self.session)

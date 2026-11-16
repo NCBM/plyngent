@@ -26,6 +26,7 @@ from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
+    from pathlib import Path
 
     from plyngent.cli.offers import ClientTools
     from plyngent.cli.policy import Policy
@@ -135,6 +136,7 @@ async def story_with(tmp_path, transport):
         grades: Grades | None = None,
         policy: Policy | None = None,
         markdown: bool = False,
+        mark: Path | None = None,
     ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
@@ -161,6 +163,7 @@ async def story_with(tmp_path, transport):
             grades=grades,
             policy=policy,
             markdown=markdown,
+            mark=mark,
         )
         started.append(story)
         return story

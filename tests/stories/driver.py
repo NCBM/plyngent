@@ -171,6 +171,7 @@ class Story:
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
         markdown: bool = False,
+        mark: Path | None = None,
         leaving: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.client = client
@@ -197,6 +198,7 @@ class Story:
             tools=tools,
             policy=policy,
             markdown=markdown,
+            mark=mark,
         )
         self._running = asyncio.create_task(self.app.run())
 
@@ -221,6 +223,7 @@ class Story:
         grades: Grades | None = None,
         policy: Policy | None = None,
         markdown: bool = False,
+        mark: Path | None = None,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
@@ -268,6 +271,10 @@ class Story:
         ``markdown`` says the screen is a terminal: the answer is laid out as the markdown it is and grown
         in place while it arrives, which a story reads as the rows plus the cursor movements the screen
         sent (§0.13, E100). It is off by default because a story that is not about that reads bytes.
+
+        ``mark`` is where this client remembers how far it had read (§5 B), and ``None`` is a client that
+        remembers nothing: a story about a reconnect names a file in its own directory, the way a program
+        names the one in the person's.
         """
         root.mkdir(parents=True, exist_ok=True)
         settled: dict[str, bool] = {
@@ -304,7 +311,14 @@ class Story:
             )
         )
         story = cls(
-            kernel.client, kernel=kernel, session=session, model=model, tools=tools, policy=policy, markdown=markdown
+            kernel.client,
+            kernel=kernel,
+            session=session,
+            model=model,
+            tools=tools,
+            policy=policy,
+            markdown=markdown,
+            mark=mark,
         )
         await story.settle()
         return story
@@ -320,6 +334,7 @@ class Story:
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
         markdown: bool = False,
+        mark: Path | None = None,
     ) -> Story:
         """Put a person in front of a kernel that is reached at an address rather than built here.
 
@@ -331,6 +346,9 @@ class Story:
         ``kernel`` is the daemon when it is this process's, and it is what lets such a story say what the
         host did; ``None`` is a frontend with nothing of the kernel in hand, which is the ordinary case
         for a program that was pointed at an address.
+
+        ``mark`` is where this client remembers how far it had read, and ``None`` is a client that
+        remembers nothing: a story about a reconnect names a file, the way a program names its own.
         """
         story = cls(
             client,
@@ -340,6 +358,7 @@ class Story:
             tools=tools,
             policy=policy,
             markdown=markdown,
+            mark=mark,
             leaving=partial(_client_leaves, client),
         )
         await story.settle()

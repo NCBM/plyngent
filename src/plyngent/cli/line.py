@@ -176,6 +176,9 @@ def _picked(question: int, text: str, *, options: tuple[str, ...], default: str 
 #: The directory one session's history lives in, under the same root as the journal.
 HISTORY = "history"
 
+#: The directory of reading marks: how far a client had read, beside the lines a person typed.
+MARKS = "marks"
+
 #: What a directory or a file name may keep of a session's own: lowercase words, one dash between them.
 _NOT_A_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -192,6 +195,17 @@ def history_path(session: str) -> Path:
     A pure answer: it creates nothing, and the directory appears when a run first has a line to keep.
     """
     return user_data_path("plyngent") / HISTORY / f"{_slug(session)}-{_digest(session)}.txt"
+
+
+def mark_path(session: str) -> Path:
+    """Where one session's reading mark is kept between runs: how far this client had read.
+
+    The same directory rules as :func:`history_path`, and for the same reason: it is a frontend's own
+    memory of a conversation, and it does not belong in the tree it was talking about. What it holds is a
+    number the *kernel* gave out, so it is only meaningful beside the run that gave it — the greeting
+    says which run that was, and a mark from another one is dropped rather than guessed at (§5 B).
+    """
+    return user_data_path("plyngent") / MARKS / f"{_slug(session)}-{_digest(session)}.json"
 
 
 def _slug(name: str) -> str:

@@ -31,7 +31,7 @@ import click
 from plyngent import boot, config
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
-from plyngent.cli.line import PlainEditor, PromptEditor, history_path
+from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
 from plyngent.cli.policy import Policy
 from plyngent.cli.render import workspace_label
 
@@ -243,6 +243,7 @@ async def _talk(
         colour=_colour(asked=no_colour, stream=sys.stdout),
         markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         diff=not no_diff,
+        mark=mark_path(session),
     )
     return await app.run()
 
