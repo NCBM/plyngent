@@ -257,13 +257,20 @@ class Routed(Event, tag="routed", frozen=True, kw_only=True):
     model answered this request" is answerable later from the history rather than from a terminal that
     scrolled away.
 
-    The change takes effect at the next request and never refuses anybody: a turn already asking keeps
+    Said twice: when a route is chosen, and when a session is opened — which is what ``opening`` says,
+    since the two are different things to a client. The answer to an opening is where the conversation
+    *is*, and a frontend that has just attached knows nothing about the one it attached to; a change is
+    something that happened, and a person did it. Reading the first as news would draw a line for a
+    thing nobody did.
+
+    A change takes effect at the next request and never refuses anybody: a turn already asking keeps
     the route it started with (R7, ``SetRoute``).
     """
 
     session: str = ""
     route: str = ""
     epoch: int = 0
+    opening: bool = False
 
 
 class RouteRefused(Event, tag="route-refused", frozen=True, kw_only=True):
@@ -377,6 +384,12 @@ class ToolReturned(Event, tag="tool-returned", frozen=True, kw_only=True):
     ``partial``), and ``summary`` is the same sentence the model is given: the person watching and the
     model reading want that one line, and it is made once. The body is not here — it belongs to the
     history the model is sent, and a second copy would be a second version of one answer.
+
+    ``elapsed_ms`` is what the call cost, from the one place that times it
+    (:attr:`plyngent.kernel.toolresult.Meta.elapsed_ms`). It travels because a per-call duration is the
+    kernel's own measurement of its own work: a frontend that timed the gap between two events would be
+    reporting how long the *terminal* waited, which is a different number whenever a batch or a busy
+    loop delays the line.
     """
 
     session: str = ""
@@ -385,6 +398,7 @@ class ToolReturned(Event, tag="tool-returned", frozen=True, kw_only=True):
     tool: str = ""
     status: str = ""
     summary: str = ""
+    elapsed_ms: int = 0
 
 
 class OfferRefused(Event, tag="offer-refused", frozen=True, kw_only=True):

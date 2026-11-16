@@ -36,7 +36,7 @@ from plyngent.cli.grammar import Catalog, Composes, Help, Runs, Wrong, decode
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.policy import Policy, Tally
-from plyngent.cli.render import Fold, notice
+from plyngent.cli.render import Stage, notice
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
@@ -65,6 +65,7 @@ class App:
 
     client: KernelLink
     session: str
+    workspace: str
     editor: LineEditor
     catalog: Catalog
     tools: ClientTools
@@ -74,7 +75,7 @@ class App:
     _leaving: asyncio.Event
     _cursor: str | None
     _seeding: bool
-    _fold: Fold
+    _stage: Stage
 
     def __init__(
         self,
@@ -85,15 +86,18 @@ class App:
         editor: LineEditor,
         out: TextIO,
         err: TextIO,
+        workspace: str = "",
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
         colour: bool = False,
         markdown: bool = False,
+        diff: bool = True,
     ) -> None:
         self.client = client
         self.session = session
         self.editor = editor
         self.catalog = catalog
+        self.workspace = workspace
         self.tools = tools
         # What this client answers by itself, and the count of what it has (§0.15, E114). Both are the
         # frontend's own: the kernel asks and is answered, and never learns which of the two answered.
@@ -112,10 +116,18 @@ class App:
         # Whether the one listing this client asks for at startup has been answered yet: that answer is
         # state, not news, so it is read rather than drawn.
         self._seeding = False
-        # What the kernel is saying right now, until a line or a block of it is finished: only a client
-        # knows what a person has already read, so only a client can say what a message looks like when it
-        # arrives in pieces (E94), and only a client knows whether it has a screen to grow it on (E100).
-        self._fold = Fold(markdown=markdown)
+        # What the kernel is saying right now, and where this conversation stands while it says it: only
+        # a client knows what a person has already read, so only a client can say what a message looks
+        # like when it arrives in pieces (E94), whether it has a screen to grow one on (E100), and how
+        # much of a turn has gone by (§5 A).
+        self._stage = Stage(
+            session=session,
+            workspace=workspace,
+            mode=self.policy.mode,
+            decorated=markdown,
+            diff=diff,
+            markdown=markdown,
+        )
 
     async def run(self) -> int:
         """Serve the connection until somebody says goodbye, then say why before closing it.
@@ -206,17 +218,26 @@ class App:
                     self._cursor = event.entry
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
+        self._leaving.set()
 
     async def _drawn(self, event: AnyEvent) -> None:
-        """One event on the screen, as the lines and the window it makes.
+        """One event on the screen: the conversation's rows, and this client's own rows about it.
 
         A fragment has no line in it yet, so the fold holds it — until a newline makes a line of it on a
         stream, or a blank line makes a markdown block of it on a screen; everything else first commits
         whatever the fold was holding, so a half-said answer is never left behind a turn. The message the
         fragments add up to is dropped when it is the same turn's: what a person read was the pieces, and
         saying it again would print the answer twice (§0.13, E94).
+
+        The two streams are written apart for the reason they exist: what the kernel said goes where the
+        conversation goes, and where this client thinks it is goes to the notices, so nothing a frontend
+        worked out by itself lands among the kernel's own words (§5 A, E130).
         """
-        await self._screen.paint(self._fold.push(event, focus=self.session, width=self._screen.width))
+        frame = self._stage.push(event, width=self._screen.width)
+        if frame.said.lines or frame.said.window:
+            await self._screen.paint(frame.said)
+        if frame.told:
+            await self._screen.tell(*frame.told)
 
     async def _questions(self) -> None:
         """Answer what the kernel asks, one at a time, through the one cursor."""

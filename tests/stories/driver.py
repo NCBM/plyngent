@@ -37,6 +37,7 @@ from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
 from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.cli.render import question as question_line
+from plyngent.cli.render import workspace_label
 from plyngent.kernel.catalog import BUILTIN
 from plyngent.kernel.host import Host
 from plyngent.kernel.link import InProcLink
@@ -185,6 +186,7 @@ class Story:
             editor=self.editor,
             out=self._out,
             err=self._err,
+            workspace=workspace_label(str(self.workspace)),
             tools=tools,
             policy=policy,
             markdown=markdown,

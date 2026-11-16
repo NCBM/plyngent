@@ -291,15 +291,29 @@ class Serving:
         ``Open`` is idempotent because a frontend that reattaches has the same session in mind; what it
         may not have is a second copy of it. Seeding is the one form that needs entries to point at, so
         it waits for the forest.
+
+        The opening answers with the route this session stands at, whether or not it was already
+        served: a client that has just attached is told where it is rather than having to ask, and the
+        answer is the same one ``SetRoute`` gives so a client reads both lines with one rule.
         """
         if seed_from is not None:
             self.link.emit(TurnRefused(session=session, reason=NO_FOREST, holder=0))
             return
         declaration = self._declaration(session)
         declared = self.assembly.keys()
-        if declaration.key in declared:
+        if declaration.key not in declared:
+            _ = await self.assembly.admit(declaration)
+        self._say_route(session)
+
+    def _say_route(self, session: str) -> None:
+        """Say which route answers *session*, resolved the way a route change resolves one."""
+        found = self._session(session)
+        if found is None:
             return
-        _ = await self.assembly.admit(declaration)
+        asked = found.host.routes.resolve(found.route)
+        self.link.emit(
+            Routed(session=session, route="" if asked is None else asked.name, epoch=found.route_epoch, opening=True)
+        )
 
     async def _close(self, session: str) -> None:
         """Stop serving a session; its PTYs go back to the host on the way down."""

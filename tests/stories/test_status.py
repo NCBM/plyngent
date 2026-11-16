@@ -1,0 +1,89 @@
+"""Where the conversation is, and what it cost: the rows a frontend works out for itself.
+
+These are the frontend's own rows rather than the kernel's, which is why a story is the only place they
+can be read from the outside: :func:`plyngent.cli.render.render` says nothing about them, and a unit
+test of a row cannot say whether the loop put it on the right stream.
+
+Everything here reads the notices. A row this client worked out is not something the kernel said, so it
+does not land among the kernel's own words — which is also what keeps a program driving this one over a
+pipe reading exactly what the kernel said and nothing else (§5 A, E130).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from plyngent.kernel.lm import Caps
+from plyngent.kernel.lm.route import Route
+from plyngent.kernel.model import Reply
+from plyngent.kernel.model import Usage as Cost
+from tests.stories.model import calling, text
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from tests.stories.driver import Story
+
+    type Scripted = Callable[..., Awaitable[Story]]
+
+#: The characters a decorated lane draws with, and the ones a plain lane must never produce.
+DRAWN = ("│", "╰", "╭", "┌", "└")
+
+
+def _route(name: str) -> Route:
+    """One endpoint a story can name, with nothing behind it: the scripted model answers, not this."""
+    return Route(name=name, dialect="messages", base=f"http://{name}.invalid/v1", model="m", caps=Caps(max_output=64))
+
+
+async def test_a_turn_says_where_the_conversation_is(story_with: Scripted) -> None:
+    """Once where it begins and once where it ends, and both say the route this session is on.
+
+    The route is the half a person cannot see anywhere else: ``/model`` is a command they may have typed
+    in a different session, hours ago, and which model is answering is not a fact the conversation says.
+    """
+    story = await story_with(text("hello"), routes=(_route("claude"),), route="claude")
+
+    await story.type("hi")
+    await story.finished()
+
+    said = [line for line in story.notices() if line.startswith("main")]
+    assert len(said) == 2, "one where the turn began, one where it ended"
+    assert all("route claude" in line for line in said)
+    assert all("workspace0" in line for line in said), "and the directory the work happens in"
+
+
+async def test_a_turn_says_what_it_cost(story_with: Scripted) -> None:
+    story = await story_with(Reply(text="hello", usage=Cost(prompt=1200, completion=30)))
+
+    await story.type("hi")
+    await story.finished()
+
+    tally = [line for line in story.notices() if line.startswith("turn 1 ")]
+    assert tally, story.notices()
+    assert "1 step" in tally[0], "one request to the model, and 'one step' rather than '1 steps'"
+    assert "1200+30 tokens" in tally[0], "what was sent and what came back"
+
+
+async def test_a_call_says_how_long_it_took(story_with: Scripted) -> None:
+    story = await story_with(calling("write_file", {"path": "notes.txt", "content": "hi"}), text("written"))
+
+    await story.type("write a note")
+    await story.answer("y")
+    await story.finished()
+
+    cost = [line for line in story.screen() if line.startswith("took ")]
+    assert len(cost) == 1, "one row under one call, on the stream the call itself is on"
+    assert re.fullmatch(r"took \d+ ms", cost[0]), "the kernel's own measurement, and it is a number"
+
+
+async def test_a_plain_lane_draws_nothing(story_with: Scripted) -> None:
+    """No bar, no corner: a stream that is not a terminal reads words and never a border."""
+    story = await story_with(calling("write_file", {"path": "notes.txt", "content": "hi"}), text("written"))
+
+    await story.type("write a note")
+    await story.answer("y")
+    await story.finished()
+
+    written = "\n".join((*story.screen(), *story.notices()))
+    assert not [character for character in DRAWN if character in written], written

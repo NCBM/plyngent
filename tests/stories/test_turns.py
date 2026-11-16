@@ -79,12 +79,13 @@ async def test_a_call_runs_and_the_model_reads_what_it_said(story_with: Scripted
     await story.finished()
 
     screen = story.screen()
-    assert screen[:3] == (
+    assert screen[:4] == (
         "turn 1 started (chat)",
         "calling write_file",
         "write_file ok: wrote 2 chars to notes.txt",
-    ), "what the person sees first: the turn, the call, and what came of it"
-    assert re.fullmatch(r"write_file changed 1 path \([0-9a-f]{8}\)", screen[3]), (
+        "took 0 ms",
+    ), "what the person sees first: the turn, the call, what came of it, and what it cost"
+    assert re.fullmatch(r"write_file changed 1 path \([0-9a-f]{8}\)", screen[4]), (
         "then what the call left different — the version's own id, so a person can ask for it again"
     )
     assert screen[-2:] == ("written", "turn 1 finished"), "and the difference does not displace the answer"

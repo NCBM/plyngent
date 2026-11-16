@@ -18,7 +18,8 @@ Three rules shape it:
   turns the role into a style (:mod:`plyngent.cli.screen`) or into nothing at all.
 * **A role is what a line *is*, not how it looks.** The closed set (:data:`Role`) is the whole of what
   the renderer promises: the conversation itself, a tool's doing, the kernel's bookkeeping, a refusal,
-  or what an asking cost. A colour is one reader of it and a test is another (E90).
+  what an asking cost, or which way one row of a difference went. A colour is one reader of it and a
+  test is another (E90).
 * **The session is named only when it has to be.** One frontend may hold several sessions, so a line
   from the session in focus is bare, and a line from another one is prefixed with its name. The
   renderer does not assume there is only one session: the focus is an argument, and the default
@@ -28,6 +29,7 @@ Three rules shape it:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
 from plyngent.cli import markdown
@@ -83,7 +85,7 @@ WINDOW_ROWS = 8
 #: account of its own bookkeeping, ``refusal`` is something that did not happen and why, and ``usage``
 #: is what an asking cost. The five are kept apart because they are five different things to read, and
 #: a sixth must be a decision rather than a colour that happens to fall through.
-type Role = Literal["assistant", "tool", "notice", "refusal", "usage"]
+type Role = Literal["assistant", "tool", "notice", "refusal", "usage", "added", "removed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +151,7 @@ def focus(session: str | None) -> str:
     return DEFAULT_FOCUS if session is None else session
 
 
-def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS) -> tuple[Shown, ...]:
+def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS, diff: bool = True) -> tuple[Shown, ...]:
     """The lines a person sees for one event, in the order they are written.
 
     A ``Batch`` is unfolded into the lines of its items: coalescing is a transport fact, and a person
@@ -159,10 +161,14 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS) -> tuple[Shown, ...]:
     tool call and its result are the conversation itself, while the rest is bookkeeping about turns
     and sessions. Both halves are matched when every claim ends, so a new kind of news fails to
     type-check in the half it belongs to instead of being silently unread.
+
+    ``diff`` is whether a change is shown as the difference itself; a frontend told not to show patches
+    still says that a call left something behind, because that is a fact about the workspace rather
+    than about how much of it a screen can hold.
     """
     match event:
         case Batch(items=items):
-            return tuple(line for item in items for line in render(item, focus=focus))
+            return tuple(line for item in items for line in render(item, focus=focus, diff=diff))
         case AssistantText() | AssistantDelta() | ToolCalled() | ToolReturned():
             rows = _said(event)
         case Usage() | AnswerCut():
@@ -170,7 +176,7 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS) -> tuple[Shown, ...]:
         case TurnStarted() | TurnFinished() | TurnRefused() | OfferRefused():
             rows = _turned(event)
         case Changed():
-            rows = _diffed(event)
+            rows = _diffed(event, diff=diff)
         case _ as rest:
             rows = _reported(rest)
     return tuple(_named(session, focus, shown) for session, shown in rows)
@@ -259,6 +265,15 @@ class Fold:
         closed = self._closed(focus, width)
         return Painted(closed.lines + render(event, focus=focus))
 
+    def close(self, *, focus: str = DEFAULT_FOCUS, width: int = DEFAULT_WIDTH) -> Painted:
+        """Finish whatever is being held, so the next line begins where it should.
+
+        A row this client writes under a call's result is not part of what the model said, so the tail
+        still being held has to become final first — the same order :meth:`push` keeps for an event that
+        is not a fragment.
+        """
+        return self._closed(focus, width)
+
     def _gathered(self, event: AssistantDelta, focus: str, width: int) -> Painted:
         """One fragment: whatever it finished becomes final, and the rest is the window."""
         # Another turn talking before this one closed: nothing can be held from two turns at once, because
@@ -321,6 +336,201 @@ class Fold:
         if not text.strip():
             return ()
         return tuple(_named(self._who, focus, Shown(row, "assistant")) for row in markdown.lines(text, width=width))
+
+
+@dataclass(frozen=True, slots=True)
+class Frame:
+    """What one event puts on the screen: the conversation, and what this client says about itself.
+
+    The two are different streams and different hands. A kernel event is the conversation and goes
+    where the conversation goes; what a frontend works out on its own — where this session is, what a
+    turn has cost — goes to the notices, so a program driving this one over a pipe reads the kernel's
+    own words and nothing else (§5 A, E130).
+    """
+
+    said: Painted = Painted()
+    told: tuple[Shown, ...] = ()
+
+
+#: The bar a decorated row is drawn with, and the character the same row ends with.
+BAR = "│"
+CORNER = "╰"
+
+#: How wide the workspace's own name may be on a status line before its front is dropped.
+WORKSPACE_COLUMNS = 32
+
+
+def workspace_label(root: str, /, *, home: str | None = None) -> str:
+    """A workspace as a status line says it: under the home directory when it is, and short enough.
+
+    A path is shortened at its *front*, because the end is the part that names the project: ``…/repo``
+    says which workspace this is while ``/home/somebody/Projects/…`` does not. It is computed once, when
+    the program starts, rather than per line — which is why it is a function of a path and not a look at
+    the machine from inside a renderer.
+    """
+    place = Path(root)
+    house = Path(home) if home is not None else Path.home()
+    said = "~/" + place.relative_to(house).as_posix() if place.is_relative_to(house) and place != house else str(place)
+    if len(said) <= WORKSPACE_COLUMNS:
+        return said
+    parts = Path(said).parts
+    label = "…/" + "/".join(parts[-2:])
+    return label if len(label) <= WORKSPACE_COLUMNS else "…/" + parts[-1]
+
+
+class Stage:
+    """Where this conversation is, and what it has cost so far — the stateful half of the screen.
+
+    :func:`render` is a function of one event, and that is what lets a screen be compared without a
+    terminal; but "where am I" and "what did this turn cost" are questions about a *stretch* of events
+    rather than about one, so they live here. One per client, like :class:`Fold`, and what it hands back
+    is still lines and roles: nothing here decides a width, a colour, or a cursor.
+
+    Three things are added, and each is a row of its own rather than a rewrite of a row that already
+    exists. That is deliberate: a frontend's idea of how a call *reads* must not change what a call
+    *said*, because those words are the kernel's, and the one place they are written is
+    :func:`render`.
+
+    * a **status line** where a turn starts and ends and where a route changes — the session, the
+      workspace, the route answering it, the way this run answers questions, and how full the context
+      was at the last ask;
+    * a **cost row** under a call's result: how long it took, from the kernel's own measurement
+      (:attr:`~plyngent.wire.event.ToolReturned.elapsed_ms`), because a number this client timed would
+      be how long the *terminal* waited;
+    * a **tally** where a turn ends: how many steps, how many calls, how many tokens.
+
+    ``decorated`` is whether this lane may draw: the same rows carry a box-drawing bar here and the word
+    that says the same thing on a stream that is not a terminal, which is the distinction
+    :class:`~plyngent.cli.screen.Screen` already makes for a block that grows in place.
+    """
+
+    _fold: Fold
+    _decorated: bool
+    _diff: bool
+    _session: str
+    _workspace: str
+    _mode: str
+    _routes: dict[str, str]
+    _turn: int
+    _steps: int
+    _calls: int
+    _prompt: int
+    _completion: int
+    _context: int
+
+    def __init__(
+        self,
+        *,
+        session: str,
+        workspace: str = "",
+        mode: str = "",
+        decorated: bool = False,
+        diff: bool = True,
+        markdown: bool = False,
+    ) -> None:
+        self._fold = Fold(markdown=markdown)
+        self._decorated = decorated
+        self._diff = diff
+        self._session = session
+        self._workspace = workspace
+        self._mode = mode
+        self._routes = {}
+        self._turn = 0
+        self._steps = 0
+        self._calls = 0
+        self._prompt = 0
+        self._completion = 0
+        self._context = 0
+
+    def push(self, event: AnyEvent, *, width: int = DEFAULT_WIDTH) -> Frame:
+        """What this event puts on the screen, as the conversation and as this client's own rows."""
+        if isinstance(event, Batch):
+            frame = Frame()
+            for item in event.items:
+                one = self.push(item, width=width)
+                frame = Frame(Painted(frame.said.lines + one.said.lines, one.said.window), (*frame.told, *one.told))
+            return frame
+        if isinstance(event, AssistantText | AssistantDelta):
+            # A fragment is the fold's in every respect, including the message it adds up to (E94).
+            return Frame(said=self._fold.push(event, focus=self._session, width=width))
+        if isinstance(event, Routed):
+            return self._routed(event, width)
+        return Frame(said=self._said(event, width), told=self._noticed(event))
+
+    def _routed(self, event: Routed, width: int) -> Frame:
+        """A route, which is either where this conversation *is* or something that happened to it."""
+        self._routes[event.session] = event.route
+        if event.opening:
+            # The answer to attaching is the state this client started in, and a row for it would say a
+            # thing nobody did (§5 A, E131).
+            return Frame()
+        return Frame(said=self._fold.push(event, focus=self._session, width=width), told=(self._status(event.session),))
+
+    def _said(self, event: AnyEvent, width: int) -> Painted:
+        """The conversation's own rows for one event, with this stage's row where it belongs."""
+        if isinstance(event, AssistantText | AssistantDelta):
+            # Only a fragment needs the fold's own rules: what it is holding, and the message it adds up
+            # to (E94). Everything else is one event with its rows in it, and this is what ``Fold``
+            # would have done with it — with the one answer a stage has and a fold does not.
+            return self._fold.push(event, focus=self._session, width=width)
+        closed = self._fold.close(focus=self._session, width=width)
+        rows = (*closed.lines, *render(event, focus=self._session, diff=self._diff))
+        if isinstance(event, ToolReturned):
+            rows = (*rows, _named(event.session, self._session, Shown(self._cost(event.elapsed_ms), "usage")))
+        return Painted(rows)
+
+    def _noticed(self, event: AnyEvent) -> tuple[Shown, ...]:
+        """What this client has to say about the event: where it is, and what the turn has cost."""
+        if isinstance(event, TurnStarted) and event.session == self._session:
+            self._turn, self._steps, self._calls, self._completion, self._prompt = event.turn, 0, 0, 0, 0
+            return (self._status(event.session),)
+        if isinstance(event, Usage) and event.session == self._session:
+            self._steps += 1
+            self._prompt = event.prompt
+            self._completion += event.completion
+            self._context = event.prompt
+            return ()
+        if isinstance(event, ToolCalled) and event.session == self._session:
+            self._calls += 1
+            return ()
+        if isinstance(event, TurnFinished) and event.session == self._session:
+            return (self._status(event.session), self._tally(event.turn))
+        return ()
+
+    def _status(self, session: str) -> Shown:
+        """One row saying where this conversation is: it, its workspace, its route, and how full."""
+        route = self._routes.get(session, "")
+        fields = [session] if not self._workspace else [session, self._workspace]
+        fields.append(f"route {route or '-'}")
+        if self._mode:
+            fields.append(self._mode)
+        if self._context:
+            fields.append(f"context {self._context} tokens")
+        return self._bar("  ".join(fields))
+
+    def _tally(self, turn: int) -> Shown:
+        """One row saying what the turn cost, in the three numbers a person can act on."""
+        fields = [f"turn {turn}", _counted(self._steps, "step"), _counted(self._calls, "call")]
+        if self._steps:
+            fields.append(f"{self._prompt}+{self._completion} tokens")
+        return self._end("  ".join(fields))
+
+    def _cost(self, elapsed_ms: int) -> str:
+        """How long one call took, said the way this lane says a thing."""
+        return f"{CORNER} {elapsed_ms} ms" if self._decorated else f"took {elapsed_ms} ms"
+
+    def _bar(self, text: str) -> Shown:
+        """A row this client draws down the side of the screen, or the same row without a side."""
+        return Shown(f"{BAR} {text}" if self._decorated else text, "notice")
+
+    def _end(self, text: str) -> Shown:
+        """A row that closes one — the corner a decorated lane ends a block with."""
+        return Shown(f"{CORNER} {text}" if self._decorated else text, "notice")
+
+
+def _counted(number: int, noun: str) -> str:
+    """A number and its noun, said the way a person says one of something."""
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
 def _said(event: _Said) -> tuple[_Row, ...]:
@@ -415,23 +625,41 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def _diffed(event: _Diffed) -> tuple[_Row, ...]:
+def _diffed(event: _Diffed, *, diff: bool = True) -> tuple[_Row, ...]:
     """What one call left different, as the difference itself.
 
     One line saying which call and how many paths, then git's own unified diff under it — ``---``,
-    ``+++`` and ``@@`` already say what a person needs, so nothing is rewritten here. Nothing is added
-    for the model either: this is the one place a change is read, and it is read by the person watching.
+    ``+++`` and ``@@`` already say what a person needs, so nothing is rewritten here. Each row is read
+    for what it *is*: an added line and a removed one are two different things to look at, and the
+    frontend turns that into two colours. Nothing is added for the model either: this is the one place a
+    change is read, and it is read by the person watching.
     """
     match event:
         case Changed(session=session, tool=tool, revision=revision, paths=paths, patch=patch, truncated=truncated):
             counted = "1 path" if len(paths) == 1 else f"{len(paths)} paths"
             rows = [(session, Shown(f"{tool} changed {counted} ({revision[:8]})", "tool"))]
-            rows.extend((session, Shown(line, "assistant")) for line in patch.splitlines())
+            if diff:
+                rows.extend((session, Shown(line, _difference(line))) for line in patch.splitlines())
             if truncated:
                 rows.append((session, Shown(f"the rest is kept under {revision}", "notice")))
             return tuple(rows)
         case _ as never:
             assert_never(never)
+
+
+def _difference(line: str) -> Role:
+    """What one row of a patch is: a line added, a line taken away, or neither.
+
+    ``+++`` and ``---`` are the patch's own headers and not content, so they are read before the first
+    character is: a header coloured as an addition would say a file was written twice.
+    """
+    if line.startswith(("+++", "---")):
+        return "assistant"
+    if line.startswith("+"):
+        return "added"
+    if line.startswith("-"):
+        return "removed"
+    return "assistant"
 
 
 def _declined(event: _Declined) -> tuple[_Row, ...]:
@@ -544,6 +772,8 @@ STYLES: dict[Role, str] = {
     "notice": "ansibrightblack",
     "refusal": "ansired",
     "usage": "ansibrightblack",
+    "added": "ansigreen",
+    "removed": "ansired",
 }
 
 

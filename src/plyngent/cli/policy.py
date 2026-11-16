@@ -32,6 +32,11 @@ from plyngent.wire.ask import SILENCE, Agreed, AnyAsk, By, Confirmation, Severit
 YOLO = "yolo"
 AWAY = "away"
 
+#: The second away switch as a *mode* rather than as an answer: a question it answers is still answered
+#: by ``away``, but a run that was started with it is a different run to be in, and the status line says
+#: which one this is.
+AWAY_DANGER = "away-danger"
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Answered:
@@ -78,6 +83,17 @@ class Policy:
     def speaking(self) -> bool:
         """Whether anything is being answered here at all — a program with no policy says nothing."""
         return self.yolo or self.away
+
+    @property
+    def mode(self) -> str:
+        """What to call this run's answering, for a status line: the switches, in the order they read.
+
+        It is a word about *this* frontend and not about the kernel, which is why it is named here and
+        why the screen may say it: a person who left ``--yolo`` on three hours ago should be able to see
+        it without reading their own shell history.
+        """
+        named = [name for name, on in ((YOLO, self.yolo), (AWAY, self.away), (AWAY_DANGER, self.away_danger)) if on]
+        return " ".join(named)
 
     def opening(self) -> str:
         """What the program says about itself when it is started with the loudest switch.

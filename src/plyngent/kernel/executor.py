@@ -219,6 +219,7 @@ class ToolExecutor:
                 tool=node.name,
                 status=result.status.value,
                 summary=result.summary,
+                elapsed_ms=result.meta.elapsed_ms,
             ),
         )
         # A body that did not fit was written to the store by the tool that produced it, before this

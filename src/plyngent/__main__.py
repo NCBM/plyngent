@@ -10,10 +10,10 @@ sentence with an exit code when the file cannot be one (§0.11, E69).
 The one thing it does decide about the frontend is *which* cursor reads a line — a terminal's prompt, or
 the plain lane over a pipe, a redirected file, or a `PLYNGENT_PLAIN` run (§0.13, E93) — and whether the
 lines it writes are painted (§0.13, E90), and whether an answer is laid out as the markdown it is
-(§0.13, E100), and where the prompt keeps the session's lines between runs (§0.13, E101). All four are
-facts about the streams in front of it and about this person's own data directory, not about how a line
-looks, and together they are the whole difference between a program somebody types at and one a script
-drives.
+(§0.13, E100), and where the prompt keeps the session's lines between runs (§0.13, E101), and whether a
+change is shown as the difference itself (§5 A, E121). All five are facts about the streams in front of
+it and about this person's own data directory, not about how a line looks, and together they are the
+whole difference between a program somebody types at and one a script drives.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path
 from plyngent.cli.policy import Policy
+from plyngent.cli.render import workspace_label
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -68,6 +69,7 @@ INTERRUPTED = 130
     help=f"the file to read settings from; {config.CONFIG_FILE} in the user's data directory by default",
 )
 @click.option("--no-colour", "no_colour", is_flag=True, help="write plain text, with no colour")
+@click.option("--no-diff", "no_diff", is_flag=True, help="say what a call changed, without the difference itself")
 @click.option("--yolo", "yolo", is_flag=True, help="answer the light and ordinary questions with a yes")
 @click.option("--away", "away", is_flag=True, help="answer each question as its own silence would have")
 @click.option(
@@ -82,6 +84,7 @@ def main(
     config_path: Path | None,
     *,
     no_colour: bool,
+    no_diff: bool,
     yolo: bool,
     away: bool,
     away_danger: bool,
@@ -101,14 +104,23 @@ def main(
     # code and no traceback (§0.13, E97).
     try:
         code = asyncio.run(
-            _serve(session=session, root=workspace, settings=settings, no_colour=no_colour, policy=policy)
+            _serve(
+                session=session,
+                root=workspace,
+                settings=settings,
+                no_colour=no_colour,
+                no_diff=no_diff,
+                policy=policy,
+            )
         )
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
     sys.exit(code)
 
 
-async def _serve(*, session: str, root: Path | None, settings: config.Settings, no_colour: bool, policy: Policy) -> int:
+async def _serve(
+    *, session: str, root: Path | None, settings: config.Settings, no_colour: bool, no_diff: bool, policy: Policy
+) -> int:
     """Bring the kernel up, talk to it, and take it down — in that order, whatever happened."""
     workspace = Path.cwd() if root is None else root
     # What this kernel is was decided by the file, and it is handed over as one value: which routes exist,
@@ -123,9 +135,11 @@ async def _serve(*, session: str, root: Path | None, settings: config.Settings, 
             editor=_editor(session=session, catalog=catalog, history=history_path(session)),
             out=sys.stdout,
             err=sys.stderr,
+            workspace=workspace_label(str(workspace)),
             policy=policy,
             colour=_colour(asked=no_colour, stream=sys.stdout),
             markdown=_markdown(reading=sys.stdin, written=sys.stdout),
+            diff=not no_diff,
         )
         return await app.run()
     finally:
