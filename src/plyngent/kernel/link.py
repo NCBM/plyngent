@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, NamedTuple, cast, override
 
 from msgspec.structs import replace
 
-from plyngent.kernel.channel import Channel, Wire
 from plyngent.kernel.events import Human
 from plyngent.wire.ask import (
     DEFAULT_ASK_TIMEOUT_SECONDS,
@@ -61,11 +60,13 @@ from plyngent.wire.ask import (
     answer_kind,
     unanswered,
 )
+from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import KernelManifest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
+    from plyngent.kernel.channel import Channel
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent
     from plyngent.wire.flow import Ack

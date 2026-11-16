@@ -10,50 +10,26 @@ Two implementations, differing in exactly one codec:
 * :class:`InProcChannel` — one process, so a value crosses as itself and the queues *are* the wire. It is
   not a shortcut past the lanes; it is this transport's byte layer, and it exists so that ``inproc`` and
   a socket differ nowhere else (R2.1 D29). A socket channel is the same lanes with each value written
-  down as a frame first, and nothing above this module can tell which one it is holding.
+  down as a frame first (:mod:`plyngent.wire.frame`), and nothing above this module can tell which one it
+  is holding.
 * folding a backlog is *here* rather than in the lane that decides when to fold, because folding is a
-  queue operation — it takes adjacent messages out of a backlog and puts one message back. A socket
-  channel folds the queue it has not written yet; an in-process one folds the queue it hands over. The
-  same algorithm either way, which is why it is written once.
+  queue operation — it takes adjacent messages out of a backlog and puts one message back. The rule
+  itself is :func:`plyngent.wire.frame.packed`, because more than one queue can fold: the one being
+  handed over, and the one that has not been written yet.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import deque
-from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, cast
 
-from plyngent.wire.event import Batch
+from plyngent.wire.frame import Wire, packed
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator, Iterable, Sequence
 
     from plyngent.wire.event import AnyEvent
-
-
-class Wire(StrEnum):
-    """What crosses a connection, and which way each one goes.
-
-    The names are the lanes and not the classes: a command is every value in
-    :data:`~plyngent.wire.command.AnyCommand`, and which lane a value is on is the one thing both ends
-    have to agree about before either can read what it says.
-    """
-
-    #: Client to kernel, never dropped and never reordered.
-    COMMAND = "command"
-    #: Client to kernel: how far this client has rendered, and the heartbeat in one number.
-    ACK = "ack"
-    #: Client to kernel, in answer to one question: the other half of :attr:`QUESTION`.
-    ANSWER = "answer"
-    #: Client to kernel, in answer to one call: the other half of :attr:`INVOCATION`.
-    RETURNED = "returned"
-    #: Kernel to client, in emission order, and the one lane that may be folded.
-    EVENT = "event"
-    #: Kernel to client, one at a time, and never folded: a question nobody can see is a hang.
-    QUESTION = "question"
-    #: Kernel to client, the other kind of asking: one of *this* client's tools to run.
-    INVOCATION = "invocation"
 
 
 class Stream[T]:
@@ -185,29 +161,9 @@ class InProcChannel:
         return len(self._lanes[wire].items())
 
     def fold(self, wire: Wire, at_most: int) -> None:
-        """Group adjacent runs of a lane into messages of at most ``at_most`` items.
-
-        A message that is already a batch is left alone rather than folded into another one, because
-        "how deep is this message" has to have one answer. Kind plays no part: the batch *carries* its
-        items with their own ``seq``, so what the other end receives is unchanged apart from how many
-        messages it arrived in.
-        """
+        """Pack that lane's backlog into fewer, larger messages, keeping every item and its ``seq``."""
         lane = self._lanes[wire]
-        pending = lane.items()
-        packed: list[object] = []
-        index = 0
-        while index < len(pending):
-            first = pending[index]
-            index += 1
-            if isinstance(first, Batch):
-                packed.append(first)
-                continue
-            run: list[AnyEvent] = [cast("AnyEvent", first)]
-            while index < len(pending) and len(run) < at_most and not isinstance(pending[index], Batch):
-                run.append(cast("AnyEvent", pending[index]))
-                index += 1
-            packed.append(_folded(run) if len(run) > 1 else first)
-        lane.replace(packed)
+        lane.replace(packed(cast("Sequence[AnyEvent]", lane.items()), at_most))
 
     def drop(self, wire: Wire) -> None:
         self._lanes[wire].replace(())
@@ -218,8 +174,3 @@ class InProcChannel:
         self._closed = True
         for lane in self._lanes.values():
             lane.close()
-
-
-def _folded(run: list[AnyEvent]) -> AnyEvent:
-    """One message carrying ``run``, numbered by its last item so an ack of it covers all of them."""
-    return Batch(seq=run[-1].seq, items=tuple(run))
