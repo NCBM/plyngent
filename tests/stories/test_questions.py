@@ -100,7 +100,7 @@ async def test_an_answer_that_arrives_too_late_changes_nothing(story: Story) -> 
     question = story.questions()[0]
 
     assert (await asked).text is None
-    assert story.kernel.client.answer(Written(id=question.id, text="late", by=By.HUMAN)) is True, (
+    assert story.client.answer(Written(id=question.id, text="late", by=By.HUMAN)) is True, (
         "the connection took it; whether that id still has a question is the kernel's answer"
     )
     await story.settle()

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
+from msgspec.structs import replace
 
 from plyngent.kernel import local
 from plyngent.kernel.catalog import BUILTIN
@@ -41,6 +42,7 @@ from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
+from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import CLIENT_OFFER, KernelManifest, command_specs
 
 if TYPE_CHECKING:
@@ -67,13 +69,38 @@ KERNEL_TRANSPORTS = ("inproc", "local") if local.AVAILABLE else ("inproc",)
 BROKER_WATCH_SECONDS = 0.5
 
 
-class _Held(NamedTuple):
-    """One connection this kernel opened for somebody else: its two faces, its loop, and its socket."""
+#: How long a client waits for a kernel to say what it is. A greeting is the first thing on the stream,
+#: so an address that answers and then says nothing is not a kernel this build can be a frontend for.
+GREETING_SECONDS = 10.0
 
+
+class NoKernelError(OSError):
+    """Nobody is answering at that address, or whoever does is not this program."""
+
+
+class _Kernel(NamedTuple):
+    """One host, up: the assembly, the tools it serves, what it says it is, and how long it waits."""
+
+    assembly: Assembly
+    host: str
+    specs: tuple[ToolSpec, ...]
+    manifest: KernelManifest
+    patience: float | None
+    graded: Grades
+
+
+class _Held(NamedTuple):
+    """One connection a kernel is serving: its command loop, the socket under it, and the far side.
+
+    ``client`` is filled only where the far end is this program's own — a connection the composition
+    root opened for itself — because closing a stream somebody else holds is their business, not ours.
+    """
+
+    serving: Serving
     link: Link
-    client: KernelLink
     task: asyncio.Task[None]
     streams: tuple[local.SocketChannel, ...] = ()
+    client: KernelLink | None = None
 
 
 class Installed:
@@ -91,6 +118,7 @@ class Installed:
     assembly: Assembly
     serving: Serving
     host: str
+    manifest: KernelManifest
     _link: Link
     _client: KernelLink
     _task: asyncio.Task[None]
@@ -105,6 +133,7 @@ class Installed:
         serving: Serving,
         link: Link,
         task: asyncio.Task[None],
+        manifest: KernelManifest,
         *,
         host: str = DEFAULT_HOST,
         client: KernelLink | None = None,
@@ -115,6 +144,7 @@ class Installed:
         self.assembly = assembly
         self.serving = serving
         self.host = host
+        self.manifest = manifest
         self._link = link
         self._client = link if client is None else client
         self._task = task
@@ -141,18 +171,20 @@ class Installed:
         offer to attach. What it does not get is the one thing this kernel has one of — it answers no
         questions while the client installed here is attached (D19).
         """
-        manifest = KernelManifest(commands=command_specs(), caps=caps)
+        manifest = replace(self.manifest, caps=caps)
         if self._listening is None:
             link = _opened(InProcChannel(), manifest)
-            _serving, task = _served(self.assembly, self.host, link, BUILTIN)
-            self._others.append(_Held(link, link, task))
+            serving, task = _served(self.assembly, self.host, link, BUILTIN)
+            self._others.append(_Held(serving, link, task))
             return link
         far = await local.connect(self._listening.endpoint)
         near = await self._listening.accept()
+        _greeted(manifest, near)
         link = _opened(near, manifest)
-        _serving, task = _served(self.assembly, self.host, link, BUILTIN)
-        self._others.append(_Held(link, Link(far, manifest=manifest), task, (near, far)))
-        return self._others[-1].client
+        serving, task = _served(self.assembly, self.host, link, BUILTIN)
+        client = Link(far, manifest=await _greeting(far))
+        self._others.append(_Held(serving, link, task, (near, far), client))
+        return client
 
     async def settle(self) -> None:
         """Wait until the connection's loop has finished — the client left, or the kernel did.
@@ -187,10 +219,11 @@ class Installed:
         _ = await self.assembly.stop(*self.assembly.keys())
 
     async def _dropped(self) -> None:
-        """Close every connection this kernel opened for somebody else, and wait for its loop to end."""
+        """Close every connection this kernel opened or accepted for somebody else, and wait for its loop."""
         for held in self._others:
-            held.link.close()
-            held.client.close()
+            await held.serving.stop("the kernel is leaving")
+            if held.client is not None:
+                held.client.close()
         _ = await asyncio.gather(*(held.task for held in self._others), return_exceptions=True)
         for held in self._others:
             for stream in held.streams:
@@ -289,6 +322,229 @@ async def install(
     if transport not in KERNEL_TRANSPORTS:
         msg = f"{transport!r} is not a transport this kernel can open; it knows {KERNEL_TRANSPORTS}"
         raise ValueError(msg)
+    kernel = await _assembled(
+        root,
+        host=host,
+        model=model,
+        routes=routes,
+        route=route,
+        web=web,
+        skills=skills,
+        prompt=prompt,
+        journal=journal,
+        limits=limits,
+        versions=versions,
+        deadline=deadline,
+        grades=grades,
+    )
+    listening: local.Listening | None = None
+    streams: tuple[local.SocketChannel, ...] = ()
+    if transport == "local":
+        # A kernel that is reached over a socket still serves the client it was started for, and that
+        # client arrives the way any other does: at the address, over a connection this kernel accepted.
+        named = local.temporary_endpoint() if endpoint is None else Path(endpoint)
+        listening = await local.Listening.at(named)
+        channel = await local.connect(named)
+        near = await listening.accept()
+        _greeted(kernel.manifest, near)
+        link = _opened(near, kernel.manifest, timeout=kernel.patience, grades=kernel.graded)
+        client: KernelLink = Link(channel, manifest=await _greeting(channel))
+        streams = (near, channel)
+    else:
+        link = _opened(InProcChannel(), kernel.manifest, timeout=kernel.patience, grades=kernel.graded)
+        client = link
+    serving, task = _served(kernel.assembly, host, link, kernel.specs)
+    watch = asyncio.create_task(_replace_the_broker(kernel.assembly, Declaration(PtyBroker).key))
+    return Installed(
+        kernel.assembly,
+        serving,
+        link,
+        task,
+        kernel.manifest,
+        host=host,
+        client=client,
+        watch=watch,
+        listening=listening,
+        streams=streams,
+    )
+
+
+class Daemon:
+    """A host with one address: every client that reaches it gets a connection of its own.
+
+    The difference from :class:`Installed` is that a daemon has no client of its own — nothing here waits
+    for one particular frontend to leave, and no frontend holds this object. What it serves is the same
+    kernel, and every connection reads and writes the same sessions, so two clients are two views of one
+    conversation rather than two conversations.
+
+    The address is the only thing that says how to reach it, and it is the caller's: the command line
+    named it, or this process invented one nobody has to find (§5 B).
+    """
+
+    listening: local.Listening
+    _kernel: _Kernel
+    _held: list[_Held]
+    _accepting: asyncio.Task[None] | None
+    _watch: asyncio.Task[None] | None
+    _stopped: bool
+
+    def __init__(self, kernel: _Kernel, listening: local.Listening) -> None:
+        self.listening = listening
+        self._kernel = kernel
+        self._held = []
+        self._accepting = None
+        self._watch = None
+        self._stopped = False
+
+    @property
+    def assembly(self) -> Assembly:
+        """The host being served: what a story reads when it needs to see the kernel's own objects."""
+        return self._kernel.assembly
+
+    @property
+    def manifest(self) -> KernelManifest:
+        """What this kernel says it is, which is what every client is greeted with."""
+        return self._kernel.manifest
+
+    def start(self) -> None:
+        """Begin accepting, and begin watching the one component that can die under it."""
+        self._accepting = asyncio.create_task(self.accepting())
+        self._watch = asyncio.create_task(_replace_the_broker(self._kernel.assembly, Declaration(PtyBroker).key))
+
+    async def running(self) -> None:
+        """Serve until the address stops answering — what a program that *is* this daemon waits on."""
+        if self._accepting is not None:
+            await self._accepting
+
+    async def accepting(self) -> None:
+        """Serve every client that reaches the address, one connection after another.
+
+        A connection is greeted before it is served, which is what makes a frontend able to read the
+        kernel's own table without asking for it (R2.1 D7). Its refusal or its failure is the
+        connection's own: a client that leaves mid-sentence ends nothing but its lane.
+        """
+        while not self._stopped:
+            near = await self.listening.accept()
+            _greeted(self._kernel.manifest, near)
+            link = _opened(near, self._kernel.manifest, timeout=self._kernel.patience, grades=self._kernel.graded)
+            serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
+            self._held.append(_Held(serving, link, task, (near,)))
+
+    async def stop(self, reason: str = "the kernel is leaving") -> None:
+        """Leave: stop accepting, say goodbye on every connection, then take the host down."""
+        if self._stopped:
+            return
+        self._stopped = True
+        for task in (self._accepting, self._watch):
+            if task is not None:
+                _ = task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._accepting = self._watch = None
+        for held in self._held:
+            await held.serving.stop(reason)
+        _ = await asyncio.gather(*(held.task for held in self._held), return_exceptions=True)
+        for held in self._held:
+            for stream in held.streams:
+                await stream.flushed()
+        self._held.clear()
+        await self.listening.stop()
+        _ = await self._kernel.assembly.stop(*self._kernel.assembly.keys())
+
+
+async def serve(
+    root: Path | str,
+    *,
+    endpoint: Path | str,
+    host: str = DEFAULT_HOST,
+    model: Model | None = None,
+    routes: Iterable[Route] | None = None,
+    route: str = "",
+    web: Web | None = None,
+    skills: Skills | None = None,
+    prompt: PromptPlan | None = None,
+    journal: Path | str | None = None,
+    limits: Limits | None = None,
+    deadline: float | None = None,
+    grades: Grades | None = None,
+    versions: bool = True,
+) -> Daemon:
+    """Bring up one workspace and serve every client that reaches one address.
+
+    Every parameter means what it means in :func:`install`, because it is the same host: this function
+    adds an address and takes away the client the program was started for. ``endpoint`` is required
+    rather than defaulted, because a daemon nobody can name is a daemon nobody can reach — the only
+    caller that never has to find one is :func:`install`, which is its own client.
+    """
+    if not local.AVAILABLE:
+        msg = "this platform has no local address to serve on"
+        raise ValueError(msg)
+    kernel = await _assembled(
+        root,
+        host=host,
+        model=model,
+        routes=routes,
+        route=route,
+        web=web,
+        skills=skills,
+        prompt=prompt,
+        journal=journal,
+        limits=limits,
+        versions=versions,
+        deadline=deadline,
+        grades=grades,
+    )
+    daemon = Daemon(kernel, await local.Listening.at(Path(endpoint)))
+    daemon.start()
+    return daemon
+
+
+async def connect(endpoint: Path | str) -> KernelLink:
+    """The far end of a kernel somebody else is serving: one connection, and what it said it is.
+
+    The manifest arrives before the connection is handed over, so there is no handshake to forget: a
+    frontend that holds this value already knows which commands exist (R2.1 D7). What it cannot know is
+    whether the program it reached is this one, which is why an address that answers and then says
+    nothing is refused here rather than failing at the first command.
+    """
+    named = Path(endpoint)
+    try:
+        channel = await local.connect(named)
+    except OSError as exc:
+        msg = f"no kernel is answering at {named}"
+        raise NoKernelError(msg) from exc
+    try:
+        manifest = await asyncio.wait_for(_greeting(channel), GREETING_SECONDS)
+    except TimeoutError, StopAsyncIteration:
+        channel.close()
+        await channel.flushed()
+        msg = f"{named} answered, and then said nothing about what it is"
+        raise NoKernelError(msg) from None
+    return Link(channel, manifest=manifest)
+
+
+async def _assembled(
+    root: Path | str,
+    *,
+    host: str,
+    model: Model | None,
+    routes: Iterable[Route] | None,
+    route: str,
+    web: Web | None,
+    skills: Skills | None,
+    prompt: PromptPlan | None,
+    journal: Path | str | None,
+    limits: Limits | None,
+    versions: bool,
+    deadline: float | None,
+    grades: Grades | None,
+) -> _Kernel:
+    """Bring one workspace up: the declarations, the host, and the three things a connection needs of it.
+
+    It is one function because two programs are built out of it — a kernel with one connection
+    (:func:`install`) and a kernel with an address (:func:`serve`) — and "what a host is" must not be
+    two answers. What it does not decide is how anybody reaches it.
+    """
     registry = ComponentRegistry()
     up: dict[ComponentKey, Component] = {}
     kept = _journal_file(root, journal)
@@ -333,37 +589,40 @@ async def install(
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
     specs = (*BUILTIN, *net_specs(web), *skill_specs(skills))
-    manifest = KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,))
-    patience = DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline
-    graded = Grades() if grades is None else grades
-    listening: local.Listening | None = None
-    streams: tuple[local.SocketChannel, ...] = ()
-    if transport == "local":
-        # A kernel that is reached over a socket still serves the client it was started for, and that
-        # client arrives the way any other does: at the address, over a connection this kernel accepted.
-        named = local.temporary_endpoint() if endpoint is None else Path(endpoint)
-        listening = await local.Listening.at(named)
-        channel = await local.connect(named)
-        near = await listening.accept()
-        link = _opened(near, manifest, timeout=patience, grades=graded)
-        client: KernelLink = Link(channel, manifest=manifest, timeout=patience, grades=graded)
-        streams = (near, channel)
-    else:
-        link = _opened(InProcChannel(), manifest, timeout=patience, grades=graded)
-        client = link
-    serving, task = _served(assembly, host, link, specs)
-    watch = asyncio.create_task(_replace_the_broker(assembly, Declaration(PtyBroker).key))
-    return Installed(
+    manifest = KernelManifest(commands=command_specs(), caps=(CLIENT_OFFER,), workspace=str(_workspace_of(root)))
+    return _Kernel(
         assembly,
-        serving,
-        link,
-        task,
-        host=host,
-        client=client,
-        watch=watch,
-        listening=listening,
-        streams=streams,
+        host,
+        specs,
+        manifest,
+        DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
+        Grades() if grades is None else grades,
     )
+
+
+def _greeted(manifest: KernelManifest, channel: Channel) -> None:
+    """Say what this kernel is, before it says anything else.
+
+    One value on a lane of its own, and it is handed over first because the far end cannot build a
+    parser without it. A connection between two faces of one process needs no greeting — there is
+    nothing to hand *over*, the value is already theirs — which is the one thing about a greeting that
+    is not about the wire.
+    """
+    _ = channel.send(Wire.HELLO, manifest)
+
+
+async def _greeting(channel: local.SocketChannel) -> KernelManifest:
+    """What the kernel on the other end said it is, read before the connection is given to anybody."""
+    greeted = await anext(channel.read(Wire.HELLO))
+    if not isinstance(greeted, KernelManifest):
+        msg = "the first thing this kernel said is not a manifest"
+        raise NoKernelError(msg)
+    return greeted
+
+
+def _workspace_of(root: Path | str) -> Path:
+    """The directory a kernel works in, spelled the way its own workspace spells it."""
+    return Path(root).expanduser().resolve()
 
 
 def _opened(

@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import io
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration, ServiceNotUpError
 
 from plyngent import config as configured
-from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Installed, install
+from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Daemon, Installed, install
 from plyngent.cli.app import App
 from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
@@ -44,7 +45,7 @@ from plyngent.wire.command import Offer
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Awaitable, Callable, Iterable
     from typing import TextIO
 
     from plyngent.cli.policy import Policy
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.net.web import Web
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
+    from plyngent.kernel.serving import Serving
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import AnyAnswer, AnyAsk, Grades
     from plyngent.wire.command import OfferedTool
@@ -139,9 +141,15 @@ class ScriptedHuman:
 
 
 class Story:
-    """One run of the program: the kernel behind it, the screen in front, and the human between."""
+    """One run of the program: the connection, the screen in front, and the human between.
 
-    kernel: Installed
+    ``client`` is the connection this story's program talks on, and ``kernel`` is the host behind it
+    when that host is this process's — which it is for every story but the ones a daemon serves at an
+    address, where the host is one object and each frontend reaches it as a connection.
+    """
+
+    client: KernelLink
+    kernel: Installed | Daemon | None
     app: App
     editor: ScriptedHuman
     session: str
@@ -151,20 +159,24 @@ class Story:
     _err: io.StringIO
     _running: asyncio.Task[int]
     _code: int | None
+    _leaving: Callable[[], Awaitable[None]] | None
 
     def __init__(
         self,
-        kernel: Installed,
+        client: KernelLink,
         *,
+        kernel: Installed | Daemon | None = None,
         session: str,
         model: Model | None = None,
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
         markdown: bool = False,
+        leaving: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        self.client = client
         self.kernel = kernel
         self.session = session
-        self.catalog = build(kernel.client.manifest, session=session)
+        self.catalog = build(client.manifest, session=session)
         self.model = model
         # A story about a terminal reads what a terminal reads: the stream says it is a cursor, so lines
         # are painted through it and the answer is laid out as markdown — and then grown in place, which
@@ -173,8 +185,9 @@ class Story:
         self._err = io.StringIO()
         self.editor = ScriptedHuman(focus=session, err=self._err)
         self._code = None
+        self._leaving = leaving
         self.app = App(
-            kernel.client,
+            client,
             session=session,
             catalog=self.catalog,
             editor=self.editor,
@@ -290,7 +303,45 @@ class Story:
                 grades=grades,
             )
         )
-        story = cls(kernel, session=session, model=model, tools=tools, policy=policy, markdown=markdown)
+        story = cls(
+            kernel.client, kernel=kernel, session=session, model=model, tools=tools, policy=policy, markdown=markdown
+        )
+        await story.settle()
+        return story
+
+    @classmethod
+    async def connected(
+        cls,
+        client: KernelLink,
+        *,
+        kernel: Daemon | None = None,
+        session: str = SESSION,
+        model: Model | None = None,
+        tools: ClientTools = TERMINAL,
+        policy: Policy | None = None,
+        markdown: bool = False,
+    ) -> Story:
+        """Put a person in front of a kernel that is reached at an address rather than built here.
+
+        ``client`` is what :func:`plyngent.boot.connect` answered: the far end of a socket, whose manifest
+        arrived before the value did. Everything else is the same program — the same ``App``, the same
+        editor, the same scripted model — which is the point: a frontend cannot tell whether the kernel
+        is in its process, and only a story that reads the kernel's own objects can.
+
+        ``kernel`` is the daemon when it is this process's, and it is what lets such a story say what the
+        host did; ``None`` is a frontend with nothing of the kernel in hand, which is the ordinary case
+        for a program that was pointed at an address.
+        """
+        story = cls(
+            client,
+            kernel=kernel,
+            session=session,
+            model=model,
+            tools=tools,
+            policy=policy,
+            markdown=markdown,
+            leaving=partial(_client_leaves, client),
+        )
         await story.settle()
         return story
 
@@ -354,14 +405,32 @@ class Story:
     @property
     def host(self) -> Host:
         """The kernel's own host: the one object a story may reach into, and only as a stimulus."""
+        assert self.kernel is not None, "this story reaches into a kernel that is not in this process"
         found = self.kernel.assembly.instance(Declaration(Host, instance=DEFAULT_HOST).key)
         assert isinstance(found, Host), "the story's kernel has no host"
         return found
 
     @property
     def workspace(self) -> Path:
-        """The directory the kernel calls its workspace: what a tool changed is checked here."""
+        """The directory the kernel calls its workspace: what a tool changed is checked here.
+
+        A connection's own manifest says it too, which is how a frontend that has no kernel in its
+        process still knows which tree it is looking at — and how ``--workspace`` becomes a claim to
+        check rather than an assumption (E123).
+        """
+        if self.kernel is None:
+            return Path(self.client.manifest.workspace)
         return self.host.workspace.root
+
+    @property
+    def serving(self) -> Serving:
+        """The kernel's half of its one connection: what a story about the kernel's own words reaches.
+
+        A story that says "the kernel is leaving" is staging something no command does, so it says it on
+        the object that owns it — and only a kernel in this process has one.
+        """
+        assert isinstance(self.kernel, Installed), "only a kernel in this process has one connection to stop"
+        return self.kernel.serving
 
     @property
     def human(self) -> Human:
@@ -382,7 +451,7 @@ class Story:
         connection, so a story sends it the same way the loop does — and this is how a story about
         offered tools stages one without pretending the terminal offers more than it does.
         """
-        if not self.kernel.client.submit(Offer(tools=tools)):
+        if not self.client.submit(Offer(tools=tools)):
             msg = "the connection was already gone, so the offer went nowhere"
             raise AssertionError(msg)
         await self.settle()
@@ -398,6 +467,7 @@ class Story:
         The connection is made the way any other is, over whatever transport this story runs on: a
         second connection that took a shortcut past it would be a story about a transport nobody uses.
         """
+        assert isinstance(self.kernel, Installed), "only a kernel in this process opens a second connection"
         link = await self.kernel.attach(caps=caps)
         await self.settle()
         return link
@@ -445,6 +515,7 @@ class Story:
 
     def _session_component(self) -> Session:
         """The kernel's session object for this story's session, which a stimulus may hold."""
+        assert self.kernel is not None, "this story reaches into a kernel that is not in this process"
         key = Declaration(Session, instance=f"{DEFAULT_HOST}/{self.session}").key
         found = self.kernel.assembly.instance(key)
         assert isinstance(found, Session), "the story's session is not admitted"
@@ -458,15 +529,19 @@ class Story:
             if not self._running.done():
                 self.editor.lines.put_nowait(EndOfInput())
             self._code = await self._running
-            await self.kernel.settle()
+            if isinstance(self.kernel, Installed):
+                await self.kernel.settle()
         return self._code
 
     async def close(self) -> None:
-        """Take the kernel down, whether or not the story got as far as stopping it."""
+        """Take the connection down, whether or not the story got as far as stopping it."""
         if not self._running.done():
             _ = self._running.cancel()
             _ = await asyncio.gather(self._running, return_exceptions=True)
-        await self.kernel.close()
+        if self._leaving is not None:
+            await self._leaving()
+        elif isinstance(self.kernel, Installed):
+            await self.kernel.close()
 
     # -- waiting, without a clock --------------------------------------------------
 
@@ -530,6 +605,12 @@ class Story:
 def _drawn(text: str) -> tuple[str, ...]:
     """Captured output as the lines a person read, with the trailing blank dropped."""
     return tuple(text.splitlines())
+
+
+async def _client_leaves(client: KernelLink) -> None:
+    """Leave one connection the way a program does: say goodbye, then wait until it has gone out."""
+    client.close()
+    await client.finished()
 
 
 class _Terminal(io.StringIO):
