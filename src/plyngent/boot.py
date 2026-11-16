@@ -136,11 +136,8 @@ class Installed:
     the transports one implementation with a different codec.
     """
 
-    assembly: Assembly
+    _kernel: _Kernel
     serving: Serving
-    host: str
-    manifest: KernelManifest
-    ledger: Ledger
     _link: Link
     _client: KernelLink
     _task: asyncio.Task[None]
@@ -151,24 +148,18 @@ class Installed:
 
     def __init__(
         self,
-        assembly: Assembly,
+        kernel: _Kernel,
         serving: Serving,
         link: Link,
         task: asyncio.Task[None],
-        manifest: KernelManifest,
         *,
-        ledger: Ledger,
-        host: str = DEFAULT_HOST,
         client: KernelLink | None = None,
         watch: asyncio.Task[None] | None = None,
         listening: local.Listening | None = None,
         streams: tuple[local.SocketChannel, ...] = (),
     ) -> None:
-        self.assembly = assembly
+        self._kernel = kernel
         self.serving = serving
-        self.host = host
-        self.manifest = manifest
-        self.ledger = ledger
         self._link = link
         self._client = link if client is None else client
         self._task = task
@@ -176,6 +167,26 @@ class Installed:
         self._listening = listening
         self._streams = streams
         self._others = []
+
+    @property
+    def assembly(self) -> Assembly:
+        """The host being served: what a story reads when it needs to see the kernel's own objects."""
+        return self._kernel.assembly
+
+    @property
+    def host(self) -> str:
+        """The qualifier every session of this kernel is addressed under."""
+        return self._kernel.host
+
+    @property
+    def manifest(self) -> KernelManifest:
+        """What this kernel says it is, which is what every client is greeted with."""
+        return self._kernel.manifest
+
+    @property
+    def ledger(self) -> Ledger:
+        """The one counter every connection's event numbers come from."""
+        return self._kernel.ledger
 
     @property
     def client(self) -> KernelLink:
@@ -191,23 +202,27 @@ class Installed:
         this kernel is listening on; over ``inproc`` it is a channel, and there is nothing else it could
         be — which is the same statement as "the two transports are one implementation".
 
-        The connection is served like the first one: its own command loop, its own tool table, its own
-        offer to attach. What it does not get is the one thing this kernel has one of — it answers no
-        questions while the client installed here is attached (D19).
+        The connection is served like the first one: the same host, the same tools, its own command
+        loop and its own offer to attach. What it does not get is the one thing this kernel has one of —
+        it answers no questions while the client installed here is attached (D19).
         """
-        manifest = replace(self.manifest, caps=caps)
+        manifest = replace(self._kernel.manifest, caps=caps)
         if self._listening is None:
-            link = _opened(InProcChannel(), manifest, ledger=self.ledger)
-            serving, task = _served(self.assembly, self.host, link, BUILTIN)
+            link = _opened(
+                InProcChannel(),
+                manifest,
+                ledger=self._kernel.ledger,
+                timeout=self._kernel.patience,
+                grades=self._kernel.graded,
+            )
+            serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
             self._others.append(_Held(serving, link, task))
             return link
         far = await local.connect(self._listening.endpoint)
         near = await self._listening.accept()
-        _greeted(manifest, near)
-        link = _opened(near, manifest, ledger=self.ledger)
-        serving, task = _served(self.assembly, self.host, link, BUILTIN)
-        client = Link(far, manifest=await _greeting(far), ledger=self.ledger)
-        self._others.append(_Held(serving, link, task, (near, far), client))
+        held = _accepted(self._kernel, near, manifest=manifest)
+        client = Link(far, manifest=await _greeting(far), ledger=self._kernel.ledger)
+        self._others.append(_Held(held.serving, held.link, held.task, (near, far), client))
         return client
 
     async def settle(self) -> None:
@@ -370,8 +385,8 @@ async def install(
         listening = await local.Listening.at(named)
         channel = await local.connect(named)
         near = await listening.accept()
-        _greeted(kernel.manifest, near)
-        link = _opened(near, kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded)
+        held = _accepted(kernel, near)
+        link, serving, task = held.link, held.serving, held.task
         client: KernelLink = Link(channel, manifest=await _greeting(channel), ledger=kernel.ledger)
         streams = (near, channel)
     else:
@@ -379,16 +394,13 @@ async def install(
             InProcChannel(), kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded
         )
         client = link
-    serving, task = _served(kernel.assembly, host, link, kernel.specs)
+        serving, task = _served(kernel.assembly, host, link, kernel.specs)
     watch = asyncio.create_task(_replace_the_broker(kernel.assembly, Declaration(PtyBroker).key))
     return Installed(
-        kernel.assembly,
+        kernel,
         serving,
         link,
         task,
-        kernel.manifest,
-        ledger=kernel.ledger,
-        host=host,
         client=client,
         watch=watch,
         listening=listening,
@@ -451,17 +463,7 @@ class Daemon:
         connection's own: a client that leaves mid-sentence ends nothing but its lane.
         """
         while not self._stopped:
-            near = await self.listening.accept()
-            _greeted(self._kernel.manifest, near)
-            link = _opened(
-                near,
-                self._kernel.manifest,
-                ledger=self._kernel.ledger,
-                timeout=self._kernel.patience,
-                grades=self._kernel.graded,
-            )
-            serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
-            self._held.append(_Held(serving, link, task, (near,)))
+            self._held.append(_accepted(self._kernel, await self.listening.accept()))
 
     async def stop(self, reason: str = "the kernel is leaving") -> None:
         """Leave: stop accepting, say goodbye on every connection, then take the host down."""
@@ -689,6 +691,24 @@ def _served(
     """The command loop for one connection: the server that reads it, and the task that runs it."""
     serving = Serving(assembly, host=host, link=link, specs=specs)
     return serving, asyncio.create_task(serving.run())
+
+
+def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelManifest | None = None) -> _Held:
+    """One connection this kernel accepted: greet it, put a link over it, and serve it.
+
+    The greeting comes first because a frontend that has to ask what it reached has a second thing that
+    can be forgotten (R2.1 D7). The three steps are one function because no program shape may do them in
+    another order or leave one out: a connection this kernel accepted is the same connection whichever of
+    ``install``, ``attach`` or a daemon's accept loop is the one asking.
+
+    ``manifest`` is the greeting to send, which is this kernel's own except on the one connection a
+    client is promised a capability on — the promise travels in the greeting and nowhere else.
+    """
+    wanted = kernel.manifest if manifest is None else manifest
+    _greeted(wanted, near)
+    link = _opened(near, wanted, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded)
+    serving, task = _served(kernel.assembly, kernel.host, link, kernel.specs)
+    return _Held(serving, link, task, (near,))
 
 
 async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:

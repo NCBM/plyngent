@@ -13,15 +13,19 @@ from typing import TYPE_CHECKING
 
 from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.kernel.client import DUPLICATE, NO_CAPABILITY, NOT_AN_OBJECT
+from plyngent.kernel.resources import Root
+from plyngent.kernel.skills import Skills
 from plyngent.wire.ask import Invocation, Returned
 from plyngent.wire.command import Offer, OfferedTool
 from plyngent.wire.event import OfferRefused
+from plyngent.wire.manifest import CLIENT_OFFER
 from tests.stories.model import calling, text, told
 
 from .driver import Story
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from plyngent.cli.line import LineEditor
     from plyngent.cli.offers import Handler
@@ -52,6 +56,11 @@ def _search(*, name: str = "lookup", schema: str = SEARCH, resident: bool = Fals
 def _names(request: Request) -> set[str]:
     """The tools one request offered the model."""
     return {decl.name for decl in request.tools}
+
+
+def _store(tmp_path: Path) -> Skills:
+    """A kernel with a skills directory, which is what makes five more tools exist."""
+    return Skills((Root(path=tmp_path / "skills", origin="user", scope="user"),))
 
 
 async def test_an_offered_tool_is_in_the_block_and_a_resident_one_needs_no_asking(story_with: Scripted) -> None:
@@ -132,6 +141,23 @@ async def test_a_connection_that_did_not_say_it_takes_offers_is_refused_the_whol
     assert isinstance(event, OfferRefused)
     assert (event.name, event.reason) == ("", NO_CAPABILITY), "refused as a connection, not tool by tool"
     assert story.toolset_epoch == before, "and nothing about any session moved"
+
+
+async def test_a_second_connection_is_served_by_the_same_kernel(story_with: Scripted, tmp_path: Path) -> None:
+    """A connection this kernel accepted answers for the kernel it was accepted by, tools and all.
+
+    What tools exist is decided when the kernel is brought up — a skills directory adds five — so a
+    connection served with less than that would be answering for a kernel that does not exist, and a turn
+    run through it would reach fewer tools than the same turn run through the first one.
+    """
+    story = await story_with(text("ok"), skills=_store(tmp_path))
+    other = await story.another_client(caps=(CLIENT_OFFER,))
+    _ = other.submit(Offer(tools=(_search(name="skill_read"),)))
+
+    event = await asyncio.wait_for(anext(other.events()), 2.0)
+
+    assert isinstance(event, OfferRefused)
+    assert (event.name, event.reason) == ("skill_read", DUPLICATE), "a name this kernel already answers to"
 
 
 async def test_leaving_says_the_tool_set_moved_once_more(story: Story) -> None:
