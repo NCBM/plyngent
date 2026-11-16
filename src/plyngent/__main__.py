@@ -51,7 +51,8 @@ PLAIN = "PLYNGENT_PLAIN"
 #: The convention a terminal program honours when somebody wants no colour, whoever asks.
 NO_COLOUR = "NO_COLOR"
 
-#: What a program interrupted by its person returns: the shell's own answer for a signal (128 + SIGINT).
+#: What a program returns when an interrupting signal had nowhere to go: the shell's own answer for one
+#: (128 + SIGINT). A frontend whose loop can be told does not come here — it stops a turn instead.
 INTERRUPTED = 130
 
 
@@ -127,9 +128,9 @@ def main(
     # What this client answers by itself is a flag and not a setting: a policy is about *this* run,
     # while the file says how the program starts (§0.15, E114).
     policy = Policy(yolo=yolo, away=away or away_danger, away_danger=away_danger)
-    # A signal is a way out of this program, not a way into it: the loop has already told the kernel
-    # why the connection is closing from inside ``App.run``'s ``finally``, so what is left is an exit
-    # code and no traceback (§0.13, E97).
+    # A signal is the stop a keyboard's Ctrl+C is, and ``App.run`` turns it into one — so reaching this
+    # is a host or a loop that would not be told, where the signal is the process's own business and what
+    # is left to do is an exit code and no traceback (§0.13, E97).
     try:
         code = asyncio.run(
             _serve(
@@ -289,9 +290,10 @@ async def _serving(*, workspace: Path, settings: config.Settings, endpoint: Path
 def _interrupted() -> asyncio.Future[None]:
     """Wait for Ctrl+C, which is how a server is asked to stop.
 
-    A signal is a way out of this program rather than a way into it: the interrupting key becomes one
-    event that the daemon can be shut down around, so what a person presses ends a program in the order
-    things depend on instead of tearing a loop down under live connections.
+    A daemon differs from a frontend here, and the difference is not a preference: it has no keyboard in
+    front of it, no prompt to interrupt and no line to stop, so signalling it *is* how its supervisor asks
+    it to come down. What the signal becomes is one event the daemon can be shut down around, so a
+    program ends in the order things depend on instead of tearing a loop down under live connections.
     """
     stopping: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):

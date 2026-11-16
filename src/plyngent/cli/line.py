@@ -484,9 +484,10 @@ class PlainEditor:
       itself is the draft, and an empty one is nothing to send.
     * **:class:`Preempted` cannot happen**: a question cannot take a cursor that does not exist, so a
       line read here is never cut short by one.
-    * **:class:`Cancelled` cannot happen**: in this lane a signal *is* leaving (§0.13, E97). A keyboard
-      is what tells an interruption apart from a goodbye, and there is no keyboard here — the program
-      exits, and the exit code says how.
+    * **:class:`Cancelled` cannot happen**, but nothing is lost by that: an interruption in this lane
+      arrives as a *signal* rather than as a key, and the loop answers a signal with the same stop the
+      key makes (:func:`plyngent.cli.app._a_signal_is_a_stop`). A line read here is therefore never cut
+      short — the read is still waiting when the turn it belonged to has stopped (§0.13, E97).
     * **Nothing is remembered**: history is what the arrow keys reach back for, and a file has no arrow
       keys. A pipe is a thing being read, not a person being helped.
 

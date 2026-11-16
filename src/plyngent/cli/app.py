@@ -33,6 +33,8 @@ from another run of a kernel is dropped rather than guessed at: two counts are n
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import signal
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -52,6 +54,7 @@ from plyngent.wire.flow import Ack
 from plyngent.wire.scope import CancelReason
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
     from pathlib import Path
     from typing import TextIO
 
@@ -180,7 +183,15 @@ class App:
         The very first thing said is how far the run before this one had read, when there was one: it is
         a claim about the past rather than progress in the present, so the kernel answers it once, and
         everything after it is this connection's own (§5 B).
+
+        From here on a signal is one of the ways a person says "stop that", so it is turned into the
+        command the key already sends before any of the loop's own work begins.
         """
+        with _a_signal_is_a_stop(self._stopped_by_person):
+            return await self._running()
+
+    async def _running(self) -> int:
+        """Open the session, say what this client can run, and loop until somebody says goodbye."""
         if not self._resuming():
             return GONE
         if not self.client.submit(Open(session=self.session)):
@@ -356,6 +367,15 @@ class App:
 
     # -- what the human says -------------------------------------------------------
 
+    def _stopped_by_person(self) -> None:
+        """Ask the kernel to stop whatever this session is doing, for a reason somebody gave.
+
+        One gesture and one message. The interrupting key a terminal hands over as a line and the signal
+        a pipe, a script or another process hands over both arrive here, so what a person pressed and
+        what a person signalled cannot drift into meaning two things (R3).
+        """
+        _ = self.client.submit(Cancel(session=self.session, scope=None, reason=CancelReason.USER))
+
     async def _lines(self) -> int:
         """Read, decide, send — until the human is done or the connection is."""
         while True:
@@ -371,7 +391,7 @@ class App:
                 case EndOfInput():
                     return LEFT
                 case Cancelled():
-                    _ = self.client.submit(Cancel(session=self.session, scope=None, reason=CancelReason.USER))
+                    self._stopped_by_person()
                 case Preempted():
                     # A question took the cursor; it has already asked, and the editor holds the buffer.
                     continue
@@ -433,3 +453,30 @@ def _ends_at(listing: SessionsListed, session: str) -> str | None:
         if listed.session == session:
             return listed.head or None
     return None
+
+
+@contextlib.contextmanager
+def _a_signal_is_a_stop(stopped: Callable[[], None]) -> Generator[bool]:
+    """Say what an interrupting signal *is* for as long as this program runs: the key's own stop.
+
+    A person pressing Ctrl+C on a terminal is answering a prompt, and a prompt hands the key over as a
+    value — so a run with a keyboard in front of it never sees a signal at all. A run reading a pipe, or
+    one somebody signals from another process, is the same intention arriving the other way, and it is
+    answered with the same command here rather than with an exit code: leaving is what Ctrl+D and the
+    commands are for, and "stop that" is not "goodbye" (§0.13, E97).
+
+    ``False`` is a host or a loop that will not be told — a thread that is not the main one, a platform
+    with no such handler, or a caller that is not on a loop at all. The signal is then the process's own
+    and what happens is whatever the platform does with it, which is why a frontend still has an exit
+    code for an interruption.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, stopped)
+    except NotImplementedError, RuntimeError, ValueError:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _ = loop.remove_signal_handler(signal.SIGINT)

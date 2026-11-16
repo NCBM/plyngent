@@ -8,7 +8,9 @@ disk, and the exit code.
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.catalog import RESIDENT
@@ -119,6 +121,29 @@ async def test_a_second_message_is_refused_while_a_turn_is_running(story_with: S
     await story.settle()
 
     assert story.screen()[-2:] == ("about time", "turn 1 finished")
+
+
+async def test_a_signal_is_the_stop_a_key_is(story_with: Scripted) -> None:
+    """A run reading a pipe has no key to press, so the same intention arrives as a signal and means the same.
+
+    The signal is raised by the story at its own process, which is the only way to have one arrive: what
+    is under test is that the loop answers it with a ``Cancel`` rather than by leaving, so the turn says
+    why it stopped and the session takes the next message.
+    """
+    was = signal.signal(signal.SIGINT, lambda *_: None)
+    try:
+        story = await story_with(Held(text("too late")), text("the next one"))
+
+        await story.type("something slow")
+        _ = os.kill(os.getpid(), signal.SIGINT)
+        await story.until("turn 1 finished: user")
+        await story.type("try again")
+
+        assert story.screen()[-2:] == ("the next one", "turn 2 finished"), (
+            "the request was stopped by the signal, and the program is still here"
+        )
+    finally:
+        _ = signal.signal(signal.SIGINT, was)
 
 
 async def test_ctrl_c_stops_the_request_and_the_session_is_usable_again(story_with: Scripted) -> None:
