@@ -1,7 +1,9 @@
 """The lanes a connection is made of, and nothing about what a value means.
 
-A connection carries seven kinds of value in one direction each: what the client asks for, what it
-answers, what it says it has read, and what the kernel says, asks, and calls. This is the layer that
+A connection carries eight kinds of value in one direction each: what the client asks for, what it
+answers, what it says it has read, and what the kernel says, asks, and calls — plus the greeting a stream
+needs before either end can read anything, which is why it is the one lane a channel may be *told* to
+carry and the kernel decides what goes in it. This is the layer that
 holds *where they wait* — and only that. Nothing here reads a value: what a command means, and who may
 send one, is the kernel's business and the contract's.
 
@@ -128,6 +130,15 @@ class Channel(Protocol):
         """Throw away what is waiting on one lane: nobody will read it, and it cannot be kept forever."""
         ...
 
+    async def flushed(self) -> None:
+        """Wait until everything handed over has been written and the stream is closed at this end.
+
+        The one verb here that is about *timing* rather than about values, and it is here because "what
+        was said has gone out" is a fact only the codec knows: a socket has a buffer and a task writing
+        it, one process has neither.
+        """
+        ...
+
     def close(self) -> None:
         """End every lane. What is queued stays readable, so a leaving kernel can be drained."""
         ...
@@ -167,6 +178,9 @@ class InProcChannel:
 
     def drop(self, wire: Wire) -> None:
         self._lanes[wire].replace(())
+
+    async def flushed(self) -> None:
+        """Nothing to wait for: in one process a value handed over is already in the other end's queue."""
 
     def close(self) -> None:
         if self._closed:

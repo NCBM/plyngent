@@ -18,9 +18,11 @@ from plyngent.wire.command import Submit
 from plyngent.wire.event import TurnStarted
 from plyngent.wire.flow import Ack
 from plyngent.wire.frame import FrameError, Framer, Wire, encode
+from plyngent.wire.manifest import KernelManifest
 
 #: One value per lane: the union each lane carries, as the smallest value it can be.
 SAMPLES: tuple[tuple[Wire, object], ...] = (
+    (Wire.HELLO, KernelManifest(workspace="/w")),
     (Wire.COMMAND, Submit(session="main", text="hello")),
     (Wire.ACK, Ack(seq=3)),
     (Wire.ANSWER, Written(id=1, text="yes", by=By.HUMAN)),

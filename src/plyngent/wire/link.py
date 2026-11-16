@@ -94,6 +94,15 @@ class KernelLink(Protocol):
         "left" from "slow" (R2.1 D15).
         """
 
+    async def finished(self) -> None:
+        """Wait until what this end said has gone out and the stream is closed.
+
+        What a process does on its way out, after :meth:`close`: saying goodbye is a value on a lane, and
+        a program that closed the connection and returned would leave the last thing it said unsent. A
+        client in one process has nothing to wait for, so there it answers at once.
+        """
+        ...
+
 
 class KernelSide(Protocol):
     """What the kernel holds: the same connection, with the verbs the kernel is allowed.

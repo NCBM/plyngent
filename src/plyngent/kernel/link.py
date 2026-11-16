@@ -552,6 +552,15 @@ class Link:
         """The watermark this client last claimed."""
         return self._events.acked
 
+    async def finished(self) -> None:
+        """Wait until what this end said has gone out and the stream is closed.
+
+        After :meth:`close`, and it is what a process that is leaving owes the last thing it said — a
+        goodbye is a value on a lane, and a socket still has it in a buffer at that point. One process
+        answers at once, because there is no buffer to empty.
+        """
+        await self._channel.flushed()
+
     @property
     def dead(self) -> bool:
         """Whether this connection was dropped because the client fell silent while behind."""

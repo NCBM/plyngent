@@ -27,6 +27,7 @@ from plyngent.wire.ask import AnyAnswer, AnyAsk, Invocation, Returned
 from plyngent.wire.command import AnyCommand
 from plyngent.wire.event import AnyEvent, Batch
 from plyngent.wire.flow import Ack
+from plyngent.wire.manifest import KernelManifest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,8 +39,15 @@ class Wire(StrEnum):
     The names are the lanes and not the classes: a command is every value in
     :data:`~plyngent.wire.command.AnyCommand`, and which lane a value is on is the one thing both ends
     have to agree about before either can read what it says.
+
+    The declaration order is also the order a write drains them in, and :attr:`HELLO` is first for that
+    reason: a greeting names the kernel, so it has to reach the far end before anything the kernel says.
     """
 
+    #: Kernel to client, once, at the head of the stream: what this kernel says it is. A stream needs it
+    #: because there is no other way to hand a value over before the connection is in use; one process
+    #: does not, because the two faces are one object and the manifest is already theirs.
+    HELLO = "hello"
     #: Client to kernel, never dropped and never reordered.
     COMMAND = "command"
     #: Client to kernel: how far this client has rendered, and the heartbeat in one number.
@@ -62,6 +70,7 @@ LENGTH_BYTES = 4
 #: The byte that names a lane. Written out rather than numbered from the enum's order: adding a lane
 #: must not quietly change what an old frame means at the other end of a socket.
 KINDS: dict[Wire, int] = {
+    Wire.HELLO: 0,
     Wire.COMMAND: 1,
     Wire.ACK: 2,
     Wire.ANSWER: 3,
@@ -78,6 +87,7 @@ _encoder = msgspec.msgpack.Encoder()
 #: One decoder per lane, because each lane's union is the set of values it may carry: a decoder shared
 #: by two lanes would be a body one of them was never allowed to send.
 _DECODERS: dict[Wire, msgspec.msgpack.Decoder[Any]] = {
+    Wire.HELLO: msgspec.msgpack.Decoder(KernelManifest),
     Wire.COMMAND: msgspec.msgpack.Decoder(AnyCommand),
     Wire.ACK: msgspec.msgpack.Decoder(Ack),
     Wire.ANSWER: msgspec.msgpack.Decoder(AnyAnswer),

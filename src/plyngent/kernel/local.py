@@ -3,7 +3,7 @@
 Two processes and one connection is the whole of what this file is for. It holds the three things a
 program needs to be at either end of it:
 
-* :class:`SocketChannel` — the same seven lanes as :class:`~plyngent.kernel.channel.InProcChannel`,
+* :class:`SocketChannel` — the same lanes as :class:`~plyngent.kernel.channel.InProcChannel`,
   with each value written down as a frame (:mod:`plyngent.wire.frame`) and a task per direction moving
   the bytes. Nothing above the channel can tell which of the two it is holding, which is the point:
   ``inproc`` and ``local`` are one implementation of a connection and a difference of codec (R2.1 D29).
@@ -73,7 +73,7 @@ class EndpointTakenError(OSError):
 
 
 class SocketChannel:
-    """The same seven lanes, written down as frames and moved by two tasks.
+    """The same lanes, written down as frames and moved by two tasks.
 
     Each direction is one task. Reading turns bytes into values and puts each on its lane, which is
     where the kernel or the client finds it; writing takes values off the lanes in the order they were

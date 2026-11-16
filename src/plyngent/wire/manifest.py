@@ -55,6 +55,10 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
 
     protocol_version: int = PROTOCOL_VERSION
     kernel: str = "plyngent"
+    #: The directory this kernel works in, as it resolved it. A client that was told which workspace to
+    #: work in compares rather than assumes: two programs in different directories are two kernels, and
+    #: finding that out here is a sentence instead of a session that edits the wrong tree (§5 B, E123).
+    workspace: str = ""
     commands: tuple[CommandSpec, ...] = ()
     #: What this build can do — "pty", "notify", "client-offer", … Read by the client, never by a turn.
     caps: tuple[str, ...] = ()
