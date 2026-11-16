@@ -13,6 +13,7 @@ is what closes the terminals a story left running.
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from typing import TYPE_CHECKING
 
@@ -61,15 +62,24 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
     await story.require("process")
 
     await story.type("say hello back")
-    await story.answer("y")
+    # Two shells and one write: a shell is a danger-level question every time (§R12 乙), and typing into
+    # a live process is agreed to once.
+    for _ in range(3):
+        await story.answer("y")
     await story.until("turn 1 finished", "it said hello back")
 
     (_, first, second, written, read, closed) = story.requests()
     opened, used = _session_id(first), _session_id(second)
     assert used != opened, "two terminals were opened, so neither number is the only one that could work"
+    asked = (
+        f"run {shlex.join(shell)} on a terminal? "
+        f"sh runs code given on its own command line, and this build does not read that code: {shell[-1]}"
+    )
     assert [question.prompt for question in story.questions()] == [
-        f"change PTY session {used}, which is still running?"
-    ], "typing into a live process is agreed to once, and closing a finished one is not a question"
+        asked,
+        asked,
+        f"change PTY session {used}, which is still running?",
+    ], "the two shells are asked about as code this build does not read, and the write once"
     assert told(written) == (f"wrote 6 chars to session {used}\nsession_id={used}\nwrote=6 chars"), (
         "the write reaches the terminal it named, in the line and in the fields"
     )

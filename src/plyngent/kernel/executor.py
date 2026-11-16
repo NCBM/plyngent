@@ -55,12 +55,14 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.client import declared
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.history import History, Unreadable
+from plyngent.kernel.listing import walk
 from plyngent.kernel.paths import display, key
 from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
-from plyngent.kernel.toolspec import ArgsError, Posture, Remember, Res, Role, argument
+from plyngent.kernel.toolspec import ArgsError, Mutation, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.ask import By
-from plyngent.wire.event import DocumentStored, ToolCalled, ToolReturned
+from plyngent.wire.event import Changed, DocumentStored, ToolCalled, ToolReturned
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -84,6 +86,17 @@ CONCURRENCY = 8
 #: The one tool name this layer may write into a hint: showing a group is what a refusal for a tool
 #: nobody has been shown points at, and that tool exists to be named by exactly such a line (§10.4).
 ASKING = "tool_require"
+
+#: How much of one difference an event carries. Past this the patch is cut and the event says so; the
+#: whole of it is still in the store under the version the event names, so nothing is lost — a limit on
+#: what crosses one wire, not on what is kept.
+PATCH_CHARS = 20_000
+
+#: How many files one sweep may compare before it gives up on taking a version. A program's own paths are
+#: invisible (§10.12), so the tree itself is the only witness — and hashing a checkout the size of a
+#: kernel on every command would be a stall nobody asked for. Past this the call keeps its record and no
+#: version, which is the same degradation as a host with no store.
+SWEEP_PATHS = 5_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +227,41 @@ class ToolExecutor:
         for part in result.body:
             if isinstance(part, Document):
                 self._emit(ctx, DocumentStored(session=session, document=part.document_id, chars=part.chars))
+        await self._shown(ctx, node, result)
         return result
+
+    async def _shown(self, ctx: TurnCtx, node: _Call, result: ToolResult) -> None:
+        """Tell whoever is watching what this call left different, and tell the model nothing.
+
+        The model's account of a call is its result, in the tool's own words; a second account would be a
+        second thing to read and to keep in step. This is the other reader's: the difference itself, out
+        of the store rather than off the disk, so the answer cannot drift from what the call did.
+
+        A store that cannot answer leaves this unsaid rather than failing the call: the change happened,
+        and a viewer that is missing one difference is a viewer, not a wrong result.
+        """
+        store, revision = ctx.host.history, result.effects.revision
+        if store is None or not revision:
+            return
+        try:
+            parent = await store.parent(revision)
+            patch = await store.diff(parent, revision)
+            paths = await store.changed(revision)
+        except Unreadable:
+            return
+        self._emit(
+            ctx,
+            Changed(
+                session=ctx.session.session_id,
+                turn=ctx.turn_id,
+                call=node.call,
+                tool=node.name,
+                revision=revision,
+                paths=paths,
+                patch=patch[:PATCH_CHARS],
+                truncated=len(patch) > PATCH_CHARS,
+            ),
+        )
 
     async def _ran(self, ctx: TurnCtx, node: _Call, view: ToolView) -> ToolResult:
         """Ask about this call if its declarations say to, then run it — or answer the refusal."""
@@ -229,11 +276,60 @@ class ToolExecutor:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.
             async with ctx.host.locks.hold(reads=reads, writes=writes):
-                return await env.scope().guard(spec.run(env, args))
+                result = await env.scope().guard(spec.run(env, args))
+                # Inside the lock on purpose: a version has to be taken while the paths still hold what
+                # this call left, and a lock released first is a file another call may have written.
+                return await self._versioned(ctx, node, result)
         except Cancelled:
             # A call that was stopped still left this process, so it still declares what it sent. The
             # handler normally records that, and a stopped call never gets as far as a result of its own.
             return ToolResult.of(Failure.LIMIT, "stopped", effects=_sent(spec, node.raw))
+
+    async def _versioned(self, ctx: TurnCtx, node: _Call, result: ToolResult) -> ToolResult:
+        """Keep what this call changed as one version, and answer the result that names it.
+
+        A store that is not there, a call that changed no path, and a store that could not be written
+        all leave the effect as it was — with no version — because the change happened whether or not
+        anything managed to keep it, and a result that failed over a bookkeeping problem would be
+        reporting the wrong thing about the call.
+
+        The paths come from the handler's own ``Effects``, which is the list this kernel trusts for
+        "what is no longer what you last saw". A tool that cannot say what it changed — a program was
+        started, and its argv names no files (§10.12) — is swept instead: the tree is enumerated by the
+        kernel's own rules and compared with the version in force, so what a build or a formatter wrote
+        is still kept, under the same one-version-per-call rule.
+        """
+        store = ctx.host.history
+        if store is None:
+            return result
+        changed = result.effects.changed
+        try:
+            if not changed and node.spec is not None and node.spec.mutates & Mutation.WORKSPACE:
+                changed = await self._swept(ctx, store)
+            if not changed:
+                return result
+            revision = await store.record(changed, says=f"{node.name} {node.call}")
+        except Unreadable:
+            return result
+        return replace(result, effects=replace(result.effects, revision=revision))
+
+    async def _swept(self, ctx: TurnCtx, store: History) -> tuple[Path, ...]:
+        """What a program left behind, read off the tree because the call cannot say.
+
+        The walk is the kernel's own (the same one a listing uses: its ignore rules, its hidden
+        directories, its denylist), never ``git add`` — a sweep by git would apply a second set of
+        ignore rules to the same tree and record files this kernel deliberately does not look at.
+
+        A tree too big to walk is not walked: the effect still says the program ran, and the call costs
+        no stall. That bound is the honest one — a version nobody could afford to take is worse than a
+        record that says where it stopped.
+        """
+        root = ctx.host.workspace.root
+        listing = await asyncio.to_thread(walk, ctx.host.workspace, root)
+        files = [root / entry.relative for entry in listing.entries if not entry.is_dir]
+        if len(files) > SWEEP_PATHS:
+            return ()
+        return await store.differing(await store.head(), files)
 
     async def _approve(self, ctx: TurnCtx, node: _Call) -> ToolResult | None:
         """Put this call to a person when its posture says to; ``None`` when nothing has to be asked.

@@ -31,9 +31,10 @@ they hold whichever backend is behind this protocol:
    and ``state-change`` is the first tag beside them that no model reads (:class:`StateChange`):
    which tool groups a session has been shown, and whatever else a session knows about itself.
    ``summary`` is the second record of its own kind and the opposite case — what a conversation was
-   compressed into, which a model does read (:class:`Summary`). The
-   rest — ``failure``, ``prune``, ``attempt``, ``document-ref`` — each become one more
-   tag when the feature that writes them lands, never a column. Three consequences
+   compressed into, which a model does read (:class:`Summary`). Beside them are the records that are
+   bookkeeping — ``attempt``, ``prune``, ``effect`` — and the ones still to come (``failure``,
+   ``document-ref``): each becomes one more tag when the feature that writes it lands, never a column.
+   Three consequences
    come with that: **a body never enters a row** (a payload too big for one entry is kept in the
    document store and the row carries only the handle); **:meth:`Trail.derive` is the projector** and
    reads a subset of the tags, so a new projector version invalidates everything it made; and **a
@@ -174,25 +175,66 @@ class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
     reason: str = ""
 
 
+#: The tag one call's changes carry. Spelled here because it is half of the record's identity.
+EFFECT_TAG = "effect"
+
+
+class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
+    """What one tool call left different, as an index to the content rather than the content itself.
+
+    ``changed`` names the paths the call did not put back as it found them — the same list the result
+    carries, written down where the conversation can still find it after that result is a paragraph
+    somebody scrolled past. ``revision`` names the version of the workspace those bytes are kept under:
+    the content lives in a store beside the journal, one commit per changing call, so a row says *which*
+    paths and *where in the store* to look and never carries a body — which is the rule every record
+    here follows. A call that changed nothing writes no row at all: "nothing happened" is not worth a
+    row for every read in the conversation.
+
+    It is written **into the chain, directly below the result it belongs to**, so the two are adjacent
+    and neither has to name the other; and because a result is still what such a chain ends with, where
+    a turn continues from does not move (contrast :class:`Attempt`, which is a root because the answer
+    it stands for never arrived).
+
+    ``external`` and ``approvals`` are the other two things a result knows about itself, carried up for
+    the same reason: what a call did should not be readable only from an event lane that has scrolled
+    away. They are **not** the audit of who agreed — an approval here is a grant a yes was kept for, not
+    every question that was put — so "which danger questions did a policy answer" is still a question
+    this row cannot answer (§10.13, E111).
+    """
+
+    turn: int = 0
+    call: str = ""
+    tool: str = ""
+    #: The version this call's bytes are kept under, or empty when this host has no store — a row that
+    #: still says *what* changed when there is nowhere to read the change back from.
+    revision: str = ""
+    changed: tuple[str, ...] = ()
+    external: tuple[str, ...] = ()
+    approvals: tuple[str, ...] = ()
+
+
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
-#: compressed into, what it has stopped showing, and what became of a request that was never answered.
-type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt
+#: compressed into, what it has stopped showing, what became of a request that was never answered, and
+#: what one call left different.
+type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
     """What a model reads of one record, or ``None`` when it is not a record a model reads.
 
-    Three records have a meaning of their own and none is a message. A state change is a fact about the
+    Four records have a meaning of their own and none is a message. A state change is a fact about the
     session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
     the heading saying what it is, because a model handed an unannounced block of prose as its own history
     would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
     arrived, and a model told about it would be reading a conversation that did not happen. A prune is
     bookkeeping of the other kind — it does not speak, it decides what of the rest is spoken
-    (:meth:`~plyngent.kernel.trail.Trail.derive` applies it).
+    (:meth:`~plyngent.kernel.trail.Trail.derive` applies it). An effect is bookkeeping a person reads:
+    the result above it already told the model what happened, and what a path used to hold is not the
+    conversation.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange | Attempt | Withheld):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect):
         return None
     return record
 

@@ -34,10 +34,10 @@ from msgspec.structs import replace as replaced
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.model import Assistant, Delta, ModelFailed, Picture, Reply, Request, Result, User
+from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
-from plyngent.kernel.toolresult import OUTCOMES
-from plyngent.kernel.trail import Attempt
+from plyngent.kernel.toolresult import OUTCOMES, ToolResult
+from plyngent.kernel.trail import Attempt, Effect
 from plyngent.wire.event import AnswerCut, AssistantDelta, AssistantText, TurnFinished, TurnStarted, Usage
 
 if TYPE_CHECKING:
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.model import AnyMessage
     from plyngent.kernel.session import TurnCtx
+    from plyngent.kernel.trail import AnyRecord
     from plyngent.wire.event import AnyEvent
 
 #: Why a turn that ended without being cancelled did not run to its own end.
@@ -278,12 +279,40 @@ class TurnRunner:
         asked = [(self._addressing(), call) for call in reply.calls]
         results = await self._executor.batch(ctx, asked)
         for call, result in zip(reply.calls, results, strict=True):
+            said = await self._changed(said, call, result)
             text = render(result)
             said = await self._append(
                 said,
                 Result(call=call.id, tool=call.tool, status=result.status, text=text, documents=result.handles),
             )
         return replace(said, more=True)
+
+    async def _changed(self, state: TurnState, call: Call, result: ToolResult) -> TurnState:
+        """Write what this call left different, directly below the result it belongs to.
+
+        Below and not above, and that is the whole of the ordering rule: the effect sits at the end of the
+        chain the result ends, so the two are adjacent and neither names the other, while the row a turn
+        continues from stays the result.
+
+        A call that changed nothing writes nothing — the same rule a session's own settings follow — and a
+        result produced without a store still records *what* changed with no version to read it back from,
+        because "these paths are not what you last saw" is true whether or not this host keeps bytes.
+        """
+        effects = result.effects
+        if not (effects.changed or effects.external or effects.approvals):
+            return state
+        return await self._append(
+            state,
+            Effect(
+                turn=state.ctx.turn_id,
+                call=call.id,
+                tool=call.tool,
+                revision=effects.revision,
+                changed=tuple(str(one) for one in effects.changed),
+                external=effects.external,
+                approvals=effects.approvals,
+            ),
+        )
 
     # -- the pieces ----------------------------------------------------------------
 
@@ -311,8 +340,12 @@ class TurnRunner:
             turn=ctx.turn_id,
         )
 
-    async def _append(self, state: TurnState, payload: AnyMessage) -> TurnState:
-        """Write one entry at the end of the chain, and answer the state that continues from it."""
+    async def _append(self, state: TurnState, payload: AnyRecord) -> TurnState:
+        """Write one entry at the end of the chain, and answer the state that continues from it.
+
+        ``payload`` is one *record*, which is wider than a message: the bookkeeping this turn writes — an
+        attempt, an effect — goes down the same road, so "what the history holds" still has one author.
+        """
         ctx = state.ctx
         trail = ctx.host.trail
         entry = await trail.append(ctx.session.session_id, payload, begin_after=state.cursor, turn=ctx.turn_id)

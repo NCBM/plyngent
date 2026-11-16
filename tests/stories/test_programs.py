@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent.cli.policy import Policy
 from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
@@ -20,6 +21,11 @@ if TYPE_CHECKING:
     from tests.stories.driver import Story
 
     type Scripted = Callable[..., Awaitable[Story]]
+
+#: What a story says when it is not about asking: yes to everything a program can raise, danger included.
+#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this rather than
+#: interrupting its own subject with an answer at the terminal.
+_YES = Policy(away=True, away_danger=True)
 
 
 def _file(story: Story, name: str) -> None:
@@ -88,18 +94,43 @@ async def test_a_branch_that_is_never_reached_is_never_asked_about(story_with: S
     _file(story, "x.txt")
 
     await story.type("run the tree")
+    await story.answer("y")
+    await story.answer("y")
     await story.finished()
 
     (_, ran) = story.requests()
-    assert story.questions() == (), "the then-branch was skipped, so nobody was asked about its program"
+    assert [question.prompt.split("?")[0] for question in story.questions()] == [
+        "run sh -c 'exit 1'",
+        "run sh -c 'echo second'",
+    ], "one question per node that ran, and the skipped branch's program was never put to anybody"
     assert told(ran).count("cmd=") == 2, "both top-level commands ran, and the branch did not"
     assert (story.workspace / "x.txt").exists()
+
+
+async def test_a_shell_is_asked_about_every_time_and_the_answer_is_not_remembered(story_with: Scripted) -> None:
+    """A command this build cannot answer for is worth one call: there is no name to keep a yes by (§R12 乙)."""
+    story = await story_with(
+        calling("execute", {"steps": [{"argv": ["sh", "-c", "echo one"]}], "intention": "first"}),
+        calling("execute", {"steps": [{"argv": ["sh", "-c", "echo two"]}], "intention": "and again"}),
+        text("both"),
+    )
+
+    await story.type("say one and then two")
+    await story.answer("y")
+    await story.answer("y")
+    await story.finished()
+
+    asked = [question.prompt for question in story.questions()]
+    assert len(asked) == 2, "the second call is asked again rather than trading on the first answer"
+    assert all(prompt.startswith("run sh -c") for prompt in asked), asked
+    assert all("runs code given on its own command line" in prompt for prompt in asked), "and says why"
 
 
 async def test_a_failure_with_nothing_after_it_is_still_a_result(story_with: Scripted) -> None:
     story = await story_with(
         calling("execute", {"steps": [{"argv": ["sh", "-c", "exit 1"]}], "intention": "a program that fails"}),
         text("oh"),
+        policy=_YES,
     )
 
     await story.type("run something that fails")
@@ -123,6 +154,7 @@ async def test_failfast_false_follows_the_failure_and_runs_the_next_node(story_w
             },
         ),
         text("both ran"),
+        policy=_YES,
     )
 
     await story.type("run both")
@@ -143,6 +175,7 @@ async def test_what_ran_before_a_stop_is_partial_and_stays_run(story_with: Scrip
             },
         ),
         text("oh"),
+        policy=_YES,
     )
 
     await story.type("run a tree that stops")
@@ -179,6 +212,7 @@ async def test_a_deadline_stops_the_command_and_says_it_did(story_with: Scripted
             {"steps": [{"argv": ["sh", "-c", "sleep 5"], "timeout_secs": 0.05}], "intention": "wait too long"},
         ),
         text("it never answered"),
+        policy=_YES,
     )
 
     await story.type("wait for an answer that does not come")

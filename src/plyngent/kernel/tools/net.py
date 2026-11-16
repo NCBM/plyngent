@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import msgspec
 
-from plyngent.kernel.documents import picture_media
+from plyngent.kernel.documents import MAX_KEPT_BYTES, picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.net import client, policy, web
 from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Part, Text, ToolResult, kind_of
@@ -72,7 +72,7 @@ class ClientFetchArgs(ToolArgs, kw_only=True):
     body: str | None = None
     user_agent: str | None = None
     timeout_seconds: Annotated[float, msgspec.Meta(gt=0)] = policy.DEFAULT_TIMEOUT_SECONDS
-    max_bytes: Annotated[int, msgspec.Meta(ge=1)] = policy.DEFAULT_MAX_BYTES
+    max_bytes: Annotated[int, msgspec.Meta(ge=1, le=MAX_KEPT_BYTES)] = policy.DEFAULT_MAX_BYTES
     max_redirects: Annotated[int, msgspec.Meta(ge=0)] = policy.DEFAULT_MAX_REDIRECTS
     follow_redirects: bool = True
     allow_http_downgrade: bool = False
@@ -208,18 +208,20 @@ async def _answered(env: Env, fetched: client.Fetched, *, approvals: tuple[str, 
     if fetched.kind is client.BodyKind.EMPTY:
         return ToolResult.ok(_summary(fetched, kept=False), effects=effects)
     if fetched.kind is client.BodyKind.TEXT:
-        body, summary = await _text(env, fetched.as_text(), line=lambda kept: _summary(fetched, kept=kept))
+        text = await _text(env, fetched.as_text(), line=lambda kept: _summary(fetched, kept=kept))
+        if isinstance(text, ToolResult):
+            return text
+        body, summary = text
         return ToolResult.ok(summary, body=body, effects=effects)
     media = picture_media(fetched.body) or _media_of(fetched)
     summary = _summary(fetched, kept=True)
-    return ToolResult.ok(
-        summary,
-        body=await kept_bytes(env, fetched.body, summary=summary, media=media),
-        effects=effects,
-    )
+    picture = await kept_bytes(env, fetched.body, summary=summary, media=media)
+    if isinstance(picture, ToolResult):
+        return picture
+    return ToolResult.ok(summary, body=picture, effects=effects)
 
 
-async def _text(env: Env, content: str, *, line: Callable[[bool], str]) -> tuple[Part, str]:
+async def _text(env: Env, content: str, *, line: Callable[[bool], str]) -> tuple[Part, str] | ToolResult:
     """A body as the model gets it, and the line that stands in for it when it did not fit.
 
     ``line`` is given whether the body had to be kept, because the handle's own summary has to say that it
@@ -227,7 +229,8 @@ async def _text(env: Env, content: str, *, line: Callable[[bool], str]) -> tuple
     """
     long = len(content) > env.documents.keep_chars
     summary = line(long)
-    return await kept(env, content, summary=summary), summary
+    part = await kept(env, content, summary=summary)
+    return part if isinstance(part, ToolResult) else (part, summary)
 
 
 def _summary(fetched: client.Fetched, *, kept: bool) -> str:
@@ -351,7 +354,10 @@ async def web_fetch(env: Env, args: WebFetchArgs) -> ToolResult:
         page = await pages.fetch(url.url)
     except web.SourceFailed as exc:
         return ToolResult.of(Failure.PROTOCOL, str(exc))
-    body, summary = await _text(env, page.content, line=lambda kept: _page(page, url, kept=kept))
+    found = await _text(env, page.content, line=lambda kept: _page(page, url, kept=kept))
+    if isinstance(found, ToolResult):
+        return found
+    body, summary = found
     return ToolResult.ok(summary, body=body, effects=Effects(external=(f"read {url.url}",)))
 
 

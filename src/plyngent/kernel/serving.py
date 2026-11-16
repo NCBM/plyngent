@@ -39,8 +39,10 @@ from composat.errors import KeyInTransitError
 
 from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
 from plyngent.kernel.client import NO_CAPABILITY, ClientOffers, Offers, specs_from
+from plyngent.kernel.documents import refuses
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.executor import ToolExecutor
+from plyngent.kernel.history import Unreadable, Unwilling
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import Summary, Withheld, transcript
@@ -55,6 +57,7 @@ from plyngent.wire.command import (
     Open,
     Prune,
     Resume,
+    Rollback,
     SetRoute,
     Submit,
 )
@@ -69,6 +72,8 @@ from plyngent.wire.event import (
     Pruned,
     PruneRefused,
     ResumeRefused,
+    RollbackRefused,
+    RolledBack,
     Routed,
     RouteRefused,
     SessionsListed,
@@ -185,8 +190,8 @@ class Serving:
                 await self._export(session, begin_after)
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
-            case Resume(session=session, store=store):
-                await self._resume(session, store)
+            case Resume() | Rollback():
+                await self._past(command)
             case _ as never:
                 # Every command a client may send has an answer here, even where the answer is "there is
                 # nowhere to resume from": a new command must be a decision at this match, not silence.
@@ -225,6 +230,46 @@ class Serving:
             self.link.emit(ResumeRefused(session=session, reason=NO_SESSION))
             return
         self.link.emit(ResumeRefused(session=session, reason=_no_trajectory(store)))
+
+    async def _past(self, command: Resume | Rollback) -> None:
+        """The two commands about what this session and its workspace already were.
+
+        Read together because they are one question asked of two records — a conversation's trajectory
+        and a workspace's versions — and both are refused while a turn is live for the same reason.
+        """
+        match command:
+            case Resume(session=session, store=store):
+                await self._resume(session, store)
+            case Rollback(session=session, version=version, paths=paths, force=force):
+                await self._rollback(session, version, paths, force=force)
+
+    async def _rollback(self, session: str, version: str, paths: tuple[str, ...], *, force: bool) -> None:
+        """Put the workspace back a version, if this kernel keeps versions and nothing is running.
+
+        A rollback is refused while a turn is live, and for the reason ``Resume`` is: the bytes on disk
+        are what that turn's calls are producing, so putting older ones under them would make every
+        later result describe a file nobody has. Nothing here asks a person: the command *is* the person,
+        and what it touches is what this kernel itself wrote a moment ago.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(RollbackRefused(session=session, reason=NO_SESSION))
+            return
+        store = found.host.history
+        if store is None:
+            self.link.emit(RollbackRefused(session=session, reason=NO_VERSIONS))
+            return
+        if found.turns():
+            self.link.emit(RollbackRefused(session=session, reason=A_TURN_IS_RUNNING))
+            return
+        try:
+            undone = await store.undo(version=version, paths=paths, force=force)
+        except (Unreadable, Unwilling) as exc:
+            self.link.emit(RollbackRefused(session=session, reason=str(exc)))
+            return
+        self.link.emit(
+            RolledBack(session=session, revision=undone.revision, target=undone.target, restored=undone.restored)
+        )
 
     async def _bookkeeping(self, command: Compact | Prune) -> None:
         """The two commands that write one row where the conversation ends, and nothing else.
@@ -422,8 +467,13 @@ class Serving:
         if not messages:
             self.link.emit(ExportRefused(session=session, reason=NOTHING_TO_EXPORT))
             return
+        transcript_text = transcript(messages)
+        refusal = refuses(transcript_text)
+        if refusal is not None:
+            self.link.emit(ExportRefused(session=session, reason=refusal))
+            return
         kept = await found.host.documents.put(
-            session, transcript(messages), summary=f"conversation exported ({len(messages)} messages)"
+            session, transcript_text, summary=f"conversation exported ({len(messages)} messages)"
         )
         self.link.emit(DocumentStored(session=session, document=kept.id, chars=kept.chars))
 
@@ -616,6 +666,12 @@ BUSY = "a turn is already running in this session"
 
 #: Why an ``Open`` could not seed a new session: there is no history to copy from yet.
 NO_FOREST = "seeding a session needs the history store, which does not exist yet"
+
+#: Why a ``Rollback`` did nothing: this kernel keeps no versions, so there is nothing to go back to.
+NO_VERSIONS = "this kernel keeps no versions of this workspace"
+
+#: Why a ``Rollback`` waited: the bytes on disk are the ones a live turn's calls are still producing.
+A_TURN_IS_RUNNING = "a turn is running in this session, so the workspace is still being written"
 
 #: Why a ``Compact`` wrote nothing: an empty summary would stand for everything and say nothing.
 NOTHING_TO_KEEP = "a summary with no text compresses nothing"

@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from plyngent.cli.policy import Policy
 from plyngent.kernel.model import Reply, Result
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
     from plyngent.kernel.model import Request
 
     type Scripted = Callable[..., Awaitable[Story]]
+
+#: What a story says when it is not about asking: yes to everything a program can raise, danger included.
+#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this rather than
+#: interrupting its own subject with an answer at the terminal.
+_YES = Policy(away=True, away_danger=True)
 
 
 async def _told(story: Story) -> str:
@@ -235,6 +241,7 @@ async def test_a_copy_and_a_move_change_the_tree(story_with: Scripted) -> None:
     await story.type("copy it, then rename the copy")
     await story.answer("y")
     await story.answer("y")
+    await story.finished()
 
     assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "hi"
     assert (story.workspace / "renamed.txt").read_text(encoding="utf-8") == "hi"
@@ -286,6 +293,7 @@ async def test_a_program_runs_and_both_commands_are_reported(story_with: Scripte
             },
         ),
         text("both ran"),
+        policy=_YES,
     )
 
     await story.type("say one and two")
@@ -302,6 +310,7 @@ async def test_a_program_that_fails_is_a_result_and_not_an_error(story_with: Scr
             {"steps": [{"argv": ["sh", "-c", "echo no; exit 3"]}], "intention": "a program that fails"},
         ),
         text("oh"),
+        policy=_YES,
     )
 
     await story.type("run something that fails")
@@ -321,6 +330,7 @@ async def test_a_programs_input_can_be_a_lump_of_text(story_with: Scripted) -> N
             },
         ),
         text("read it back"),
+        policy=_YES,
     )
 
     await story.type("feed it a line")

@@ -20,6 +20,7 @@ from plyngent.kernel.approvals import Approvals
 from plyngent.kernel.client import Offers  # noqa: TC001
 from plyngent.kernel.documents import Documents  # noqa: TC001
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
+from plyngent.kernel.history import History  # noqa: TC001
 from plyngent.kernel.journal import Journal  # noqa: TC001
 from plyngent.kernel.lm.route import Routes
 from plyngent.kernel.locks import Locks
@@ -96,9 +97,13 @@ class Host(Component):
     # lifecycle. What *does* have one is the model channel, because swapping the model is a `replace`.
     routes: Routes
     # What every request to a model begins with: the sections that do not come from the conversation. A
-    # plain field again — a prompt plan is text made once at install, and the one part of it that moves
-    # (which groups this session can reach) is handed in per request rather than stored here.
     prompt: PromptPlan
+    # Where this workspace's versions are kept, or ``None`` when nothing keeps them — a machine with no
+    # git, or a program started without them. A plain field for the reason the skills are: a store is a
+    # directory and a program, with no lifecycle to open. ``None`` is a value rather than a missing
+    # field, and it is decided where the kernel is assembled, because what exists is decided there
+    # (§10.1, E26) — a call that would have kept a version writes none instead of failing.
+    history: History | None
 
     def __init__(
         self,
@@ -108,6 +113,7 @@ class Host(Component):
         skills: Skills | None = None,
         routes: Routes | None = None,
         prompt: PromptPlan | None = None,
+        history: History | None = None,
     ) -> None:
         super().__init__()
         self.workspace = Workspace(root)
@@ -119,6 +125,7 @@ class Host(Component):
         self.skills = skills
         self.routes = Routes() if routes is None else routes
         self.prompt = PromptPlan() if prompt is None else prompt
+        self.history = history
 
     @override
     async def unload(self) -> None:

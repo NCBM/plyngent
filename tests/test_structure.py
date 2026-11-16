@@ -59,7 +59,16 @@ from plyngent.kernel.toolspec import (
     ToolArgs,
     ToolSpec,
 )
-from plyngent.kernel.trail import SUMMARY_HEADING, AnyRecord, Attempt, StateChange, Summary, Withheld, as_message
+from plyngent.kernel.trail import (
+    SUMMARY_HEADING,
+    AnyRecord,
+    Attempt,
+    Effect,
+    StateChange,
+    Summary,
+    Withheld,
+    as_message,
+)
 from plyngent.kernel.workspace import Denied, OutsideWorkspace
 from plyngent.wire.ask import SEVERITIES, Severity
 from plyngent.wire.event import Batch, Event, TurnStarted
@@ -224,7 +233,8 @@ def test_only_the_loader_reads_the_environment() -> None:
 
     The readers that are not configuration are named rather than merely permitted, because a name in
     this list is a claim somebody has to write down: a child process is handed the environment its parent
-    had, ``$EDITOR`` is how a person says which program they write in, and the last two are facts about
+    had — twice, once for a tool's command and once for the git this build keeps versions with — then
+    ``$EDITOR`` is how a person says which program they write in, and the last two are facts about
     the stream in front of this run — there is no terminal here, and ``NO_COLOR`` says not to paint. They
     are the exception to E76 and they are narrow on purpose: they say what the *input and output* are
     rather than what the program does, and setting them where a terminal was reading is a worse picture,
@@ -236,10 +246,14 @@ def test_only_the_loader_reads_the_environment() -> None:
     assert readers == {
         "config.py:load",
         "process.py:_environment",
+        "history.py:_environment",
         "line.py:_composed",
         "__main__.py:_plainly_asked",
         "__main__.py:_colour",
-    }, "the loader, a child process's environment, the person's editor, and the two facts about a stream"
+    }, (
+        "the loader, the two places a child is handed an environment, the person's editor, "
+        "and the two facts about a stream"
+    )
 
 
 def _environment_readers(path: pathlib.Path) -> list[str]:
@@ -666,13 +680,19 @@ def _catalog():
 
 
 def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
-    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Withheld, Attempt), (
+    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Withheld, Attempt, Effect), (
         "a record nobody classified would be a writer nobody asked about"
     )
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
     assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
-    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt())] == [None, None, None], (
-        "what a session knows, what it stopped showing, and what became of a request are not things a model reads"
+    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt(), Effect())] == [
+        None,
+        None,
+        None,
+        None,
+    ], (
+        "what a session knows, what it stopped showing, what became of a request and what a call left "
+        "different are not things a model reads"
     )
     says = as_message(Summary(text="it was settled"))
 

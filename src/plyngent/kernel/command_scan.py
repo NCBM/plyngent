@@ -2,34 +2,47 @@
 
 Judging a risky command must look at the program that will really run, not the outermost token:
 ``env FOO=1 python -c …``, ``nohup pdm run python …`` and ``timeout 5 bash -c …`` all reach the
-interpreter — or the denylisted program — further in.  Pure functions over one argv, so there is
-nothing to bind and nothing to ask.
+interpreter — or the denylisted program — further in.
+
+The second thing here is the other half of that judgement: what this build **could not** answer for
+(:func:`reasons_for`). A command line where the program is a guess, a shell that runs text, a hop to
+another machine — each is a fact about one argv that no denylist can settle, and each is said as data
+rather than as a sentence so that a policy can turn it into a question and a client can show why.
+
+Pure functions over one argv, so there is nothing to bind and nothing to ask.
 """
 
 from __future__ import annotations
 
+import base64
 import getopt
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 __all__ = [
     "ESCALATION_PROGRAMS",
+    "REVIEW_SAYS",
     "CommandString",
+    "Reason",
     "RemoteTarget",
+    "Review",
     "UnwrappedCommand",
     "basename",
     "dash_c_code",
     "escalators_in_chain",
+    "git_is_irreversible",
     "is_interpreter",
+    "reasons_for",
     "unwrap_command",
 ]
 
-# Detached runners: review-worthy whatever program they wrap.
-_SELF_REVIEW: frozenset[str] = frozenset({"nohup"})
+# Detached runners: they start something that outlives the call, and its output does not come back.
+_SELF_REVIEW: frozenset[str] = frozenset({"nohup", "screen", "tmux"})
 
 # ``<launcher> run <program> …``: task runners and package managers that launch
 # a program in their environment. A package-manager script (``npm run build``)
@@ -115,9 +128,15 @@ class _Spec:
     launcher: bool = False
     #: Runs its command on another machine (``ssh`` / ``mosh``).
     remote: bool = False
+    #: A multiplexer: its first non-option argument *is* the program (``busybox rm``).
+    applet: bool = False
 
 
 _WRAPPERS: dict[str, _Spec] = {
+    # A multiplexer is the whole program until its first argument names another one: ``busybox rm`` runs
+    # ``rm``, and ``busybox --list`` runs nothing at all.
+    "busybox": _Spec(applet=True),
+    "toybox": _Spec(applet=True),
     "command": _Spec(short="pvV"),
     "doas": _Spec(short="C:nsu:", long=("user=",)),
     # ``env -S`` / ``su -c`` carry a *command line*: the value is code the review
@@ -275,42 +294,41 @@ _REMOTE_WRAPPERS: dict[str, _Spec] = {
     ),
 }
 
-# Launcher options that consume a value (``uv run --with rich python``).
-_RUN_VALUE_OPTS: frozenset[str] = frozenset(
-    {
-        "-C",
-        "-e",
-        "-F",
-        "-G",
-        "-m",
-        "-n",
-        "-p",
-        "-s",
-        "-w",
-        "--config",
-        "--constraint",
-        "--default-index",
-        "--directory",
-        "--env",
-        "--env-file",
-        "--extra",
-        "--extras",
-        "--file",
-        "--group",
-        "--index",
-        "--module",
-        "--name",
-        "--overrides",
-        "--package",
-        "--prefix",
-        "--project",
-        "--python",
-        "--python-version",
-        "--script",
-        "--with",
-        "--without",
-    }
+# A shell that runs a command line handed to it as an *option*, per shell: the switch, and whether its
+# value is base64 rather than text (``pwsh -EncodedCommand``). These switches are read before ``getopt``,
+# because ``cmd``'s are spelled with a slash and PowerShell's take the whole rest of the line.
+_SHELL_SWITCHES: dict[str, dict[str, bool]] = {
+    "cmd": {"/c": False, "/k": False},
+    "powershell": {"-command": False, "-c": False, "-encodedcommand": True, "-ec": True},
+    "pwsh": {"-command": False, "-c": False, "-encodedcommand": True, "-ec": True},
+}
+
+#: git's global options that take their value as the next token, so the subcommand is one further on.
+_GIT_GLOBAL_VALUES: frozenset[str] = frozenset(
+    {"-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path", "--super-prefix"}
 )
+
+#: The git subcommands this build will not answer for, and the arguments that make them so.
+#:
+#: A subcommand listed with no arguments is irreversible whatever it is given (``filter-branch`` rewrites
+#: history by existing); the others are the words that take something away — ``reset --hard`` throws away
+#: uncommitted work, ``clean`` deletes files git never tracked, ``push --force`` rewrites what others have.
+#: This is a policy and not argv-unwrapping: the program is known (``git``), and what is at stake is what
+#: the subcommand does. None of these can be answered once for the rest of the session, which is why they
+#: are a review reason and not a denylist entry: a yes to ``git`` cannot mean a yes to ``reset --hard``.
+_GIT_IRREVERSIBLE: dict[str, frozenset[str]] = {
+    "branch": frozenset({"-D", "--force"}),
+    "checkout": frozenset({"--"}),
+    "clean": frozenset({"-f", "-d", "-x", "-X", "--force"}),
+    "filter-branch": frozenset(),
+    "gc": frozenset({"--prune"}),
+    "push": frozenset({"-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete", "--prune"}),
+    "reflog": frozenset({"expire", "delete"}),
+    "reset": frozenset({"--hard", "--merge", "--keep"}),
+    "restore": frozenset(),
+    "stash": frozenset({"drop", "clear"}),
+    "update-ref": frozenset({"-d"}),
+}
 
 
 @dataclass(frozen=True)
@@ -472,9 +490,13 @@ class _Step:
 def _step(name: str, parts: list[str], start: int, *, command_strings: list[CommandString]) -> _Step:
     """Resolve the wrapper *name* at ``parts[start - 1]`` past its own options."""
     spec = _spec_for(name)
-    if spec is None:
+    # Two ways there is nothing to unwrap: the name wraps nothing, or it is a shell whose command line was
+    # collected rather than guessed at (`_shell_step`).
+    if _shell_step(parts, start, name=name, command_strings=command_strings) or spec is None:
         return _Step()
     index = start
+    if spec.applet:
+        return _applet_step(parts, index)
     if spec.launcher:
         if index >= len(parts) or parts[index] != "run":
             return _Step()  # ``npm install``: the launcher is the whole command
@@ -489,6 +511,51 @@ def _step(name: str, parts: list[str], start: int, *, command_strings: list[Comm
     if spec.remote:
         return _remote_step(name, parts, index, parsed.options)
     return _Step(index=index) if index < len(parts) else _Step()
+
+
+def _applet_step(parts: list[str], index: int) -> _Step:
+    """The applet a multiplexer runs: ``busybox rm -rf /`` runs ``rm``, ``busybox --list`` runs nothing.
+
+    A multiplexer has few options of its own and none of them names a program, so a token that starts with
+    ``-`` ends the unwrap rather than being guessed past: the program behind it is the multiplexer itself.
+    """
+    if index >= len(parts) or parts[index].startswith("-"):
+        return _Step()
+    return _Step(index=index)
+
+
+def _shell_step(parts: list[str], index: int, *, name: str, command_strings: list[CommandString]) -> bool:
+    """Collect the command line a shell was handed as an option; ``True`` when *name* was one of these.
+
+    ``cmd /c dir`` and ``pwsh -EncodedCommand <base64>`` do not unwrap to a program: what they run is a
+    *string*, which this build does not read through. So the shell stays the command, the string is
+    collected for a person to be shown, and the interpreter rule covers the rest. ``getopt`` cannot read
+    these — one is spelled with a slash, the other takes the whole rest of its line — which is why this is
+    the one place that reads a shell's options by hand.
+    """
+    switches = _SHELL_SWITCHES.get(name)
+    if switches is None:
+        return False
+    for at in range(index, len(parts)):
+        token = parts[at]
+        if not token.startswith(("-", "/")):
+            break
+        spelled, _, inline = token.partition(":")
+        encoded = switches.get(spelled.lower())
+        if encoded is None:
+            continue
+        text = inline or (parts[at + 1] if at + 1 < len(parts) else "")
+        command_strings.append(CommandString(wrapper=name, option=spelled, text=_decoded(text) if encoded else text))
+        break
+    return True
+
+
+def _decoded(text: str) -> str:
+    """PowerShell's ``-EncodedCommand``: base64 of UTF-16LE, decoded so a person can read what would run."""
+    try:
+        return base64.b64decode(text, validate=True).decode("utf-16-le", "replace")
+    except ValueError:
+        return text
 
 
 def _spec_for(name: str) -> _Spec | None:
@@ -551,3 +618,147 @@ def _batch_mode(options: Sequence[tuple[str, str]]) -> bool:
         if option == "-o" and key.strip().lower() == "batchmode":
             return setting.strip().lower() in {"1", "on", "true", "yes"}
     return False
+
+
+# -- what could not be answered for ------------------------------------------------
+
+
+class Review(StrEnum):
+    """One reason this build will not answer for a command by itself.
+
+    A reason is not a refusal: it says the judgement cannot be made here, so a person has to make it —
+    and because nothing about it is certain, a yes is worth one call and never the rest of the session.
+    That is the difference between this and a denylisted program, whose yes is remembered by name.
+    """
+
+    #: The program is an interpreter, so what runs is text given on its own command line.
+    INTERPRETER = "interpreter"
+    #: It starts something that outlives the call, and its output does not come back.
+    DETACHED = "detached"
+    #: A wrapper option carries a command line, which this build does not read through.
+    COMMAND_STRING = "command-string"
+    #: A client with no command: it opens a shell whose input is not checked.
+    REMOTE_SHELL = "remote-shell"
+    #: A command on another machine whose client cannot prompt at either end.
+    REMOTE_BATCH = "remote-batch"
+    #: An option the wrapper's spec does not know, so the program behind it is a guess.
+    OPTIONS = "options"
+    #: The command runs with rights this session does not have.
+    ESCALATION = "escalation"
+    #: The command takes something away that cannot be put back where it was.
+    IRREVERSIBLE = "irreversible"
+
+
+#: What each reason says, with ``{about}`` the program, wrapper or host it is about.
+#:
+#: One table because the kind is for a client and the sentence is for a person, and two places deciding
+#: what a kind means is how the two drift; the text a reason carries, when it has any, is appended.
+REVIEW_SAYS: Mapping[Review, str] = {
+    Review.INTERPRETER: "{about} runs code given on its own command line, and this build does not read that code",
+    Review.DETACHED: "{about} starts something that outlives this call, so its output never comes back",
+    Review.COMMAND_STRING: "{about} carries a command line this build does not read through",
+    Review.REMOTE_SHELL: "{about} opens a shell on another machine, and nothing typed into it is checked",
+    Review.REMOTE_BATCH: "{about} runs on another machine with no prompt at either end",
+    Review.OPTIONS: "{about} has options this build does not understand, so the program behind them is a guess",
+    Review.ESCALATION: "{about} runs with rights this session does not have",
+    Review.IRREVERSIBLE: "{about} cannot be undone",
+}
+
+#: How much of a carried command line a reason quotes: enough to recognise, not a page in a question.
+_QUOTED = 160
+
+
+@dataclass(frozen=True, slots=True)
+class Reason:
+    """One thing this build could not answer for: what kind, about what, and the text behind it."""
+
+    kind: Review
+    #: The program, the wrapper and its option, the host — whatever the sentence says ``{about}``.
+    detail: str = ""
+    #: The command line the reason is about, when there is one (``-c``'s code, ``env -S``'s argument).
+    text: str = ""
+
+    def says(self) -> str:
+        """The sentence a person reads: what kind, about what, and — quoted — the text it carries."""
+        said = REVIEW_SAYS[self.kind].format(about=self.detail or "this call")
+        return f"{said}: {_quoted(self.text)}" if self.text else said
+
+
+def reasons_for(argv: Sequence[str]) -> tuple[Reason, ...]:
+    """What about *argv* this build cannot answer for, read off one scan of it.
+
+    Empty for a command nothing is in doubt about, which is most of them. The order is the order a person
+    reading one line wants: what the program is, then what the chain around it does.
+    """
+    scan = unwrap_command(argv)
+    reasons: list[Reason] = []
+    if scan.unparsed:
+        reasons.append(Reason(Review.OPTIONS, scan.unparsed))
+    if is_interpreter(scan.base):
+        code = dash_c_code(scan.command)
+        reasons.append(Reason(Review.INTERPRETER, scan.base, "" if code is None else code[1]))
+    reasons.extend(Reason(Review.DETACHED, name) for name in scan.self_review)
+    quoted = {reason.text for reason in reasons if reason.text}
+    reasons.extend(
+        Reason(Review.COMMAND_STRING, span.label, span.text) for span in scan.command_strings if span.text not in quoted
+    )
+    remote = scan.remote
+    if remote is not None and remote.shell:
+        reasons.append(Reason(Review.REMOTE_SHELL, f"{remote.wrapper} {remote.host}"))
+    elif remote is not None and remote.batch:
+        reasons.append(Reason(Review.REMOTE_BATCH, f"{remote.wrapper} {remote.host}"))
+    reasons.extend(Reason(Review.ESCALATION, name) for name in escalators_in_chain(argv))
+    irreversible = git_is_irreversible(scan.command)
+    if irreversible is not None:
+        reasons.append(irreversible)
+    return tuple(dict.fromkeys(reasons))
+
+
+def git_is_irreversible(command: Sequence[str]) -> Reason | None:
+    """The reason a git command cannot be answered for, or ``None`` when it is one git can.
+
+    git's global options come before the subcommand (``git -c k=v -C dir status``) and a few of them take
+    their value as the next token, which is the whole difficulty of reading git's own argv. What is at
+    stake afterwards is not the program — it is the subcommand, and the words that make it take something
+    away that cannot be put back (``_GIT_IRREVERSIBLE``).
+    """
+    parsed = _git_subcommand(command)
+    if parsed is None:
+        return None
+    subcommand, rest = parsed
+    words = _GIT_IRREVERSIBLE.get(subcommand)
+    if words is None:
+        return None
+    if not words:
+        return Reason(Review.IRREVERSIBLE, f"git {subcommand}")
+    said = next((token for token in rest if any(_word_in(token, word) for word in words)), None)
+    return None if said is None else Reason(Review.IRREVERSIBLE, f"git {subcommand} {said}")
+
+
+def _git_subcommand(command: Sequence[str]) -> tuple[str, tuple[str, ...]] | None:
+    """The subcommand of a git command and its own arguments, or ``None`` when this is not git's."""
+    if not command or basename(command[0]) != "git":
+        return None
+    index = 1
+    while index < len(command):
+        token = command[index]
+        if not token.startswith("-"):
+            return token, tuple(command[index + 1 :])
+        index += 2 if token in _GIT_GLOBAL_VALUES else 1
+    return None
+
+
+def _word_in(token: str, word: str) -> bool:
+    """Whether one argument says *word*: exactly, as a ``--flag=value``, or inside a short cluster."""
+    if token == word:
+        return True
+    if word.startswith("--"):
+        return token.startswith(f"{word}=")
+    clustered = token.startswith("-") and not token.startswith("--")
+    return clustered and len(word) > 1 and word[1] in token[1:]
+
+
+def _quoted(text: str) -> str:
+    """One line of carried text: newlines flattened, and cut where a question stops being readable."""
+    said = " ".join(text.split())
+    return said if len(said) <= _QUOTED else f"{said[:_QUOTED]}…"

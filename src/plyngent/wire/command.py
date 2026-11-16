@@ -129,6 +129,24 @@ class Export(Command, tag="export", frozen=True, kw_only=True):
     begin_after: str | None = None
 
 
+class Rollback(Command, tag="rollback", frozen=True, kw_only=True):
+    """Put this workspace back to the version *before* ``version``, and record the putting-back.
+
+    A rollback is a write, and it is a write of bytes that were already here — so it comes from the
+    frontend rather than from a tool, and it is one version like any other: the history is appended to,
+    never rewound, and what it was before the rollback stays in the store for anyone who wants it back.
+
+    ``version`` is empty for "the newest one". ``paths`` narrows it to a few of the paths that version
+    changed, and empty means all of them. ``force`` is for the case the safety check exists for: the disk
+    no longer holds what that version left, so somebody has written over it since, and putting it back
+    would throw that away.
+    """
+
+    version: str = ""
+    paths: tuple[str, ...] = ()
+    force: bool = False
+
+
 class OfferedTool(Struct, frozen=True, kw_only=True):
     """One tool a client offers: its name, the shape of its arguments, and whether it is always there.
 
@@ -161,4 +179,6 @@ class Offer(Command, tag="offer", frozen=True, kw_only=True):
 
 
 #: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
-type AnyCommand = Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export | Offer
+type AnyCommand = (
+    Open | Close | Submit | Cancel | SetRoute | Compact | Prune | Resume | ListSessions | Export | Offer | Rollback
+)

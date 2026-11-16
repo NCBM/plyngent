@@ -13,7 +13,7 @@ from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
 from plyngent.cli.grammar import Catalog, Runs, SlashCompleter, Wrong, build, decode
-from plyngent.wire.command import SetRoute
+from plyngent.wire.command import Rollback, SetRoute
 from plyngent.wire.manifest import KernelManifest, command_specs
 
 
@@ -40,6 +40,14 @@ def test_an_empty_argument_is_still_an_argument() -> None:
 
     assert intent == Runs(command=SetRoute(session="main", route="")), (
         "a value the person wrote as empty is empty, not a missing option"
+    )
+
+
+def test_a_switch_is_a_word_without_a_value() -> None:
+    intent = decode("/rollback --force", _catalog(), session="main")
+
+    assert intent == Runs(command=Rollback(session="main", force=True)), (
+        "a switch says itself; nothing is typed after it"
     )
 
 

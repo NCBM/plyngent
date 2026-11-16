@@ -221,6 +221,34 @@ class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
     reason: str = ""
 
 
+class RolledBack(Event, tag="rolled-back", frozen=True, kw_only=True):
+    """A workspace went back a version, and what that cost.
+
+    ``target`` is the version the content was taken *from*, ``revision`` the version the putting-back was
+    recorded as — a rollback is appended like everything else, so the history says what happened rather
+    than rewriting itself. ``restored`` names the paths whose content moved, and it is what a person sees
+    instead of a difference: the difference between two versions is a thing the store can show again, and
+    this is the receipt for the one act that changed the disk.
+    """
+
+    session: str = ""
+    revision: str = ""
+    target: str = ""
+    restored: tuple[str, ...] = ()
+
+
+class RollbackRefused(Event, tag="rollback-refused", frozen=True, kw_only=True):
+    """A rollback did nothing, and why — there is no version, or the disk moved on since.
+
+    The second reason is the one worth having: putting a version back over bytes somebody else wrote
+    would be exactly the kind of quiet loss the approval gate exists to prevent, so it is refused by name
+    rather than forced by default.
+    """
+
+    session: str = ""
+    reason: str = ""
+
+
 class Routed(Event, tag="routed", frozen=True, kw_only=True):
     """This session now asks *route*, and which epoch that is.
 
@@ -256,6 +284,32 @@ class DocumentStored(Event, tag="document-stored", frozen=True, kw_only=True):
     session: str = ""
     document: str = ""
     chars: int = 0
+
+
+class Changed(Event, tag="changed", frozen=True, kw_only=True):
+    """What one call left different, with the difference itself: the one place a change is shown.
+
+    **The model is not told any of this.** Its result already says what the call did, in the words the
+    tool chose, and a second account of the same call is a second thing to read and to keep in step. So
+    this event has no reader inside the kernel and none in a history: it is written for whoever is
+    watching the work happen, and the patch is the whole of it. ``revision`` names the version those bytes
+    are kept under, so a person who looks later can ask the store for the same difference and get the same
+    answer.
+
+    ``patch`` is git's own unified diff between this version and the one before it, which is why it needs
+    no wording of ours: ``---``/``+++`` and ``@@`` are what a person already reads. ``truncated`` says the
+    patch was longer than one event should carry and that the rest is in the store under ``revision``
+    rather than lost.
+    """
+
+    session: str = ""
+    turn: int = 0
+    call: str = ""
+    tool: str = ""
+    revision: str = ""
+    paths: tuple[str, ...] = ()
+    patch: str = ""
+    truncated: bool = False
 
 
 class KernelLeaving(Event, tag="kernel-leaving", frozen=True, kw_only=True):
@@ -396,7 +450,10 @@ type AnyEvent = (
     | PruneRefused
     | ExportRefused
     | ResumeRefused
+    | RolledBack
+    | RollbackRefused
     | DocumentStored
+    | Changed
     | KernelLeaving
     | AssistantText
     | AssistantDelta

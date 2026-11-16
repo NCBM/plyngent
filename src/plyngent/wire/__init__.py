@@ -62,12 +62,14 @@ from plyngent.wire.command import OfferedTool as OfferedTool
 from plyngent.wire.command import Open as Open
 from plyngent.wire.command import Prune as Prune
 from plyngent.wire.command import Resume as Resume
+from plyngent.wire.command import Rollback as Rollback
 from plyngent.wire.command import SetRoute as SetRoute
 from plyngent.wire.command import Submit as Submit
 from plyngent.wire.event import AnswerCut as AnswerCut
 from plyngent.wire.event import AnyEvent as AnyEvent
 from plyngent.wire.event import AssistantText as AssistantText
 from plyngent.wire.event import Batch as Batch
+from plyngent.wire.event import Changed as Changed
 from plyngent.wire.event import Compacted as Compacted
 from plyngent.wire.event import CompactRefused as CompactRefused
 from plyngent.wire.event import DocumentStored as DocumentStored
@@ -80,7 +82,8 @@ from plyngent.wire.event import OfferRefused as OfferRefused
 from plyngent.wire.event import Pruned as Pruned
 from plyngent.wire.event import PruneRefused as PruneRefused
 from plyngent.wire.event import ResumeRefused as ResumeRefused
-from plyngent.wire.event import Routed as Routed
+from plyngent.wire.event import RollbackRefused as RollbackRefused
+from plyngent.wire.event import RolledBack as RolledBack
 from plyngent.wire.event import RouteRefused as RouteRefused
 from plyngent.wire.event import SessionsListed as SessionsListed
 from plyngent.wire.event import ToolCalled as ToolCalled

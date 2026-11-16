@@ -42,11 +42,13 @@ from platformdirs import user_data_path
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
 from plyngent.kernel.trail import (
     ATTEMPT_TAG,
+    EFFECT_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
     WITHHELD_TAG,
     AnyRecord,
     Attempt,
+    Effect,
     Entry,
     Shape,
     StateChange,
@@ -145,14 +147,20 @@ PROJECTOR = 3
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 
-#: The tags a conversation continues from: what a model reads, plus the summary that stands in for what
-#: it read before, plus the prune that says what of it is not shown. One set, two uses — the placeholder
-#: list for the one query that names them (:meth:`head`) and the filter a projection applies — so what a
-#: turn may continue and what a model is shown cannot drift. A prune belongs here and not among the model
-#: tags: nothing reads a prune *as a message*, and it must still be the place a turn grows from — a prune
-#: that did not become the head would hide nothing from the next turn, which is the same bug a summary
-#: that did not become the head has (E53).
-_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG, WITHHELD_TAG}
+#: The tags a conversation continues from: what a model reads, plus the records that sit *in* a chain
+#: without being messages — the summary that stands in for what a model read before, the prune that says
+#: what of it is not shown, and the effect that says what one call left behind. One set, two uses — the
+#: placeholder list for the one query that names them (:meth:`head`) and the filter a projection applies
+#: — so what a turn may continue and what a model is shown cannot drift.
+#:
+#: A prune belongs here and not among the model tags: nothing reads a prune *as a message*, and it must
+#: still be the place a turn grows from — a prune that did not become the head would hide nothing from
+#: the next turn, which is the same bug a summary that did not become the head has (E53). An effect is
+#: the same shape for a different reason: it is written below the result it belongs to, so a turn that
+#: stopped right after it would otherwise grow from the result *above* it and leave the effect on a
+#: branch of its own. Projecting from one is unchanged — an effect is not a message
+#: (:func:`~plyngent.kernel.trail.as_message`) — so continuing from it says the same thing.
+_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG, WITHHELD_TAG, EFFECT_TAG}
 _CONVERSATION = tuple(sorted(_CONVERSATION_TAGS))
 _CONVERSATION_IN = ", ".join("?" for _ in _CONVERSATION)
 
@@ -582,6 +590,8 @@ def _decode(tag: str, payload: str) -> AnyRecord:
         return msgspec.json.decode(payload, type=Attempt)
     if tag == WITHHELD_TAG:
         return msgspec.json.decode(payload, type=Withheld)
+    if tag == EFFECT_TAG:
+        return msgspec.json.decode(payload, type=Effect)
     return _message(payload)
 
 

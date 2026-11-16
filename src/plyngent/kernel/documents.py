@@ -18,14 +18,32 @@ content nobody refers to rather than a handle pointing at nothing.
 two sessions on one host do not see each other's documents by id, and an id that belongs to somebody
 else is answered as if it did not exist.
 
+**The same bytes are kept once, per session.** A row is (content, media) under the session that asked for
+it, so a window read twice is one handle rather than two, and a handle is something a model can hold on
+to. Sessions never share a row — that is the privacy rule above, read in the other direction.
+
+**It is a cache, not an archive.** Every body here can be had again: a tool can be asked twice, a file
+read twice, an export derived from the log again. So each session has a budget, and writing past it lets
+the oldest bodies go — at the write, when the answer is known, rather than on a timer somebody would have
+to trust. A handle to a body that has gone is not a broken handle: it is an id this session no longer
+has, which is the answer a made-up id already gets.
+
 **How much fits is a property of the store.** :data:`KEEP_CHARS` is the threshold a tool asks this
 object for rather than a number in a schema: a schema that changed with it would rewrite the prompt
 prefix a provider caches (§10.5), and the executor does not know what a body means.
+:data:`MAX_TEXT_CHARS` and :data:`MAX_KEPT_BYTES` are the other end of the same idea — what this build
+will hold at all — and :data:`SUMMARY_CHARS` keeps the line that stands in for content a line.
+
+**There is no full-text index.** A search here is one handle at a time: the reader takes the content out
+and matches it line by line, so an index would be a second copy of the same bytes with its own
+consistency problem and nothing to answer that the content does not. Cross-document search is a
+different call, and a different decision, which is when FTS5 becomes worth its price (§0.6, R10).
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,16 +81,65 @@ _WEBP_HEADER = 12
 #: ``DEFAULT_TOOL_RESULT_MAX_CHARS``.
 KEEP_CHARS = 32_000
 
-#: The one version of this shape.
+#: The most text this build will keep, and the most it will hold in memory to search line by line.
 #:
-#: There is no ladder yet: nothing has been released, so this script *is* the shape and a change before
-#: the first release is a change to it. The version is stamped anyway, because a file written by this
-#: build has to be able to say what it is to the build that comes after it — and because stamping it
-#: costs nothing while a ladder invented for one version would be a promise nobody has kept yet.
+#: Four million characters is a long book and several times the largest page anybody fetches; past it the
+#: answer is a window, not the whole thing. One number serves both questions because they are the same
+#: question — how much text this build is willing to have in memory at once — and a second number for
+#: searching would be a second opinion about the same trade.
+MAX_TEXT_CHARS = 4_000_000
+
+#: The most bytes it will keep: a picture, and a screenshot is the biggest thing that arrives.
+#:
+#: Bytes are not text in any window, so there is no size at which handing them over would be a favour —
+#: which is why the binary limit is checked once, at the door, and not per read.
+MAX_KEPT_BYTES = 8 * 1024 * 1024
+
+#: How long a summary may be: it is the line that stands in for content, and a line is what it is.
+SUMMARY_CHARS = 200
+
+#: How much one session's kept bodies may take, and how many of them: the store is a cache, not an archive.
+#:
+#: A body is reconstructible — a tool can be asked again, a file read again, an export derived again from
+#: the log — so the store keeps what a conversation is still likely to want and lets the oldest go. The
+#: budget is in bytes (``length(content)`` in SQLite, which counts a blob as bytes and a string as
+#: characters), because bytes are what the file costs. There is no timer anywhere: room is made when
+#: something is written, which is the only moment the answer can be known (§0.6, R10).
+SESSION_BUDGET = 64 * 1024 * 1024
+SESSION_ROWS = 200
+
+
+class TooBigError(Exception):
+    """Content over this store's limit. The message is the sentence a tool shows, number and all."""
+
+
+def refuses(content: str | bytes) -> str | None:
+    """Why this build will not keep *content*, or ``None`` when it will.
+
+    Asked by the writers before they get here (so a refusal can carry a hint) and again by
+    :meth:`Documents.put` (so a writer that forgot cannot get past it): a limit that only the polite path
+    honours is not a limit.
+    """
+    size = len(content)
+    cap = MAX_TEXT_CHARS if isinstance(content, str) else MAX_KEPT_BYTES
+    if size <= cap:
+        return None
+    unit = "characters" if isinstance(content, str) else "bytes"
+    return f"{size} {unit} is more than this build will keep ({cap}): ask for a window of it instead"
+
+
+#: The shape this build writes, and the first step of its ladder.
+#:
+#: ``sha256`` arrived with deduplication, so a file written before it is one column short and
+#: :meth:`Documents._upgraded` adds it: the column is nullable, and a row from the older build keeps no
+#: hash and is simply never matched by a later ``put`` — nothing is thrown away to gain an index. The
+#: version is stamped once the shape is right rather than by this script, because a script that stamped it
+#: would claim a shape that an older file does not have yet.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS document (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session TEXT NOT NULL,
+    sha256 BLOB,
     summary TEXT NOT NULL,
     media TEXT NOT NULL,
     chars INTEGER NOT NULL,
@@ -80,8 +147,10 @@ CREATE TABLE IF NOT EXISTS document (
     content BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS document_session ON document (session);
-PRAGMA user_version = 1;
 """
+
+#: The shape this build expects, which a file written by an earlier one has to be brought up to.
+_VERSION = 2
 
 #: What one document is read as, by everything that does not want its bytes.
 _COLUMNS = "SELECT id, summary, media, chars FROM document"
@@ -144,14 +213,25 @@ class Documents(Component):
     """
 
     keep_chars: int
+    budget: int
+    rows: int
     _path: Path
     _db: aiosqlite.Connection | None
     _lock: asyncio.Lock
 
-    def __init__(self, path: Path | str, *, keep_chars: int = KEEP_CHARS) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        keep_chars: int = KEEP_CHARS,
+        budget: int = SESSION_BUDGET,
+        rows: int = SESSION_ROWS,
+    ) -> None:
         super().__init__()
         self._path = Path(path)
         self.keep_chars = keep_chars
+        self.budget = budget
+        self.rows = rows
         self._db = None
         self._lock = asyncio.Lock()
 
@@ -179,10 +259,27 @@ class Documents(Component):
             _ = await db.execute("PRAGMA journal_mode = WAL")
             _ = await db.execute("PRAGMA busy_timeout = 5000")
             _ = await db.executescript(_SCHEMA)
+            await self._upgraded(db)
         except BaseException:
             self._db = None
             await db.close()
             raise
+
+    async def _upgraded(self, db: aiosqlite.Connection) -> None:
+        """Bring a file written by an earlier build up to this one: one column, one index, nothing lost.
+
+        The first step of this store's ladder, and the reason it is a step rather than a fresh script: a
+        person's ``documents.db`` predates the deduplication, and dropping their content to gain an index
+        would be the store throwing away something it was asked to keep. A row from that build keeps no
+        hash, which means it is never matched by a later ``put`` — it stays readable, and it is not part of
+        the same-bytes-kept-once promise, which is a promise about what happens next.
+        """
+        async with db.execute("PRAGMA table_info(document)") as cursor:
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+        if "sha256" not in columns:
+            _ = await db.execute("ALTER TABLE document ADD COLUMN sha256 BLOB")
+        _ = await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS document_same ON document (session, sha256, media)")
+        _ = await db.execute(f"PRAGMA user_version = {_VERSION}")
 
     async def close(self) -> None:
         """Give the file back; a store already closed answers this by doing nothing."""
@@ -202,17 +299,59 @@ class Documents(Component):
 
         Text is stored as the bytes it encodes to, so the store has one column and one kind of value;
         ``chars`` counts characters for text and bytes for everything else, because it is there to say
-        how big the thing is to the reader that will ask for it.
+        how big the thing is to the reader that will ask for it. Content over :func:`refuses`' limit is
+        not kept, and a summary longer than :data:`SUMMARY_CHARS` is cut: both are the store keeping its
+        own promise rather than trusting every writer to have asked.
+
+        The same bytes of the same media in the same session are one row: a model that reads one window
+        twice is handed the handle it already has, which is what makes a handle something it can keep
+        rather than something that quietly multiplies. The row keeps the summary it was first given —
+        a handle names content, and where it came from is the first place it came from. Sessions never
+        share a row: content is as private as the conversation it was kept for.
         """
+        refusal = refuses(content)
+        if refusal is not None:
+            raise TooBigError(refusal)
         data = content.encode("utf-8") if isinstance(content, str) else content
         chars = len(content)
+        digest = hashlib.sha256(data).digest()
+        same = await self._read(
+            _COLUMNS + " WHERE session = ? AND sha256 = ? AND media = ?",
+            (session, digest, media),
+        )
+        if same is not None:
+            return _kept(same)
+        line = _clipped(summary)
         row = await self._execute(
-            "INSERT INTO document (session, summary, media, chars, created, content) "
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-            (session, summary, media, chars, int(time.time()), data),
+            "INSERT INTO document (session, sha256, summary, media, chars, created, content) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            (session, digest, line, media, chars, int(time.time()), data),
         )
         assert row is not None, "an insert that returns its row always has one"
-        return Kept(id=_handle(row[0]), summary=summary, media=media, chars=chars)
+        await self._made_room(session)
+        return Kept(id=_handle(row[0]), summary=line, media=media, chars=chars)
+
+    async def _made_room(self, session: str) -> None:
+        """Let this session's oldest bodies go until it is inside its budget; the newest one always stays.
+
+        Making room at the write rather than on a timer is the whole design: there is no clock to trust,
+        no sweep to schedule, and the moment a body does not fit is exactly the moment to decide. The
+        newest row is never dropped — a store that threw away what it had just been given would keep
+        nothing at all for a body that is large on its own.
+        """
+        rows = await self._read_all(
+            "SELECT id, length(content) FROM document WHERE session = ? ORDER BY id", (session,)
+        )
+        total = sum(int(str(size)) for _id, size in rows)
+        dropped: list[object] = []
+        while len(rows) > 1 and (total > self.budget or len(rows) > self.rows):
+            oldest = rows.pop(0)
+            dropped.append(oldest[0])
+            total -= int(str(oldest[1]))
+        if not dropped:
+            return
+        marks = ", ".join("?" * len(dropped))
+        _ = await self._execute(f"DELETE FROM document WHERE id IN ({marks})", tuple(dropped))
 
     async def get(self, session: str, document_id: str) -> Content | None:
         """One document with its bytes, or ``None`` when this session has no such id."""
@@ -263,6 +402,11 @@ class Documents(Component):
 def _handle(row: object) -> str:
     """The name of the document in one row. Opaque outside this module, and stable across a restart."""
     return f"d{row}"
+
+
+def _clipped(summary: str) -> str:
+    """A summary as the one line it is: cut where it stops being a line, and marked where it was cut."""
+    return summary if len(summary) <= SUMMARY_CHARS else summary[: SUMMARY_CHARS - 1] + "…"
 
 
 def _row_of(document_id: str) -> int | None:

@@ -2,9 +2,12 @@
 
 Judging and asking are two steps, and keeping them apart is the point: a policy that called the
 human would be a callback into the CLI, and the kernel does not have that seam. ``verdict`` reads an
-argv, walks the wrapper chain, and answers one of two things — nothing in it is denylisted (or every
-denylisted program in it was already approved for this host), or these programs need a human. The
-tool that was refused asks, through ``Host.human``, and reports the answer in its own result.
+argv, walks the wrapper chain, and answers one of three things — nothing in it needs asking (or every
+denylisted program in it was already approved for this host), these programs need a human, or this is a
+command the denylist cannot settle at all. The third is what a reason from
+:func:`~plyngent.kernel.command_scan.reasons_for` makes: a program that is a guess or a shell that runs
+text, where a person has to decide for this call and no yes can be kept. The tool that was refused asks,
+through ``Host.human``, and reports the answer in its own result.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.command_scan import basename, unwrap_command
+from plyngent.kernel.command_scan import Reason, basename, reasons_for, unwrap_command
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -82,9 +85,16 @@ class Allowed:
 
 @dataclass(frozen=True, slots=True)
 class NeedsHuman:
-    """The denylisted programs a human has to allow, outermost first."""
+    """The denylisted programs a human has to allow, outermost first.
+
+    ``reasons`` is what this build could not answer for besides them. It is carried here rather than
+    returned as a second verdict because both are one question to one person — but it changes the answer's
+    worth: a yes to a *named* program is remembered by that name, and a yes to a command whose program is a
+    guess is worth this call only, so a reason makes the whole thing asked again next time.
+    """
 
     hits: tuple[DenylistHit, ...]
+    reasons: tuple[Reason, ...] = ()
 
     @property
     def programs(self) -> tuple[str, ...]:
@@ -92,7 +102,23 @@ class NeedsHuman:
         return tuple(hit.program for hit in self.hits)
 
 
-type Verdict = Allowed | NeedsHuman
+@dataclass(frozen=True, slots=True)
+class NeedsReview:
+    """Nothing on the denylist, and a command this build will not answer for by itself.
+
+    Every call is asked: what is in doubt is not the program's name, so there is no name to remember a
+    yes by. ``reasons`` says what it could not judge, in the order :func:`reasons_for` gives them.
+    """
+
+    reasons: tuple[Reason, ...]
+
+    @property
+    def says(self) -> str:
+        """Everything that could not be judged, as one line for a person."""
+        return "; ".join(reason.says() for reason in self.reasons)
+
+
+type Verdict = Allowed | NeedsHuman | NeedsReview
 
 
 def match(argv: Sequence[str], denylist: frozenset[str]) -> tuple[DenylistHit, ...]:
@@ -176,12 +202,21 @@ class CommandPolicy:
         ``ValueError`` is for an argv this policy cannot read at all (empty, or a shell line instead
         of an argv list): that is a bug in the caller, not something a human should be asked to
         allow. A model-facing complaint about the shape belongs to the tool that took the argument.
+
+        A denylisted program is the answer when there is one — it is a fact, and its yes is kept by name.
+        Anything this build could not answer for comes beside it (and alone, when nothing is denylisted),
+        and that is what makes the answer worth one call rather than the rest of the session (§R12 乙).
         """
         if not argv:
             msg = "command argv must not be empty"
             raise ValueError(msg)
         pending = tuple(hit for hit in match(argv, self.denylist) if hit.program not in self._approved)
-        return NeedsHuman(pending) if pending else Allowed()
+        reasons = reasons_for(argv)
+        if pending:
+            return NeedsHuman(pending, reasons)
+        if reasons:
+            return NeedsReview(reasons)
+        return Allowed()
 
     def approve(self, program: str) -> None:
         """Let *program* past the denylist for as long as this host lives."""

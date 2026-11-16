@@ -318,6 +318,10 @@ def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> t
         return click.Option([_flag(name)], type=_BY_TYPE[kind], default=default), False, ""
     if kind == "array":
         return _listed(name, schema)
+    if kind == "boolean":
+        # A boolean is a switch and not a value: nothing to type after it, and no default to send when
+        # it is absent — which is why this is read before the table of types that take an argument.
+        return click.Option([_flag(name)], is_flag=True, default=bool(offered)), False, ""
     return click.Option([""]), False, "has a shape this client cannot put on a line"
 
 

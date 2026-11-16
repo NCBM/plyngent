@@ -233,6 +233,12 @@ class Effects:
     changed: tuple[Path, ...] = ()
     external: tuple[str, ...] = ()
     approvals: tuple[str, ...] = ()
+    #: The version these bytes were kept under, or empty when nothing was kept — a host with no store,
+    #: a call that changed no path, or a store that could not write. It is filled in by
+    #: :class:`~plyngent.kernel.executor.ToolExecutor` once the call has returned, because the version
+    #: has to be taken while the paths are still the ones this call left (the executor's own lock is
+    #: what says so) and a handler cannot know it exists.
+    revision: str = ""
 
 
 @dataclass(frozen=True, slots=True)

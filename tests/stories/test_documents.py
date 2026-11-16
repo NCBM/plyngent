@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent.kernel.documents import MAX_TEXT_CHARS
 from plyngent.kernel.model import Reply, Result
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, Step, calling, text, told
@@ -205,6 +206,7 @@ async def test_a_numbered_edit_changes_the_lines_a_numbered_read_showed(story_wi
 
     await story.type("change the middle line")
     await story.answer("y")
+    await story.finished()
 
     assert note.read_text(encoding="utf-8") == "one\nTWO\nthree\n", (
         "the numbers a read wrote are the numbers an edit takes"
@@ -222,6 +224,7 @@ async def test_a_numbered_edit_appends_after_the_last_line(story_with: Scripted)
 
     await story.type("add a line at the end")
     await story.answer("y")
+    await story.finished()
 
     assert note.read_text(encoding="utf-8") == "one\ntwo\nthree\nfour\n"
     assert _told_of(story.requests()[-1]) == "appended 1 line after line 3 in notes.txt"
@@ -236,6 +239,7 @@ async def test_an_append_into_an_empty_file_needs_no_read(story_with: Scripted) 
 
     await story.type("start it off")
     await story.answer("y")
+    await story.finished()
 
     assert note.read_text(encoding="utf-8") == "hello\n", "there were no lines to clobber, so there was nothing to read"
     assert _told_of(story.requests()[-1]) == "appended 1 line to new.txt"
@@ -303,6 +307,7 @@ async def test_an_empty_new_content_takes_the_range_away(story_with: Scripted) -
 
     await story.type("drop the middle line")
     await story.answer("y")
+    await story.finished()
 
     assert note.read_text(encoding="utf-8") == "one\nthree\n"
     assert _told_of(story.requests()[-1]) == "replaced line 2 (1 line; first: 'two') with 0 lines in notes.txt"
@@ -358,6 +363,20 @@ async def test_a_kept_document_is_read_back_by_its_handle(story_with: Scripted) 
     assert _told_of(story.requests()[-1]) == "read d1 (lines 1-2 of 4000)\nline 0\nline 1\n", (
         "the handle is read as a window, the same shape a file is read as"
     )
+
+
+async def test_a_handle_this_session_does_not_have_is_answered_with_the_list(story_with: Scripted) -> None:
+    """A handle that names nothing — made up, or evicted when the store made room — has one answer (§0.6, R10)."""
+    story = await story_with(calling("read", {"document_id": "d99", "limit": 1}), text("fair"))
+
+    await story.require("document")
+
+    await story.type("read the thing from before")
+
+    assert (await _told(story)).splitlines() == [
+        "no document d99 in this session",
+        "hint: documents — see what was kept",
+    ], "the fix is the list, because the list is what says which handles this session has"
 
 
 async def test_documents_says_what_this_conversation_kept(story_with: Scripted) -> None:
@@ -463,6 +482,20 @@ async def test_a_search_stops_at_its_budget_and_says_what_it_left(story_with: Sc
         "2: x",
         "...[truncated at 2 matches]",
     ], "a list that was cut says how much of how much it is"
+
+
+async def test_a_search_over_a_file_too_big_to_hold_is_refused_with_its_size(story_with: Scripted) -> None:
+    """A search holds one file's text in memory, so what this build will not keep it will not scan (§0.6, R10)."""
+    story = await story_with(calling("search", {"path": "big.log", "pattern": "needle"}), text("shame"))
+    _ = _file(story, "big.log", "x" * (MAX_TEXT_CHARS + 1_000))
+
+    await story.require("document")
+
+    await story.type("find the needle")
+
+    told_ = await _told(story)
+    assert told_.startswith(f"big.log is {MAX_TEXT_CHARS + 1_000} characters, more than this build holds"), told_
+    assert "read it in windows" in told_, "and the answer says what to do instead"
 
 
 async def test_a_search_shows_the_lines_around_a_hit(story_with: Scripted) -> None:

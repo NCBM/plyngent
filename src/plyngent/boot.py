@@ -25,6 +25,7 @@ from plyngent.kernel.catalog import BUILTIN
 from plyngent.kernel.client import Offers
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
+from plyngent.kernel.history import History, available, history_path
 from plyngent.kernel.host import Host
 from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
 from plyngent.kernel.link import InProcLink
@@ -134,6 +135,7 @@ async def install(
     limits: Limits | None = None,
     deadline: float | None = None,
     grades: Grades | None = None,
+    versions: bool = True,
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
@@ -193,11 +195,14 @@ async def install(
     wait before it counts as unanswered. It belongs to the connection and not to a session, so it is
     set where the connection is built, and ``None`` is the transport's own default.
 
-    ``grades`` is how long a question of each level gets instead of that one deadline, and what each
-    level's silence means. ``None`` is the three numbers this tree ships with — five seconds for the
-    light question, thirty for the ordinary one, and the connection's own clock for the heaviest — so
-    a program started with no configuration is the program it always was, and a story that wants a
     timeout without sleeping says so here (§0.15, E112).
+
+    ``versions`` is whether a call that changed something leaves a version behind. ``True`` is the store
+    this build ships with — a bare repository beside the journal
+    (:func:`~plyngent.kernel.history.history_path`) — and it is kept only where this machine has a git
+    to keep it with, so a machine without one records *what* changed and not the bytes. That degradation
+    is decided here rather than discovered at the first write (§10.1, E26), the way a kernel with no
+    skills directory has no skill tools.
     """
     if transport not in KERNEL_TRANSPORTS:
         msg = f"{transport!r} is not a transport this kernel can open; it knows {KERNEL_TRANSPORTS}"
@@ -211,6 +216,9 @@ async def install(
     # they are part of is the front of a cached prefix (§10.5, E65/E66). Nothing in the tree is read for it
     # — a model that wants the workspace's own ``AGENTS.md`` reads it with the `read` call.
     plan = PromptPlan.of(skills) if prompt is None else prompt
+    # One store per workspace, beside the journal it belongs with — and none at all where nothing can
+    # keep one, which is a fact about the machine rather than about the call that asks for it.
+    versions_kept = History(root, history_path(kept)) if versions and available() else None
     _ = registry.declare_all(
         [
             Declaration(PtyBroker),
@@ -221,7 +229,12 @@ async def install(
             Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
             Declaration(Documents, instance=host, args=(documents_path(kept),)),
-            Declaration(Host, instance=host, args=(root,), kwargs={"skills": skills, "routes": table, "prompt": plan}),
+            Declaration(
+                Host,
+                instance=host,
+                args=(root,),
+                kwargs={"skills": skills, "routes": table, "prompt": plan, "history": versions_kept},
+            ),
         ]
     )
     # One broker for the whole process: it is the root-qualified component, and it is the only thing

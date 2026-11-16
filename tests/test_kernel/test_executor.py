@@ -4,6 +4,12 @@ A batch orders the calls of one answer by what they do to a path, and a lock kee
 once — both read the same answer, so "which paths" and "doing what to them" have to be one thing here
 (§10.12). What the graph decides is asserted through handlers that wait for each other: a batch that
 serialized calls it could have overlapped cannot pass without hanging.
+
+The versions a call leaves are the other half, and what a person can see of them is a story: that a
+change is shown, that the model is told nothing, that a read is not a version, that a rollback puts back
+what the last call left. What stays here is what no story can see from outside — which role a path was
+held under, that a refused path does not take its siblings with it, and that a version is taken inside
+the call's own lock rather than after it.
 """
 
 from __future__ import annotations
@@ -13,19 +19,23 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
+import pytest
+
 from plyngent.kernel.cancel import CancelToken
 from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.events import NoSink
 from plyngent.kernel.executor import ToolExecutor, _paths
+from plyngent.kernel.history import History
 from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import Call
 from plyngent.kernel.paths import key
-from plyngent.kernel.toolresult import ToolResult
+from plyngent.kernel.toolresult import Effects, ToolResult
 from plyngent.kernel.tools import fs
-from plyngent.kernel.toolspec import Group, Res, Role, ToolArgs, ToolSpec
+from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import Workspace
 from plyngent.wire.ask import AskSite
+from tests import repositories
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -45,6 +55,9 @@ class _Host:
     workspace: Workspace
     locks: Locks = field(default_factory=Locks)
     human: NoSink = field(default_factory=NoSink)
+    #: Where versions are kept. Most of these tests have none: a store is only reached for by a call
+    #: that changed a path, and only one test here changes one on purpose.
+    history: History | None = None
 
 
 @dataclass(frozen=True)
@@ -77,8 +90,8 @@ class _Ctx:
         return AskSite(session=self.session.session_id, turn=self.turn_id, scope="/".join(("1", "r0", *segments)))
 
 
-def _ctx(root: Path) -> TurnCtx:
-    return cast("TurnCtx", cast("object", _Ctx(_Host(Workspace(root)))))
+def _ctx(root: Path, *, history: object = None) -> TurnCtx:
+    return cast("TurnCtx", cast("object", _Ctx(_Host(Workspace(root), history=history))))
 
 
 # -- the paths a call holds ------------------------------------------------------------
@@ -116,6 +129,13 @@ class _PathArgs(ToolArgs, kw_only=True):
     """One path, read: the smallest declaration that still puts a call in the file graph."""
 
     path: str = ""
+
+
+class _CommandArgs(ToolArgs, kw_only=True):
+    """A tool that may run a program, and therefore has to say why it was called (``Res.EXEC``)."""
+
+    path: str = ""
+    intention: str = ""
 
 
 def _holding(name: str, run: Run) -> ToolSpec:
@@ -203,3 +223,83 @@ async def test_a_read_waits_for_a_write_the_answer_asked_for_first(tmp_path) -> 
 
     assert seen == ["wrote", "hi"], "the read ran after the write, and saw what it wrote"
     assert [result.summary for result in results] == ["wrote", "read"]
+
+
+@pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")
+async def test_what_a_write_left_is_kept_as_one_version(tmp_path) -> None:
+    """The version is taken inside the call's own lock, and the result carries the id it was kept under.
+
+    Taken inside because the lock is the only promise that the bytes being hashed are still the ones this
+    call left: released first, the next call in the same answer may already have written over them, and a
+    version would then hold a state that no call ever produced.
+    """
+
+    async def write(env: Env, args: object) -> ToolResult:
+        leaf = env.workspace.root / "notes.txt"
+        leaf.write_text("hi\n", encoding="utf-8")
+        _ = args
+        return ToolResult.ok("wrote", effects=Effects(changed=(leaf,)))
+
+    spec = ToolSpec(name="write", group=Group.FS, args=_PathArgs, run=write, uses=Res.PATHS, roles={"path": Role.WRITE})
+    store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
+    executor = ToolExecutor(ToolCatalog([spec]))
+
+    results = await executor.batch(_ctx(tmp_path, history=store), [_asked("tool-1", "write", "notes.txt")])
+
+    revision = results[0].effects.revision
+    assert revision, "a call that changed a path is a version"
+    assert await store.blob(revision, "notes.txt") == b"hi\n", "and the store holds what the call left"
+
+
+@pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")
+async def test_a_program_that_cannot_say_what_it_wrote_is_swept(tmp_path) -> None:
+    """A command's argv names no files, so the tree is the witness: what it wrote is found by comparing."""
+
+    async def ran(env: Env, args: object) -> ToolResult:
+        _ = args
+        (env.workspace.root / "built.txt").write_text("made by a program\n", encoding="utf-8")
+        return ToolResult.ok("ran", effects=Effects(external=("ran: make",)))
+
+    spec = ToolSpec(
+        name="execute",
+        group=Group.PROCESS,
+        args=_CommandArgs,
+        run=ran,
+        uses=Res.EXEC | Res.PATHS,
+        mutates=Mutation.WORKSPACE,
+        posture=Posture.AUTO,
+    )
+    store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
+    executor = ToolExecutor(ToolCatalog([spec]))
+    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "build"})))
+
+    results = await executor.batch(_ctx(tmp_path, history=store), [asked])
+
+    revision = results[0].effects.revision
+    assert revision, (results[0],)
+    assert await store.blob(revision, "built.txt") == b"made by a program\n"
+
+
+@pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")
+async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None:
+    """The sweep compares content, so a command that only read the tree leaves no version behind."""
+
+    async def ran(env: Env, args: object) -> ToolResult:
+        _ = env, args
+        return ToolResult.ok("ran", effects=Effects(external=("ran: ls",)))
+
+    spec = ToolSpec(
+        name="execute",
+        group=Group.PROCESS,
+        args=_PathArgs,
+        run=ran,
+        uses=Res.EXEC,
+        mutates=Mutation.WORKSPACE,
+        posture=Posture.AUTO,
+    )
+    store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
+    executor = ToolExecutor(ToolCatalog([spec]))
+
+    results = await executor.batch(_ctx(tmp_path, history=store), [_asked("tool-1", "execute", "x")])
+
+    assert results[0].effects.revision == ""

@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from plyngent.kernel.command_scan import basename, dash_c_code, escalators_in_chain, is_interpreter, unwrap_command
+import base64
+
+from plyngent.kernel.command_scan import (
+    basename,
+    dash_c_code,
+    escalators_in_chain,
+    git_is_irreversible,
+    is_interpreter,
+    unwrap_command,
+)
 
 
 def test_basename() -> None:
@@ -216,6 +225,52 @@ def test_unwrap_remote_command_still_reviews_what_runs() -> None:
     assert scan.base == "bash"
     assert dash_c_code(scan.command) == (1, "rm -rf /")
     assert escalators_in_chain(["ssh", "prod", "sudo", "rm", "-rf", "/"]) == ("sudo",)
+
+
+def test_a_shell_switch_that_carries_a_command_line_is_collected() -> None:
+    """``cmd``'s switches are spelled with a slash and PowerShell's take the rest of the line: not getopt."""
+    scan = unwrap_command(["cmd", "/d", "/c", "del x"])
+    assert scan.base == "cmd", "the shell is the program; what it runs is a string it was handed"
+    assert [(span.label, span.text) for span in scan.command_strings] == [("cmd /c", "del x")]
+
+    scan = unwrap_command(["powershell", "-NoProfile", "-Command", "Remove-Item x"])
+    assert [(span.option, span.text) for span in scan.command_strings] == [("-Command", "Remove-Item x")]
+    assert unwrap_command(["pwsh", "-c:dir"]).command_strings[0].text == "dir", "an inline value is the value"
+
+    encoded = base64.b64encode("dir".encode("utf-16-le")).decode("ascii")
+    assert unwrap_command(["pwsh", "-EncodedCommand", encoded]).command_strings[0].text == "dir"
+    assert unwrap_command(["pwsh", "-EncodedCommand", "not base64!"]).command_strings[0].text == "not base64!", (
+        "a value that is not base64 is quoted as it stands rather than dropped"
+    )
+
+
+def test_a_git_subcommand_that_cannot_be_undone_is_a_reason() -> None:
+    """git's global options come before the subcommand, and only the subcommand says what is at stake."""
+    assert git_is_irreversible(("git", "reset", "--hard")) is not None
+    assert git_is_irreversible(("git", "-c", "k=v", "-C", "/tmp", "clean", "-fdx")) is not None, (
+        "the global options are stepped over, and a short cluster still says -f"
+    )
+    assert git_is_irreversible(("git", "stash", "drop")) is not None
+    for argv in (
+        ("git", "status"),
+        ("git", "log", "-n5"),
+        ("git", "reset", "--soft", "HEAD~1"),
+        ("git", "branch", "-a"),
+        ("git", "--version"),
+        ("not-git", "reset", "--hard"),
+    ):
+        assert git_is_irreversible(argv) is None, argv
+    """``busybox rm`` runs ``rm``: the multiplexer's first argument is a program, not an argument of one."""
+    scan = unwrap_command(["busybox", "rm", "-rf", "/"])
+    assert scan.wrappers == ("busybox",)
+    assert scan.base == "rm"
+    assert scan.command == ("rm", "-rf", "/")
+
+    # Its own options name no program, so they end the unwrap rather than being guessed past.
+    for argv in (["busybox", "--list"], ["busybox"], ["toybox", "--help"]):
+        scan = unwrap_command(argv)
+        assert scan.wrappers == (), argv
+        assert scan.base == argv[0], argv
 
 
 def test_is_interpreter_ignores_version_suffix() -> None:

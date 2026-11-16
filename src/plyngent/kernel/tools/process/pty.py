@@ -20,14 +20,15 @@ import shlex
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.command import NeedsHuman
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.process import Refused
 from plyngent.kernel.pty.errors import PtyError
 from plyngent.kernel.pty.keys import KeySyntaxError, decode_write_data
 from plyngent.kernel.pty.policy import room_for_session
 from plyngent.kernel.pty.registry import DEFAULT_PTY_READ_BYTES, PtyReadResult
 from plyngent.kernel.toolresult import Effects, Meta, Text, ToolResult
 from plyngent.kernel.tools import lifted
+from plyngent.kernel.tools.process.gate import agreed
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.ask import Severity
@@ -271,24 +272,17 @@ async def _consent(env: Env, session: PtySession) -> ToolResult | None:
 async def _allowed(env: Env, command: list[str]) -> ToolResult | tuple[str, ...]:
     """Whether this argv may start, from the policy and — when it asks — from the human.
 
-    The answer is the programs the human allowed, so the caller can record them as this call's effects:
-    the policy remembers them for the life of the host, and the effect record is about this call.
+    The asking is the gate's, not this module's: the same argv on a terminal is the same question about the
+    same programs, and the only difference is the words it is put to a person in. The answer is the
+    programs the human allowed, so the caller can record them as this call's effects: the policy remembers
+    them for the life of the host, and the effect record is about this call.
     """
-    verdict = env.workspace.commands.verdict(command)
-    if not isinstance(verdict, NeedsHuman):
-        return ()
-    approvals: list[str] = []
-    for program in verdict.programs:
-        agreed = await env.human.confirm(
-            prompt=f"run {program!r} on a terminal? it is on the command denylist",
-            severity=Severity.DANGER,
-            site=env.site("gate"),
-        )
-        if not agreed.accepted:
-            return ToolResult.unagreed(agreed, about=f"running {program!r}")
-        env.workspace.commands.approve(program)
-        approvals.append(program)
-    return tuple(approvals)
+    asked = await agreed(env, command, where="on a terminal")
+    if isinstance(asked, Refused):
+        if asked.denial is not None:
+            return ToolResult.denied(asked.denial, asked.message)
+        return ToolResult.of(asked.failure, asked.message, hints=asked.hints)
+    return asked
 
 
 async def _room(env: Env) -> ToolResult | None:

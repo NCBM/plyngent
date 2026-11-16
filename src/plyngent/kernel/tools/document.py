@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import msgspec
 
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.documents import TEXT_MEDIA, picture_media
+from plyngent.kernel.documents import MAX_KEPT_BYTES, MAX_TEXT_CHARS, TEXT_MEDIA, picture_media, refuses
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
 from plyngent.kernel.toolresult import Document, Effects, Hint, Part, Text, ToolResult
@@ -205,6 +205,8 @@ async def _kept_picture(env: Env, name: str, picture: _Picture) -> ToolResult:
         summary=f"{picture.media}, {len(picture.data)} bytes",
         media=picture.media,
     )
+    if isinstance(handle, ToolResult):
+        return handle
     return ToolResult.ok(
         f"read {name} ({picture.media}, {len(picture.data)} bytes) — kept as {handle.document_id}",
         body=handle,
@@ -246,6 +248,8 @@ async def window(
     if source.replaced:
         summary += " — not utf-8, so some bytes were replaced"
     part = await kept(env, body, summary=f"{name}, lines {start + 1}-{end} of {len(lines)}")
+    if isinstance(part, ToolResult):
+        return part
     if with_lineno and target is not None and isinstance(part, Text):
         env.reads.mark(target, range(start + 1, end + 1), seen=source.seen)
     return ToolResult.ok(summary, body=part)
@@ -270,25 +274,35 @@ def locator(args: Any) -> None:
         raise ArgsError("", msg)
 
 
-async def kept(env: Env, content: str, *, summary: str, media: str = TEXT_MEDIA) -> Part:
+async def kept(env: Env, content: str, *, summary: str, media: str = TEXT_MEDIA) -> Part | ToolResult:
     """What the model is given for *content*: the text itself, or a handle when it is too long.
 
     The threshold is the store's, asked here rather than decided here, because how much fits is a fact
     about the store and not about this tool. ``summary`` is the line that stands in for the content in
     the result, so it has to say what the handle is — the model will read it with no body beside it.
+
+    Content past the store's own limit comes back as a refusal rather than as a handle, with the number
+    in it: a handle nobody can make is not an answer, and the fix (a window) is a different call.
     """
+    refusal = refuses(content)
+    if refusal is not None:
+        return ToolResult.of(Failure.LIMIT, refusal)
     if len(content) <= env.documents.keep_chars:
         return Text(value=content)
     handle = await env.documents.put(env.session, content, summary=summary, media=media)
     return Document(document_id=handle.id, summary=handle.summary, chars=handle.chars)
 
 
-async def kept_bytes(env: Env, content: bytes, *, summary: str, media: str) -> Document:
+async def kept_bytes(env: Env, content: bytes, *, summary: str, media: str) -> Document | ToolResult:
     """A handle to content that is never sent as text at all — a picture, an archive, anything binary.
 
     Text that does not fit is still text, and a model can read a window of it; bytes are not text in
-    any window, so there is no size at which handing them over would be a favour.
+    any window, so there is no size at which handing them over would be a favour — which is why a body
+    past the stored limit is refused here instead of kept.
     """
+    refusal = refuses(content)
+    if refusal is not None:
+        return ToolResult.of(Failure.LIMIT, refusal)
     handle = await env.documents.put(env.session, content, summary=summary, media=media)
     return Document(document_id=handle.id, summary=handle.summary, chars=handle.chars)
 
@@ -373,13 +387,39 @@ async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
         return lifted(exc)
     if not target.is_file():
         return _nothing_there(name, target)
+    found = await _scan_text(name, target)
+    return found if isinstance(found, ToolResult) else (name, found)
+
+
+async def _scan_text(name: str, target: Path) -> str | ToolResult:
+    """This file's text, or why a line-by-line scan of it is not a thing this call will do.
+
+    A search holds one file's text in memory a line at a time, so a file past what this build keeps is
+    refused before it is read: the size on disk is the first answer (it counts bytes, so it refuses a
+    little early on multi-byte text, which is the safe direction), and the text's own length is the
+    exact one after decoding.
+    """
     try:
+        size = (await asyncio.to_thread(target.stat)).st_size
+        if size > MAX_KEPT_BYTES:
+            return _too_big(name, size, "bytes")
         source = await asyncio.to_thread(_read_file, target)
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"search failed: {exc}")
     if isinstance(source, _Picture):
         return ToolResult.ok(f"search {name}: it is {source.media}, and a picture has no lines to match")
-    return name, source.text
+    if len(source.text) > MAX_TEXT_CHARS:
+        return _too_big(name, len(source.text), "characters")
+    return source.text
+
+
+def _too_big(name: str, size: int, unit: str) -> ToolResult:
+    """A search over text this build will not hold: the number, and what to do instead of it."""
+    return ToolResult.of(
+        Failure.LIMIT,
+        f"{name} is {size} {unit}, more than this build holds at once ({MAX_TEXT_CHARS}): "
+        "read it in windows, or run a program that searches it",
+    )
 
 
 def around(lines: list[str], hits: list[int], context: int) -> list[str]:

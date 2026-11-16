@@ -37,6 +37,7 @@ from plyngent.wire.event import (
     AssistantDelta,
     AssistantText,
     Batch,
+    Changed,
     Compacted,
     CompactRefused,
     DocumentStored,
@@ -46,6 +47,8 @@ from plyngent.wire.event import (
     Pruned,
     PruneRefused,
     ResumeRefused,
+    RollbackRefused,
+    RolledBack,
     Routed,
     RouteRefused,
     SessionsListed,
@@ -117,15 +120,22 @@ type _Reported = (
     | ExportRefused
     | ResumeRefused
     | RouteRefused
+    | RolledBack
+    | RollbackRefused
 )
+
+#: What one call left different. Its own reader because it is the one thing on this lane a person reads
+#: in full rather than as a line: a difference is several rows, and it turns up between a call and its
+#: result rather than after a turn.
+type _Diffed = Changed
 
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, and what it
 #: kept. A document belongs here and not to a turn because the thing kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed
+type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
-type _Declined = CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused
+type _Declined = CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused | RollbackRefused
 
 #: What one request to a model cost, and whether the answer it brought stopped short.
 type _Asked = Usage | AnswerCut
@@ -159,6 +169,8 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS) -> tuple[Shown, ...]:
             rows = _asking(event)
         case TurnStarted() | TurnFinished() | TurnRefused() | OfferRefused():
             rows = _turned(event)
+        case Changed():
+            rows = _diffed(event)
         case _ as rest:
             rows = _reported(rest)
     return tuple(_named(session, focus, shown) for session, shown in rows)
@@ -363,9 +375,9 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     match event:
         case KernelLeaving() | SessionsListed():
             return _connection(event)
-        case Compacted() | Pruned() | DocumentStored() | Routed():
+        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack():
             return _setting(event)
-        case CompactRefused() | PruneRefused() | ExportRefused() | ResumeRefused() | RouteRefused():
+        case CompactRefused() | PruneRefused() | ExportRefused() | ResumeRefused() | RouteRefused() | RollbackRefused():
             return _declined(event)
         case _ as never:
             assert_never(never)
@@ -395,6 +407,29 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:
             return ((session, Shown(f"document {document} kept ({chars} chars)", "notice")),)
         case Routed(session=session, route=route, epoch=epoch):
             return ((session, Shown(f"route: {route or 'none'} (epoch {epoch})", "notice")),)
+        case RolledBack(session=session, revision=revision, target=target, restored=restored):
+            counted = "1 path" if len(restored) == 1 else f"{len(restored)} paths"
+            said = f"rolled back to {target[:8]}: {counted} put back ({revision[:8]})"
+            return ((session, Shown(said, "notice")),)
+        case _ as never:
+            assert_never(never)
+
+
+def _diffed(event: _Diffed) -> tuple[_Row, ...]:
+    """What one call left different, as the difference itself.
+
+    One line saying which call and how many paths, then git's own unified diff under it — ``---``,
+    ``+++`` and ``@@`` already say what a person needs, so nothing is rewritten here. Nothing is added
+    for the model either: this is the one place a change is read, and it is read by the person watching.
+    """
+    match event:
+        case Changed(session=session, tool=tool, revision=revision, paths=paths, patch=patch, truncated=truncated):
+            counted = "1 path" if len(paths) == 1 else f"{len(paths)} paths"
+            rows = [(session, Shown(f"{tool} changed {counted} ({revision[:8]})", "tool"))]
+            rows.extend((session, Shown(line, "assistant")) for line in patch.splitlines())
+            if truncated:
+                rows.append((session, Shown(f"the rest is kept under {revision}", "notice")))
+            return tuple(rows)
         case _ as never:
             assert_never(never)
 
@@ -412,6 +447,8 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:
             return ((session, Shown(f"resume refused: {reason}", "refusal")),)
         case RouteRefused(session=session, reason=reason):
             return ((session, Shown(f"route refused: {reason}", "refusal")),)
+        case RollbackRefused(session=session, reason=reason):
+            return ((session, Shown(f"rollback refused: {reason}", "refusal")),)
         case _ as never:
             assert_never(never)
 
