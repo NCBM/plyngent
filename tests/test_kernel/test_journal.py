@@ -5,8 +5,8 @@ conversation goes on, what a model is told of the stretch a compaction replaced 
 not here. What is left is what no story can make: the name of the file, which is a pure function; a
 second open; a migration step interrupted between the schema and the version that records it; a
 projection, which is only visible as rows beside the entries; a head that bookkeeping does not move; a
-summary's `replaces`, which the projection never reads; and an effect's row, whose whole content is the
-paths and the version it names.
+summary's `replaces`, which the projection never reads; an effect's row, whose whole content is the
+paths and the version it names; and a notice, which is a message only while it has words.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from contextlib import closing
 from platformdirs import user_data_path
 
 from plyngent.kernel.journal import MEMORY_JOURNAL, MIGRATIONS, SqliteTrail, journal_path
-from plyngent.kernel.model import Assistant, Call, Result, User
-from plyngent.kernel.trail import Effect, StateChange, Summary, as_message
+from plyngent.kernel.model import Assistant, Call, Note, Result, User
+from plyngent.kernel.trail import NOTICE_MARKER, Effect, Notice, StateChange, Summary, as_message, preview
 
 
 async def test_a_workspace_names_its_journal_and_creates_nothing(tmp_path) -> None:
@@ -185,6 +185,43 @@ async def test_what_a_summary_replaces_is_bookkeeping_and_the_summary_outlives_t
             as_message(Summary(text="first")),
             as_message(Summary(text="second")),
         ), "a summary is a row like any other, so a restart reads it back"
+    finally:
+        await again.close()
+
+
+async def test_a_notice_is_a_row_a_model_reads_and_an_empty_one_is_not(tmp_path) -> None:
+    """E142: a reminder is on the chain, so the bytes a model is given are the bytes the log keeps.
+
+    Two rows and one projection rule. A notice with words is the harness speaking, at the place it was
+    written — so a later turn continues from it and reads it above its own line. A notice with no words is
+    a reminder that stopped being true: it stays in the log for whoever reads it afterwards, and a
+    projection makes no message of it, because nothing was said to anybody.
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        said = await trail.append("a", User(text="one"))
+        told = await trail.append(
+            "a",
+            Notice(text=f"{NOTICE_MARKER}\n2 things are still on your list", summary="2 things left"),
+            begin_after=said.id,
+        )
+        gone = await trail.append("a", Notice(summary="nothing is left on the list"), begin_after=told.id)
+        spoken = Note(text=f"{NOTICE_MARKER}\n2 things are still on your list")
+
+        assert await trail.derive("a", told.id) == (User(text="one"), spoken), "the marker is in the text itself"
+        assert await trail.derive("a", gone.id) == (User(text="one"), spoken), "an empty notice adds no message"
+        assert preview(gone.payload) == "nothing is left on the list", "and a person reads its summary"
+    finally:
+        await trail.close()
+
+    again = SqliteTrail(path)
+    await again.open()
+    try:
+        head = await again.head("a")
+        assert head is not None and head.id == gone.id, "a notice is a place the next turn continues from"
+        assert await again.derive("a", gone.id) == (User(text="one"), spoken), "and it reads back after a restart"
     finally:
         await again.close()
 

@@ -6,9 +6,9 @@ model is read the same tuple a provider will one day encode. Nothing here knows 
 transport or a JSON dialect: the canonical encoding is R11's business, and it stays out of this
 module because the history has to be spellable without one.
 
-Three shapes and no more, because they are the three a model API has ever distinguished: a person's
-line, the model's own answer — which may carry the calls it asked for — and what one call came back
-with.
+Four shapes, and they are the four a model API has ever distinguished: a person's line, the model's own
+answer — which may carry the calls it asked for — what one call came back with, and a line the harness
+itself put in the history (a reminder, which is neither person speaking).
 
 Two rules the shapes hold to:
 
@@ -124,8 +124,24 @@ class Result(Message, tag="tool-result", frozen=True, kw_only=True):
     pictures: tuple[Picture, ...] = ()
 
 
+class Note(Message, tag="note", frozen=True, kw_only=True):
+    """A line the harness told the model: a reminder, not something either speaker said.
+
+    It is a message because a model's next turn depends on it, and it is its own kind because a reader
+    has to be able to tell it apart from the two people in the conversation: a frontend draws it as the
+    harness speaking, an export names it so, and a dialect puts it in whatever slot that vocabulary has
+    for "instructions, but not the ones at the front" (§10.4, E142).
+
+    ``text`` is the whole byte the model reads, marker included
+    (:data:`~plyngent.kernel.trail.NOTICE_MARKER`). Nothing here is ever empty: a notice whose body went
+    away is a row with no text and therefore no message.
+    """
+
+    text: str = ""
+
+
 #: What a history is made of, as one type a tuple can be — for a reader that switches on the kind.
-type AnyMessage = User | Assistant | Result
+type AnyMessage = User | Assistant | Result | Note
 
 #: The tags a model reads, which is what a projection keeps. A stored entry carrying anything else is
 #: bookkeeping — a prune, a state change — and the projector skips it unread, so the vocabulary a log may

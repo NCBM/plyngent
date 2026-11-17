@@ -30,7 +30,7 @@ from plyngent.kernel.journal import _decode, _encode
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
 from plyngent.kernel.lm.route import Route, RouteWeb
-from plyngent.kernel.model import AnyMessage, Request, User
+from plyngent.kernel.model import AnyMessage, Note, Request, User
 from plyngent.kernel.net.web import Engine, Engines, Hit, Page
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
 from plyngent.kernel.skills import NAME_PATTERN, Skills
@@ -62,11 +62,13 @@ from plyngent.kernel.toolspec import (
     ToolSpec,
 )
 from plyngent.kernel.trail import (
+    NOTICE_MARKER,
     SUMMARY_HEADING,
     AnyRecord,
     Attempt,
     Consent,
     Effect,
+    Notice,
     StateChange,
     Summary,
     TurnEnded,
@@ -758,15 +760,24 @@ def _catalog():
 #
 # R9's other half: a section of the prompt is not a message. The record vocabulary is the whole check,
 # because a writer can only put something in a history by carrying a record — so if every record either is
-# a message, is dropped from what a model reads, or is the summary that stands in for what was compressed,
-# no writer anywhere can put words into a person's mouth.
+# a message, is dropped from what a model reads, or is announced as what it is (the summary standing in
+# for what was compressed, the harness saying a reminder in its own marked line), no writer anywhere can
+# put words into a person's mouth.
 
 
-def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
+def test_every_record_arrives_as_who_actually_spoke() -> None:
+    """Two records are read as messages and neither of them is a person's own words.
+
+    A summary is made into the person's turn it stands in for, and a notice into the harness speaking —
+    with a marker in its text, so the model does not take it for somebody else in the conversation. Every
+    other record is dropped, and that split is the whole check: a new record has to be classified here
+    rather than arriving in a history because nobody asked who said it.
+    """
     assert get_args(AnyRecord.__value__) == (
         AnyMessage,
         StateChange,
         Summary,
+        Notice,
         Withheld,
         Attempt,
         Effect,
@@ -775,7 +786,11 @@ def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
         TurnEnded,
     ), "a record nobody classified would be a writer nobody asked about"
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
-    assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
+    assert kinds == {"User", "Assistant", "Result", "Note"}, "a message is a message, whichever of the four it is"
+    assert as_message(Notice(text=NOTICE_MARKER)) == Note(text=NOTICE_MARKER), (
+        "a notice is the harness speaking, and the marker is in the text it is read from"
+    )
+    assert as_message(Notice()) is None, "a notice that stopped being true said nothing"
     assert [
         as_message(record)
         for record in (StateChange(), Withheld(), Attempt(), Effect(), Consent(), Usage(), TurnEnded())

@@ -28,13 +28,13 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, document, frames, schema
-from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Reply, Result, Usage, User
+from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Note, Reply, Result, Usage, User
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Any
 
-    from plyngent.kernel.lm.caps import Caps
+    from plyngent.kernel.lm.caps import Caps, NoteRole
     from plyngent.kernel.lm.codec import Body
     from plyngent.kernel.model import Request
 
@@ -63,7 +63,10 @@ class Chat(Codec):
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
         body: Body = {
             "model": model,
-            "messages": [*_system(request), *(_message(item) for item in request.messages)],
+            "messages": [
+                *_system(request),
+                *(_message(item, caps.note_role) for item in request.messages),
+            ],
             "stream": caps.stream,
             "max_tokens": caps.max_output,
             "parallel_tool_calls": caps.parallel_tools,
@@ -190,8 +193,15 @@ def _system(request: Request) -> list[Body]:
     return [{"role": "system", "content": request.system}] if request.system else []
 
 
-def _message(message: User | Assistant | Result) -> Body:
-    """One canonical message, in the spelling this dialect has for it."""
+def _message(message: User | Assistant | Result | Note, note_role: NoteRole) -> Body:
+    """One canonical message, in the spelling this dialect has for it.
+
+    A notice takes the role the route names, which is the one place in this dialect a notice differs from
+    a person's line: this vocabulary has no channel for "the harness", only roles, and a role in the middle
+    of the list is exactly what ``system``/``developer`` are for (§10.4, E142).
+    """
+    if isinstance(message, Note):
+        return {"role": note_role.value, "content": message.text}
     if isinstance(message, User):
         return {"role": "user", "content": message.text}
     if isinstance(message, Assistant):

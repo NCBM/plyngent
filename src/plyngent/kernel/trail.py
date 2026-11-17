@@ -65,7 +65,7 @@ from msgspec import Struct
 
 # Not a type-only import: ``type AnyRecord`` evaluates its members at runtime, and a lazily-undefined
 # name would make a row that carries a message undecodable.
-from plyngent.kernel.model import AnyMessage, Assistant, User
+from plyngent.kernel.model import AnyMessage, Assistant, Note, User
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -122,6 +122,40 @@ class Summary(Struct, tag=SUMMARY_TAG, frozen=True, kw_only=True):
 
     text: str = ""
     replaces: tuple[str, str] | None = None
+
+
+#: The tag one reminder carries. Spelled here because it is half of the record's identity.
+NOTICE_TAG = "notice"
+
+#: What a notice's text begins with, so that the harness speaking is not read as a person speaking.
+#:
+#: In the row rather than applied when a request is assembled, because the byte a model reads has to be
+#: the byte the log keeps: a projection that added a marker would be a second version of a line, and an
+#: offline reader would have to know to add it back.
+NOTICE_MARKER = "[notice from harness]"
+
+
+class Notice(Struct, tag=NOTICE_TAG, frozen=True, kw_only=True):
+    """Something the harness told the model, written where the conversation would have carried it.
+
+    A reminder is not a message either of the two speakers said, and it is not bookkeeping nobody reads:
+    a model's next turn depends on it. So it is a row **in the chain**, at the place it was said — a turn
+    continues from below it, and the projection reads it as a message
+    (:func:`~plyngent.kernel.trail.as_message`) whose speaker is the harness. Append-only holds: every
+    notice written stays where it was written and stays in that projection, rather than a note being
+    recomputed at assembly time and the log saying something else than the request carried.
+
+    ``text`` is what the model reads, marker and all, so the log's own line is the byte the model saw.
+    ``summary`` is the sentence for a person — the one a client prints when the row is written — and is
+    never part of a request. An **empty** ``text`` is a notice that stopped being true: the row stays for
+    whoever reads the log afterwards, and a projection does not make a message of it, because nothing was
+    said to anybody.
+
+    The marker's wording is model-visible and pinned by a test, like a summary's heading.
+    """
+
+    text: str = ""
+    summary: str = ""
 
 
 #: The tag one failed asking carries. Its own record kind, and the third of them: a state change is what a
@@ -316,20 +350,25 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
 
 
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
-#: compressed into, what it has stopped showing, what became of a request that was never answered, what
-#: one call left different, what one person said when they were asked, and what one request cost.
-type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent | Usage | TurnEnded
+#: compressed into, what the harness told the model, what it has stopped showing, what became of a request
+#: that was never answered, what one call left different, what one person said when they were asked, and
+#: what one request cost.
+type AnyRecord = AnyMessage | StateChange | Summary | Notice | Withheld | Attempt | Effect | Consent | Usage | TurnEnded
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
     """What a model reads of one record, or ``None`` when it is not a record a model reads.
 
-    Six records have a meaning of their own and none is a message. A state change is a fact about the
-    session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
-    the heading saying what it is, because a model handed an unannounced block of prose as its own history
-    would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
-    arrived, and a model told about it would be reading a conversation that did not happen. A prune is
-    bookkeeping of the other kind — it does not speak, it decides what of the rest is spoken
+    Two records are read as messages and neither is a message somebody in the conversation said. A
+    summary is read as the person's turn it stands in for, with the heading saying what it is, because a
+    model handed an unannounced block of prose as its own history would take it for something somebody
+    said. A notice is read as the harness speaking — the marker is already in its text — and a notice with
+    no text is not read at all: a row saying a reminder stopped being true did not say anything.
+
+    The other seven have a meaning of their own and none is a message. A state change is a fact about the
+    session, and is dropped. An attempt is bookkeeping: the answer it stands for never arrived, and a model
+    told about it would be reading a conversation that did not happen. A prune is bookkeeping of the other
+    kind — it does not speak, it decides what of the rest is spoken
     (:meth:`~plyngent.kernel.trail.Trail.derive` applies it). An effect is bookkeeping a person reads:
     the result above it already told the model what happened, and what a path used to hold is not the
     conversation. A consent is bookkeeping of the same sort, from the other side of the wire: the model is
@@ -340,6 +379,8 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
+    if isinstance(record, Notice):
+        return Note(text=record.text) if record.text else None
     if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded):
         return None
     return record
@@ -367,7 +408,9 @@ def preview(record: AnyRecord) -> str:
     the person looking for a place to continue from is actually looking for. A consent says the question
     it was, because "consent" alone is a row nobody can act on: which question it was is the whole of what
     a person reading their own log came for; a turn's end says the reason the turn gave, because a row of
-    that kind with nothing after it is the one a person is looking for. The rest of the bookkeeping has no
+    that kind with nothing after it is the one a person is looking for. A notice says its summary rather
+    than the line a model was handed: the marker in that line is addressed to the model, and what a person
+    picking among rows is looking for is what the reminder was about. The rest of the bookkeeping has no
     words of its own (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
     """
     if isinstance(record, Summary):
@@ -376,6 +419,8 @@ def preview(record: AnyRecord) -> str:
         said = record.question
     elif isinstance(record, TurnEnded):
         said = record.reason
+    elif isinstance(record, Notice):
+        said = record.summary
     else:
         message = as_message(record)
         said = "" if message is None else message.text
@@ -403,6 +448,8 @@ def _speaker(message: AnyMessage) -> str:
         return "person"
     if isinstance(message, Assistant):
         return "assistant"
+    if isinstance(message, Note):
+        return "harness"
     return f"tool: {message.tool} ({message.status})"
 
 

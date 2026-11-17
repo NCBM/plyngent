@@ -21,12 +21,23 @@ import msgspec
 import pytest
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.lm import DIALECTS, Caps, Chat, Codec, Messages, PrefixCache, Responses, codec_named
+from plyngent.kernel.lm import (
+    DIALECTS,
+    Caps,
+    Chat,
+    Codec,
+    Messages,
+    NoteRole,
+    PrefixCache,
+    Responses,
+    codec_named,
+)
 from plyngent.kernel.lm.codec import of_status, refused
 from plyngent.kernel.model import (
     Assistant,
     Call,
     ModelFailed,
+    Note,
     Picture,
     Request,
     Result,
@@ -34,6 +45,7 @@ from plyngent.kernel.model import (
     User,
 )
 from plyngent.kernel.toolresult import Status
+from plyngent.kernel.trail import NOTICE_MARKER
 
 if TYPE_CHECKING:
     from typing import Any
@@ -105,6 +117,31 @@ def test_the_two_dialects_are_the_same_conversation() -> None:
     assert spoken[0] == {"role": "user", "content": [{"type": "text", "text": "what is in this directory?"}]}
     assert spoken[1]["content"][1] == {"type": "tool_use", "id": "c1", "name": "listdir", "input": {"path": "."}}
     assert spoken[2]["content"] == [{"type": "tool_result", "tool_use_id": "c1", "content": "a.txt\nb.txt"}]
+
+
+def test_a_notice_is_put_where_each_dialect_has_room_for_it() -> None:
+    """E142: the harness speaking takes a role, a developer item, and the person's role — in that order.
+
+    Three answers because the three vocabularies differ: a flat list of roles has a word for "instructions
+    below the front" (and a route chooses which word, since one family reserves ``system`` for the front),
+    typed items have ``developer``, and the block dialect has no role for it at all — so there the notice
+    is a block of the person's turn, and the marker in its text is what keeps the two apart.
+    """
+    note = Note(text=f"{NOTICE_MARKER}\n2 things are still on your list")
+    request = _request(messages=(User(text="hi"), note))
+
+    chat = _body(Chat(), request, caps=_caps())["messages"]
+    assert chat[2] == {"role": "system", "content": note.text}
+    reserved = _body(Chat(), request, caps=_caps(note_role=NoteRole.DEVELOPER))["messages"]
+    assert reserved[2] == {"role": "developer", "content": note.text}
+
+    spoken = _body(Messages(), request, caps=_caps())["messages"]
+    assert [block["text"] for block in spoken[0]["content"]] == ["hi", note.text], (
+        "this dialect takes turns, so the notice is a block of the turn it was said in"
+    )
+
+    items = _body(Responses(), request, caps=_caps())["input"]
+    assert items[1] == {"role": "developer", "content": [{"type": "input_text", "text": note.text}]}
 
 
 def test_a_run_of_results_is_one_turn_of_the_person_speaking() -> None:

@@ -9,9 +9,9 @@ Three rules, and they are what makes the table worth its lines:
 
 * **A field is here because somebody obeys it.** ``vision`` gates a picture at assembly time,
   ``prefix_cache`` decides which cache mechanism a request carries (§10.5), ``max_output`` becomes the
-  room an answer is given, ``stream`` decides whether a request asks for one, and ``parallel_tools`` /
-  ``reasoning`` become flags the dialects write. A cap nobody reads would be a comment with a default
-  value.
+  room an answer is given, ``stream`` decides whether a request asks for one, ``parallel_tools`` /
+  ``reasoning`` become flags the dialects write, and ``note_role`` is the word one dialect puts in front
+  of a notice's line. A cap nobody reads would be a comment with a default value.
 * **``max_output`` has no default.** How much room an answer gets is a decision somebody makes, and a
   dialect that must state it (``messages`` does) would otherwise invent one silently.
 * **The defaults are the conservative ones.** A route that was told nothing gets a model that cannot
@@ -42,8 +42,22 @@ class PrefixCache(StrEnum):
     BREAKPOINT = "breakpoint"
 
 
+class NoteRole(StrEnum):
+    """Which role a chat-completions request puts a notice's line in.
+
+    Two spellings because two endpoints read different words for "instructions that are not the first
+    thing said": the older one knows ``system`` anywhere in the list, and a newer family reserves it for
+    the front and expects ``developer`` below. Nothing else in the vocabulary moves — the other two
+    dialects have one spelling each, and a notice carries its own marker so a model still knows who is
+    speaking (§10.4, E142).
+    """
+
+    SYSTEM = "system"
+    DEVELOPER = "developer"
+
+
 class Caps(Struct, frozen=True, kw_only=True):
-    """One route's model, as the seven things anything downstream has to know about it."""
+    """One route's model, as the things anything downstream has to know about it."""
 
     #: Whether a picture reaches the model at all. False is "send the words, not the pixels", which is
     #: what a tool's handle already says in prose.
@@ -66,6 +80,9 @@ class Caps(Struct, frozen=True, kw_only=True):
     context_window: int = 0
     #: Which cache mechanism this route's requests carry.
     prefix_cache: PrefixCache = PrefixCache.NONE
+    #: Which role a notice's line takes on a chat-completions route; the other two dialects have one
+    #: spelling each and do not read this.
+    note_role: NoteRole = NoteRole.SYSTEM
     #: Whether an answer may arrive in pieces. It is one bit and not two: a fragment of an *argument* is
     #: not a thing anything here acts on, so a route that streams its tool arguments into one answer is
     #: just a route that streams. False is "ask and wait", which is what a dialect that cannot read a

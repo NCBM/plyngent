@@ -45,6 +45,7 @@ from plyngent.kernel.trail import (
     ATTEMPT_TAG,
     CONSENT_TAG,
     EFFECT_TAG,
+    NOTICE_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
     TURN_ENDED_TAG,
@@ -55,6 +56,7 @@ from plyngent.kernel.trail import (
     Consent,
     Effect,
     Entry,
+    Notice,
     Shape,
     StateChange,
     Summary,
@@ -154,6 +156,10 @@ _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 #: placeholder list for the one query that names them (:meth:`head`) and the filter a projection applies
 #: — so what a turn may continue and what a model is shown cannot drift.
 #:
+#: A notice is a message of its own (``note``) but its row is filed under ``notice``, which is why it is
+#: named here rather than being inside ``MODEL_TAGS``: the tags there are the ones a row *is*, and this
+#: one is a record that a projection turns into a message.
+#:
 #: A prune belongs here and not among the model tags: nothing reads a prune *as a message*, and it must
 #: still be the place a turn grows from — a prune that did not become the head would hide nothing from
 #: the next turn, which is the same bug a summary that did not become the head has (E53). An effect is
@@ -161,7 +167,12 @@ _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 #: stopped right after it would otherwise grow from the result *above* it and leave the effect on a
 #: branch of its own. Projecting from one is unchanged — an effect is not a message
 #: (:func:`~plyngent.kernel.trail.as_message`) — so continuing from it says the same thing.
-_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {SUMMARY_TAG, WITHHELD_TAG, EFFECT_TAG}
+_CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {
+    SUMMARY_TAG,
+    NOTICE_TAG,
+    WITHHELD_TAG,
+    EFFECT_TAG,
+}
 _CONVERSATION = tuple(sorted(_CONVERSATION_TAGS))
 _CONVERSATION_IN = ", ".join("?" for _ in _CONVERSATION)
 
@@ -616,6 +627,7 @@ def _encode(payload: AnyRecord) -> str:
 _RECORDS: Mapping[str, type[AnyRecord]] = {
     STATE_CHANGE_TAG: StateChange,
     SUMMARY_TAG: Summary,
+    NOTICE_TAG: Notice,
     ATTEMPT_TAG: Attempt,
     WITHHELD_TAG: Withheld,
     EFFECT_TAG: Effect,

@@ -26,7 +26,7 @@ import msgspec
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema, spelled
-from plyngent.kernel.model import Assistant, Call, ModelFailed, Reply, Result, Usage, User
+from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Usage, User
 from plyngent.kernel.toolresult import Status
 
 if TYPE_CHECKING:
@@ -116,6 +116,10 @@ def _messages(history: tuple[AnyMessage, ...]) -> list[Body]:
 
 def _spoke(message: AnyMessage) -> tuple[str, list[Body]]:
     """One canonical message as the speaker it was and the blocks it said."""
+    if isinstance(message, Note):
+        # The harness has no role of its own here, so it speaks as the person does — and the marker in
+        # the text is what keeps the two apart (§10.4, E142).
+        return "user", [{"type": "text", "text": message.text}]
     if isinstance(message, User):
         return "user", [{"type": "text", "text": message.text}]
     if isinstance(message, Assistant):

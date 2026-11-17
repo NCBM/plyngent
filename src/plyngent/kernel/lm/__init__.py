@@ -5,7 +5,7 @@ it exists: :mod:`plyngent.kernel.turn` asks a :class:`~plyngent.kernel.model.Mod
 :class:`~plyngent.kernel.lm.route.Posted` turns that question into one HTTP request to the endpoint a
 :class:`~plyngent.kernel.lm.route.Route` names. The three pieces are the whole of it:
 
-* :mod:`plyngent.kernel.lm.caps` — one route's model, as the five facts anything downstream obeys.
+* :mod:`plyngent.kernel.lm.caps` — one route's model, as the facts anything downstream obeys.
 * :mod:`plyngent.kernel.lm.codec` — a dialect as two pure functions, plus the one status→kind table.
 * :mod:`plyngent.kernel.lm.route` — a named endpoint, and the model that posts to it.
 
@@ -19,6 +19,7 @@ tree looking for a dialect's name *outside* this package — because the day a l
 from __future__ import annotations
 
 from plyngent.kernel.lm.caps import Caps as Caps
+from plyngent.kernel.lm.caps import NoteRole as NoteRole
 from plyngent.kernel.lm.caps import PrefixCache as PrefixCache
 from plyngent.kernel.lm.chat import CHAT as CHAT
 from plyngent.kernel.lm.chat import Chat as Chat

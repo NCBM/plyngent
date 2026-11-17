@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
-from plyngent.kernel.model import Assistant, Call, ModelFailed, Reply, Result, Usage, User
+from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Usage, User
 
 if TYPE_CHECKING:
     from typing import Any
@@ -99,10 +99,13 @@ def _items(message: AnyMessage) -> list[Body]:
 
     One item each, unlike ``messages``: an answer that asked for two tools becomes an answer item and two
     ``function_call`` items, and each of them is addressed by its own ``call_id`` — so nothing has to be
-    folded together at the front of the next turn.
+    folded together at the front of the next turn. A notice is a ``developer`` message and needs no cap to
+    say so: this vocabulary has that role and no other for a line the harness says (§10.4, E142).
     """
     if isinstance(message, User):
         return [{"role": "user", "content": [{"type": "input_text", "text": message.text}]}]
+    if isinstance(message, Note):
+        return [{"role": "developer", "content": [{"type": "input_text", "text": message.text}]}]
     if isinstance(message, Assistant):
         said: list[Body] = []
         if message.text:
