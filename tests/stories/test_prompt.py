@@ -74,6 +74,7 @@ async def test_the_prompt_is_five_sections_in_one_order(tmp_path: Path, transpor
     story = await _opened(tmp_path, transport, calling("tool_require", {"group": "session"}), text("done"))
     try:
         await story.type("I will need the todo tools")
+        await story.finished(turn=1)
 
         first, second = story.requests()
         assert first.system == "\n\n".join(
