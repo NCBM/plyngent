@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.model import Call, Reply, Result
+from plyngent.kernel.model import Call, Note, Reply, Result
+from plyngent.kernel.trail import NOTICE_MARKER
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text
 
@@ -317,3 +318,52 @@ async def test_clearing_the_stack_needs_the_group_first(story_with: Scripted) ->
         "'todo_clear' is not available yet: it is in the 'session' group\n"
         "hint: tool_require(group=session) — show that group first"
     ), "a session that has not asked for the group is answered with the one call that shows it"
+
+
+async def test_what_is_left_of_the_plan_is_said_above_the_next_answer(story_with: Scripted) -> None:
+    """E142: the plan lives in the session, so the model is told what is left of it while it works.
+
+    A checklist written two rounds ago is one a model goes on working from memory, and a notice is the
+    one row that fixes that: the round after the call carries it as the harness speaking — marker and all
+    — above that round's own line, and the person watching is told where it was written.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec", "write the parser"]}),
+        text("that is the plan"),
+    )
+
+    await story.type("here is the plan")
+
+    _first, second = story.requests()
+    assert isinstance(second.messages[-1], Note), "the reminder is the last thing the model reads"
+    assert second.messages[-1].text == (f"{NOTICE_MARKER}\n2 items still open: read the spec, write the parser"), (
+        "the marker is in the text, so the model can tell the harness from the person"
+    )
+    assert isinstance(second.messages[-2], Result), "and it sits above the result it was written after"
+    await story.until("turn 1 finished")
+    assert "written: 2 items still open: read the spec, write the parser" in "\n".join(story.screen()), (
+        "the person reads the same sentence, under the entry it was written at"
+    )
+
+
+async def test_a_plan_that_was_cleared_says_the_reminder_no_longer_holds(story_with: Scripted) -> None:
+    """A reminder that stopped being true is a row with no text: the log has it, the model does not.
+
+    That is the difference between "the plan changed again" and "there is no plan any more": the second
+    has nothing to say to the model, and a person reading the history still needs to know it happened.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        calling("todo_clear", {}),
+        text("clean slate"),
+    )
+    await story.require("session")
+
+    await story.type("plan it, then drop it")
+
+    told = [message for message in story.requests()[-1].messages if isinstance(message, Note)]
+    assert told == [Note(text=f"{NOTICE_MARKER}\n1 item still open: read the spec")], (
+        "the reminder that held is the one the model was given, and the empty one is not a message"
+    )
+    await story.until("turn 1 finished")
+    assert "written: nothing is left on the plan" in "\n".join(story.screen()), "while a person reads what went away"

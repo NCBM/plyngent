@@ -38,7 +38,11 @@ if TYPE_CHECKING:
 #: A tuple and not a set, because the order is the answer to "what does the model read first" — and it is
 #: written down here rather than discovered, so that two writers cannot disagree about it by arriving at
 #: different times.
-DECLARED: tuple[str, ...] = ()
+
+#: The plan's writer: what is left of the todo stack.
+PLAN = "plan"
+
+DECLARED: tuple[str, ...] = (PLAN,)
 
 
 @dataclass(frozen=True, slots=True)

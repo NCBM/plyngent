@@ -29,11 +29,17 @@ from typing import TYPE_CHECKING
 import msgspec
 from msgspec import Struct, field
 
+from plyngent.kernel.words import counted
+
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable
 
 #: What a listing says when the stack holds nothing, which is a state and not a missing answer.
 EMPTY = "(todo stack empty — no groups)"
+
+#: How many open tasks a reminder names by title before it counts the rest: enough to work from, short
+#: enough that a line written once does not sit in every later request at full length.
+NAMED = 3
 
 
 class TodoStatus(StrEnum):
@@ -164,6 +170,22 @@ class Todos(Struct, kw_only=True):
         if notes is not None:
             item.notes = notes.strip()
         return item
+
+    def reminder(self) -> str:
+        """What is left of the plan, as the one line a model is told between rounds.
+
+        Empty when nothing is open, and that is a real answer rather than a missing one: a reminder that
+        has nothing to say is how a writer says the one it wrote before no longer holds (E142). The
+        titles are named up to :data:`NAMED` and counted past that, because this line is written once and
+        then read in every request that follows it.
+        """
+        opened = self.open_items()
+        if not opened:
+            return ""
+        named = ", ".join(item.title for item in opened[:NAMED])
+        rest = len(opened) - NAMED
+        said = f"{named} and {rest} more" if rest > 0 else named
+        return f"{counted(len(opened), 'item')} still open: {said}"
 
     def render(self, only: Collection[int] | None = None) -> str:
         """The listing: the whole stack, or the groups ``only`` names, each under its own number.

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import msgspec
 
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.notices import PLAN
 from plyngent.kernel.session import TODOS
 from plyngent.kernel.todos import OPEN, Todos, TodoStatus
 from plyngent.kernel.toolresult import Hint, Meta, Part, Text, ToolResult
@@ -35,6 +36,8 @@ from plyngent.kernel.words import counted, plural
 from plyngent.wire.ask import FreeText, as_written
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from plyngent.kernel.env import Env
 
 
@@ -143,6 +146,24 @@ def _duration(seconds: float) -> str:
     return f"{seconds:g}s"
 
 
+async def _planned(env: Env, mutate: Callable[[str | None], tuple[str | None, ToolResult]]) -> ToolResult:
+    """Change the plan, and leave the model a line about what is left of it.
+
+    The plan is the one setting a model has to hear about. It lives in the session rather than in the
+    conversation, so a checklist written two rounds ago is one the model goes on working from memory —
+    and the round after the call is exactly when it needs telling. So every change fires one reminder,
+    and the turn writes it at its next boundary, which is that round (E142).
+
+    The sentence is the stack's own (:meth:`~plyngent.kernel.todos.Todos.reminder`), and it is empty when
+    nothing is open: that is how "the reminder you were given no longer holds" is said, and the summary
+    beside it is the one thing a person can read in that case.
+    """
+    answer = await env.session_state.change(TODOS, mutate)
+    left = Todos.load(env.session_state.setting(TODOS)).reminder()
+    env.session_state.notices.say(PLAN, left, summary=left or "nothing is left on the plan")
+    return answer
+
+
 async def todo_list(env: Env, args: ListArgs) -> ToolResult:
     """The TOP group, or every group when the call asked for the whole stack."""
     todos = Todos.load(env.session_state.setting(TODOS))
@@ -164,7 +185,7 @@ async def todo_push(env: Env, args: PushArgs) -> ToolResult:
         summary = f"pushed {counted(len(group.items), 'item')} (depth {todos.depth()})"
         return todos.dump(), _layer(todos, todos.depth() - 1, summary)
 
-    return await env.session_state.change(TODOS, push)
+    return await _planned(env, push)
 
 
 async def todo_update(env: Env, args: UpdateArgs) -> ToolResult:
@@ -181,7 +202,7 @@ async def todo_update(env: Env, args: UpdateArgs) -> ToolResult:
         summary = f"updated group {args.group} item {args.number}{_changed(args)}"
         return todos.dump(), _layer(todos, args.group, summary)
 
-    return await env.session_state.change(TODOS, update)
+    return await _planned(env, update)
 
 
 async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
@@ -199,7 +220,7 @@ async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
         summary = f"popped {counted(len(group.items), 'item')} (depth {todos.depth()})"
         return todos.dump(), _layer(todos, todos.depth() - 1, summary)
 
-    return await env.session_state.change(TODOS, pop)
+    return await _planned(env, pop)
 
 
 async def todo_clear(env: Env, _args: ClearArgs) -> ToolResult:
@@ -211,7 +232,7 @@ async def todo_clear(env: Env, _args: ClearArgs) -> ToolResult:
         answer = ToolResult.ok(f"cleared {counted(count, 'item')}", body=Text(value=todos.render()))
         return (todos.dump() if count else None), answer
 
-    return await env.session_state.change(TODOS, clear)
+    return await _planned(env, clear)
 
 
 def _layer(todos: Todos, depth: int, summary: str) -> ToolResult:
