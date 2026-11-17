@@ -39,7 +39,7 @@ import click
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
-from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory
+from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory, Turns
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -61,7 +61,12 @@ ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": 
 #: Every read so far is about one session, which is why the table says so: a read that was about nothing
 #: in particular would be a second shape here, and naming it today would be a dict of ``Query`` that no
 #: read could be built from.
-READS: dict[str, type[AnyQuery]] = {"grants": Grants, "history": Trajectory, "skills": Skills}
+READS: dict[str, type[AnyQuery]] = {
+    "grants": Grants,
+    "history": Trajectory,
+    "running": Turns,
+    "skills": Skills,
+}
 
 #: The one word whose text is written in an editor rather than on the line.
 COMPOSED = "submit"
@@ -116,6 +121,7 @@ def _asks_about(kind: type[AnyQuery], session: str) -> AnyQuery:
 _ASKS: dict[type[AnyQuery], Callable[[str], AnyQuery]] = {
     Grants: lambda session: Grants(session=session),
     Trajectory: lambda session: Trajectory(session=session),
+    Turns: lambda session: Turns(session=session),
     Skills: lambda _session: Skills(),
 }
 

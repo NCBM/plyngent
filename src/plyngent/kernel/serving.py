@@ -94,6 +94,8 @@ from plyngent.wire.query import (
     Forest,
     Grants,
     GrantTable,
+    LiveTurn,
+    LiveTurns,
     MissingRoot,
     Reached,
     ShadowedSkill,
@@ -101,6 +103,7 @@ from plyngent.wire.query import (
     Skills,
     SkillTable,
     Trajectory,
+    Turns,
 )
 from plyngent.wire.scope import CancelReason, CancelScope
 
@@ -215,6 +218,8 @@ class Serving:
                 return Forest(id=query.id, entries=await self._trajectory(session))
             case Skills():
                 return self._skills(query.id)
+            case Turns(session=session):
+                return self._live(query.id, session)
 
     async def _trajectory(self, session: str) -> tuple[Entry, ...]:
         """One conversation's rows, as the forest a person walks: what each one is, and what it continues.
@@ -245,6 +250,24 @@ class Serving:
                 children=continued.get(row.id, 0),
             )
             for row in rows
+        )
+
+    def _live(self, number: int, session: str) -> LiveTurns:
+        """The turns this conversation is running, and nothing about where its history stands.
+
+        A session this kernel is not serving runs nothing here, for the reason its grant table is empty:
+        it is a conversation nobody opened. What is *not* here is the journal's shape, because that is a
+        different question with its own read (``Trajectory``), and an answer that carried both would make
+        every client that only wants "is it done yet" ask for the whole forest.
+        """
+        found = self._session(session)
+        if found is None:
+            return LiveTurns(id=number)
+        return LiveTurns(
+            id=number,
+            turns=tuple(
+                LiveTurn(turn=turn.turn_id, kind=str(turn.kind), begin_after=turn.begin_after) for turn in found.turns()
+            ),
         )
 
     def _skills(self, number: int) -> SkillTable:

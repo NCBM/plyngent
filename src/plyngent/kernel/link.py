@@ -69,7 +69,7 @@ from plyngent.wire.ask import (
 )
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import KernelManifest
-from plyngent.wire.query import AnyQuery, AnyReply, Forest, Trajectory, Unanswered
+from plyngent.wire.query import AnyQuery, AnyReply, Forest, LiveTurn, LiveTurns, Trajectory, Turns, Unanswered
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -642,6 +642,16 @@ class Link:
         """
         answer = await self.query(Trajectory(session=session))
         return answer.entries if isinstance(answer, Forest) else ()
+
+    async def turns(self, session: str) -> tuple[LiveTurn, ...]:
+        """Which turns of this conversation are running, oldest first — an empty tuple when none is.
+
+        A snapshot and not a wait: what a client does with "still running" is its own business, and the
+        kernel's job is only to answer the question that was put. Asking again is a second read, which is
+        why this is a method on the link and not an event the kernel sends when the last turn ends.
+        """
+        answer = await self.query(Turns(session=session))
+        return answer.turns if isinstance(answer, LiveTurns) else ()
 
     def completed(self, returned: Returned) -> bool:
         """Hand what one of this client's tools came back with over; ``False`` when the connection is gone.

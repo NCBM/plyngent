@@ -177,37 +177,6 @@ class TurnCtx:
         self.session.end_turn(self)
 
 
-@dataclass(frozen=True, slots=True)
-class TurnClaim:
-    """One live turn as anything outside may see it: what it is, and where it started.
-
-    ``doing`` is deliberately absent: a sentence about what a turn is *currently* doing would be
-    prose that goes stale between the write and the read. Addresses and states are answers; a status
-    string is a guess with a clock on it.
-    """
-
-    turn: int
-    kind: TurnKind
-    begin_after: str | None
-    since: float
-
-
-@dataclass(frozen=True, slots=True)
-class SessionStatus:
-    """What one session is doing, answered in a single read.
-
-    ``heads`` and ``roots`` are entry ids: the entries nothing continues from, and the entries with no
-    parent. Both are empty for a session whose journal holds nothing, which is the truth rather than a
-    placeholder — a session with no entries has neither. ``seq`` is not here either: it is the
-    transport's watermark and belongs to the link that stamped it.
-    """
-
-    session: str
-    turns: tuple[TurnClaim, ...]
-    heads: tuple[str, ...]
-    roots: tuple[str, ...]
-
-
 class Session(Component):
     """One conversation: the turns it has, and the cancellation they are addressed through.
 
@@ -499,26 +468,13 @@ class Session(Component):
         _ = self._turns.pop(turn.turn_id, None)
 
     def turns(self) -> tuple[TurnCtx, ...]:
-        """The turns still live, oldest first."""
-        return tuple(self._turns[key] for key in sorted(self._turns))
+        """The turns still live, oldest first.
 
-    async def status(self) -> SessionStatus:
-        """What this session is doing, in one read: its live turns and where its history stands.
-
-        This is the answer a frontend used to assemble from its own "compacting", "waiting for
-        approval", "a turn is running" flags — and the reason those flags can go: one read either says
-        a turn is live or does not, and the journal says where the conversation can be continued.
+        The one thing a client cannot work out for itself: a turn is started by a command and ends by an
+        event, so "is this conversation still working" is a fact the kernel has and the reader does not
+        (``Turns`` is the read that hands it out).
         """
-        shape = await self.host.trail.shape(self.session_id)
-        return SessionStatus(
-            session=self.session_id,
-            turns=tuple(
-                TurnClaim(turn=turn.turn_id, kind=turn.kind, begin_after=turn.begin_after, since=turn.since)
-                for turn in self.turns()
-            ),
-            heads=shape.heads,
-            roots=shape.roots,
-        )
+        return tuple(self._turns[key] for key in sorted(self._turns))
 
     # -- cancellation --------------------------------------------------------------
 

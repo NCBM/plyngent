@@ -72,6 +72,22 @@ class Trajectory(Query, tag="trajectory", frozen=True, kw_only=True):
     session: str = ""
 
 
+class Turns(Query, tag="turns", frozen=True, kw_only=True):
+    """Which turns of one conversation are still running, right now.
+
+    A read, and not something a client can work out for itself: a turn is started by a command and ends
+    by an event, so a client that wants to know whether the work it asked for is over has two facts to
+    compare and no way to be sure it has seen both. The kernel has one answer to that — the turns it is
+    running — and it is a snapshot rather than a wait: an empty answer means this conversation is idle,
+    and a client that wants to be told when that changes asks again after the next event.
+
+    Empty is an answer and not a refusal, the same way an empty forest is: a conversation nothing is
+    running in is the ordinary case, and it is the answer the lane this serves is waiting for.
+    """
+
+    session: str = ""
+
+
 class Skills(Query, tag="skills", frozen=True, kw_only=True):
     """Which skills this host can see, and what is wrong with the ones that are not clean.
 
@@ -120,6 +136,29 @@ class Forest(Reply, tag="forest", frozen=True, kw_only=True):
     entries: tuple[Entry, ...] = ()
 
 
+class LiveTurn(Struct, frozen=True, kw_only=True):
+    """One turn that is running: which one, what kind, and the entry it is writing after.
+
+    ``kind`` is text rather than an enum, for the reason every closed set kept in a row is: an answer
+    written by today's build stays readable when the set grows a member. ``begin_after`` is the entry
+    the turn continues, so a client that asks while a turn is live can say where it will go next.
+    """
+
+    turn: int = 0
+    kind: str = ""
+    begin_after: str | None = None
+
+
+class LiveTurns(Reply, tag="live-turns", frozen=True, kw_only=True):
+    """The answer to :class:`Turns`: the turns running in this conversation, oldest first.
+
+    No count and no flag beside the list, because the list is the answer: "nothing is running" is the
+    empty tuple, which a client reads the same way it reads a grant table with no rows.
+    """
+
+    turns: tuple[LiveTurn, ...] = ()
+
+
 class SkillRow(Struct, frozen=True, kw_only=True):
     """One skill a person can see: its name, which root answered, where it lives, and what it says.
 
@@ -164,5 +203,5 @@ class SkillTable(Reply, tag="skill-table", frozen=True, kw_only=True):
     absent: tuple[MissingRoot, ...] = ()
 
 
-type AnyQuery = Grants | Trajectory | Skills
-type AnyReply = GrantTable | Forest | SkillTable
+type AnyQuery = Grants | Trajectory | Skills | Turns
+type AnyReply = GrantTable | Forest | SkillTable | LiveTurns

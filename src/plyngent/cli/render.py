@@ -65,7 +65,17 @@ from plyngent.wire.event import (
     TurnStarted,
     Usage,
 )
-from plyngent.wire.query import AnyReply, Forest, GrantTable, MissingRoot, ShadowedSkill, SkillRow, SkillTable
+from plyngent.wire.query import (
+    AnyReply,
+    Forest,
+    GrantTable,
+    LiveTurn,
+    LiveTurns,
+    MissingRoot,
+    ShadowedSkill,
+    SkillRow,
+    SkillTable,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -629,8 +639,25 @@ def held(answer: AnyReply) -> tuple[str, ...]:
             )
         case SkillTable(skills=skills, shadowed=shadowed, absent=absent):
             return _skill_table(skills, shadowed, absent)
+        case LiveTurns(turns=turns):
+            return _live(turns)
         case _ as never:
             assert_never(never)
+
+
+def _live(turns: tuple[LiveTurn, ...]) -> tuple[str, ...]:
+    """Which turns of one conversation are still working, one line each — or the line that says none is.
+
+    A row per turn rather than a count, because more than one can be live only when one of them is a
+    compaction somebody asked for beside a chat, and "two" would leave a person guessing which. The entry
+    a turn continues is said only when the turn has one: a root has nothing to be after.
+    """
+    if not turns:
+        return ("nothing is running in this conversation",)
+    return tuple(
+        f"turn {one.turn} {one.kind} is running" + (f", continuing {one.begin_after}" if one.begin_after else "")
+        for one in turns
+    )
 
 
 def _skill_table(

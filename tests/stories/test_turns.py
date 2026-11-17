@@ -125,6 +125,34 @@ async def test_a_second_message_is_refused_while_a_turn_is_running(story_with: S
     assert story.screen()[-2:] == ("about time", "turn 1 finished")
 
 
+async def test_a_person_can_ask_which_turn_is_working(story_with: Scripted) -> None:
+    """The one fact between a turn's start and its end that a client cannot work out for itself.
+
+    A turn begins because a command said so and ends because an event says so, and in between only the
+    kernel knows: the word answers with the turn that is running, and with nothing once it is done — the
+    answer the plain lane waits on before it leaves.
+    """
+    held = Held(text("about time"))
+    story = await story_with(held)
+
+    await story.type("a first thought")
+    read_from = len(story.notices())
+    await story.type("/running")
+    await story.settle()
+
+    assert story.notices()[read_from:] == ("turn 1 chat is running",), "the turn is named while it runs"
+
+    held.ready.set()
+    await story.finished()
+    read_from = len(story.notices())
+    await story.type("/running")
+    await story.settle()
+
+    assert story.notices()[read_from:] == ("nothing is running in this conversation",), (
+        "and a conversation with nothing in flight says so rather than printing nothing"
+    )
+
+
 async def test_a_turn_kind_this_build_does_not_run_is_refused_by_name(story_with: Scripted) -> None:
     """``ASIDE`` is declared in the contract and implemented nowhere: running it as a chat would write the
     history an aside exists to leave alone, so the answer is a refusal rather than a quietly wrong turn."""
