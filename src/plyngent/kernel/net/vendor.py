@@ -33,7 +33,7 @@ import msgspec
 import niquests
 from msgspec import Struct
 
-from plyngent.kernel.net.web import Hit, Page, SourceFailed
+from plyngent.kernel.net.web import EngineFailed, Hit, Page
 
 if TYPE_CHECKING:
     from plyngent.kernel.net.client import Gate
@@ -99,7 +99,7 @@ def parse_search(body: bytes) -> tuple[Hit, ...]:
         found = msgspec.json.decode(body, type=_SearchResponse)
     except msgspec.DecodeError as exc:
         msg = f"the search answer was not the shape it promises: {exc}"
-        raise SourceFailed(msg) from exc
+        raise EngineFailed(msg) from exc
     return tuple(hit for hit in map(_hit, found.results) if hit.url)
 
 
@@ -109,7 +109,7 @@ def parse_page(body: bytes) -> Page:
         found = msgspec.json.decode(body, type=_FetchResponse)
     except msgspec.DecodeError as exc:
         msg = f"the page answer was not the shape it promises: {exc}"
-        raise SourceFailed(msg) from exc
+        raise EngineFailed(msg) from exc
     return Page(title=found.title.strip(), content=found.content)
 
 
@@ -138,37 +138,39 @@ class Vendor:
         self._count = count
         self._timeout = timeout_seconds
 
-    async def search(self, query: str, *, gate: Gate) -> tuple[Hit, ...]:
+    async def search(self, query: str, *, gate: Gate, on: str = "") -> tuple[Hit, ...]:
         """Run one query against the index.
 
         The gate is not consulted and that is the point: this request goes to the endpoint the program was
-        configured with, and the *page* is fetched on the vendor's network.
+        configured with, and the *page* is fetched on the vendor's network. ``on`` names the route the
+        conversation is speaking on, which one account has no use for yet.
         """
-        _ = gate
+        _ = gate, on
         if not query.strip():
             msg = "a search needs a query"
-            raise SourceFailed(msg)
+            raise EngineFailed(msg)
         if len(query) > MAX_QUERY_CHARS:
             msg = f"a query may be at most {MAX_QUERY_CHARS} characters ({len(query)} given)"
-            raise SourceFailed(msg)
+            raise EngineFailed(msg)
         sent = msgspec.json.encode(_SearchRequest(query=query, count=max(1, self._count)))
         status, answer = await self._post(SEARCH_PATH, sent)
         if status >= _HTTP_ERROR:
             msg = f"the search endpoint answered {status}"
-            raise SourceFailed(msg)
+            raise EngineFailed(msg)
         return parse_search(answer)
 
-    async def fetch(self, url: str) -> Page:
+    async def page(self, url: str, *, on: str = "") -> Page:
         """Read *url* through the vendor and answer the page it rendered.
 
         A malformed URL is refused here rather than at the endpoint, so a request that cannot work costs
         nothing: the same shape a browser accepts — an absolute http(s) URL, no credentials in it.
         """
+        _ = on
         _check_url(url)
         status, answer = await self._post(FETCH_PATH, msgspec.json.encode(_FetchRequest(url=url)))
         if status >= _HTTP_ERROR:
             msg = f"the fetch endpoint answered {status}"
-            raise SourceFailed(msg)
+            raise EngineFailed(msg)
         return parse_page(answer)
 
     async def _post(self, path: str, body: bytes) -> tuple[int, bytes]:
@@ -187,18 +189,18 @@ def _check_url(url: str) -> None:
     """Refuse a URL the endpoint would refuse, before the request that would tell us so."""
     if not url or len(url) > MAX_FETCH_URL_CHARS:
         msg = f"a page URL may be 1-{MAX_FETCH_URL_CHARS} characters"
-        raise SourceFailed(msg)
+        raise EngineFailed(msg)
     try:
         parts = urlsplit(url)
     except ValueError as exc:
         msg = f"{url!r} is not a URL: {exc}"
-        raise SourceFailed(msg) from exc
+        raise EngineFailed(msg) from exc
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         msg = f"{url!r} is not an absolute http(s) URL with a host"
-        raise SourceFailed(msg)
+        raise EngineFailed(msg)
     if parts.username or parts.password:
         msg = f"{url!r} carries a username or a password, and that is not this tool's to send"
-        raise SourceFailed(msg)
+        raise EngineFailed(msg)
 
 
 async def _content(response: Any) -> bytes:

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, override
 import pytest
 
 from plyngent.kernel.model import Result
-from plyngent.kernel.net.web import Hit, Page, SourceFailed, Web
+from plyngent.kernel.net.web import Engine, EngineFailed, Engines, Hit, Page
 from plyngent.kernel.toolresult import Status
 from plyngent.wire.ask import Grades, Severity
 from tests.stories.driver import Story
@@ -544,10 +544,10 @@ async def test_cleartext_is_asked_about_every_time(story_with: Scripted, serve: 
 
 @dataclass
 class Source:
-    """A search source a story scripts: the pages it answers with, or the reason it cannot answer.
+    """An engine a story scripts: the pages it answers with, or the reason it cannot answer.
 
-    The protocol is what the tool asks of a source, so a story's source is a real implementation of it —
-    the two backends this build ships (`Vendor`, `Bing`) are exercised by their own unit tests instead,
+    The verbs are what the tool asks of an engine, so a story's engine is a real implementation of them —
+    the two engines this build ships (`deepseek`, `bing`) are exercised by their own unit tests instead,
     because reaching either of them needs a network this suite is not allowed to use.
     """
 
@@ -555,21 +555,26 @@ class Source:
     asked: list[str] = field(default_factory=list)
     refuses: str = ""
 
-    async def search(self, query: str, *, gate: Gate) -> list[Hit]:
+    @property
+    def name(self) -> str:
+        """What a failure calls this engine: the story's own word for what it is."""
+        return type(self).__name__
+
+    async def search(self, query: str, *, gate: Gate, on: str = "") -> list[Hit]:
         """Answer what the story put here, recording the query as it came in."""
-        del gate  # a story's source has no destination to ask about
+        del gate, on  # a story's engine has no destination and no account to choose between
         self.asked.append(query)
         if self.refuses:
-            raise SourceFailed(self.refuses)
+            raise EngineFailed(self.refuses)
         return [Hit(title=title, url=url, snippet=snippet) for title, url, snippet in self.hits]
 
 
 class Broken(Source):
-    """A source that cannot answer: its name is what a person reads in the summary."""
+    """An engine that cannot answer: its name is what a person reads in the summary."""
 
 
 class Answering(Source):
-    """A source that answers, or answers with nothing."""
+    """An engine that answers, or answers with nothing."""
 
 
 @dataclass
@@ -579,17 +584,31 @@ class Reader:
     pages: dict[str, Page] = field(default_factory=dict)
     asked: list[str] = field(default_factory=list)
 
-    async def fetch(self, url: str) -> Page:
+    @property
+    def name(self) -> str:
+        """What a failure calls this engine: the story's own word for what it is."""
+        return type(self).__name__
+
+    async def page(self, url: str, *, on: str = "") -> Page:
         """Answer with the page the story put under *url*; a URL nobody put there is the story's bug."""
+        del on  # one account, so there is nothing to choose between
         self.asked.append(url)
         return self.pages[url]
 
 
-async def test_a_search_shows_the_pages_a_source_named(story_with: Scripted) -> None:
+def asking(*sources: Source) -> Engines:
+    """The table a story hands the kernel: each scripted source's search verb, under its own name."""
+    return Engines([Engine(name=source.name, search=source.search) for source in sources])
+
+
+def paging(*readers: Reader) -> Engines:
+    """The same, for the engines that read pages."""
+    return Engines([Engine(name=reader.name, page=reader.page) for reader in readers])
+
+
+async def test_a_search_shows_the_pages_an_engine_named(story_with: Scripted) -> None:
     source = Answering(hits=[("Python", "https://python.org", "the language"), ("Docs", "https://docs.python.org", "")])
-    story = await story_with(
-        calling("builtin_websearch", {"query": "python"}), text("done"), web=Web(sources=(source,))
-    )
+    story = await story_with(calling("web_search", {"query": "python"}), text("done"), engines=asking(source))
 
     await story.require("net")
     await story.type("search for the language")
@@ -597,19 +616,19 @@ async def test_a_search_shows_the_pages_a_source_named(story_with: Scripted) -> 
 
     assert told(story.requests()[-1]) == (
         "2 hits for 'python'\n- Python — https://python.org\n  the language\n- Docs — https://docs.python.org"
-    ), "a hit is a place to read plus the one line the source had for it"
+    ), "a hit is a place to read plus the one line the engine had for it"
     assert source.asked == ["python"], "and the query went out as it was written"
-    assert story.questions() == (), "a source that reaches no destination of its own asks nothing"
+    assert story.questions() == (), "an engine that reaches no destination of its own asks nothing"
 
 
-async def test_a_search_falls_through_and_says_what_each_source_said(story_with: Scripted) -> None:
+async def test_a_search_falls_through_and_says_what_each_engine_said(story_with: Scripted) -> None:
     broken = Broken(refuses="the index is down")
     empty = Answering()
     working = Answering(hits=[("Only", "https://example.com/only", "")])
     story = await story_with(
-        calling("builtin_websearch", {"query": "python"}),
+        calling("web_search", {"query": "python"}),
         text("done"),
-        web=Web(sources=(broken, empty, working)),
+        engines=asking(broken, empty, working),
     )
 
     await story.require("net")
@@ -618,17 +637,15 @@ async def test_a_search_falls_through_and_says_what_each_source_said(story_with:
 
     assert told(story.requests()[-1]) == (
         "1 hit for 'python' (Broken: the index is down; Answering: no results)\n- Only — https://example.com/only"
-    ), "a broken source does not take the search down, and what it said is carried out to the summary"
+    ), "a broken engine does not take the search down, and what it said is carried out to the summary"
     assert [source.asked for source in (broken, empty, working)] == [["python"], ["python"], ["python"]], (
-        "every source before the one that answered was asked"
+        "every engine before the one that answered was asked"
     )
 
 
-async def test_a_search_that_never_answers_names_every_source(story_with: Scripted) -> None:
+async def test_a_search_that_never_answers_names_every_engine(story_with: Scripted) -> None:
     first, second = Broken(refuses="no key"), Broken(refuses="rate limited")
-    story = await story_with(
-        calling("builtin_websearch", {"query": "python"}), text("fair"), web=Web(sources=(first, second))
-    )
+    story = await story_with(calling("web_search", {"query": "python"}), text("fair"), engines=asking(first, second))
 
     await story.require("net")
     await story.type("search for the language")
@@ -639,10 +656,10 @@ async def test_a_search_that_never_answers_names_every_source(story_with: Script
     )
 
 
-async def test_with_no_backend_the_web_tools_are_not_in_the_table(story_with: Scripted) -> None:
+async def test_with_no_engine_the_web_tools_are_not_in_the_table(story_with: Scripted) -> None:
     story = await story_with(
         calling("tool_require", {"group": "net"}),
-        calling("builtin_websearch", {"query": "python"}),
+        calling("web_search", {"query": "python"}),
         calling("web_fetch", {"url": "https://example.com/"}),
         text("fair"),
     )
@@ -651,17 +668,17 @@ async def test_with_no_backend_the_web_tools_are_not_in_the_table(story_with: Sc
     await story.finished()
 
     assert any(line.endswith("from net: client_fetch") for line in story.screen()), (
-        "a kernel with no backend serves one net tool, and says which"
+        "a kernel with no engine serves one net tool, and says which"
     )
-    assert "no tool is named 'builtin_websearch'" in told(story.requests()[2]), (
-        "a tool with no backend behind it is not in the table at all: nothing promises it and nothing refuses it"
+    assert "no tool is named 'web_search'" in told(story.requests()[2]), (
+        "a tool with no engine behind it is not in the table at all: nothing promises it and nothing refuses it"
     )
     assert "web_fetch failed: no tool is named 'web_fetch'" in story.screen(), (
         "and the other half of the group is the same: one name, and nothing behind it"
     )
 
 
-async def test_a_page_comes_back_as_the_vendor_read_it(story_with: Scripted) -> None:
+async def test_a_page_comes_back_as_the_engine_read_it(story_with: Scripted) -> None:
     reader = Reader(
         pages={
             "https://example.com/a": Page(title="An article", content="# Heading\n\nbody"),
@@ -672,7 +689,7 @@ async def test_a_page_comes_back_as_the_vendor_read_it(story_with: Scripted) -> 
         calling("web_fetch", {"url": "https://example.com/a"}),
         calling("web_fetch", {"url": "https://example.com/big"}),
         text("done"),
-        web=Web(pages=reader),
+        engines=paging(reader),
     )
 
     await story.require("net")

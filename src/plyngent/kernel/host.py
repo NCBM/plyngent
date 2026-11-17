@@ -26,7 +26,7 @@ from plyngent.kernel.lm.route import Routes
 from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import ModelChannel  # noqa: TC001
 from plyngent.kernel.net.policy import NetPolicy
-from plyngent.kernel.net.web import WebChannel  # noqa: TC001
+from plyngent.kernel.net.web import Engines
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
@@ -54,10 +54,11 @@ class Host(Component):
     # swapping it is a `replace`; nothing installed is a value (`None`) rather than a missing field, so a
     # turn can be refused before it starts instead of failing at its first request.
     model: ModelChannel = require()
-    # The vendor's web tools, when a program was configured with one. A component for the same reason the
-    # model is: installing a backend is a declaration and swapping it is a `replace`, and nothing installed
-    # is a value — which is what decides whether `web_fetch` and `builtin_websearch` exist at all (§0.9).
-    web: WebChannel = require()
+    # The web half of what a network tool can do: the engines this program was given, in the order a
+    # search asks them. A plain field, like the routes and for the same reason — a table of engines has no
+    # lifecycle, and which of them exist is decided where the kernel is assembled. Empty is a value: it is
+    # what decides whether `web_fetch` and `web_search` exist at all (§0.9).
+    engines: Engines
     # The conversation's journal. Held as the component that owns a backend rather than as the protocol,
     # because a requirement is answered by the class that was declared; everything that reads or appends
     # takes `Trail`, so which backend answers it is a declaration in `boot` and nothing else.
@@ -112,6 +113,7 @@ class Host(Component):
         trash_enabled: bool = True,
         skills: Skills | None = None,
         routes: Routes | None = None,
+        engines: Engines | None = None,
         prompt: PromptPlan | None = None,
         history: History | None = None,
     ) -> None:
@@ -124,6 +126,7 @@ class Host(Component):
         self.locks = Locks()
         self.skills = skills
         self.routes = Routes() if routes is None else routes
+        self.engines = Engines() if engines is None else engines
         self.prompt = PromptPlan() if prompt is None else prompt
         self.history = history
 

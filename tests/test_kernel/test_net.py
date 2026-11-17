@@ -33,7 +33,7 @@ from plyngent.kernel.net.policy import (
     resolve_location,
 )
 from plyngent.kernel.net.vendor import parse_search
-from plyngent.kernel.net.web import SourceFailed
+from plyngent.kernel.net.web import EngineFailed
 
 LOOPBACK = (ipaddress.ip_network("127.0.0.0/8"),)
 
@@ -255,9 +255,9 @@ def test_a_search_answer_is_read_into_hits() -> None:
 
 
 def test_an_answer_that_is_not_the_shape_says_so_rather_than_crashing_the_search() -> None:
-    with pytest.raises(SourceFailed):
+    with pytest.raises(EngineFailed):
         parse_search(b'{"results": "not a list"}')
-    with pytest.raises(SourceFailed):
+    with pytest.raises(EngineFailed):
         parse_rss("<html>not rss")
 
 

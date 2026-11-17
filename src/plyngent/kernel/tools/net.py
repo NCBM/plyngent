@@ -282,24 +282,36 @@ def _media_of(fetched: client.Fetched) -> str:
     return fetched.content_type.split(";")[0].strip() or "application/octet-stream"
 
 
-class BuiltinWebSearchArgs(ToolArgs, kw_only=True):
-    """Search the web through the sources this program was built with, and read the pages it names.
+class WebSearchArgs(ToolArgs, kw_only=True):
+    """Search the web through the engines this program was built with, and read the pages it names.
 
-    One entry per hit — a title, a URL, and the line the source had for it — and nothing else: a search
+    One entry per hit — a title, a URL, and the line the engine had for it — and nothing else: a search
     result is a place to read, not the reading. Use ``client_fetch`` for a page on this machine or a
-    local network, and note that this one goes out from here too, so the same question about a
-    destination applies to it.
+    local network, and note that a search that reaches a server of its own goes out from here too, so the
+    same question about a destination applies to it.
+
+    ``engine`` names *which implementation* to ask — the names are the ones the prompt lists for this
+    program — and leaving it out asks them in the order it lists them, falling through to the next when
+    one cannot answer. It never names an account or a key: which of an engine's routes pays for a search
+    is that engine's own choice, and a search is not a place to argue about somebody's quota.
     """
 
     query: Annotated[str, msgspec.Meta(min_length=1)]
-    hits: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_MAX_HITS
+    engine: str = ""
+    max_hits: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_MAX_HITS
 
 
-async def builtin_websearch(env: Env, args: BuiltinWebSearchArgs) -> ToolResult:
-    """Ask each source in turn, and show the pages the first one that answered named."""
+async def web_search(env: Env, args: WebSearchArgs) -> ToolResult:
+    """Ask the engine the call named — or each of them in turn — and show the pages that answered."""
+    chosen = env.engines.asking()
+    if args.engine:
+        picked = env.engines.named(args.engine)
+        if picked is None or picked.search is None:
+            return ToolResult.of(Failure.ARGS, _nobody(args.engine, chosen))
+        chosen = (picked,)
     questions = _Questions(env)
-    found = await web.search_in_order(env.web.sources, args.query, gate=questions)
-    shown = found.hits[: args.hits]
+    found = await web.search_in_order(chosen, args.query, gate=questions, on=env.route)
+    shown = found.hits[: args.max_hits]
     effects = Effects(approvals=tuple(questions.approvals))
     if not shown:
         return ToolResult.ok(f"no hit for {args.query!r} ({_because(found)})", effects=effects)
@@ -307,8 +319,18 @@ async def builtin_websearch(env: Env, args: BuiltinWebSearchArgs) -> ToolResult:
     return ToolResult.ok(_found(found, shown, args.query), body=body, effects=effects)
 
 
+def _nobody(named: str, asking: tuple[web.Engine, ...]) -> str:
+    """Why a search cannot ask the engine it named, and which ones it could have asked instead."""
+    known = ", ".join(engine.name for engine in asking)
+    if not asking:
+        return f"no engine can search, so {named!r} is not one of them"
+    if named not in {engine.name for engine in asking}:
+        return f"no engine is named {named!r}; this program searches with {known}"
+    return f"engine {named!r} cannot search; this program searches with {known}"
+
+
 def _found(found: web.Found, shown: tuple[web.Hit, ...], query: str) -> str:
-    """How many of what was found is being shown, and what the sources that did not answer said."""
+    """How many of what was found is being shown, and what the engines that did not answer said."""
     total = len(found.hits)
     count = f"{len(shown)} of {total}" if len(shown) < total else str(total)
     said = f"{count} {'hit' if total == 1 else 'hits'} for {query!r}"
@@ -316,23 +338,24 @@ def _found(found: web.Found, shown: tuple[web.Hit, ...], query: str) -> str:
 
 
 def _because(found: web.Found) -> str:
-    """Why a search came back with nothing, as what each source said in its own words."""
-    return "; ".join(found.failures) or "no source is installed"
+    """Why a search came back with nothing, as what each engine said in its own words."""
+    return "; ".join(found.failures) or "no engine is installed"
 
 
 def _entry(hit: web.Hit) -> str:
-    """One hit as the model reads it: what it is called and where it is, then the line the source had."""
+    """One hit as the model reads it: what it is called and where it is, then the line the engine had."""
     said = f"- {hit.title or '(untitled)'} — {hit.url}"
     return f"{said}\n  {hit.snippet}" if hit.snippet else said
 
 
 class WebFetchArgs(ToolArgs, kw_only=True):
-    """Read one public page as Markdown, through the network of the service this program was given.
+    """Read one public page as Markdown, through the network of the engines this program was given.
 
     Use it for an article or a documentation page when clean text is enough. The page is fetched and
     rendered on somebody else's network, so a target on this machine or a local network is unreachable
     here — ``client_fetch`` is the one that goes out from here, and the one to use for a non-GET method,
-    a custom header, or the raw status of a response.
+    a custom header, or the raw status of a response. An engine that can only move bytes is not one of
+    these: what comes back is the page as readable text, never a body to render by hand.
 
     ``http`` and ``https`` are the only schemes, and a URL with a username or a password in it is refused.
     A page longer than the conversation can hold is kept whole and the result carries a handle:
@@ -343,17 +366,14 @@ class WebFetchArgs(ToolArgs, kw_only=True):
 
 
 async def web_fetch(env: Env, args: WebFetchArgs) -> ToolResult:
-    """Read the page through the vendor, and hand the model its title and its text."""
-    pages = env.web.pages
-    if pages is None:
-        return ToolResult.of(Failure.MISSING, "no page reader is installed")
+    """Read the page with the first engine that can, and hand the model its title and its text."""
     url = policy.parse_url(args.url)
     if isinstance(url, policy.Unreadable):
         return ToolResult.of(Failure.ARGS, url.message)
-    try:
-        page = await pages.fetch(url.url)
-    except web.SourceFailed as exc:
-        return ToolResult.of(Failure.PROTOCOL, str(exc))
+    read = await web.page_in_order(env.engines.paging(), url.url, on=env.route)
+    if read.page is None:
+        return ToolResult.of(Failure.PROTOCOL, _unread(read))
+    page = read.page
     found = await _text(env, page.content, line=lambda kept: _page(page, url, kept=kept))
     if isinstance(found, ToolResult):
         return found
@@ -361,8 +381,13 @@ async def web_fetch(env: Env, args: WebFetchArgs) -> ToolResult:
     return ToolResult.ok(summary, body=body, effects=Effects(external=(f"read {url.url}",)))
 
 
+def _unread(read: web.Read) -> str:
+    """Why nobody read the page, as what each engine said before giving up."""
+    return "; ".join(read.failures) or "no engine reads pages"
+
+
 def _page(page: web.Page, url: policy.ParsedUrl, *, kept: bool) -> str:
-    """What the vendor read, in one line: what it is called, where it was, and how much of it there is."""
+    """What an engine read, in one line: what it is called, where it was, and how much of it there is."""
     beside = " (kept)" if kept else ""
     return f"{page.title or '(untitled)'} — {url.url} — {_size(len(page.content))} markdown{beside}"
 
@@ -382,13 +407,13 @@ CLIENT_FETCH = ToolSpec(
     mutates=Mutation.OUTSIDE,
 )
 
-BUILTIN_WEBSEARCH = ToolSpec(
-    name="builtin_websearch",
+WEB_SEARCH = ToolSpec(
+    name="web_search",
     group=Group.NET,
-    args=BuiltinWebSearchArgs,
-    run=builtin_websearch,
-    # ``NET`` and not ``HUMAN``: it may have to ask about a destination (a source that reaches a server of
-    # its own does), but the question is not what this tool *is* — a search with nothing to ask runs.
+    args=WebSearchArgs,
+    run=web_search,
+    # ``NET`` and not ``HUMAN``: it may have to ask about a destination (an engine that reaches a server
+    # of its own does), but the question is not what this tool *is* — a search with nothing to ask runs.
     uses=Res.NET,
     # It reads somebody else's index and changes nothing on either side, so the posture derived from this
     # is ``AUTO``: a search is not a thing the executor has an opinion about.
@@ -400,39 +425,44 @@ WEB_FETCH = ToolSpec(
     group=Group.NET,
     args=WebFetchArgs,
     run=web_fetch,
-    # ``NET`` for the channel the reader lives on, ``DOCUMENT`` for a page too long to send. No ``HUMAN``:
-    # the request leaves through the vendor, so there is no destination of this machine's to agree to.
+    # ``NET`` for the engines it may ask, ``DOCUMENT`` for a page too long to send. No ``HUMAN``: the
+    # request leaves through somebody else's network, so there is no destination of this machine's to
+    # agree to.
     uses=Res.NET | Res.DOCUMENT,
-    # A page read changes nothing on either side. What it costs is the vendor's business, and a charge is
+    # A page read changes nothing on either side. What it costs is the engine's business, and a charge is
     # not a change to anything here.
     mutates=Mutation.NONE,
 )
 
-#: The net tools a kernel with no backend installed serves (§0.9, E26).
+#: The net tools a kernel with no engine installed serves (§0.9, E26).
 SPECS: tuple[ToolSpec, ...] = (CLIENT_FETCH,)
 
-#: The net tools a backend enables; which of them a kernel has is :func:`net_specs`'s answer.
-CONDITIONAL: tuple[ToolSpec, ...] = (BUILTIN_WEBSEARCH, WEB_FETCH)
+#: The net tools an engine enables; which of them a kernel has is :func:`net_specs`'s answer.
+CONDITIONAL: tuple[ToolSpec, ...] = (WEB_SEARCH, WEB_FETCH)
 
 #: Every tool in this module, installed or not: what a structural check walks and a table may hold.
 ALL: tuple[ToolSpec, ...] = (*SPECS, *CONDITIONAL)
 
 
-def net_specs(installed: web.Web | None) -> tuple[ToolSpec, ...]:
+def net_specs(engines: web.Engines | None) -> tuple[ToolSpec, ...]:
     """The net tools a kernel serves **because** of what was installed, and nothing when nothing was.
 
     The one place where "does this tool exist" is decided, and it is decided by what the composition root
-    holds rather than by what a call names: a kernel with no backend is ``BUILTIN`` alone, and a tool that
+    holds rather than by what a call names: a kernel with no engine is ``BUILTIN`` alone, and a tool that
     is not there is answered as a name nothing has rather than as a refusal. What never changes with the
     answer is a tool's name and its schema, so a provider's cached prefix stays a function of the *set* a
     session may reach (§10.5).
 
-    Each capability enables its own tool: a program with a key and no page reader still searches, and one
-    with a reader and no key still reads a page.
+    Each verb enables its own tool, and nothing else does: an engine that only searches gives a program
+    ``web_search`` and no ``web_fetch``, and one that only reads pages gives the other. Which engines are
+    in the table at all — one route's ``share`` rather than another's — is decided where the table is
+    built, so this stays a question about abilities.
     """
+    if engines is None:
+        return ()
     served: list[ToolSpec] = []
-    if installed is not None and installed.pages is not None:
+    if engines.paging():
         served.append(WEB_FETCH)
-    if installed is not None and installed.sources:
-        served.append(BUILTIN_WEBSEARCH)
+    if engines.asking():
+        served.append(WEB_SEARCH)
     return tuple(served)

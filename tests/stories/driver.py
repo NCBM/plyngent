@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.events import Human
     from plyngent.kernel.lm.route import Route
     from plyngent.kernel.model import Model, Request
-    from plyngent.kernel.net.web import Web
+    from plyngent.kernel.net.web import Engines
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.serving import Serving
@@ -215,7 +215,7 @@ class Story:
         config: Settings | None = None,
         routes: Iterable[Route] | None = None,
         route: str = "",
-        web: Web | None = None,
+        engines: Engines | None = None,
         skills: Skills | None = None,
         prompt: PromptPlan | None = None,
         journal: Path | str | None = None,
@@ -234,8 +234,8 @@ class Story:
         ``model`` is installed the same way — nothing installed is a kernel that refuses turns, which
         is its own story.
 
-        ``web`` is what a kernel was configured with for the vendor's web tools, and ``None`` is the
-        ordinary case: no backend, and the two tools that need one are not in the table at all.
+        ``engines`` is what a kernel was configured with for the web half of the net tools, and ``None``
+        is the ordinary case: no engine, and the two tools that need one are not in the table at all.
 
         ``skills`` is where a kernel looks for skills, and ``None`` is the ordinary case here too: no
         directory, and none of the five skill tools exist. A story that is about skills passes a store
@@ -282,7 +282,7 @@ class Story:
         settled: dict[str, bool] = {
             "routes": routes is not None,
             "route": bool(route),
-            "web": web is not None,
+            "engines": engines is not None,
             "skills": skills is not None,
             "prompt": prompt is not None,
             "journal": journal is not None,
@@ -303,7 +303,7 @@ class Story:
                 model=model,
                 routes=routes,
                 route=route,
-                web=web,
+                engines=engines,
                 skills=skills,
                 prompt=prompt,
                 journal=journal,

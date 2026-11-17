@@ -29,7 +29,7 @@ from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
 from plyngent.kernel.model import AnyMessage, Request, User
-from plyngent.kernel.net.web import Web
+from plyngent.kernel.net.web import Engine, Engines, Hit, Page
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
 from plyngent.kernel.skills import NAME_PATTERN, Skills
 from plyngent.kernel.toolresult import (
@@ -579,13 +579,15 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
     the block a function of the *set* rather than of how the program was started (§0.9, E26).
     """
     assert net_specs(None) == (), "a kernel with no backend serves nothing because of one"
-    with_backend = ToolCatalog((*BUILTIN, *net_specs(Web(pages=_Any(), sources=(_Any(),)))))
+    any_engine = _Any()
+    every_verb = Engine(name="either", search=any_engine.search, page=any_engine.page)
+    with_backend = ToolCatalog((*BUILTIN, *net_specs(Engines([every_verb]))))
 
     assert with_backend.view(()).index() == (
         "6 more groups (23 tools): document(1), fs(7), net(3), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
-    assert {"client_fetch", "builtin_websearch", "web_fetch"} <= set(with_backend.names())
+    assert {"client_fetch", "web_search", "web_fetch"} <= set(with_backend.names())
 
 
 def test_a_net_body_is_kept_rather_than_paged_through() -> None:
@@ -599,7 +601,15 @@ def test_a_net_body_is_kept_rather_than_paged_through() -> None:
 
 
 class _Any:
-    """A backend that is only ever asked whether it is there."""
+    """An engine that is only ever asked whether it is there: both verbs, and neither reaches anything."""
+
+    async def search(self, query: str, *, gate: object, on: str = "") -> tuple[Hit, ...]:
+        del query, gate, on
+        return ()
+
+    async def page(self, url: str, *, on: str = "") -> Page:
+        del url, on
+        return Page()
 
 
 def test_the_tool_that_adds_a_group_is_one_a_session_cannot_lose() -> None:

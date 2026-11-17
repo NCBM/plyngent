@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.documents import Documents
     from plyngent.kernel.events import Human
     from plyngent.kernel.net.policy import NetPolicy
-    from plyngent.kernel.net.web import WebChannel
+    from plyngent.kernel.net.web import Engines
     from plyngent.kernel.pty.policy import PtyPolicy
     from plyngent.kernel.pty.registry import PtyRegistry
     from plyngent.kernel.reads import Reads
@@ -74,6 +74,16 @@ class Env:
     def session(self) -> str:
         """Which session this call belongs to, for a tool that records its owner (a terminal does)."""
         return self._ctx.session.session_id
+
+    @property
+    def route(self) -> str:
+        """Which of the host's routes this conversation is speaking on, or nothing when it never chose.
+
+        Part of the address rather than a resource: it is the channel the turn is answerable on, which is
+        what a web engine asks about when it decides whose account pays for a search. A route's *name* is
+        not a credential — the key is the route's own and never leaves it.
+        """
+        return self._ctx.session.route
 
     @property
     def reads(self) -> Reads:
@@ -163,15 +173,15 @@ class Env:
         return self._tools
 
     @property
-    def web(self) -> WebChannel:
-        """The vendor's web tools this host was given, or a channel with nothing installed.
+    def engines(self) -> Engines:
+        """The web engines this host was given, or an empty table.
 
         Granted by :attr:`Res.NET`, because it is the other half of what a network tool reaches: a tool
         that reads a page through somebody else's network is still a tool that touches a network, and one
         resource is what the declaration is about.
         """
-        self._granted(Res.NET, "web")
-        return self._ctx.host.web
+        self._granted(Res.NET, "engines")
+        return self._ctx.host.engines
 
     @property
     def session_state(self) -> Session:

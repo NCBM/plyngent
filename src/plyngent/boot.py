@@ -37,7 +37,7 @@ from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
-from plyngent.kernel.net.web import Web, WebChannel
+from plyngent.kernel.net.web import Engines
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
@@ -279,7 +279,7 @@ async def install(
     model: Model | None = None,
     routes: Iterable[Route] | None = None,
     route: str = "",
-    web: Web | None = None,
+    engines: Engines | None = None,
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
@@ -306,10 +306,11 @@ async def install(
     model has nothing to ask, which is a program nobody configured; one given routes but no model asks
     the route its session names. Both are what :mod:`plyngent.config` hands over (§0.11).
 
-    ``web`` is the same move for the vendor's web tools: ``None`` is a kernel that has none, and then
-    ``web_fetch`` and ``builtin_websearch`` are not in the table at all rather than failing when called.
-    That is the one thing about this program that decides *which* tools exist, and it is decided here
-    because it is a fact about how the program was started (§0.9, E26).
+    ``engines`` is the same move for the web half of the net tools: ``None`` is a kernel that has none, and
+    then ``web_fetch`` and ``web_search`` are not in the table at all rather than failing when called. That
+    is the one thing about this program that decides *which* tools exist, and it is decided here because
+    it is a fact about how the program was started (§0.9, E26). Which engines a program has is in turn its
+    own table's answer, and what ``share`` did to it is settled before it arrives.
 
     ``skills`` is where a skill is looked for, and ``None`` is a kernel with no skill tools at all — the
     same move again, for the five of them (§0.10, E36). Which directories those are is
@@ -367,7 +368,7 @@ async def install(
         model=model,
         routes=routes,
         route=route,
-        web=web,
+        engines=engines,
         skills=skills,
         prompt=prompt,
         journal=journal,
@@ -495,7 +496,7 @@ async def serve(
     model: Model | None = None,
     routes: Iterable[Route] | None = None,
     route: str = "",
-    web: Web | None = None,
+    engines: Engines | None = None,
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
@@ -520,7 +521,7 @@ async def serve(
         model=model,
         routes=routes,
         route=route,
-        web=web,
+        engines=engines,
         skills=skills,
         prompt=prompt,
         journal=journal,
@@ -565,7 +566,7 @@ async def _assembled(
     model: Model | None,
     routes: Iterable[Route] | None,
     route: str,
-    web: Web | None,
+    engines: Engines | None,
     skills: Skills | None,
     prompt: PromptPlan | None,
     journal: Path | str | None,
@@ -599,14 +600,19 @@ async def _assembled(
             Declaration(HumanChannel, instance=host),
             Declaration(Offers, instance=host),
             Declaration(ModelChannel, instance=host, args=(asked,)),
-            Declaration(WebChannel, instance=host, args=(web,)),
             Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
             Declaration(Documents, instance=host, args=(documents_path(kept),)),
             Declaration(
                 Host,
                 instance=host,
                 args=(root,),
-                kwargs={"skills": skills, "routes": table, "prompt": plan, "history": versions_kept},
+                kwargs={
+                    "skills": skills,
+                    "routes": table,
+                    "engines": Engines() if engines is None else engines,
+                    "prompt": plan,
+                    "history": versions_kept,
+                },
             ),
         ]
     )
@@ -623,7 +629,7 @@ async def _assembled(
     # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
-    specs = (*BUILTIN, *net_specs(web), *skill_specs(skills))
+    specs = (*BUILTIN, *net_specs(engines), *skill_specs(skills))
     manifest = KernelManifest(
         commands=command_specs(),
         caps=(CLIENT_OFFER,),

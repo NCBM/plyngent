@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from plyngent.cli.policy import Policy
     from plyngent.config import Settings
     from plyngent.kernel.lm.route import Route
-    from plyngent.kernel.net.web import Web
+    from plyngent.kernel.net.web import Engines
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.skills import Skills
@@ -127,7 +127,7 @@ async def story_with(tmp_path, transport):
         config: Settings | None = None,
         routes: Iterable[Route] | None = None,
         route: str = "",
-        web: Web | None = None,
+        engines: Engines | None = None,
         skills: Skills | None = None,
         prompt: PromptPlan | None = None,
         tools: ClientTools = TERMINAL,
@@ -153,7 +153,7 @@ async def story_with(tmp_path, transport):
             config=config,
             routes=routes,
             route=route,
-            web=web,
+            engines=engines,
             skills=skills,
             prompt=prompt,
             journal=None if config is not None else journal,

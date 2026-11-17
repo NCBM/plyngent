@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 from plyngent.kernel.net import client, policy
-from plyngent.kernel.net.web import Hit, SourceFailed
+from plyngent.kernel.net.web import EngineFailed, Hit
 
 if TYPE_CHECKING:
     from plyngent.kernel.net.client import Gate
@@ -39,7 +39,7 @@ def parse_rss(document: str) -> tuple[Hit, ...]:
         root = ET.fromstring(document)
     except ET.ParseError as exc:
         msg = f"bing answered something that is not XML: {exc}"
-        raise SourceFailed(msg) from exc
+        raise EngineFailed(msg) from exc
     found: list[Hit] = []
     for item in root.iter("item"):
         url = (item.findtext("link") or "").strip()
@@ -63,8 +63,9 @@ class Bing:
     def __init__(self, *, timeout_seconds: float = _TIMEOUT_SECONDS) -> None:
         self._timeout = timeout_seconds
 
-    async def search(self, query: str, *, gate: Gate) -> tuple[Hit, ...]:
+    async def search(self, query: str, *, gate: Gate, on: str = "") -> tuple[Hit, ...]:
         """Ask Bing *query*, and answer the items it answered with."""
+        _ = on
         url = f"{SEARCH_URL}?{urlencode({'format': 'rss', 'q': query})}"
         request = client.Request(
             method="GET",
@@ -75,8 +76,8 @@ class Bing:
         )
         found = await client.fetch(request, gate=gate)
         if isinstance(found, client.Stopped):
-            raise SourceFailed(found.message)
+            raise EngineFailed(found.message)
         if found.status >= _HTTP_ERROR:
             msg = f"bing answered {found.status}"
-            raise SourceFailed(msg)
+            raise EngineFailed(msg)
         return parse_rss(found.as_text())

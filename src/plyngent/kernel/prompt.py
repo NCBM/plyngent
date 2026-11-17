@@ -94,7 +94,7 @@ An interactive program is a terminal: `open_pty` to start one, `read_pty` and `w
 `write_pty_keys` for control sequences rather than their bytes, and `ask_into_pty` for a secret, which is
 never echoed back into this conversation.""",
     Group.NET: """\
-The network: `client_fetch` asks from the person's own machine, `builtin_websearch` finds pages, and
+The network: `client_fetch` asks from the person's own machine, `web_search` finds pages, and
 `web_fetch` reads one as markdown. A denial is a decision rather than a transient failure — answer it by
 changing what you ask for, not by asking again.""",
     Group.SESSION: """\
