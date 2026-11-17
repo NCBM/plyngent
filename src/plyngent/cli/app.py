@@ -20,6 +20,11 @@ Leaving has three entrances and one exit. The connection refusing a command, the
 and the other two are a normal goodbye (0). Before closing, the client says *why* it is leaving with a
 ``Cancel`` — the kernel cannot tell "left" from "slow", so it has to be told (R2.1 D15).
 
+**A goodbye is not a hang-up.** The end of the input is a person saying "that is all I have to type",
+so the client reads what is still on its way before it stops listening: a command has no receipt and
+its answer is an event (E134), so a program that returned the moment the last line was read would drop
+the answer that line asked for.
+
 What this file deliberately does not do: draw a prompt, decide how a line looks, decide where on the
 terminal a line may be written, decide what a tool of its own does, or know what a command's arguments
 are. Those are the editor's, the screen's, the offers', and the grammar's, and this loop only routes.
@@ -35,6 +40,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+from collections import deque
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -87,6 +94,21 @@ def _read_mark(path: Path) -> Mark | None:
         return None
 
 
+class _Asked(StrEnum):
+    """Why this client asked for a listing, because a listing's answer is state rather than news.
+
+    A client asks for the whole list of conversations in three states of mind: when it attaches, to
+    learn where its own conversation ends; when a person types the word for it; and on the way out, to
+    know that everything it was told has been handled. Only the middle one is something a person asked
+    to see — the other two are read and dropped — so the answers are paired with the asking in the
+    order the kernel answers them, which is the order they were asked in.
+    """
+
+    SEED = "seed"
+    LINE = "line"
+    GOODBYE = "goodbye"
+
+
 class App:
     """One client of one kernel: its three tasks, and the exit code they add up to."""
 
@@ -103,7 +125,8 @@ class App:
     _tally: Tally
     _leaving: asyncio.Event
     _cursor: str | None
-    _seeding: bool
+    _listings: deque[_Asked]
+    _goodbye: asyncio.Event
     _stage: Stage
 
     def __init__(
@@ -148,9 +171,12 @@ class App:
         # frontend is looking at is the frontend's own state, so the kernel neither keeps it nor guesses
         # it: a message says which entry it continues, and ``None`` is a new root.
         self._cursor = None
-        # Whether the one listing this client asks for at startup has been answered yet: that answer is
-        # state, not news, so it is read rather than drawn.
-        self._seeding = False
+        # The listings this client has asked for and not yet been answered, in the order it asked: an
+        # answer to one of these is state, not news, so the client has to know which of the three it is
+        # reading (:class:`_Asked`). The last one is the goodbye, whose answer is what lets the loop
+        # leave knowing it has read everything it asked for.
+        self._listings = deque()
+        self._goodbye = asyncio.Event()
         # What the kernel is saying right now, and where this conversation stands while it says it: only
         # a client knows what a person has already read, so only a client can say what a message looks
         # like when it arrives in pieces (E94), whether it has a screen to grow one on (E100), and how
@@ -197,7 +223,9 @@ class App:
             return GONE
         if not self.client.submit(Open(session=self.session)):
             return GONE
-        self._seeding = self.client.submit(ListSessions())
+        self._listings.append(_Asked.SEED)
+        if not self.client.submit(ListSessions()):
+            return GONE
         if not self.client.submit(Offer(tools=self.tools.offer)):
             return GONE
         if self.policy.away_danger:
@@ -275,9 +303,10 @@ class App:
         The lane ending is not a failure: ``KernelLeaving`` is a message like any other, and the end of
         the stream after it is the kernel's way of saying the connection is over (R2.1 D20).
 
-        The first listing of a connection is the exception: this client asked for it, so it answers with a
-        cursor rather than a line. It is read before anything is drawn and acknowledged like everything
-        else, so the transport's watermark does not depend on who wanted the answer.
+        A listing is the exception, and it is not one thing: this client asks for it in the three states of
+        mind :class:`_Asked` names, so the answer is either a cursor, a line, or nothing at all. It is
+        read before anything is drawn and acknowledged like everything else, so the transport's watermark
+        does not depend on who wanted the answer.
 
         What reaches the screen is not one line per event: an answer arriving in pieces is gathered until
         a line of it is whole, and the whole message that follows those pieces is not drawn at all
@@ -285,10 +314,7 @@ class App:
         """
         async for event in self.client.events():
             self._seen = max(self._seen, event.seq)
-            if self._seeding and isinstance(event, SessionsListed):
-                self._seeding = False
-                self._cursor = _ends_at(event, self.session)
-            else:
+            if not self._swallowed(event):
                 await self._drawn(event)
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
                     self._cursor = event.ends_at
@@ -304,7 +330,29 @@ class App:
                     self._cursor = event.entry
             self.client.ack(Ack(seq=event.seq))
         self._leaving.set()
-        self._leaving.set()
+
+    def _swallowed(self, event: AnyEvent) -> bool:
+        """Take one listing this client asked for off its own list, and answer whether nobody asked for it.
+
+        Two of the three listings are the client's own business: the one it asks on attaching, whose
+        answer is where its conversation ends, and the one it asks on the way out, whose answer is "what
+        you said has been handled" (:meth:`_drained`). The third — the word a person typed — is drawn
+        like any other answer, which is why this answers ``False`` for it rather than consuming it
+        silently.
+
+        Answering *in order* is what makes the three tellable apart: the kernel answers commands one at
+        a time, so the listings come back in the order they were asked for.
+        """
+        if not isinstance(event, SessionsListed) or not self._listings:
+            return False
+        match self._listings.popleft():
+            case _Asked.SEED:
+                self._cursor = _ends_at(event, self.session)
+            case _Asked.GOODBYE:
+                self._goodbye.set()
+            case _Asked.LINE:
+                return False
+        return True
 
     async def _drawn(self, event: AnyEvent) -> None:
         """One event on the screen: the conversation's rows, and this client's own rows about it.
@@ -390,6 +438,7 @@ class App:
                         if code is not None:
                             return code
                 case EndOfInput():
+                    await self._drained()
                     return LEFT
                 case Cancelled():
                     self._stopped_by_person()
@@ -397,10 +446,42 @@ class App:
                     # A question took the cursor; it has already asked, and the editor holds the buffer.
                     continue
 
+    async def _drained(self) -> None:
+        """Read what is still on its way, because the end of the input is not a hang-up.
+
+        A command has no receipt and its answer is an event (E134), so "I stopped typing" and "I stopped
+        listening" are not the same thing: a pipe written in one go — ``printf '/sessions\\n' | plyngent``
+        — would otherwise end the program one event before the answer that line asked for was drawn.
+
+        The wait is one more listing, asked after everything else, and the reason it is enough is the
+        shape of the kernel's command lane: it handles one command at a time, in the order they arrived,
+        and it is what emits. So the answer to this listing arriving proves every command before it has
+        been handled, and reading it in order proves their answers have been read. It is asked and
+        dropped rather than drawn — which conversations this kernel serves is this client's own business
+        on the way out, not news for the person.
+
+        A connection that is already gone answers nothing, and that is not a reason to wait: the event
+        lane ending is the other way out, and whichever comes first ends the goodbye.
+        """
+        self._listings.append(_Asked.GOODBYE)
+        if not self.client.submit(ListSessions()):
+            _ = self._listings.pop()
+            return
+        left = asyncio.create_task(self._leaving.wait())
+        answered = asyncio.create_task(self._goodbye.wait())
+        _, pending = await asyncio.wait({left, answered}, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            _ = task.cancel()
+            _ = await asyncio.gather(task, return_exceptions=True)
+
     async def _said(self, line: str) -> int | None:
         """One line's meaning, and the exit code it earns if the connection was gone."""
         match decode(line, self.catalog, session=self.session):
             case Runs(command=command):
+                if isinstance(command, ListSessions):
+                    # The one command whose answer is a listing, and a listing is read rather than told,
+                    # so which answer this will be has to be known before it arrives (:class:`_Asked`).
+                    self._listings.append(_Asked.LINE)
                 return None if self.client.submit(self._continuing(command)) else GONE
             case Composes(session=session):
                 composed = await self.editor.compose()

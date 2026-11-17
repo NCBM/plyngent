@@ -33,9 +33,9 @@ async def test_a_pipe_is_a_session_from_a_command_to_the_end_of_its_input(tmp_pa
 
     What the person reads is what a terminal would have read, less the drawing: the command's listing
     goes to the notices because that is where a complaint goes, and the refusal goes to the screen
-    because that is where what the kernel *said* goes. The question is asked progressively — the pipe
-    is fed one line at a time and the story waits for the answer to land — because a file written all
-    at once would end the program before it had drawn anything.
+    because that is where what the kernel *said* goes. The pipe is fed one line at a time and the story
+    waits for each answer to land, which keeps the two claims apart: what a command answers and what a
+    message answers. A pipe written in one go is the story below.
     """
     reading, writing = os.pipe()
     with os.fdopen(reading, "r", encoding="utf-8") as stream, os.fdopen(writing, "w", encoding="utf-8") as feed:
@@ -63,6 +63,38 @@ async def test_a_pipe_is_a_session_from_a_command_to_the_end_of_its_input(tmp_pa
     assert code == 0, "the end of the input is a goodbye, not a failure"
     assert "commands you can type:" in err.getvalue()
     assert out.getvalue().startswith("turn refused:"), "and the message it sent reached the kernel"
+
+
+async def test_a_pipe_written_in_one_go_still_reads_what_it_asked_for(tmp_path: Path) -> None:
+    """The whole input at once, then the end of it: the answer the last line asked for is still read.
+
+    This is the case the loop has to wait for, and the reason it is a case at all: a command has no
+    receipt and its answer is an event, so a program that left the moment the last line was read would
+    drop the answer that line asked for. Here the pipe is written and closed before the program has said
+    anything, so everything the person said is waiting when the loop starts.
+
+    The listing arrives once: what the line asked for is drawn, and the last listing — the one the
+    goodbye waits on — is this client's own business and is dropped.
+    """
+    reading, writing = os.pipe()
+    with os.fdopen(reading, "r", encoding="utf-8") as stream, os.fdopen(writing, "w", encoding="utf-8") as feed:
+        _ = feed.write("/sessions\n")
+        _ = feed.flush()
+        feed.close()
+        kernel = await install(tmp_path / "workspace", journal=tmp_path / "journal.db")
+        try:
+            out, err = io.StringIO(), io.StringIO()
+            editor = PlainEditor(session="main", stream=stream, err=err)
+            catalog = build(kernel.client.manifest, session="main")
+            app = App(kernel.client, session="main", catalog=catalog, editor=editor, out=out, err=err)
+            code = await app.run()
+        finally:
+            await kernel.close()
+
+    assert code == 0
+    asked = out.getvalue()
+    assert asked.count("sessions:") == 1, "the answer was drawn once, and the goodbye's was not"
+    assert "main" in asked, "and it is the listing the person asked for"
 
 
 async def _until(stream: TextIO, wanted: str) -> None:
