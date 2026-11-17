@@ -74,7 +74,9 @@ _VIEW = ToolCatalog().view(())
 
 def _env(root: Path) -> Env:
     host = _Host(Workspace(root), NoSink())
-    return Env(cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, "tool-1", tools=_VIEW)
+    return Env(
+        cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW
+    )
 
 
 async def test_a_workspace_that_is_not_a_repository_is_answered_rather_than_refused(tmp_path) -> None:

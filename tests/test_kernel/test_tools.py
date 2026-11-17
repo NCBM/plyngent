@@ -72,11 +72,11 @@ _VIEW = ToolCatalog().view(())
 def _env(root: Path, *, trash_enabled: bool = True) -> Env:
     """A call's world as the executor builds it, around a host rather than around a turn."""
     host = Host(root, trash_enabled=trash_enabled)
-    return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tools=_VIEW)
+    return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW)
 
 
 async def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
-    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1", tools=_VIEW)
+    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1", tool="probe", tools=_VIEW)
 
     assert env.workspace.root == tmp_path.resolve(), "a declared resource answers"
     with pytest.raises(AttributeError, match="pty"):

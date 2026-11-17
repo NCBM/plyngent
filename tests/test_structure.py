@@ -26,6 +26,7 @@ from plyngent.kernel.access import AccessMode
 from plyngent.kernel.catalog import BUILTIN, EVERY, NOBODY, RESIDENT, ToolCatalog, ToolView
 from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
+from plyngent.kernel.journal import _decode, _encode
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
 from plyngent.kernel.lm.route import Route, RouteWeb
@@ -64,11 +65,13 @@ from plyngent.kernel.trail import (
     SUMMARY_HEADING,
     AnyRecord,
     Attempt,
+    Consent,
     Effect,
     StateChange,
     Summary,
     Withheld,
     as_message,
+    kind_of,
 )
 from plyngent.kernel.workspace import Denied, OutsideWorkspace
 from plyngent.wire.ask import SEVERITIES, Severity
@@ -754,23 +757,44 @@ def _catalog():
 
 
 def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
-    assert get_args(AnyRecord.__value__) == (AnyMessage, StateChange, Summary, Withheld, Attempt, Effect), (
-        "a record nobody classified would be a writer nobody asked about"
-    )
+    assert get_args(AnyRecord.__value__) == (
+        AnyMessage,
+        StateChange,
+        Summary,
+        Withheld,
+        Attempt,
+        Effect,
+        Consent,
+    ), "a record nobody classified would be a writer nobody asked about"
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
     assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
-    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt(), Effect())] == [
+    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt(), Effect(), Consent())] == [
+        None,
         None,
         None,
         None,
         None,
     ], (
-        "what a session knows, what it stopped showing, what became of a request and what a call left "
-        "different are not things a model reads"
+        "what a session knows, what it stopped showing, what became of a request, what a call left "
+        "different and what a person was asked are not things a model reads"
     )
     says = as_message(Summary(text="it was settled"))
 
     assert says is not None and says.text.startswith(SUMMARY_HEADING), "a summary is announced as one"
+
+
+def test_every_record_written_is_a_record_read_back() -> None:
+    """The tag is a column and the reader is one branch per kind, so a new kind needs a new branch.
+
+    Nothing else would notice: a row of a kind the reader does not know decodes as a message and fails
+    there, which is a journal that cannot be listed — so the shape is checked here, once, over the whole
+    union rather than by each writer remembering.
+    """
+    for kind in get_args(AnyRecord.__value__):
+        if kind is AnyMessage:
+            continue
+        record = kind()
+        assert _decode(kind_of(record), _encode(record)) == record, f"{kind.__name__} is written and not read"
 
 
 def test_the_four_outcomes_are_the_words_the_contract_carries() -> None:

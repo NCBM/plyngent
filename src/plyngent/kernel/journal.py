@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
@@ -42,12 +43,14 @@ from platformdirs import user_data_path
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
 from plyngent.kernel.trail import (
     ATTEMPT_TAG,
+    CONSENT_TAG,
     EFFECT_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
     WITHHELD_TAG,
     AnyRecord,
     Attempt,
+    Consent,
     Effect,
     Entry,
     Shape,
@@ -60,7 +63,7 @@ from plyngent.kernel.trail import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 #: The path that asks for a journal which lasts only as long as the process: a conversation nobody meant
 #: to keep. Every other path is a file this program opens and migrates.
@@ -607,24 +610,28 @@ def _encode(payload: AnyRecord) -> str:
     return msgspec.json.encode(payload).decode()
 
 
-def _decode(tag: str, payload: str) -> AnyRecord:
-    """One record back out of its row, by the tag the row already keeps for exactly this reason.
+#: The type each tag is read back as: one row per kind of record, which is what a new kind of row adds.
+#:
+#: A table rather than a branch, because the tag is already a column: ``msgspec`` refuses a union whose
+#: members disagree about the name of their tag field, and these do — a message is tagged ``role`` while
+#: every other kind is tagged ``type`` — so reading one row is a lookup and no JSON guessing. A tag
+#: nothing here knows is read as a message, which is the only other thing a row could be.
+_RECORDS: Mapping[str, type[AnyRecord]] = {
+    STATE_CHANGE_TAG: StateChange,
+    SUMMARY_TAG: Summary,
+    ATTEMPT_TAG: Attempt,
+    WITHHELD_TAG: Withheld,
+    EFFECT_TAG: Effect,
+    CONSENT_TAG: Consent,
+}
 
-    Not a union decode: ``msgspec`` refuses a union whose members disagree about the name of their tag
-    field, and the kinds of record do — a message is tagged ``role`` while a state change and a summary
-    are tagged ``type``. The tag is a column here, so reading it is one branch and no JSON guessing.
-    """
-    if tag == STATE_CHANGE_TAG:
-        return msgspec.json.decode(payload, type=StateChange)
-    if tag == SUMMARY_TAG:
-        return msgspec.json.decode(payload, type=Summary)
-    if tag == ATTEMPT_TAG:
-        return msgspec.json.decode(payload, type=Attempt)
-    if tag == WITHHELD_TAG:
-        return msgspec.json.decode(payload, type=Withheld)
-    if tag == EFFECT_TAG:
-        return msgspec.json.decode(payload, type=Effect)
-    return _message(payload)
+
+def _decode(tag: str, payload: str) -> AnyRecord:
+    """One record back out of its row, by the tag the row already keeps for exactly this reason."""
+    known = _RECORDS.get(tag)
+    if known is None:
+        return _message(payload)
+    return msgspec.json.decode(payload, type=known)
 
 
 def _message(payload: str) -> AnyMessage:

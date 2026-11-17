@@ -273,7 +273,7 @@ class ToolExecutor:
         if turned_down is not None:
             return turned_down
         reads, writes = _locks(node.held)
-        env = Env(ctx, spec.uses, node.call, tools=view)
+        env = Env(ctx, spec.uses, node.call, tool=spec.name, tools=view)
         try:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.
@@ -351,7 +351,12 @@ class ToolExecutor:
             return None
         question = f"allow {spec.name}" + (f" on {subjects}" if subjects else "") + "?"
         answer = as_agreed(
-            await ctx.ask(Confirmation(prompt=question, severity=asking.severity), call=node.call, at="approve")
+            await ctx.ask(
+                Confirmation(prompt=question, severity=asking.severity),
+                tool=spec.name,
+                call=node.call,
+                at="approve",
+            )
         )
         if not answer.accepted:
             return ToolResult.unagreed(answer, about="this call")

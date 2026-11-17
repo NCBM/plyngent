@@ -60,13 +60,16 @@ class Env:
     the call would be a second way to reach the same resources that no declaration is checked against.
     """
 
-    __slots__ = ("_call", "_ctx", "_tools", "_uses")
+    __slots__ = ("_call", "_ctx", "_tool", "_tools", "_uses")
 
-    def __init__(self, ctx: TurnCtx, uses: Res, call: str, *, tools: ToolView) -> None:
+    def __init__(self, ctx: TurnCtx, uses: Res, call: str, *, tool: str, tools: ToolView) -> None:
         self._ctx = ctx
         self._uses = uses
         #: This call's segment of the turn's address — ``tool-1`` in ``3/r0/tool-1/proc-0``.
         self._call = call
+        #: The tool being run, which is what a question asked from here is recorded under: "somebody
+        #: asked" is not an audit until it says who.
+        self._tool = tool
         #: What this session can reach, as the round it runs in saw it. Handed in rather than reached
         #: for, because the answer belongs to one round's request and nothing here may ask twice.
         self._tools = tools
@@ -252,7 +255,7 @@ class Env:
         """
         if not self._uses & ASKING:
             self._refused("ask", ASKING)
-        return await self._ctx.ask(question, call=self._call, at=at)
+        return await self._ctx.ask(question, tool=self._tool, call=self._call, at=at)
 
     @property
     def client(self) -> Client:

@@ -63,7 +63,7 @@ class _Ctx:
     def site(self, *segments: str) -> AskSite:
         return AskSite(session="s1", turn=1, scope="/".join(("1", "r0", *segments)))
 
-    async def ask(self, question: AnyAsk, *, call: str = "", at: str = "") -> AnyAnswer:
+    async def ask(self, question: AnyAsk, *, tool: str, call: str = "", at: str = "") -> AnyAnswer:
         """Put the question to this host's channel: what a turn does, without a journal to write to."""
         return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
 
@@ -77,7 +77,9 @@ _VIEW = ToolCatalog().view(())
 
 def _env(root: Path, *, human: Human | None = None) -> Env:
     host = _Host(Workspace(root), human if human is not None else NoSink())
-    return Env(cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, "tool-1", tools=_VIEW)
+    return Env(
+        cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW
+    )
 
 
 async def test_a_directory_outside_the_workspace_is_refused_with_the_tool_that_lifts_it(tmp_path) -> None:

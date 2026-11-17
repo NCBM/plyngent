@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from plyngent.kernel.pty.registry import Limits
+from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
@@ -316,6 +317,16 @@ async def test_the_humans_answer_reaches_the_terminal_and_is_reported_nowhere_el
     ], "what the kernel did with the answer, and not the answer"
     assert not any("s3cret" in line for line in story.screen() + story.notices()), (
         "the secret went from the person to the terminal: it is not on the screen they are reading"
+    )
+
+    rows = await story.host.trail.entries(story.session)
+    asked_once = [entry.payload for entry in rows if isinstance(entry.payload, Consent)]
+    assert [(row.kind, row.severity, row.by, row.accepted) for row in asked_once] == [("secret", "", "human", None)], (
+        "a secret is a question with no level and no yes-or-no, and the journal says that it happened"
+    )
+    assert asked_once[0].question == "the passphrase", "the label, because a label is what it was shown"
+    assert not any("s3cret" in f"{row}" for row in asked_once), (
+        "a secret's value is never carried into a record (R2.1 D6)"
     )
 
 

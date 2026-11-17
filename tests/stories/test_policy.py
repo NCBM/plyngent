@@ -11,14 +11,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.cli.policy import Policy
+from plyngent.kernel.trail import Consent
 from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from plyngent.kernel.trail import Consent as Row
     from tests.stories.driver import Story
 
     type Scripted = Callable[..., Awaitable[Story]]
+
+
+async def _answered(story: Story) -> tuple[Row, ...]:
+    """Every question this conversation put, and who answered it, as the journal kept it."""
+    rows = await story.host.trail.entries(story.session)
+    return tuple(entry.payload for entry in rows if isinstance(entry.payload, Consent))
 
 
 async def test_a_policy_that_says_yes_stops_at_the_question_nothing_undoes(story_with: Scripted) -> None:
@@ -44,6 +52,11 @@ async def test_a_policy_that_says_yes_stops_at_the_question_nothing_undoes(story
         "yolo: allowed",
         "yolo: allowed",
     ], "every question a policy answered leaves a line saying which policy and which way"
+    assert [(row.tool, row.by, row.policy, row.accepted) for row in await _answered(story)] == [
+        ("write_file", "policy", "yolo", True),
+        ("edit_replace", "policy", "yolo", True),
+        ("delete_path", "human", "", False),
+    ], "and the journal says the same thing without the screen, policy name and all"
 
 
 async def test_away_answers_each_question_as_its_own_silence_would_have(story_with: Scripted) -> None:

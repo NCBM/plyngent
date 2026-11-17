@@ -73,7 +73,7 @@ class _Ctx:
     def site(self, *segments: str) -> AskSite:
         return AskSite(session=self.session.session_id, turn=1, scope="/".join(("1", "r0", *segments)))
 
-    async def ask(self, question: AnyAsk, *, call: str = "", at: str = "") -> AnyAnswer:
+    async def ask(self, question: AnyAsk, *, tool: str, call: str = "", at: str = "") -> AnyAnswer:
         """Put the question to this host's channel: what a turn does, without a journal to write to."""
         return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
 
@@ -92,7 +92,9 @@ def _env(root: Path, registry: PtyRegistry, *, human: Human | None = None) -> En
         pty_policy=PtyPolicy(),
         human=human if human is not None else NoSink(),
     )
-    return Env(cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1", tools=_VIEW)
+    return Env(
+        cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW
+    )
 
 
 @pytest.fixture

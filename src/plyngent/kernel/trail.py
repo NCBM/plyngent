@@ -198,8 +198,8 @@ class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
     ``external`` and ``approvals`` are the other two things a result knows about itself, carried up for
     the same reason: what a call did should not be readable only from an event lane that has scrolled
     away. They are **not** the audit of who agreed — an approval here is a grant a yes was kept for, not
-    every question that was put — so "which danger questions did a policy answer" is still a question
-    this row cannot answer (§10.13, E111).
+    every question that was put. That audit is :class:`Consent`, which is one row per question, and it
+    is the only thing that can answer "which danger questions did a policy answer" (§10.13, E111).
     """
 
     turn: int = 0
@@ -213,16 +213,54 @@ class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
     approvals: tuple[str, ...] = ()
 
 
+#: The tag one question put to a person carries. Its own record kind, and the fifth of them: a state change
+#: is what a session knows, a summary is what a conversation was compressed into, an attempt is what became
+#: of a request that was never answered, an effect is what one call left different, and a consent is what
+#: one person was asked.
+CONSENT_TAG = "consent"
+
+
+class Consent(Struct, tag=CONSENT_TAG, frozen=True, kw_only=True):
+    """One question the kernel put to a person, and the answer that came back.
+
+    An audit row, and the one record that answers "which danger questions did a policy answer": an
+    :class:`Effect` says which approvals a call *earned*, a refusal earns none, and neither says what
+    was asked. It is written by the one place that asks (:meth:`~plyngent.kernel.session.TurnCtx.ask`),
+    so a question cannot be answered without a row — and it is a **root**, because a question is not a
+    place a conversation continues from, exactly like :class:`Attempt`.
+
+    ``kind``, ``severity`` and ``by`` are closed sets kept as **text**, for the reason :class:`Attempt`
+    spells its two out: a row written by today's build stays readable when one of those sets grows a
+    member. ``severity`` is the question's level and is empty for the three kinds that are not yes or
+    no; ``accepted`` is a confirmation's answer and ``None`` for those same three, because "was this
+    allowed" is a question only a confirmation asks.
+
+    ``question`` is the label that was put to the person and nothing else: a passphrase typed into a
+    terminal is carried back to where it was needed and nowhere else (R2.1 D6), so a secret's row says
+    that a secret was asked and never what it was.
+    """
+
+    turn: int = 0
+    call: str = ""
+    tool: str = ""
+    kind: str = ""
+    severity: str = ""
+    question: str = ""
+    by: str = ""
+    policy: str = ""
+    accepted: bool | None = None
+
+
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
-#: compressed into, what it has stopped showing, what became of a request that was never answered, and
-#: what one call left different.
-type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect
+#: compressed into, what it has stopped showing, what became of a request that was never answered, what
+#: one call left different, and what one person said when they were asked.
+type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
     """What a model reads of one record, or ``None`` when it is not a record a model reads.
 
-    Four records have a meaning of their own and none is a message. A state change is a fact about the
+    Five records have a meaning of their own and none is a message. A state change is a fact about the
     session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
     the heading saying what it is, because a model handed an unannounced block of prose as its own history
     would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
@@ -230,11 +268,12 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     bookkeeping of the other kind — it does not speak, it decides what of the rest is spoken
     (:meth:`~plyngent.kernel.trail.Trail.derive` applies it). An effect is bookkeeping a person reads:
     the result above it already told the model what happened, and what a path used to hold is not the
-    conversation.
+    conversation. A consent is bookkeeping of the same sort, from the other side of the wire: the model is
+    not told what a person agreed to before its call ran, and a person reading the row is.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange | Attempt | Withheld | Effect):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent):
         return None
     return record
 
@@ -258,11 +297,15 @@ def preview(record: AnyRecord) -> str:
     """One line of what this row says, for somebody choosing among rows rather than reading them.
 
     A record a model reads says its own text, and a summary says the text it stands for — which is the one
-    the person looking for a place to continue from is actually looking for. Bookkeeping has no words of
-    its own (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
+    the person looking for a place to continue from is actually looking for. A consent says the question
+    it was, because "consent" alone is a row nobody can act on: which question it was is the whole of what
+    a person reading their own log came for. The rest of the bookkeeping has no words of its own
+    (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
     """
     if isinstance(record, Summary):
         said = record.text
+    elif isinstance(record, Consent):
+        said = record.question
     else:
         message = as_message(record)
         said = "" if message is None else message.text

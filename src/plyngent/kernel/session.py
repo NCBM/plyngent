@@ -32,8 +32,8 @@ from plyngent.kernel.cancel import CancelToken, Scope
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
 from plyngent.kernel.host import Host  # noqa: TC001
 from plyngent.kernel.reads import Reads
-from plyngent.kernel.trail import StateChange
-from plyngent.wire.ask import AskSite
+from plyngent.kernel.trail import Consent, StateChange
+from plyngent.wire.ask import Agreed, AskSite, Confirmation
 from plyngent.wire.event import TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
 
@@ -117,18 +117,42 @@ class TurnCtx:
         """
         return AskSite(session=self.session.session_id, turn=self.turn_id, scope=str(self.address(*segments)))
 
-    async def ask(self, question: AnyAsk, *, call: str = "", at: str = "") -> AnyAnswer:
-        """Put one question to whoever is outside, and answer what came back.
+    async def ask(self, question: AnyAsk, *, tool: str, call: str = "", at: str = "") -> AnyAnswer:
+        """Put one question to whoever is outside, write down what came back, and answer it.
 
         The one place a question leaves the kernel: a tool reaches it through
         :meth:`~plyngent.kernel.env.Env.ask`, the executor through its own approval, and nothing else
-        asks — so "this process asked somebody" has one meaning, and no second road can grow beside it.
+        asks — so "this process asked somebody" has one meaning, no second road can grow beside it, and
+        no question can be answered without a :class:`~plyngent.kernel.trail.Consent` row.
 
-        ``call`` is the call's segment of the turn's address and ``at`` is the part of that call the
-        question belongs to (``gate``, ``consent``, ``approve``). The two build the question's place,
-        ``3/r0/tool-1/gate``, so a frontend holding several conversations shows it under the right one.
+        ``tool`` names who asked and ``call`` is the call's segment of the turn's address — the same two
+        the row carries — while ``at`` is the part of that call the question belongs to (``gate``,
+        ``consent``, ``approve``). The place the question is put under is built from ``call`` and ``at``
+        and nothing else, so where a frontend shows it and what the journal says about it cannot
+        disagree.
+
+        The row is written **after** the answer, because ``by`` is a fact about an answer and not about
+        a question: a question nobody got to answer — the turn was stopped while it was out — leaves no
+        row, and every row is a row about something a person, a policy or a silence said.
         """
-        return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
+        site = self.site(*(part for part in (call, at) if part))
+        answer = await self.host.human.put(question, site=site)
+        _ = await self.host.trail.append(
+            self.session.session_id,
+            Consent(
+                turn=self.turn_id,
+                call=call,
+                tool=tool,
+                kind=str(question.__struct_config__.tag),
+                severity=str(question.severity) if isinstance(question, Confirmation) else "",
+                question=question.prompt,
+                by=str(answer.by),
+                policy=answer.policy,
+                accepted=answer.accepted if isinstance(answer, Agreed) else None,
+            ),
+            turn=self.turn_id,
+        )
+        return answer
 
     def round_scope(self) -> Scope:
         """The cancellation handle for the round itself."""
