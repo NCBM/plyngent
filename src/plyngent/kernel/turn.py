@@ -37,10 +37,10 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Part, Picture, Reply, Request, Result, User
-from plyngent.kernel.notices import LIMIT
+from plyngent.kernel.notices import ELIDED, LIMIT, elided, elision_summary
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
-from plyngent.kernel.trail import Attempt, Effect, Notice, Summary, TurnEnded
+from plyngent.kernel.trail import BY_BUDGET, Attempt, Effect, Notice, Summary, TurnEnded, Withheld, as_message
 from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.wire.event import (
     AnswerCut,
@@ -49,6 +49,7 @@ from plyngent.wire.event import (
     AssistantThought,
     Compacted,
     Noticed,
+    Pruned,
     TurnFinished,
     TurnKind,
     TurnStarted,
@@ -56,16 +57,67 @@ from plyngent.wire.event import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Sequence
+
     from plyngent.kernel.catalog import ToolCatalog
     from plyngent.kernel.executor import ToolExecutor
-    from plyngent.kernel.model import AnyMessage
+    from plyngent.kernel.model import AnyMessage, ToolDecl
     from plyngent.kernel.notices import Pending
     from plyngent.kernel.session import TurnCtx
-    from plyngent.kernel.trail import AnyRecord
+    from plyngent.kernel.trail import AnyRecord, Entry
     from plyngent.wire.event import AnyEvent
 
 #: Why a turn that ended without being cancelled did not run to its own end.
 FAILED = "the turn failed"
+
+#: The reason written on a checkpoint the budget asked for, so a reader of the log can tell it from a
+#: person's prune without decoding who asked (:data:`plyngent.kernel.trail.BY_BUDGET` says that).
+OUTGREW = "the conversation outgrew what this route can hold"
+
+
+class _TooLongError(Exception):
+    """The conversation does not fit the room this route gives it, and nothing more can be put aside.
+
+    Not a ``ModelFailed``: no request was made, so there is no attempt to write down — the turn ended
+    before it asked anything. It becomes a ``LIMIT`` turn-end and one sentence (:meth:`TurnRunner.run`).
+    """
+
+
+def _said(payload: AnyRecord) -> bool:
+    """Whether this row is something one of the two speakers said, rather than a line about the log.
+
+    A summary and a reminder project to messages as well, and neither is a round's: one is the compressed
+    past, which a budget that hid it would be hiding the beginning of the conversation to make room for
+    its end, and the other is the harness speaking at a boundary it chose.
+    """
+    return isinstance(payload, User | Assistant | Result)
+
+
+def _rounds(
+    chain: Sequence[Entry],
+    *,
+    hidden: Collection[str],
+    skipping: int,
+) -> list[list[tuple[Entry, AnyMessage]]]:
+    """The chain's still-shown messages, oldest first, grouped into the rounds that wrote them.
+
+    A round is the unit a checkpoint works in, because it is the unit both readers already have: half of
+    one is a question with no answer or an answer to nothing. ``hidden`` is what an earlier checkpoint
+    took away, and ``skipping`` is the turn being run — a round that has not finished being written is
+    not a round yet, and the person's line it began with is the question being answered.
+    """
+    rounds: list[list[tuple[Entry, AnyMessage]]] = []
+    for row in reversed(chain):
+        if row.id in hidden or row.turn == skipping or not _said(row.payload):
+            continue
+        message = as_message(row.payload)
+        if message is None:  # pragma: no cover — every record `_said` keeps projects to a message
+            continue
+        if rounds and rounds[-1][0][0].turn == row.turn:
+            rounds[-1].append((row, message))
+        else:
+            rounds.append([(row, message)])
+    return rounds
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +200,7 @@ class TurnRunner:
                     state = await self._append(state, User(text=text))
                 while True:
                     state = await self._told(state)
-                    request = await self.assemble(state)
+                    state, request = await self.assemble(state)
                     reply = await self.call(state, request)
                     state = await self.dispatch(state, reply)
                     if not state.more:
@@ -156,6 +208,11 @@ class TurnRunner:
                     state = replace(state, ctx=state.ctx.next_round())
         except Cancelled as stopped:
             reason = str(stopped.reason)
+        except _TooLongError as crowded:
+            # Nothing was asked, so this is not an attempt: the turn ends having said why it could not
+            # start, and the wall it hit is the one a person clears with `/compact` (E149).
+            failure = Failure.LIMIT
+            reason = str(crowded)
         except ModelFailed as unmet:
             # A model that could not be asked is a *result*, not a bug: the turn ends having done what
             # it could, and says which kind of trouble it met so a person can act on it (and a program
@@ -277,7 +334,7 @@ class TurnRunner:
             Summary(text=text, replaces=await self._replaced(ctx.session.session_id, state.cursor)),
             turn=ctx.turn_id,
         )
-        _ = await ctx.session.note_compaction()
+        _ = await ctx.session.note_history()
         self._emit(Compacted(session=ctx.session.session_id, entry=entry.id, chars=len(text)))
         return replace(state, cursor=entry.id, more=False)
 
@@ -301,7 +358,7 @@ class TurnRunner:
 
     # -- the stages ----------------------------------------------------------------
 
-    async def assemble(self, state: TurnState) -> Request:
+    async def assemble(self, state: TurnState) -> tuple[TurnState, Request]:
         """What the model is asked: the conversation up to ``cursor``, and the tools in name order.
 
         The conversation is the journal's projection rather than a list this turn kept up to date, so a
@@ -319,19 +376,139 @@ class TurnRunner:
         about *this* request. Which route answers is read at this boundary, so a ``SetRoute`` lands on the
         next round rather than on a turn that is half way through, and the key names the prefix by the
         session and the two counters that say where its prompt stands.
+
+        The answer is the *state* as well as the request, because fitting a conversation to its route may
+        write a row (:meth:`_fitted`): a checkpoint hides a stretch, so what the turn continues from is no
+        longer what it was handed.
         """
         ctx = state.ctx
-        trail = ctx.host.trail
-        messages = await trail.derive(ctx.session.session_id, state.cursor)
         view = self._catalog.view(ctx.session.disclosed)
         asked = ctx.host.routes.resolve(ctx.session.route)
-        return Request(
-            system=ctx.host.prompt.compose(view, continuing=self._carrying_on(state)),
-            messages=await self._seen(ctx, messages),
-            tools=view.prompts(),
+        system = ctx.host.prompt.compose(view, continuing=self._carrying_on(state))
+        tools = view.prompts()
+        state, messages = await self._fitted(state, system=system, tools=tools)
+        return state, Request(
+            system=system,
+            messages=messages,
+            tools=tools,
             route="" if asked is None else asked.name,
             cache_key=ctx.session.cache_key,
         )
+
+    async def _fitted(
+        self,
+        state: TurnState,
+        *,
+        system: str,
+        tools: tuple[ToolDecl, ...],
+    ) -> tuple[TurnState, tuple[AnyMessage, ...]]:
+        """The conversation this request may carry: all of it, or all of it that still fits.
+
+        A conversation has no size until somebody names a window, and only a route may: ``0`` is "this
+        endpoint never said", and a denominator nobody stated is not a small one, so an unbudgeted route
+        is sent its whole history however long it is.
+
+        When the room is stated and the request outgrows it, the oldest **whole rounds** are put aside —
+        a checkpoint, not a truncation (§10.4, E149). Three things that are decisions rather than
+        details: the cut is by round, because half a round is a question with no answer or an answer to
+        nothing; it goes *deep*, to half the room, because every checkpoint moves the prefix a provider
+        cached and a shallow cut would move it every round; and it is written down, so the same history
+        is read the same way twice and the entries are still there to travel back to. The line the model
+        reads about it is a notice the session owes, said here because this is a boundary where no
+        request is in flight.
+
+        What cannot be fitted even after that is the one case this refuses instead of guessing: a
+        conversation whose newest round alone is too big ends the turn with ``LIMIT`` rather than being
+        sent to a provider that would reject it, and rather than being pruned to nothing.
+        """
+        room = self._room(state)
+        messages = await self._shown(state)
+        size = estimate(messages, system=system, tools=tools)
+        if not room or size <= room:
+            return state, messages
+        targets = await self._put_aside(state, room=room, size=size)
+        if not targets:
+            msg = (
+                f"this conversation needs {size} tokens and this route holds {room}, and nothing in it is "
+                "old enough to put aside"
+            )
+            raise _TooLongError(msg)
+        ctx = state.ctx
+        entry = await ctx.host.trail.append(
+            ctx.session.session_id,
+            Withheld(targets=targets, reason=OUTGREW, by=BY_BUDGET),
+            begin_after=state.cursor,
+            turn=ctx.turn_id,
+        )
+        # Said outward as well as written: a client's own cursor is where its next message continues from,
+        # so a prune nobody announced is a stretch every other frontend would read back by growing from
+        # below it (E53's bug, second case).
+        self._emit(Pruned(session=ctx.session.session_id, entry=entry.id, targets=targets, reason=OUTGREW))
+        ctx.session.notices.say(
+            ELIDED,
+            elided(len(targets), by=BY_BUDGET),
+            summary=elision_summary(len(targets), by=BY_BUDGET),
+        )
+        # The elision is the second number a provider's prefix cache keys on: what the next prompt holds
+        # has changed, and a key that did not move would claim a prefix nobody answered for (§10.5).
+        _ = await ctx.session.note_history()
+        state = await self._told(replace(state, cursor=entry.id))
+        messages = await self._shown(state)
+        left = estimate(messages, system=system, tools=tools)
+        if left > room:
+            msg = (
+                f"this conversation still needs {left} tokens and this route holds {room}, even after "
+                f"putting {len(targets)} entries aside"
+            )
+            raise _TooLongError(msg)
+        return state, messages
+
+    def _room(self, state: TurnState) -> int:
+        """How many tokens one request may be, or ``0`` when this route never said what it can hold.
+
+        The room the answer will need is taken off the top: ``max_output`` is what a request is given for
+        what it is about to say, and a budget that forgot it would fill the window exactly and then be cut
+        off mid-sentence. A route whose window cannot even hold its own answer is a route whose numbers do
+        not describe it, and nothing is invented from them: it is treated as one that never said a window.
+        """
+        asked = state.ctx.host.routes.resolve(state.ctx.session.route)
+        if asked is None or asked.caps.context_window <= 0:
+            return 0
+        room = asked.caps.context_window - asked.caps.max_output
+        return max(0, room)
+
+    async def _put_aside(self, state: TurnState, *, room: int, size: int) -> tuple[str, ...]:
+        """Which entries to put aside: whole rounds, oldest first, until the rest fits in half the room.
+
+        Read off the chain every time rather than remembered, because "what is still shown" is a fact
+        about the log: an earlier checkpoint already hid a stretch, and what this one may hide is what
+        that one left.
+
+        Half the room is the target rather than the wall itself: a conversation pruned exactly to the edge
+        would be back at the wall within one answer, and every visit writes a row and moves a prefix.
+        """
+        ctx = state.ctx
+        rows = {row.id: row for row in await ctx.host.trail.entries(ctx.session.session_id)}
+        chain: list[Entry] = []
+        here = state.cursor
+        while here is not None and here in rows:
+            chain.append(rows[here])
+            here = rows[here].begin_after
+        hidden = {target for row in chain if isinstance(row.payload, Withheld) for target in row.payload.targets}
+        wanted, freed = size - room // 2, 0
+        targets: list[str] = []
+        for round_ in _rounds(chain, hidden=hidden, skipping=ctx.turn_id):
+            if freed >= wanted:
+                break
+            for row, message in round_:
+                targets.append(row.id)
+                freed += estimate((message,))
+        return tuple(targets)
+
+    async def _shown(self, state: TurnState) -> tuple[AnyMessage, ...]:
+        """The conversation as this route can read it, pictures and all — the value a request carries."""
+        ctx = state.ctx
+        return await self._seen(ctx, await ctx.host.trail.derive(ctx.session.session_id, state.cursor))
 
     def _carrying_on(self, state: TurnState) -> str:
         """The section a turn the kernel started itself carries, and nothing for any other turn.

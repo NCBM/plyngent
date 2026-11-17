@@ -719,7 +719,7 @@ class Serving:
         except ValueError:
             self.link.emit(CompactRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return
-        _ = await found.note_compaction()
+        _ = await found.note_history()
         self.link.emit(Compacted(session=session, entry=entry.id, chars=len(text)))
 
     async def _export(self, session: str, begin_after: str | None) -> None:
@@ -803,6 +803,10 @@ class Serving:
             elided(len(targets), by=BY_PERSON, reason=reason),
             summary=elision_summary(len(targets), by=BY_PERSON),
         )
+        # The conversation under the prompt moved, so the number a provider cache keys on moves with it:
+        # a prune is one of the things that makes a prefix miss, and a miss nobody counted is a miss
+        # nobody can account for (§10.5, E149).
+        _ = await found.note_history()
         self.link.emit(Pruned(session=session, entry=entry.id, targets=targets, reason=reason))
 
     # -- turns ---------------------------------------------------------------------

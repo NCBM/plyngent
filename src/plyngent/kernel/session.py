@@ -318,21 +318,21 @@ class Session(Component):
 
     @property
     def prompt_plan_epoch(self) -> int:
-        """How many times what the next prompt holds has changed — every compaction, so far.
+        """How many times what the next prompt holds has changed — a compaction, an elision, so far.
 
         The second of the two numbers a provider cache keys on (§10.5), and a separate one because the
-        two move for different reasons: a disclosure changes the tools block, and a compaction changes
-        the conversation under it. Keeping them apart is what makes a cache miss attributable to one of
-        them instead of to "something happened".
+        two move for different reasons: a disclosure changes the tools block, and a change to the
+        conversation under it — a summary written, a stretch put aside — changes the rest. Keeping them
+        apart is what makes a cache miss attributable to one of them instead of to "something happened".
         """
         return _epoch(self._state.get(PROMPT_PLAN))
 
-    async def note_compaction(self) -> int:
-        """Say a summary just changed what the next prompt holds, and answer the number it stands at.
+    async def note_history(self) -> int:
+        """Say the conversation under the prompt just changed, and answer the number it stands at.
 
-        Written by whoever wrote the summary, because the count lives beside the history it counts: a
-        session reopened after a compaction has to know the plan moved, or the first request of the new
-        process would claim a prefix no provider ever answered for.
+        Written by whoever changed it — the writer of a summary, the turn that checkpointed — because the
+        count lives beside the history it counts: a session reopened afterwards has to know the plan
+        moved, or the first request of the new process would claim a prefix no provider ever answered for.
         """
 
         def mutate(before: str | None) -> tuple[str | None, int]:

@@ -1,0 +1,99 @@
+"""A conversation that stops fitting the route it is on: what is put aside, and what is said about it.
+
+A budget is invisible until it acts, and when it acts it does two things a person can see: it writes a
+checkpoint — a prune row, and the line the model reads about it — and, when nothing can be put aside, it
+ends the turn at the wall instead of sending a request a provider would reject. Both are stories, because
+both are things this program does to a conversation somebody is having (E149).
+
+Every window here is a real one, and it has to be: this program's standing prompt — a persona, the
+playbook and thirteen tool declarations — is nearly six thousand tokens. The numbers below are chosen
+against that, and a turn that ends at the wall says so in its own line, so the arithmetic is never a
+guess a person has to make.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from plyngent.kernel.lm.caps import Caps
+from plyngent.kernel.lm.route import Route
+from plyngent.kernel.model import Note, User
+from plyngent.kernel.trail import NOTICE_MARKER
+from tests.stories.model import text
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from tests.stories.driver import Story
+
+    type Scripted = Callable[..., Awaitable[Story]]
+
+#: The checkpoint on the screen: the row, and how many entries it put aside.
+WRITTEN = re.compile(r"prune e\d+ written \((\d+) withheld\)")
+
+#: And the line the model is owed about it, said at the boundary where it can be read.
+NOTICED = re.compile(r"notice e\d+ written: \d+ earlier entries put aside to fit the window")
+
+#: What the model reads instead of the stretch: model-visible wording, so it is pinned here.
+ELISION = (
+    f"{NOTICE_MARKER}\n"
+    "Hidden from you: 2 earlier entries of this conversation, put aside because this conversation outgrew "
+    "the room this route gives it, and kept rather than lost. What you read below is not the whole "
+    "conversation, so do not assume that a decision or a result you cannot see did not happen."
+)
+
+#: An answer long enough that keeping it would not leave room for another one: twenty thousand characters
+#: is five thousand tokens, which is most of a seven thousand token window.
+LONG = "x" * 20_000
+
+
+def _route(name: str, *, window: int) -> Route:
+    """One endpoint that states what it can hold. Nothing answers at it: the scripted model does."""
+    return Route(
+        name=name,
+        dialect="messages",
+        base=f"http://{name}.invalid/v1",
+        model="m",
+        caps=Caps(max_output=64, context_window=window),
+    )
+
+
+async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_aside(story_with: Scripted) -> None:
+    """It is written down rather than trimmed away: a row, a line about it, and the entries still there."""
+    story = await story_with(text(LONG), text("done"), routes=(_route("roomy", window=7_000),), route="roomy")
+
+    await story.type("a first question")
+    await story.finished()
+    await story.type("a second question")
+    await story.finished()
+
+    assert story.requests()[0].messages == (User(text="a first question"),), (
+        "the first request carried the whole conversation, because it fitted"
+    )
+    assert any(WRITTEN.fullmatch(line) for line in story.screen()), (
+        f"a checkpoint says what it put aside: {story.screen()!r}"
+    )
+    assert any(NOTICED.fullmatch(line) for line in story.screen()), (
+        f"and the model is owed a line about it: {story.screen()!r}"
+    )
+    assert story.requests()[-1].messages == (User(text="a second question"), Note(text=ELISION)), (
+        "the round that no longer fitted is gone from what the model reads, and the hole it left is named"
+    )
+
+
+async def test_a_conversation_that_cannot_fit_at_all_ends_at_the_wall(story_with: Scripted) -> None:
+    """The floor: a window that cannot hold this program's own prompt is not a conversation to prune.
+
+    Pruning to nothing would be a request carrying an instruction and no history, which is not what the
+    person asked for; sending it would be a provider saying no. Saying so is the third answer.
+    """
+    story = await story_with(text("hello"), routes=(_route("narrow", window=1_000),), route="narrow")
+
+    await story.type("hi")
+    await story.until("turn 1 failed")
+
+    failed = [line for line in story.screen() if line.startswith("turn 1 failed")]
+    assert failed and "limit" in failed[0], f"the turn says where it stopped: {story.screen()!r}"
+    assert "needs" in failed[0] and "holds" in failed[0], "and how big it was against how big the room is"
+    assert story.requests() == (), "nothing was sent: a request that cannot be read back is not worth making"

@@ -83,10 +83,14 @@ async def test_the_context_row_says_a_share_when_the_route_stated_a_window(story
     E128 kept this row at an absolute number while ``Caps`` had no window to divide by; the number lives
     on the route announcement, so a route that stated one gets the share and a route that did not gets the
     count alone rather than a percentage of something this client made up.
+
+    The window is a real one and not a small fiction: a route whose window cannot even hold this
+    program's standing prompt — a persona, the playbook and thirteen tool declarations — is a route whose
+    every turn ends at the wall (E149).
     """
     story = await story_with(
-        Reply(text="hello", usage=Cost(prompt=250, completion=10)),
-        routes=(_route("roomy", window=1000),),
+        Reply(text="hello", usage=Cost(prompt=12500, completion=10)),
+        routes=(_route("roomy", window=50_000),),
         route="roomy",
     )
 
@@ -95,7 +99,7 @@ async def test_the_context_row_says_a_share_when_the_route_stated_a_window(story
 
     said = [line for line in story.notices() if "context" in line]
     assert said, story.notices()
-    assert all("context 250/1000 (25%)" in line for line in said), said
+    assert all("context 12500/50000 (25%)" in line for line in said), said
     assert not [line for line in said if "tokens" in line], "two numbers and a share, not three claims"
 
 
