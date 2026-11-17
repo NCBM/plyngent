@@ -258,17 +258,28 @@ def decode(line: str, catalog: Catalog, *, session: str) -> Intent:
     return _slash(line[len(SLASH) :], catalog, session=session)
 
 
-def help_text(catalog: Catalog, word: str | None = None) -> str:
-    """The listing, or one command's own help, from the same table the parser is built from."""
-    if word is not None:
-        tag = catalog.word(word)
-        if tag is not None:
-            return _help_of(catalog.offers[tag])
-        if word in READS:
-            return f"{SLASH}{word} {_read_usage(READS[word])}\n\n  {_read_summary(READS[word])}"
-        if word == TRAVELLED:
-            return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
-        return f"no command {SLASH}{word} here"
+def word_help(catalog: Catalog, word: str) -> str:
+    """One word's own help, as the word itself answers it (``/open --help``).
+
+    The one way a word describes itself, so the two are one function: a command's text is click's own,
+    rendered from the options the parser was built from, while a read word and the one word this client
+    answers itself have no command behind them and say their two lines here.
+
+    A word nobody has is a sentence rather than an exception: a person typed it on the other end.
+    """
+    tag = catalog.word(word)
+    if tag is not None:
+        return _help_of(catalog.offers[tag])
+    if word in READS:
+        kind = READS[word]
+        return f"{SLASH}{word} {_read_usage(kind)}\n\n  {_read_summary(kind)}"
+    if word == TRAVELLED:
+        return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
+    return f"no command {SLASH}{word} here"
+
+
+def help_text(catalog: Catalog) -> str:
+    """The listing: every word this client can spell, and the sentence that says what it is for."""
     spelled = [
         (f"{SLASH}{tag}" + (" <editor>" if entry.composes else _usage(entry)), entry.summary)
         for tag, entry in catalog.offers.items()
@@ -292,20 +303,36 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     """A line that begins with the slash: a word, then the arguments it was given."""
     said, _, rest = text.partition(" ")
     if not said or said == HELP:
-        # A bare slash asks what the word for asking does, so both are the same answer.
-        return Help(text=help_text(catalog, (rest.strip() or None) if said else None))
+        return _asking_help(said, rest, catalog)
     reading = READS.get(said)
     if reading is not None:
-        return _reading(said, reading, rest, session=session)
+        return _reading(said, reading, rest, catalog=catalog, session=session)
     if said == TRAVELLED:
-        return _travelling(rest)
+        return _travelling(rest, catalog=catalog)
     tag = catalog.word(said)
     if tag is None:
         return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
-    return _known(tag, catalog.offers[tag], rest, session=session)
+    return _known(tag, catalog.offers[tag], rest, catalog=catalog, session=session)
 
 
-def _reading(word: str, kind: type[AnyQuery], rest: str, *, session: str) -> Intent:
+def _asking_help(said: str, rest: str, catalog: Catalog) -> Intent:
+    """The listing — or a sentence saying that a word describes itself, and how to ask that word.
+
+    A bare slash asks what the word for asking does, so both are the same answer. A word after it used to
+    be answered here too, and that was two answers to one question: the word's own text is the one that
+    cannot go stale, because it is rendered from the options the parser was built from (E147).
+    """
+    asked = rest.strip().split(" ")[0].lstrip(SLASH) if rest.strip() else ""
+    if said and asked:
+        # The example is the word they asked about when this client has it, so the sentence points at the
+        # line that would actually answer them.
+        known = catalog.word(asked) is not None or asked in READS or asked == TRAVELLED
+        example = asked if known else "open"
+        return Wrong(text=f"{SLASH}{HELP} takes no argument; a word describes itself, as {SLASH}{example} --help")
+    return Help(text=help_text(catalog))
+
+
+def _reading(word: str, kind: type[AnyQuery], rest: str, *, catalog: Catalog, session: str) -> Intent:
     """A read word: the query it names, and the session it is about when it is about one.
 
     Click is not used here and that is not a shortcut: there is no command behind this word to derive a
@@ -317,7 +344,7 @@ def _reading(word: str, kind: type[AnyQuery], rest: str, *, session: str) -> Int
     except ValueError as exc:
         return Wrong(text=f"{SLASH}{word}: {exc}")
     if parts in (["--help"], ["-h"]):
-        return Help(text=help_text(Catalog(), word))
+        return Help(text=word_help(catalog, word))
     if not _scoped(kind):
         return Reads(query=_asks_about(kind, session)) if not parts else Wrong(text=f"{SLASH}{word} takes no argument")
     match parts:
@@ -339,7 +366,7 @@ def _read_summary(kind: type[Query]) -> str:
     return (kind.__doc__ or "").strip().splitlines()[0]
 
 
-def _travelling(rest: str) -> Intent:
+def _travelling(rest: str, *, catalog: Catalog) -> Intent:
     """Where to stand: one entry id, spelled as the option a person can see in the listing.
 
     One argument and no second: an entry is a name the kernel minted, so there is nothing here to
@@ -349,6 +376,8 @@ def _travelling(rest: str) -> Intent:
         parts = shlex.split(rest)
     except ValueError as exc:
         return Wrong(text=f"{SLASH}{TRAVELLED}: {exc}")
+    if parts in (["--help"], ["-h"]):
+        return Help(text=word_help(catalog, TRAVELLED))
     match parts:
         case ["--entry", entry] if entry:
             return Travels(entry=entry)
@@ -356,7 +385,7 @@ def _travelling(rest: str) -> Intent:
             return Wrong(text=f"{SLASH}{TRAVELLED} takes {TRAVEL_USAGE} and nothing else")
 
 
-def _known(tag: str, entry: Entry, rest: str, *, session: str) -> Intent:
+def _known(tag: str, entry: Entry, rest: str, *, catalog: Catalog, session: str) -> Intent:
     """A word this client can spell: either it wants an editor, or click does the parsing.
 
     The arguments are split like a shell's, so a quoted value stays one argument and an unquoted one is
@@ -372,7 +401,7 @@ def _known(tag: str, entry: Entry, rest: str, *, session: str) -> Intent:
             return Wrong(text=f"{SLASH}{tag} takes no argument: it opens an editor for the text")
         return Composes(session=session)
     if "--help" in args or "-h" in args:
-        return Help(text=_help_of(entry))
+        return Help(text=word_help(catalog, tag))
     return _parsed(tag, entry, args)
 
 
@@ -420,7 +449,7 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
 
     ``sole`` is whether this command's whole argument is the one field besides ``session``: a word with a
     single value takes it bare (``/goal on``), because an option for it would be a name a person has to
-    type to say a word they already know (§0.13, E117).
+    type to say a word they already know (E146).
     """
     document = _object(json.loads(spec.args))
     name = _text(document.get("$ref")).rpartition("/")[2]
@@ -591,7 +620,7 @@ def _chosen(entry: Entry) -> tuple[str, ...]:
     """The values a command's bare argument accepts, and nothing when it has no such argument.
 
     Read from the same click command the parser uses, so a word that grew or lost its closed set cannot
-    disagree with what completion offers (§0.13, E117).
+    disagree with what completion offers (E147).
     """
     for param in entry.command.get_params(click.Context(entry.command)):
         if isinstance(param, click.Argument) and isinstance(param.type, click.Choice):

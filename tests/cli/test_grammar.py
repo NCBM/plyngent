@@ -12,7 +12,20 @@ from __future__ import annotations
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Travels, Wrong, build, decode, help_text
+from plyngent.cli.grammar import (
+    TRAVELLED,
+    Catalog,
+    Help,
+    Reads,
+    Runs,
+    SlashCompleter,
+    Travels,
+    Wrong,
+    build,
+    decode,
+    help_text,
+    word_help,
+)
 from plyngent.wire.command import Goal, Rollback, SetRoute
 from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
@@ -141,3 +154,30 @@ def test_the_listing_names_the_words_that_read() -> None:
 
     assert "/grants" in listed
     assert "Which paths outside its workspace" in listed, "and it says what asking it will tell them"
+
+
+def test_a_word_describes_itself_and_the_listing_answers_nothing_else() -> None:
+    """E117: one answer per question. ``/help`` lists; a word's own ``--help`` describes that word.
+
+    The old shape answered both — ``/help <word>`` — and that was two texts that had to be kept in step
+    for one answer a person wanted, while the derived one was already there and cannot go stale.
+    """
+    catalog = _catalog()
+
+    assert decode("/help", catalog, session="main") == Help(text=help_text(catalog))
+    assert decode("/help open", catalog, session="main") == Wrong(
+        text="/help takes no argument; a word describes itself, as /open --help"
+    ), "and a word after it is told where the answer actually is"
+    assert decode("/help nope", catalog, session="main") == Wrong(
+        text="/help takes no argument; a word describes itself, as /open --help"
+    ), "a word nobody has is not the one the sentence points at"
+    assert decode("/open --help", catalog, session="main") == Help(text=word_help(catalog, "open"))
+
+
+def test_the_words_with_no_command_behind_them_describe_themselves_too() -> None:
+    """A read word and the one this client answers itself have no schema, so their two lines are theirs."""
+    catalog = _catalog()
+
+    for word in ("grants", TRAVELLED):
+        helped = decode(f"/{word} --help", catalog, session="main")
+        assert isinstance(helped, Help) and helped.text.startswith(f"/{word} "), helped

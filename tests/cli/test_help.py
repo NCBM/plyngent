@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import click
 
-from plyngent.cli.grammar import Catalog, build, help_text
+from plyngent.cli.grammar import Catalog, build, word_help
 from plyngent.wire.manifest import KernelManifest, command_specs
 
 #: Words from inside this program. A person reading help has never seen one, and a line that needs one
@@ -128,7 +128,7 @@ def _catalog() -> Catalog:
 def _helps() -> dict[str, str]:
     """Every command's own help, read the way ``/word --help`` reads it."""
     catalog = _catalog()
-    return {tag: help_text(catalog, tag) for tag in catalog.offers}
+    return {tag: word_help(catalog, tag) for tag in catalog.offers}
 
 
 def _option_helps() -> dict[str, str]:
