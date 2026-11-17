@@ -120,6 +120,10 @@ from plyngent.wire.query import GrantTable as GrantTable
 from plyngent.wire.query import Query as Query
 from plyngent.wire.query import Reached as Reached
 from plyngent.wire.query import Reply as Reply
+from plyngent.wire.query import ShadowedSkill as ShadowedSkill
+from plyngent.wire.query import SkillRow as SkillRow
+from plyngent.wire.query import Skills as Skills
+from plyngent.wire.query import SkillTable as SkillTable
 from plyngent.wire.query import Trajectory as Trajectory
 from plyngent.wire.scope import CancelReason as CancelReason
 from plyngent.wire.scope import CancelScope as CancelScope

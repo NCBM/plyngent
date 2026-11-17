@@ -39,10 +39,10 @@ import click
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
-from plyngent.wire.query import AnyQuery, Grants, Query, Trajectory
+from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from prompt_toolkit.document import Document
 
@@ -61,7 +61,7 @@ ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": 
 #: Every read so far is about one session, which is why the table says so: a read that was about nothing
 #: in particular would be a second shape here, and naming it today would be a dict of ``Query`` that no
 #: read could be built from.
-READS: dict[str, type[Grants | Trajectory]] = {"grants": Grants, "history": Trajectory}
+READS: dict[str, type[AnyQuery]] = {"grants": Grants, "history": Trajectory, "skills": Skills}
 
 #: The one word whose text is written in an editor rather than on the line.
 COMPOSED = "submit"
@@ -92,6 +92,33 @@ SLASH = "/"
 
 #: The only argument a read word takes: which conversation to ask about, and nothing else.
 READ_USAGE = "[--session TEXT]"
+
+
+def _scoped(kind: type[Query]) -> bool:
+    """Whether this read word asks about one conversation rather than about the program itself.
+
+    One word asks the other question: the skills are found when the program starts and every conversation
+    sees the same table, so ``/skills`` has no name to take and no session to resolve.
+    """
+    return kind is not Skills
+
+
+def _asks_about(kind: type[AnyQuery], session: str) -> AnyQuery:
+    """The question one read word puts: the conversation it names, or none at all.
+
+    A builder per word rather than a keyword argument, because the two are not the same shape: a
+    ``Grants`` about a conversation takes its name and a ``Skills`` has no field to put one in.
+    """
+    return _ASKS[kind](session)
+
+
+#: How each read word becomes its query, keyed by the query it names.
+_ASKS: dict[type[AnyQuery], Callable[[str], AnyQuery]] = {
+    Grants: lambda session: Grants(session=session),
+    Trajectory: lambda session: Trajectory(session=session),
+    Skills: lambda _session: Skills(),
+}
+
 
 #: How many entries an option that stands for a tuple takes, when the schema fixes its length.
 PAIR_LENGTH = 2
@@ -231,7 +258,7 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
         if tag is not None:
             return _help_of(catalog.offers[tag])
         if word in READS:
-            return f"{SLASH}{word} {READ_USAGE}\n\n  {_read_summary(READS[word])}"
+            return f"{SLASH}{word} {_read_usage(READS[word])}\n\n  {_read_summary(READS[word])}"
         if word == TRAVELLED:
             return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
         return f"no command {SLASH}{word} here"
@@ -239,7 +266,7 @@ def help_text(catalog: Catalog, word: str | None = None) -> str:
         (f"{SLASH}{tag}" + (" <editor>" if entry.composes else _usage(entry)), entry.summary)
         for tag, entry in catalog.offers.items()
     ]
-    spelled.extend((f"{SLASH}{word} {READ_USAGE}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
+    spelled.extend((f"{SLASH}{word} {_read_usage(kind)}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
     spelled.append((f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}", TRAVEL_NOTE))
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
     lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
@@ -271,8 +298,8 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     return _known(tag, catalog.offers[tag], rest, session=session)
 
 
-def _reading(word: str, kind: type[Grants | Trajectory], rest: str, *, session: str) -> Intent:
-    """A read word: the query it names, and the session it is about — the one argument there is.
+def _reading(word: str, kind: type[AnyQuery], rest: str, *, session: str) -> Intent:
+    """A read word: the query it names, and the session it is about when it is about one.
 
     Click is not used here and that is not a shortcut: there is no command behind this word to derive a
     parser from, and a read that grew a second argument would be a read that should have been a command.
@@ -284,13 +311,20 @@ def _reading(word: str, kind: type[Grants | Trajectory], rest: str, *, session: 
         return Wrong(text=f"{SLASH}{word}: {exc}")
     if parts in (["--help"], ["-h"]):
         return Help(text=help_text(Catalog(), word))
+    if not _scoped(kind):
+        return Reads(query=_asks_about(kind, session)) if not parts else Wrong(text=f"{SLASH}{word} takes no argument")
     match parts:
         case []:
-            return Reads(query=kind(session=session))
+            return Reads(query=_asks_about(kind, session))
         case ["--session", asked]:
-            return Reads(query=kind(session=asked))
+            return Reads(query=_asks_about(kind, asked))
         case _:
             return Wrong(text=f"{SLASH}{word} takes {READ_USAGE} and nothing else")
+
+
+def _read_usage(kind: type[Query]) -> str:
+    """How one read word is spelled: the conversation it asks about, or nothing when it asks about the program."""
+    return READ_USAGE if _scoped(kind) else ""
 
 
 def _read_summary(kind: type[Query]) -> str:

@@ -78,6 +78,35 @@ def _result(request: Request) -> Result:
     return said
 
 
+async def test_a_person_can_ask_the_program_what_skills_it_has(story_with: Scripted, tmp_path: Path) -> None:
+    """`/skills` is the reading half of what a model sees through `skill_list`: one table, and what is odd."""
+    store = _store(tmp_path, "mine", "theirs", "nowhere")
+    _ = _skill(store, "alpha", description="the first")
+    _ = _skill(store, "beta", description="the second")
+    _ = _skill(store, "beta", body="theirs wrote this\n", frontmatter=False, root=1)
+    story = await story_with(text("one"), skills=store)
+
+    await story.type("/skills")
+
+    told_ = story.notices()
+    rows = [line for line in told_ if "[mine-user]" in line or "[theirs-user]" in line]
+    assert [row.split("  ")[0].strip() for row in rows] == ["alpha", "beta"], "one row per name, in name order"
+    assert rows[0].endswith(" — the first"), "the description is what a person reads the row for"
+    assert "shadowed: beta — mine-user wins (also theirs-user)" in told_, "the copy that lost is not hidden"
+    assert any(line.startswith("roots without a directory: ") for line in told_), (
+        "a root with nothing in it is said rather than left out"
+    )
+
+
+async def test_a_program_with_no_skill_store_says_so(story_with: Scripted) -> None:
+    """A kernel started without a store answers the word with the truth rather than with an error."""
+    story = await story_with(text("one"))
+
+    await story.type("/skills")
+
+    assert "no skills were found" in story.notices()
+
+
 async def test_a_listing_says_what_there_is_and_where_it_came_from(story_with: Scripted, tmp_path: Path) -> None:
     store = _store(tmp_path)
     _ = _skill(store, "alpha", description="the first")

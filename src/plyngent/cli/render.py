@@ -65,7 +65,7 @@ from plyngent.wire.event import (
     TurnStarted,
     Usage,
 )
-from plyngent.wire.query import AnyReply, Forest, GrantTable
+from plyngent.wire.query import AnyReply, Forest, GrantTable, MissingRoot, ShadowedSkill, SkillRow, SkillTable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -610,8 +610,31 @@ def held(answer: AnyReply) -> tuple[str, ...]:
             return tuple(
                 f"{entry.id} {entry.kind}" + (f": {entry.preview}" if entry.preview else "") for entry in entries
             )
+        case SkillTable(skills=skills, shadowed=shadowed, absent=absent):
+            return _skill_table(skills, shadowed, absent)
         case _ as never:
             assert_never(never)
+
+
+def _skill_table(
+    skills: tuple[SkillRow, ...], shadowed: tuple[ShadowedSkill, ...], absent: tuple[MissingRoot, ...]
+) -> tuple[str, ...]:
+    """The skills this program can see, as one row each, then what is here twice and where nothing was.
+
+    The name column is padded to the widest name so the three columns after it line up: a person reading
+    a table of paths is comparing them, and a ragged column is the one thing that makes that harder.
+    """
+    width = max((len(row.name) for row in skills), default=0)
+    rows = [
+        f"{row.name.ljust(width)}  [{row.root}]  {row.path} — {row.description or '(no description)'}" for row in skills
+    ]
+    if not skills:
+        rows = ["no skills were found"]
+    rows.extend(f"shadowed: {one.name} — {one.winner} wins (also {', '.join(one.copied)})" for one in shadowed)
+    rows.extend(f"{row.name}: {issue}" for row in skills for issue in row.issues)
+    if absent:
+        rows.append("roots without a directory: " + ", ".join(f"{root.path} ({root.label})" for root in absent))
+    return tuple(rows)
 
 
 def _reported(event: _Reported) -> tuple[_Row, ...]:

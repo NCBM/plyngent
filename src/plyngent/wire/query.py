@@ -72,6 +72,18 @@ class Trajectory(Query, tag="trajectory", frozen=True, kw_only=True):
     session: str = ""
 
 
+class Skills(Query, tag="skills", frozen=True, kw_only=True):
+    """Which skills this host can see, and what is wrong with the ones that are not clean.
+
+    A read rather than a tool, because it is about the *program's* environment rather than about a
+    conversation: the directories were chosen when this kernel started, and a person asking "what does
+    this thing know how to do" is asking about the machine in front of them, not about the turn.
+
+    Nothing is session-shaped here, which is why the query carries no name: skills are found once at
+    install, and every conversation sees the same table (``skill_list`` says the same thing to a model).
+    """
+
+
 class Reply(Struct, frozen=True, kw_only=True, tag_field="reply"):
     """What the kernel answers one query with: the same number, back on the lane a client is waiting on."""
 
@@ -108,5 +120,49 @@ class Forest(Reply, tag="forest", frozen=True, kw_only=True):
     entries: tuple[Entry, ...] = ()
 
 
-type AnyQuery = Grants | Trajectory
-type AnyReply = GrantTable | Forest
+class SkillRow(Struct, frozen=True, kw_only=True):
+    """One skill a person can see: its name, which root answered, where it lives, and what it says.
+
+    ``root`` is the label the discovery uses (``plyngent-user``, ``claude-project``), because two copies
+    of one name are two different directories and a listing that did not say which would be ambiguous.
+    ``issues`` is what could not be read as it was written — a declared name that is not one, a missing
+    description, a block that did not parse — carried as data rather than as prose, so the reader says it.
+    """
+
+    name: str = ""
+    root: str = ""
+    path: str = ""
+    description: str = ""
+    issues: tuple[str, ...] = ()
+
+
+class ShadowedSkill(Struct, frozen=True, kw_only=True):
+    """A name more than one root holds: the copy that wins, and the ones it wins over."""
+
+    name: str = ""
+    winner: str = ""
+    copied: tuple[str, ...] = ()
+
+
+class MissingRoot(Struct, frozen=True, kw_only=True):
+    """A root with no directory: where it would have been, and which one it was."""
+
+    path: str = ""
+    label: str = ""
+
+
+class SkillTable(Reply, tag="skill-table", frozen=True, kw_only=True):
+    """The answer to :class:`Skills`: the rows, the shadows, and the roots nothing was found under.
+
+    Empty is an answer and not a refusal — a host with no skills has none, and saying so is how a person
+    learns there is nothing to read — and all three lists are in the one value because they are one
+    question: what is here, what is here twice, and where there was nothing to look in.
+    """
+
+    skills: tuple[SkillRow, ...] = ()
+    shadowed: tuple[ShadowedSkill, ...] = ()
+    absent: tuple[MissingRoot, ...] = ()
+
+
+type AnyQuery = Grants | Trajectory | Skills
+type AnyReply = GrantTable | Forest | SkillTable

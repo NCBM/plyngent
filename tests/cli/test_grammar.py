@@ -15,7 +15,7 @@ from prompt_toolkit.document import Document
 from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Travels, Wrong, build, decode, help_text
 from plyngent.wire.command import Rollback, SetRoute
 from plyngent.wire.manifest import KernelManifest, command_specs
-from plyngent.wire.query import Grants, Trajectory
+from plyngent.wire.query import Grants, Skills, Trajectory
 
 
 def _catalog() -> Catalog:
@@ -100,6 +100,14 @@ def test_a_read_word_takes_an_argument_it_cannot_and_nothing_else() -> None:
 
     assert isinstance(intent, Wrong)
     assert "--session" in intent.text
+
+
+def test_the_word_about_the_program_takes_no_conversation_to_be_about() -> None:
+    """A skill table is what this program found at startup, so there is no session in the question."""
+    assert decode("/skills", _catalog(), session="main") == Reads(query=Skills())
+    assert isinstance(decode("/skills --session other", _catalog(), session="main"), Wrong), (
+        "and naming a conversation is not a smaller answer, it is a different question"
+    )
 
 
 def test_the_listing_names_the_words_that_read() -> None:

@@ -90,7 +90,18 @@ from plyngent.wire.event import (
     TurnRefused,
 )
 from plyngent.wire.manifest import CLIENT_OFFER
-from plyngent.wire.query import Forest, Grants, GrantTable, Reached, Trajectory
+from plyngent.wire.query import (
+    Forest,
+    Grants,
+    GrantTable,
+    MissingRoot,
+    Reached,
+    ShadowedSkill,
+    SkillRow,
+    Skills,
+    SkillTable,
+    Trajectory,
+)
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
@@ -202,6 +213,8 @@ class Serving:
                 return GrantTable(id=query.id, reached=held)
             case Trajectory(session=session):
                 return Forest(id=query.id, entries=await self._trajectory(session))
+            case Skills():
+                return self._skills(query.id)
 
     async def _trajectory(self, session: str) -> tuple[Entry, ...]:
         """One conversation's rows, as the forest a person walks: what each one is, and what it continues.
@@ -232,6 +245,38 @@ class Serving:
                 children=continued.get(row.id, 0),
             )
             for row in rows
+        )
+
+    def _skills(self, number: int) -> SkillTable:
+        """Every skill this host can see, said as values: the rows, the shadows, and the roots that are not.
+
+        Read out of the discovery rather than kept: it re-reads its roots on every question on purpose,
+        so a table cached here would be the one thing in this tree that a person's new skill file could
+        not change. A host with no store answers with the empty table, which is the truth about a
+        program that was started without one.
+        """
+        host = self._host()
+        if host is None or host.skills is None:
+            return SkillTable(id=number)
+        store = host.skills
+        skills = store.visible()
+        return SkillTable(
+            id=number,
+            skills=tuple(
+                SkillRow(
+                    name=skill.name,
+                    root=skill.root.label,
+                    path=str(skill.path),
+                    description=skill.description,
+                    issues=tuple(skill.issues),
+                )
+                for skill in skills
+            ),
+            shadowed=tuple(
+                ShadowedSkill(name=name, winner=copies[0].root.label, copied=tuple(c.root.label for c in copies[1:]))
+                for name, copies in store.shadowed().items()
+            ),
+            absent=tuple(MissingRoot(path=str(root.path), label=root.label) for root in store.absent()),
         )
 
     async def stop(self, reason: str = "") -> None:
