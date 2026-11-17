@@ -293,6 +293,7 @@ async def test_a_search_can_be_narrowed_to_one_skill_or_to_one_case(story_with: 
 
     await story.require("skills")
     await story.type("only in beta, and without caring about case")
+    await story.finished()
 
     assert told(story.requests()[1]).splitlines() == ["1 match in skill 'beta'", "beta/SKILL.md:1: shared word"]
     assert (await _told(story)).splitlines()[0] == "2 matches in 2 skills", "case folding finds both"
@@ -353,6 +354,7 @@ async def test_asking_for_the_group_twice_costs_one_change_of_the_tool_set(
     )
 
     await story.type("show me the skills")
+    await story.finished()
 
     assert "skills(" in story.requests()[0].system.rsplit("\n\n", 1)[-1], (
         "the first request's last section says there is a group to ask for"
