@@ -21,11 +21,12 @@ from typing import TYPE_CHECKING, Annotated, Any
 import msgspec
 
 from plyngent.kernel.access import AccessMode
-from plyngent.kernel.documents import MAX_KEPT_BYTES, MAX_TEXT_CHARS, TEXT_MEDIA, picture_media, refuses
+from plyngent.kernel.documents import MAX_KEPT_BYTES, MAX_TEXT_CHARS, TEXT_MEDIA, picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
-from plyngent.kernel.toolresult import Document, Effects, Hint, Part, Text, ToolResult
+from plyngent.kernel.toolresult import Effects, Hint, Part, Text, ToolResult
 from plyngent.kernel.tools import lifted
+from plyngent.kernel.tools.bodies import kept, kept_bytes
 from plyngent.kernel.tools.fs import LISTDIR
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, Role, ToolArgs, ToolSpec, argument
 from plyngent.kernel.workspace import PathRefused
@@ -272,39 +273,6 @@ def locator(args: Any) -> None:
     if not named and not handle:
         msg = "give 'path' (a file in the workspace) or 'document_id' (a handle a result carried)"
         raise ArgsError("", msg)
-
-
-async def kept(env: Env, content: str, *, summary: str, media: str = TEXT_MEDIA) -> Part | ToolResult:
-    """What the model is given for *content*: the text itself, or a handle when it is too long.
-
-    The threshold is the store's, asked here rather than decided here, because how much fits is a fact
-    about the store and not about this tool. ``summary`` is the line that stands in for the content in
-    the result, so it has to say what the handle is — the model will read it with no body beside it.
-
-    Content past the store's own limit comes back as a refusal rather than as a handle, with the number
-    in it: a handle nobody can make is not an answer, and the fix (a window) is a different call.
-    """
-    refusal = refuses(content)
-    if refusal is not None:
-        return ToolResult.of(Failure.LIMIT, refusal)
-    if len(content) <= env.documents.keep_chars:
-        return Text(value=content)
-    handle = await env.documents.put(env.session, content, summary=summary, media=media)
-    return Document(document_id=handle.id, summary=handle.summary, chars=handle.chars)
-
-
-async def kept_bytes(env: Env, content: bytes, *, summary: str, media: str) -> Document | ToolResult:
-    """A handle to content that is never sent as text at all — a picture, an archive, anything binary.
-
-    Text that does not fit is still text, and a model can read a window of it; bytes are not text in
-    any window, so there is no size at which handing them over would be a favour — which is why a body
-    past the stored limit is refused here instead of kept.
-    """
-    refusal = refuses(content)
-    if refusal is not None:
-        return ToolResult.of(Failure.LIMIT, refusal)
-    handle = await env.documents.put(env.session, content, summary=summary, media=media)
-    return Document(document_id=handle.id, summary=handle.summary, chars=handle.chars)
 
 
 class SearchArgs(ToolArgs, kw_only=True):

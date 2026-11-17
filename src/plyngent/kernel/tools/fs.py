@@ -29,10 +29,12 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.listing import Entry, EnumerateArgs, Filter, Listing, walk
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.temps import TempWorkspaceError, TooManyWorkspacesError, under_system_temp
-from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Meta, Text, ToolResult
+from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Meta, ToolResult
 from plyngent.kernel.tools import lifted
+from plyngent.kernel.tools.bodies import kept
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Remember, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.trash import Kind, Trouble, to_trash
+from plyngent.kernel.words import counted
 from plyngent.kernel.workspace import Denied, PathRefused
 from plyngent.wire.ask import Confirmation, Severity, as_agreed
 
@@ -152,7 +154,10 @@ async def glob_paths(env: Env, args: GlobArgs) -> ToolResult:
     text = "\n".join(shown)
     if len(found) > len(shown):
         text += f"\n...[truncated at {args.max_matches} matches]"
-    return ToolResult.ok(f"{len(shown)} paths", body=Text(value=text), meta=_meta(listing))
+    part = await kept(env, text, summary=f"{len(shown)} paths matching {args.pattern} under {args.path}")
+    if isinstance(part, ToolResult):
+        return part
+    return ToolResult.ok(f"{len(shown)} paths", body=part, meta=_meta(listing))
 
 
 async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
@@ -168,7 +173,10 @@ async def listdir(env: Env, args: ListdirArgs) -> ToolResult:
     if not listing.entries:
         return ToolResult.ok("empty directory", meta=_meta(listing))
     lines = [_line(target, entry, args.stat) for entry in listing.entries]
-    return ToolResult.ok(f"{len(lines)} entries", body=Text(value="\n".join(lines)), meta=_meta(listing))
+    part = await kept(env, "\n".join(lines), summary=f"{counted(len(lines), 'entry')} of {args.path}")
+    if isinstance(part, ToolResult):
+        return part
+    return ToolResult.ok(f"{len(lines)} entries", body=part, meta=_meta(listing))
 
 
 async def tree(env: Env, args: TreeArgs) -> ToolResult:
@@ -185,7 +193,10 @@ async def tree(env: Env, args: TreeArgs) -> ToolResult:
     lines = _draw(args.format, shown, label=_label(args.path), more=omitted)
     total = len(shown) + omitted
     summary = f"{len(shown)} entries" if omitted == 0 else f"{len(shown)} of {total} entries"
-    return ToolResult.ok(summary, body=Text(value="\n".join(lines)), meta=_meta(listing))
+    part = await kept(env, "\n".join(lines), summary=f"{summary} under {args.path}")
+    if isinstance(part, ToolResult):
+        return part
+    return ToolResult.ok(summary, body=part, meta=_meta(listing))
 
 
 async def copy_path(env: Env, args: CopyArgs) -> ToolResult:
@@ -350,7 +361,7 @@ GLOB = ToolSpec(
     group=Group.FS,
     args=GlobArgs,
     run=glob_paths,
-    uses=Res.PATHS,
+    uses=Res.PATHS | Res.DOCUMENT,
     roles={"path": Role.READ},
 )
 
@@ -359,7 +370,7 @@ LISTDIR = ToolSpec(
     group=Group.FS,
     args=ListdirArgs,
     run=listdir,
-    uses=Res.PATHS,
+    uses=Res.PATHS | Res.DOCUMENT,
     roles={"path": Role.READ},
 )
 
@@ -368,7 +379,7 @@ TREE = ToolSpec(
     group=Group.FS,
     args=TreeArgs,
     run=tree,
-    uses=Res.PATHS,
+    uses=Res.PATHS | Res.DOCUMENT,
     roles={"path": Role.READ},
 )
 

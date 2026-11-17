@@ -26,7 +26,7 @@ from plyngent.kernel.documents import MAX_KEPT_BYTES, picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.net import client, policy, web
 from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Part, Text, ToolResult, kind_of
-from plyngent.kernel.tools.document import kept, kept_bytes
+from plyngent.kernel.tools.bodies import kept, kept_bytes
 from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
 from plyngent.wire.ask import Agreed, By, Confirmation, as_agreed
 

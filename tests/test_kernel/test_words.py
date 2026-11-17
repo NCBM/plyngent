@@ -12,7 +12,17 @@ import pytest
 from plyngent.kernel.words import counted, plural
 
 
-@pytest.mark.parametrize(("count", "noun", "said"), [(0, "tool", "tools"), (1, "tool", "tool"), (2, "tool", "tools")])
+@pytest.mark.parametrize(
+    ("count", "noun", "said"),
+    [
+        (0, "tool", "tools"),
+        (1, "tool", "tool"),
+        (2, "tool", "tools"),
+        (1, "entry", "entry"),
+        (3, "entry", "entries"),
+        (2, "day", "days"),
+    ],
+)
 def test_the_noun_follows_the_count_and_nothing_else(count: int, noun: str, said: str) -> None:
     assert plural(count, noun) == said
 

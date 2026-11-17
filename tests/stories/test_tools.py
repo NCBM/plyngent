@@ -194,6 +194,29 @@ async def test_a_glob_finds_by_pattern(story_with: Scripted) -> None:
     assert "skip.md" not in told, "the pattern is what it asked for"
 
 
+async def test_a_listing_too_long_to_send_is_kept_and_read_back_in_windows(story_with: Scripted) -> None:
+    """A directory whose names do not fit in one answer: the model gets the drawer, not a cut list."""
+    story = await story_with(
+        calling("listdir", {"path": "many"}),
+        calling("read", {"document_id": "d1", "limit": 2}),
+        text("that is all"),
+    )
+    many = story.workspace / "many"
+    many.mkdir()
+    for index in range(200):
+        _ = (many / f"{index:03d}-{'x' * 200}.txt").write_text("", encoding="utf-8")
+
+    await story.require("fs", "document")
+
+    await story.type("everything that is in there")
+    await story.finished()
+
+    kept_ = _told_of(story.requests()[1])
+    assert kept_.splitlines()[1].startswith("[d1] 200 entries of many"), kept_
+    window = _told_of(story.requests()[2])
+    assert window.splitlines()[0] == "read d1 (lines 1-2 of 200)", window
+
+
 async def test_a_glob_leaves_out_what_it_was_not_asked_for_and_the_filter_is_how_to_see_it(
     story_with: Scripted,
 ) -> None:
