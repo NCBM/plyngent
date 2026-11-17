@@ -21,6 +21,7 @@ import msgspec
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.toolresult import ToolResult
 from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
+from plyngent.kernel.words import counted
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -54,7 +55,7 @@ async def tool_require(env: Env, args: RequireArgs) -> ToolResult:
         return ToolResult.ok(f"{args.group} was already shown")
     if not arriving:
         return ToolResult.ok(f"{args.group} has nothing left to show: its tools are resident already")
-    return ToolResult.ok(f"showing {len(arriving)} tools from {args.group}: {', '.join(arriving)}")
+    return ToolResult.ok(f"showing {counted(len(arriving), 'tool')} from {args.group}: {', '.join(arriving)}")
 
 
 TOOL_REQUIRE = ToolSpec(

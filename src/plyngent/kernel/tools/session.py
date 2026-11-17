@@ -31,6 +31,7 @@ from plyngent.kernel.session import TODOS
 from plyngent.kernel.todos import OPEN, Todos, TodoStatus
 from plyngent.kernel.toolresult import Hint, Meta, Part, Text, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, ToolArgs, ToolSpec, argument
+from plyngent.kernel.words import counted, plural
 from plyngent.wire.ask import FreeText, as_written
 
 if TYPE_CHECKING:
@@ -160,7 +161,7 @@ async def todo_push(env: Env, args: PushArgs) -> ToolResult:
     def push(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
         group = todos.push_group(args.titles, notes=args.notes)
-        summary = f"pushed {_count(len(group.items), 'item')} (depth {todos.depth()})"
+        summary = f"pushed {counted(len(group.items), 'item')} (depth {todos.depth()})"
         return todos.dump(), _layer(todos, todos.depth() - 1, summary)
 
     return await env.session_state.change(TODOS, push)
@@ -195,7 +196,7 @@ async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
                 body=Hint(tool=TODO_LIST.name, why="see what is on the stack"),
             )
             return None, empty
-        summary = f"popped {_count(len(group.items), 'item')} (depth {todos.depth()})"
+        summary = f"popped {counted(len(group.items), 'item')} (depth {todos.depth()})"
         return todos.dump(), _layer(todos, todos.depth() - 1, summary)
 
     return await env.session_state.change(TODOS, pop)
@@ -207,7 +208,7 @@ async def todo_clear(env: Env, _args: ClearArgs) -> ToolResult:
     def clear(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
         count = todos.clear()
-        answer = ToolResult.ok(f"cleared {_count(count, 'item')}", body=Text(value=todos.render()))
+        answer = ToolResult.ok(f"cleared {counted(count, 'item')}", body=Text(value=todos.render()))
         return (todos.dump() if count else None), answer
 
     return await env.session_state.change(TODOS, clear)
@@ -228,23 +229,18 @@ def _layer(todos: Todos, depth: int, summary: str) -> ToolResult:
 
 def _hidden(count: int) -> Hint:
     """The groups a result kept back, as the call that would show all of them."""
-    return Hint(tool=TODO_LIST.name, given=(("full", "true"),), why=f"{count} more {_plural(count, 'group')} not shown")
+    return Hint(tool=TODO_LIST.name, given=(("full", "true"),), why=f"{count} more {plural(count, 'group')} not shown")
 
 
 def _counted(todos: Todos, *, shown: int | None = None) -> str:
     """What the stack holds — in the window it was drawn in, when the call asked for a window."""
     groups = todos.depth()
-    held = f"{shown} of {groups} groups" if shown is not None and shown != groups else _count(groups, "group")
+    held = f"{shown} of {groups} groups" if shown is not None and shown != groups else counted(groups, "group")
     items = todos.items()
     if not items:
         return f"{held}, no items"
     opened = sum(1 for item in items if item.status in OPEN)
-    return f"{held}, {_count(len(items), 'item')} ({opened} open)"
-
-
-def _count(count: int, noun: str) -> str:
-    """A number with its noun — "1 items" reads like a bug."""
-    return f"{count} {_plural(count, noun)}"
+    return f"{held}, {counted(len(items), 'item')} ({opened} open)"
 
 
 def _changed(args: UpdateArgs) -> str:
@@ -264,7 +260,7 @@ def _no_item(group: int, number: int, count: int) -> ToolResult:
     """An item number that group does not have."""
     return ToolResult.of(
         Failure.ARGS,
-        f"no item {number} in group {group}: it has {_count(count, 'item')}",
+        f"no item {number} in group {group}: it has {counted(count, 'item')}",
         hints=(_listing_hint(),),
     )
 
@@ -277,11 +273,6 @@ def _listing_hint() -> Hint:
 def _deepest(todos: Todos) -> str:
     """Which numbers the stack does have, without spelling out a range a model has to work out."""
     return "0 is the bottom" if todos.depth() == 1 else f"0 is the bottom, {todos.depth() - 1} is the top"
-
-
-def _plural(count: int, noun: str) -> str:
-    """The noun at the count it is used with, singular where one is one."""
-    return noun if count == 1 else f"{noun}s"
 
 
 def _titles_given(args: Any) -> None:

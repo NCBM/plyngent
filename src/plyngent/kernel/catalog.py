@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.client import CLIENT
 from plyngent.kernel.model import ToolDecl
 from plyngent.kernel.tools import document, fs, meta, net, process, session, skills, vcs
+from plyngent.kernel.words import plural
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping
@@ -244,8 +245,8 @@ class ToolView:
             hidden = sum(count for _group, count in self.missing)
             groups = ", ".join(f"{group}({count})" for group, count in self.missing)
             parts.append(
-                f"{len(self.missing)} more {_many(len(self.missing), 'group')} "
-                f"({hidden} {_many(hidden, 'tool')}): {groups} — use tool_require(group=…) to add one"
+                f"{len(self.missing)} more {plural(len(self.missing), 'group')} "
+                f"({hidden} {plural(hidden, 'tool')}): {groups} — use tool_require(group=…) to add one"
             )
         if not self.asks:
             parts.append(NOBODY)
@@ -268,8 +269,3 @@ def _group_of(spec: ToolSpec) -> str:
 def _is_client(group: str) -> bool:
     """Whether a group is one a client's tools travel in — the one thing that says a client is attached."""
     return group == CLIENT or group.startswith(f"{CLIENT}:")
-
-
-def _many(count: int, noun: str) -> str:
-    """A noun with its plural, because "1 tools" is a line that reads like a bug."""
-    return noun if count == 1 else f"{noun}s"

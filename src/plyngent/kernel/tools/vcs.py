@@ -45,6 +45,7 @@ from plyngent.kernel.process import run as run_tree
 from plyngent.kernel.toolresult import Effects, Meta, Text, ToolResult
 from plyngent.kernel.tools.process.gate import CommandGate
 from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
+from plyngent.kernel.words import counted
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -214,7 +215,7 @@ async def vcs_status(env: Env, _args: StatusArgs) -> ToolResult:
     if isinstance(said, ToolResult):
         return said
     changed = sum(1 for line in said.splitlines() if not line.startswith("##"))
-    return asked.answer(_at("clean" if not changed else f"{_many(changed, 'path')} changed", repo), said or "(clean)")
+    return asked.answer(_at("clean" if not changed else f"{counted(changed, 'path')} changed", repo), said or "(clean)")
 
 
 async def vcs_diff(env: Env, args: DiffArgs) -> ToolResult:
@@ -235,7 +236,7 @@ async def vcs_diff(env: Env, args: DiffArgs) -> ToolResult:
         return asked.answer(_at("no diff", repo), said or "(no diff)")
     added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
     removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
-    return asked.answer(_at(f"{_many(files, 'file')} changed, +{added} -{removed}", repo), said)
+    return asked.answer(_at(f"{counted(files, 'file')} changed, +{added} -{removed}", repo), said)
 
 
 async def vcs_log(env: Env, args: LogArgs) -> ToolResult:
@@ -255,7 +256,7 @@ async def vcs_log(env: Env, args: LogArgs) -> ToolResult:
             )
         return said
     commits = sum(1 for line in said.splitlines() if line.strip())
-    return asked.answer(_at(f"{_many(commits, 'commit')}", repo), said)
+    return asked.answer(_at(f"{counted(commits, 'commit')}", repo), said)
 
 
 async def vcs_branch(env: Env, _args: BranchArgs) -> ToolResult:
@@ -326,11 +327,6 @@ def _described(repo: Repository) -> str:
             "staged (diff): the difference the next commit would record; this backend keeps an index",
         )
     )
-
-
-def _many(count: int, noun: str) -> str:
-    """A noun with its plural, because "1 paths" is a line that reads like a bug."""
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 KIND = ToolSpec(

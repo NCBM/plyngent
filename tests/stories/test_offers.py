@@ -89,7 +89,7 @@ async def test_an_offer_that_is_not_resident_waits_to_be_asked_for(story_with: S
     assert "lookup" not in _names(first), "a group nobody asked for is not offered"
     assert "client:c1(1)" in first.system, "and the line says there is one more it has not been shown"
     assert "lookup" in _names(second), "asking for the group is what brings it, like any other group"
-    assert any("showing 1 tools from client:c1: lookup" in line for line in story.screen())
+    assert any("showing 1 tool from client:c1: lookup" in line for line in story.screen())
 
 
 async def test_a_name_this_kernel_has_is_refused_and_the_table_does_not_move(story_with: Scripted) -> None:
