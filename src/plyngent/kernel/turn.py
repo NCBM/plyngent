@@ -36,6 +36,7 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
+from plyngent.kernel.notices import LIMIT
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
 from plyngent.kernel.trail import Attempt, Effect, Notice, Summary, TurnEnded
@@ -370,7 +371,28 @@ class TurnRunner:
             self._emit(
                 AnswerCut(session=state.ctx.session.session_id, turn=state.ctx.turn_id, reason=str(reply.cut)),
             )
+            self._cut_short(state, reply.cut)
         return reply
+
+    def _cut_short(self, state: TurnState, cut: Failure) -> None:
+        """Leave the model a line about the answer it gave that stopped at the limit.
+
+        A truncated answer is silent from the model's side: the next request carries half a thought as its
+        own words, and nothing in the history says why it stops in the middle — so the model goes on as if
+        it had finished. One reminder fixes that, written at the next boundary (E142), because that is the
+        first moment a request is not in flight.
+
+        Only a limit is said. A cut the provider chose — a content filter, a refusal — is not "there is
+        more of this to say", and telling a model to carry on from a sentence it was stopped from saying
+        would be this kernel giving advice about somebody else's decision.
+        """
+        if cut is not Failure.LIMIT:
+            return
+        state.ctx.session.notices.say(
+            LIMIT,
+            "the answer you gave last stopped at the output limit, so it ended mid-thought",
+            summary="the last answer hit the output limit",
+        )
 
     async def _cost(self, state: TurnState, reply: Reply) -> None:
         """Write down what this request cost, and then say it.

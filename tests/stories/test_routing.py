@@ -8,8 +8,8 @@ route is tested where a body and a status can be asserted (``tests/test_kernel/t
 
 The other two faces a route has are here because they are exactly the two a story can see: **what the
 model was asked** (which route, and which cache key) and **what the screen said** about it. The cost of a
-request and the fact that an answer was cut off are here for the same reason — neither has a place in the
-history.
+request is here for the same reason — it has no place in the history — and so is what became of an answer
+that was cut short, which reaches the history as a line to the model and not as a row about the request.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps
 from plyngent.kernel.lm.route import Route
-from plyngent.kernel.model import Picture, Reply, Result, Usage
-from plyngent.kernel.trail import Attempt
+from plyngent.kernel.model import Assistant, Note, Picture, Reply, Result, Usage, User
+from plyngent.kernel.trail import NOTICE_MARKER, Attempt
 from tests.stories.driver import Story
 from tests.stories.model import Failing, ScriptedModel, calling, text
 
@@ -104,6 +104,46 @@ async def test_an_answer_cut_at_the_limit_says_so(story_with: Scripted) -> None:
         "turn 1 answer was cut short (limit)",
         "half a sen",
     ), "the cut is said before the text, because that is when it is worth knowing"
+
+
+async def test_an_answer_cut_at_the_limit_is_told_to_the_model_before_the_next_one(story_with: Scripted) -> None:
+    """E142: a truncated answer is silent from the model's side, so the next request says it was cut.
+
+    The person already has their line (the cut is said while the turn runs); this is the other reader.
+    The history carries half a thought as the model's own words, and nothing in it says why the sentence
+    stops — so the turn writes one reminder above its end, and the next turn reads it as the harness.
+    """
+    story = await story_with(Reply(text="half a sen", cut=Failure.LIMIT), text("the rest of it"))
+
+    await story.type("say something long")
+    await story.type("go on")
+
+    first, second = story.requests()
+    assert not any(isinstance(message, Note) for message in first.messages), "nothing was cut before this turn"
+    assert second.messages == (
+        User(text="say something long"),
+        Assistant(text="half a sen"),
+        Note(text=f"{NOTICE_MARKER}\nthe answer you gave last stopped at the output limit, so it ended mid-thought"),
+        User(text="go on"),
+    ), "the next request carries what became of the answer above it, before the line that came after it"
+    assert "written: the last answer hit the output limit" in "\n".join(story.screen()), (
+        "and a person reads the same fact in their own words"
+    )
+
+
+async def test_a_cut_the_provider_chose_is_not_something_to_carry_on_from(story_with: Scripted) -> None:
+    """A refused answer is a cut too, and it is the one a model must not be told to continue.
+
+    ``Failure.DENIED`` is the provider deciding not to say the rest; "it ended mid-thought" would be this
+    kernel telling a model to say what somebody else stopped it from saying.
+    """
+    story = await story_with(Reply(text="no", cut=Failure.DENIED), text("fine"))
+
+    await story.type("say something long")
+    await story.type("go on")
+
+    _first, second = story.requests()
+    assert not any(isinstance(message, Note) for message in second.messages), "nothing was said about it"
 
 
 async def test_a_session_is_asked_by_the_route_it_names(story_with: Scripted) -> None:

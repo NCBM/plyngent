@@ -42,7 +42,10 @@ if TYPE_CHECKING:
 #: The plan's writer: what is left of the todo stack.
 PLAN = "plan"
 
-DECLARED: tuple[str, ...] = (PLAN,)
+#: The cut's writer: the last answer stopped at the output limit, so the model knows it was not finished.
+LIMIT = "limit"
+
+DECLARED: tuple[str, ...] = (PLAN, LIMIT)
 
 
 @dataclass(frozen=True, slots=True)
