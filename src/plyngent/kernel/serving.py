@@ -577,6 +577,10 @@ class Serving:
         past the whole stretch it stands for. Naming an entry keeps that much of the prefix on the chain
         instead, and naming nothing at all is refused by the journal, whose own sentence is passed on
         rather than rewritten — a parent pointer into nothing is one fact and it is already said once.
+
+        ``replaces`` is bookkeeping rather than a pointer, but it names two entries of *this* conversation
+        and nothing else reads it — so a name that is not here would be a claim nothing could ever check
+        again. It is refused the way the parent pointer is, before anything is written.
         """
         found = self._session(session)
         if found is None:
@@ -585,6 +589,12 @@ class Serving:
         if not text:
             self.link.emit(CompactRefused(session=session, reason=NOTHING_TO_KEEP))
             return
+        if replaces is not None:
+            missing = [named for named in replaces if await found.host.trail.entry(session, named) is None]
+            if missing:
+                said = f"no entry {missing[0]!r} in session {session}"
+                self.link.emit(CompactRefused(session=session, reason=said))
+                return
         try:
             entry = await found.host.trail.append(
                 session, Summary(text=text, replaces=replaces), begin_after=begin_after

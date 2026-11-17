@@ -84,7 +84,9 @@ class Compact(Command, tag="compact", frozen=True, kw_only=True):
 
     There is no rule tying ``begin_after`` to ``replaces``: the summary attaches where its author
     says. ``replaces`` is bookkeeping for the UI and for an audit ("this text stands for X..Y"), and
-    the projection never reads it — which is why changing it cannot change what a model sees.
+    the projection never reads it — which is why changing it cannot change what a model sees. The one
+    thing it must name is two entries of this conversation: a span nothing could be read back from is
+    refused rather than written down.
     """
 
     begin_after: str | None = None

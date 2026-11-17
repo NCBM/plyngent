@@ -60,6 +60,28 @@ async def test_a_refused_compaction_says_why_and_writes_nothing(story_with: Scri
     assert len(story.requests()) == 1, "and nothing was written, so there was nothing new to ask about"
 
 
+async def test_a_summary_that_stands_for_a_stretch_names_one_this_conversation_has(story_with: Scripted) -> None:
+    """``replaces`` is bookkeeping, so the only thing to check about it is that it names something real."""
+    story = await story_with(text("one"))
+    await story.type("a thought")
+    rows = await story.host.trail.entries("main")
+    first, last = rows[0].id, rows[-1].id
+    before = len(story.screen())
+
+    await story.type("/compact --replaces e999 --replaces e998 --text later")
+
+    assert story.screen()[before:] == ("compact refused: no entry 'e999' in session main",), (
+        "a span nothing could ever be read back from is refused rather than written"
+    )
+    await story.type(f"/compact --replaces {first} --replaces {last} --text settled")
+
+    written = story.screen()[-1]
+    assert WRITTEN.fullmatch(written) is not None, written
+    summary = await story.host.trail.entry("main", written.split()[1])
+    assert summary is not None and isinstance(summary.payload, Summary)
+    assert summary.payload.replaces == (first, last), "what the row says it stands for is what the command named"
+
+
 async def test_a_compaction_does_not_wait_for_a_running_turn(story_with: Scripted) -> None:
     held = Held(text("about time"))
     story = await story_with(held)
