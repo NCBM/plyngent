@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.catalog import RESIDENT
 from plyngent.kernel.model import Assistant, Result, User
 from plyngent.wire.ask import Confirmation
+from plyngent.wire.command import Submit
+from plyngent.wire.event import TurnKind
 from tests.stories.model import Held, calling, text
 
 if TYPE_CHECKING:
@@ -121,6 +123,18 @@ async def test_a_second_message_is_refused_while_a_turn_is_running(story_with: S
     await story.settle()
 
     assert story.screen()[-2:] == ("about time", "turn 1 finished")
+
+
+async def test_a_turn_kind_this_build_does_not_run_is_refused_by_name(story_with: Scripted) -> None:
+    """``ASIDE`` is declared in the contract and implemented nowhere: running it as a chat would write the
+    history an aside exists to leave alone, so the answer is a refusal rather than a quietly wrong turn."""
+    story = await story_with(text("one"))
+
+    assert story.client.submit(Submit(session=story.session, kind=TurnKind.ASIDE, text="a thought"))
+    await story.until("turn refused: an aside is not a kind of turn this build runs")
+
+    assert story.screen() == ("turn refused: an aside is not a kind of turn this build runs",), story.screen()
+    assert story.requests() == (), "and nothing was asked of the model"
 
 
 async def test_a_signal_is_the_stop_a_key_is(story_with: Scripted) -> None:

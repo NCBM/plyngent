@@ -37,9 +37,18 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
-from plyngent.kernel.trail import Attempt, Effect
+from plyngent.kernel.trail import Attempt, Effect, Summary
 from plyngent.kernel.trail import Usage as UsageRow
-from plyngent.wire.event import AnswerCut, AssistantDelta, AssistantText, TurnFinished, TurnStarted, Usage
+from plyngent.wire.event import (
+    AnswerCut,
+    AssistantDelta,
+    AssistantText,
+    Compacted,
+    TurnFinished,
+    TurnKind,
+    TurnStarted,
+    Usage,
+)
 
 if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolCatalog
@@ -102,14 +111,17 @@ class TurnRunner:
         reason = ""
         failure: Failure | None = None
         try:
-            state = await self._append(state, User(text=text))
-            while True:
-                request = await self.assemble(state)
-                reply = await self.call(state, request)
-                state = await self.dispatch(state, reply)
-                if not state.more:
-                    break
-                state = replace(state, ctx=state.ctx.next_round())
+            if ctx.kind is TurnKind.COMPACT:
+                state = await self._summarized(state)
+            else:
+                state = await self._append(state, User(text=text))
+                while True:
+                    request = await self.assemble(state)
+                    reply = await self.call(state, request)
+                    state = await self.dispatch(state, reply)
+                    if not state.more:
+                        break
+                    state = replace(state, ctx=state.ctx.next_round())
         except Cancelled as stopped:
             reason = str(stopped.reason)
         except ModelFailed as unmet:
@@ -138,6 +150,63 @@ class TurnRunner:
                 ),
             )
             ctx.end()
+
+    # -- the compaction -------------------------------------------------------------
+
+    async def _summarized(self, state: TurnState) -> TurnState:
+        """Ask the model for a summary of the stretch this turn was pointed at, and write that one row.
+
+        A compaction is a turn because the request is one: it is cancelled like any other, it costs what
+        it costs, and an endpoint that could not be reached leaves an attempt rather than nothing. What it
+        does *not* do is dispatch — a summary request carries no tools, and an answer that asked for one
+        anyway is not something this turn can act on.
+
+        The operator's line is a **directive, not a message**: the summary stands for the stretch below it,
+        so a user row reading "please summarise this" would be a thing the model is told happened.
+        """
+        ctx = state.ctx
+        system, instruction = ctx.host.prompt.summarize(state.text)
+        request = Request(
+            system=system,
+            messages=(
+                *await self._seen(ctx, await ctx.host.trail.derive(ctx.session.session_id, state.cursor)),
+                User(text=instruction),
+            ),
+            tools=(),
+            route="" if (asked := ctx.host.routes.resolve(ctx.session.route)) is None else asked.name,
+            cache_key=ctx.session.cache_key,
+        )
+        reply = await self.call(state, request)
+        text = reply.text.strip()
+        if not text:
+            msg = "the model's summary was empty, so nothing was written"
+            raise ModelFailed(Failure.PROTOCOL, msg)
+        entry = await ctx.host.trail.append(
+            ctx.session.session_id,
+            Summary(text=text, replaces=await self._replaced(ctx.session.session_id, state.cursor)),
+            turn=ctx.turn_id,
+        )
+        _ = await ctx.session.note_compaction()
+        self._emit(Compacted(session=ctx.session.session_id, entry=entry.id, chars=len(text)))
+        return replace(state, cursor=entry.id, more=False)
+
+    async def _replaced(self, session: str, cursor: str | None) -> tuple[str, str] | None:
+        """The stretch a summary stands for: the first and last rows of the chain it was given.
+
+        ``replaces`` is bookkeeping a person reads ("this text stands for X..Y"), so it is worked out from
+        the chain rather than guessed at: the two ends of the very rows the request carried.
+        """
+        if cursor is None:
+            return None
+        rows = {row.id: row for row in await self._ctx.host.trail.entries(session)}
+        chain: list[str] = []
+        here: str | None = cursor
+        while here is not None and here in rows:
+            chain.append(here)
+            here = rows[here].begin_after
+        if not chain:
+            return None
+        return chain[-1], chain[0]
 
     # -- the stages ----------------------------------------------------------------
 

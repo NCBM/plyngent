@@ -55,8 +55,8 @@ from plyngent.cli.policy import Policy, Tally
 from plyngent.cli.render import Stage, held, notice
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
-from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
-from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished
+from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Submit
+from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
 from plyngent.wire.query import AnyQuery, Unanswered
 from plyngent.wire.scope import CancelReason
@@ -563,13 +563,19 @@ class App:
     # -- what a message is sent as -------------------------------------------------
 
     def _continuing(self, command: AnyCommand) -> AnyCommand:
-        """Put a command in the conversation this client is looking at.
+        """Put a command in the conversation this client is looking at, in the shape the kernel runs.
 
         Only a message carries a place — a command about sessions or about cancelling says nothing about
         which branch is on screen — so this is about ``Submit`` and nothing else.
+
+        A ``Compact`` with no text is the one command that becomes another: a summary nobody typed has to
+        be asked for, which is a turn (``kind=COMPACT``) rather than a row written where commands are.
+        The text, when there is one, is what the person wants kept.
         """
         if isinstance(command, Submit):
             return replace(command, begin_after=self._cursor)
+        if isinstance(command, Compact) and not command.text:
+            return Submit(session=command.session, kind=TurnKind.COMPACT, begin_after=self._cursor)
         return command
 
     def _message(self, session: str, text: str) -> Submit:

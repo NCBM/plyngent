@@ -48,12 +48,10 @@ async def test_a_refused_compaction_says_why_and_writes_nothing(story_with: Scri
     await story.type("a thought")
     before = len(story.screen())
 
-    await story.type("/compact")
     await story.type("/compact --begin-after e999 --text later")
     await story.type("/compact --session nowhere --text later")
 
     assert story.screen()[before:] == (
-        "compact refused: a summary with no text compresses nothing",
         "compact refused: no entry 'e999' in session main: an entry can only continue one that exists",
         "[nowhere] compact refused: no such session here: open one first",
     ), "each refusal says what was wrong, and the journal's own sentence is the one passed on"
@@ -173,3 +171,50 @@ async def test_the_plan_epoch_moves_once_per_compaction(story_with: Scripted) ->
 
     assert story.plan_epoch == 2, "a compaction moves the plan once, and two compactions are two"
     assert story.toolset_epoch == tools, "a compaction says nothing about the tools, which is why they are two numbers"
+
+
+async def test_a_summary_nobody_typed_is_asked_for(story_with: Scripted) -> None:
+    """`/compact` with no text is a request: the model writes the summary, and the turn is one request long.
+
+    Three things make this a turn rather than a row written where commands are: it carries a place, it
+    costs what a request costs, and it can be stopped. What it does not do is write a message — the
+    summary stands for the stretch below it, so a user row reading "please summarise" would be a thing
+    the model is told happened.
+    """
+    story = await story_with(text("the first answer"), text("the summary of it"))
+
+    await story.type("a first thought")
+    await story.type("/compact")
+
+    assert story.screen()[:2] == ("turn 1 started (chat)", "the first answer"), story.screen()[:2]
+    assert story.screen()[2] == "turn 1 finished", story.screen()[2]
+    assert story.screen()[3] == "turn 2 started (compact)", "a compaction the model writes is a turn"
+    assert any(WRITTEN.fullmatch(line) for line in story.screen()), story.screen()
+
+    first, second = story.requests()
+    assert first.messages == (User(text="a first thought"),), "the chat turn saw the conversation"
+    assert second.messages[0] == User(text="a first thought"), "and the compaction read the same stretch"
+    assert isinstance(second.messages[-1], User), "with one instruction after it, which is the request itself"
+    assert second.tools == (), "a summary needs no tools"
+
+    rows = [row.payload for row in await story.host.trail.entries(story.session)]
+    summaries = [row for row in rows if isinstance(row, Summary)]
+    assert len(summaries) == 1, "one summary row and no message rows: the turn was the request"
+    assert summaries[0].text == "the summary of it"
+    assert summaries[0].replaces is not None, "the row says which stretch it stands for"
+    assert not [row for row in rows if isinstance(row, User) and "summar" in row.text.lower()], (
+        "the instruction is not a message the history keeps"
+    )
+
+
+async def test_a_summary_that_comes_back_empty_is_a_turn_that_failed(story_with: Scripted) -> None:
+    """An empty answer is not a summary: writing it would replace a conversation with nothing at all."""
+    story = await story_with(text("one"), text("   "))
+
+    await story.type("a thought")
+    await story.type("/compact")
+
+    assert story.screen()[-1].startswith("turn 2 failed"), story.screen()[-1:]
+    assert not [row for row in await story.host.trail.entries(story.session) if isinstance(row.payload, Summary)], (
+        "and nothing was written, so the conversation is still there"
+    )

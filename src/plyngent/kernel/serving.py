@@ -756,10 +756,12 @@ class Serving:
         listening for — the one bug this whole shape exists to make impossible (§R5, decision B).
 
         One turn at a time per session. Two would interleave in one journal, and while a forest allows
-        that, a frontend's cursor does not: it continues one chain. A compaction is not a turn at all —
-        it is one row, written where commands are — so the narrower rule ("a chat and a compaction may
-        coexist") is already true without anything being relaxed here. ``holder`` names the turn in the
-        way, so a client can say "waiting on turn 7" rather than invent a message.
+        that, a frontend's cursor does not: it continues one chain. A compaction *written by a person* is
+        not a turn at all — it is one row, written where commands are, so the narrower rule ("a chat and a
+        compaction may coexist") is already true without anything being relaxed here. A compaction a
+        *model* writes is a turn (``kind=COMPACT``): it is a request, it costs what a request costs, and
+        it takes this slot like any other. ``holder`` names the turn in the way, so a client can say
+        "waiting on turn 7" rather than invent a message.
         """
         found = self._session(session)
         if found is None:
@@ -767,6 +769,11 @@ class Serving:
             return
         if not found.host.model.installed:
             self.link.emit(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
+            return
+        if kind is TurnKind.ASIDE:
+            # Declared in the contract and not implemented here: running it as a chat would write the
+            # history an aside exists to leave alone, so it is refused by name instead.
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_ASIDE, holder=0))
             return
         live = found.turns()
         if live:

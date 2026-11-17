@@ -142,6 +142,17 @@ the checkout is, what its state and history are, and what changed, in a shape th
 and none of its calls writes.""",
 }
 
+#: What a compaction is asked for, when the program did not install its own instruction. It says what the
+#: summary is *for* rather than how to write one: the row it becomes is what later turns are handed instead
+#: of the stretch below it, so a summary that leaves out a decision or a path makes that turn worse.
+COMPACT = """\
+Write a summary of the conversation above, which later turns will be given instead of it. Keep what a
+later reader needs to continue the work: what was asked for, what was decided and why, which paths and
+files it touched, what is still open, and anything the next turn must not repeat or undo. Write it as
+prose in the third person, in the present tense, and say nothing about being a summary — this text is
+what the conversation becomes."""
+
+
 
 @dataclass(frozen=True, slots=True)
 class PromptPlan:
@@ -165,6 +176,9 @@ class PromptPlan:
     persona: str = PERSONA
     directives: str = CORE
     skills: str = ""
+    #: What a compaction asks the model for. Replaced by a program the same way ``directives`` is: what a
+    #: summary is worth keeping is a question about the product, not about this kernel.
+    compact: str = COMPACT
     #: The engines this program can search with, in the order it asks them — the value domain of
     #: ``web_search``'s ``engine`` argument, and the order leaving it out falls back through.
     engines: tuple[str, ...] = ()
@@ -184,6 +198,24 @@ class PromptPlan:
         """
         sections = (self.persona, self.directives, *self._arrived(view), self.skills, view.index())
         return "\n\n".join(section.strip() for section in sections if section.strip())
+
+    def summarize(self, asks: str) -> tuple[str, str]:
+        """The system message and the instruction for one compaction, in that order.
+
+        A compaction's request is not a conversation's: it carries no tools, no group sections and no index
+        line, because nothing it says is going to be *used* by a turn — it is going to be read as the text
+        the next turn starts from. What it keeps is the one part of a prompt that says who is writing: the
+        persona.
+
+        ``asks`` is what the operator wanted kept, and it is appended to the plan's own instruction rather
+        than replacing it: the closing rule of a summary (what a later reader needs) is not something a
+        person should have to remember to type.
+        """
+        system = self.persona.strip()
+        instruction = self.compact.strip()
+        if asks.strip():
+            instruction = f"{instruction}\n\nWhat the person asked to keep: {asks.strip()}"
+        return system, instruction
 
     def _arrived(self, view: ToolView) -> tuple[str, ...]:
         """One section per group this session has been shown, in name order, if it has tools here.

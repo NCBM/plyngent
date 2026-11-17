@@ -87,6 +87,10 @@ class Compact(Command, tag="compact", frozen=True, kw_only=True):
     the projection never reads it — which is why changing it cannot change what a model sees. The one
     thing it must name is two entries of this conversation: a span nothing could be read back from is
     refused rather than written down.
+
+    ``text`` is the summary itself, typed by whoever sent the command. A summary nobody typed is a
+    *request* instead — ``Submit`` with ``kind="compact"`` — because asking a model is a turn and this
+    is a row written where commands are.
     """
 
     begin_after: str | None = None
