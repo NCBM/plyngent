@@ -1,9 +1,9 @@
 """What this terminal offers the kernel, and what it does when the kernel asks for one of them.
 
 Asking a person is a tool the *client* provides: the kernel does not read stdin, and it has no way to
-put a question in front of anybody. So the terminal offers the two ways it can ask, and answers them on
-the invocation lane (§10.8). What a question *looks* like is the kernel's answer, not this file's: an
-offer of one of these names carries no schema, and the field names read below are the ones the kernel's
+put a question in front of anybody. So the terminal offers the one way it can ask — ``ask_user`` — and
+answers it on the invocation lane (§10.8). What a question *looks* like is the kernel's answer, not this
+file's: an offer of that name carries no schema, and the field names read below are the ones the kernel's
 own package declares.
 
 Two rules this file keeps:
@@ -14,10 +14,10 @@ Two rules this file keeps:
   answers it, so a name this client does not have is answered as one it could not run rather than
   dropped on the floor.
 
-A form is the third way to ask and the only one this lane cannot put up in one go: there is one cursor
-here and one line at a time, so its fields are asked in sequence and the answer is one line per field
+The call is an array of questions, and this lane cannot put a block of them up in one go: there is one
+cursor here and one line at a time, so they are asked in sequence and the answer is one line per question
 (§0.13, E95). A frontend that draws a real form answers in the same words, which is why the kernel's
-shape — an array of named fields — is not this file's invention.
+shape — an array of questions with a label each — is not this file's invention.
 """
 
 from __future__ import annotations
@@ -28,7 +28,18 @@ from typing import TYPE_CHECKING, Any, cast
 
 from msgspec.structs import replace as placed
 
-from plyngent.wire.ask import Agreed, By, FreeText, Invocation, Picked, Returned, Selection, Written
+from plyngent.wire.ask import (
+    Agreed,
+    By,
+    Confirmation,
+    FreeText,
+    Invocation,
+    Picked,
+    Returned,
+    Selection,
+    Severity,
+    Written,
+)
 from plyngent.wire.command import OfferedTool
 
 if TYPE_CHECKING:
@@ -41,14 +52,8 @@ if TYPE_CHECKING:
 #: and ``None`` from the editor is "nobody answered" rather than an empty answer (§10.8, E48).
 type Handler = Callable[[LineEditor, Invocation], Awaitable[Returned]]
 
-#: Ask for a line of free text.
-LINE = "ask_user_line"
-
-#: Ask for one of a few options.
-CHOICE = "ask_user_choice"
-
-#: Ask for a set of fields, one line each.
-FORM = "ask_user_form"
+#: Ask the person at the terminal: one question, or several as one array.
+ASK = "ask_user"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,86 +85,93 @@ async def dispatch(tools: ClientTools, editor: LineEditor, invocation: Invocatio
         return Returned(id=invocation.id, text=f"the client could not run {invocation.tool}")
 
 
-async def _ask_line(editor: LineEditor, invocation: Invocation) -> Returned:
-    """Put one line of free text to the person at the terminal, and answer what they wrote."""
-    fields = _fields(invocation.arguments)
-    question = FreeText(prompt=_text(fields, "question"), default=_text(fields, "default") or None)
-    answer = await editor.ask(_where(question, invocation))
-    written = answer if isinstance(answer, Written) else Written(by=By.NOBODY)
-    return Returned(id=invocation.id, ok=written.text is not None, text=written.text or "")
+async def _ask(editor: LineEditor, invocation: Invocation) -> Returned:
+    """Put the call's questions to the person one at a time, and answer one line per question.
 
-
-async def _ask_choice(editor: LineEditor, invocation: Invocation) -> Returned:
-    """Offer the options the model named, and answer the one the person picked."""
-    fields = _fields(invocation.arguments)
-    offered = cast("list[object]", fields.get("options"))
-    question = Selection(
-        prompt=_text(fields, "question"),
-        options=tuple(str(option) for option in offered),
-        default=_text(fields, "default") or None,
-    )
-    answer = await editor.ask(_where(question, invocation))
-    picked = answer if isinstance(answer, Picked) else Picked(by=By.NOBODY)
-    return Returned(id=invocation.id, ok=picked.value is not None, text=picked.value or "")
-
-
-async def _ask_form(editor: LineEditor, invocation: Invocation) -> Returned:
-    """Put a form's fields to the person one at a time, and answer one line per field.
-
-    A form is one question in the kernel's sense and a sequence of them here: this lane holds one cursor
-    and draws one line, and a block of labelled fields is a screen's business (R8). The answer names each
-    field, so what the model reads back is what it asked for — a frontend that did draw a real form
-    would say the same words, and the kernel would not have to know which one answered.
+    The block is one answer in the kernel's sense and a sequence of them here: this lane holds one cursor
+    and draws one line, and a block of labelled questions is a screen's business (R8). Each line of the
+    answer starts with the question's label when it has one, so what the model reads back is what it
+    asked for — a frontend that did draw a real form would say the same words, and the kernel would not
+    have to know which one answered.
     """
     fields = _fields(invocation.arguments)
     title = _text(fields, "title")
     filled: list[str] = []
-    for raw in _items(fields.get("fields")):
-        field = _object(raw)
-        answer = await editor.ask(_where(_field_question(title, field), invocation))
-        value = _answer(answer)
+    for raw in _items(fields.get("questions")):
+        question = _question(_object(raw), title=title)
+        value = _answer(await editor.ask(_where(question, invocation)))
         if value is None:
             return Returned(id=invocation.id, text="")
-        filled.append(f"{_text(field, 'name')}: {value}")
+        filled.append(f"{question.label}: {value}" if question.label else value)
     return Returned(id=invocation.id, ok=bool(filled), text="\n".join(filled))
 
 
-def _where[Q: FreeText | Selection](question: Q, invocation: Invocation) -> Q:
+def _where[Q: Confirmation | FreeText | Selection](question: Q, invocation: Invocation) -> Q:
     """The question, at the place the call came from: a frontend with several sessions shows it there."""
     return placed(question, session=invocation.session, turn=invocation.turn)
 
 
-def _field_question(title: str, field: Mapping[str, Any]) -> FreeText | Selection:
-    """One field as the question to put: a menu when it is a menu, a line otherwise.
+def _question(raw: Mapping[str, Any], *, title: str) -> Confirmation | FreeText | Selection:
+    """One question of a call, rebuilt as the value this lane puts.
 
-    The title leads every line, because a person reading a sequence of questions has to know which form
-    the line belongs to, and this lane has no block to put it above. A menu that also allows anything
-    else cannot be a :class:`~plyngent.wire.ask.Selection` — that question refuses an answer outside
-    ``options`` — so it is asked as a line with the menu spelled into it.
+    The kind is the tag the contract gives it, and the fields are the ones the kernel's own package
+    declares — the call was validated against them before it arrived, so nothing here is invented or
+    re-checked. Two things are deliberately not carried over: the addressing a question has on the lane
+    (``session``, ``turn``, ``scope``, ``id``), which is this invocation's, and a deadline, which belongs
+    to whoever is holding the cursor.
     """
-    prompt = f"{title}: {_text(field, 'prompt')}"
-    default = _text(field, "default") or None
-    options = tuple(str(one) for one in _items(field.get("options")))
-    if not options:
-        return FreeText(prompt=prompt, default=default)
-    if not field.get("allow_custom"):
-        return Selection(prompt=prompt, options=options, default=default)
-    return FreeText(prompt=f"{prompt} ({'/'.join(options)})", default=default)
+    prompt = _titled(title, _text(raw, "prompt"))
+    label = _text(raw, "label")
+    default = _text(raw, "default") or None
+    options = tuple(str(one) for one in _items(raw.get("options")))
+    match raw.get("ask"):
+        case "confirmation":
+            offered = raw.get("default")
+            return Confirmation(
+                prompt=prompt,
+                default=offered if isinstance(offered, bool) else None,
+                severity=Severity(str(raw.get("severity") or Severity.CONFIRM)),
+                label=label,
+            )
+        case "selection" if options:
+            return Selection(
+                prompt=prompt,
+                options=options,
+                default=default,
+                multiple=bool(raw.get("multiple")),
+                label=label,
+            )
+        case _:
+            return FreeText(prompt=prompt, default=default, label=label)
+
+
+def _titled(title: str, prompt: str) -> str:
+    """A question as a person reads it in a sequence: the block's heading, then the question."""
+    return f"{title}: {prompt}" if title else prompt
 
 
 def _answer(answer: AnyAnswer) -> str | None:
-    """What a field's answer said, or ``None`` when nobody answered it.
+    """What one question's answer said, or ``None`` when nobody answered it.
 
-    A form asks lines and menus and never a yes/no, so an agreement here would be an answer to a
-    question this lane did not ask, and reading it as one would invent a value.
+    A yes-or-no is written as the word a person reads, because the model reading a block back wants the
+    answers side by side and ``true`` next to ``plain`` reads like two kinds of value. Several picks are
+    one line with commas, which is how a line holds a list; a single pick is itself.
+
+    "Nobody answered" is read from the answer's author and not from a value: a confirmation has a bool
+    either way, so a declined one and a real "no" would otherwise be the same answer to a block that is
+    one answer or none.
     """
+    if answer.by is By.TIMEOUT or answer.by is By.NOBODY:
+        return None
     match answer:
-        case Written(text=text):
-            return text
+        case Agreed(accepted=accepted):
+            return "yes" if accepted else "no"
+        case Picked(values=values) if values:
+            return ", ".join(values)
         case Picked(value=value):
             return value
-        case Agreed():
-            return None
+        case Written(text=text):
+            return text
 
 
 def _fields(arguments: str) -> Mapping[str, Any]:
@@ -184,13 +196,9 @@ def _items(value: object) -> list[object]:
     return cast("list[object]", value) if isinstance(value, list) else []
 
 
-#: What the terminal offers: the three questions it can put in front of a person, one of them always
-#: there — a model that may ask has to be able to ask before it has been shown anything (§10.8, E44).
+#: What the terminal offers: the one question it can put in front of a person, always there — a model
+#: that may ask has to be able to ask before it has been shown anything (§10.8, E44).
 TERMINAL = ClientTools(
-    offer=(
-        OfferedTool(name=LINE, resident=True),
-        OfferedTool(name=CHOICE),
-        OfferedTool(name=FORM),
-    ),
-    handlers={LINE: _ask_line, CHOICE: _ask_choice, FORM: _ask_form},
+    offer=(OfferedTool(name=ASK, resident=True),),
+    handlers={ASK: _ask},
 )

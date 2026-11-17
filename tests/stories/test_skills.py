@@ -345,7 +345,7 @@ async def test_a_kernel_with_no_skills_directory_has_no_skill_tools(story_with: 
     await story.type("what skills are there?")
 
     assert (await _told(story)).splitlines() == [
-        "no group named 'skills'; there are: client:c1, document, fs, net, process, session, vcs"
+        "no group named 'skills'; there are: document, fs, net, process, session, vcs"
     ]
     assert told(story.requests()[1]) == "no tool is named 'skill_list'", "a name nothing has, answered as such"
     assert "skills" not in story.requests()[0].system, "and the line a model is given never mentions it"

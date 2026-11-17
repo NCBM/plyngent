@@ -7,10 +7,10 @@ as the connection that offered them (§10.8).
 
 Three rules shape this file, and each of them is one sentence from a ruling:
 
-* **A name the kernel answers people through is the kernel's.** ``ask_user_line`` and
-  ``ask_user_choice`` are how a question reaches a person, so their *shape* is written here and a
-  client may not say what it is. Offering one of those names is how a terminal says "I can ask"; the
-  answering itself is the question lane, which already exists.
+* **A name the kernel answers people through is the kernel's.** ``ask_user`` is how a question reaches
+  a person, so its *shape* is written here and a client may not say what it is. Offering that name is how
+  a terminal says "I can ask"; the answering itself is the question lane, which already exists, and the
+  questions are its own values in one array — a line, a menu or a block of five is that array.
 * **Everybody else's schema is taken as it is.** The kernel adds no field and tightens no constraint,
   because a provider's schema is its promise about its own tool, and the request has to agree with
   what that provider validates against. The cost is real and paid here: a call to such a tool can
@@ -35,7 +35,7 @@ from composat import Component
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.toolresult import Effects, Text, ToolResult
 from plyngent.kernel.toolspec import ExternalArgs, Intention, Mutation, Res, ToolArgs, ToolSpec
-from plyngent.wire.ask import AskSite, Invocation, Returned
+from plyngent.wire.ask import AskSite, Confirmation, FreeText, Invocation, Returned, Selection
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
@@ -49,81 +49,40 @@ if TYPE_CHECKING:
 #: connection, so what it offers is one group that arrives and leaves with it (§10.8).
 CLIENT = "client"
 
-#: The names the kernel answers a person through. All three of them have a shape, because the set is
-#: about *whose* the name is — a client offers one of these by name and never by schema — and what a
-#: question looks like is the kernel's answer, so that a form put to a person reads the same whichever
-#: frontend puts it (§10.8, E48/E95).
-ASKING_NAMES: frozenset[str] = frozenset({"ask_user_line", "ask_user_choice", "ask_user_form"})
+#: The name the kernel answers a person through. It has a shape, because the set is about *whose* the
+#: name is — a client offers this one by name and never by schema — and what a question looks like is the
+#: kernel's answer, so that a block of questions reads the same whichever frontend puts it (§10.8,
+#: E48/E95).
+ASKING_NAMES: frozenset[str] = frozenset({"ask_user"})
 
 
-class AskLine(ToolArgs, kw_only=True):
-    """Ask the person at the terminal one line of free text, and read their answer back.
+class AskUser(ToolArgs, kw_only=True):
+    """Ask the person at the terminal something, or several things in one call.
 
-    ``question`` is what to put in front of them, and it is the whole prompt: there is no title, no
-    field name and no default value that is not visible. ``default`` is suggested and is not the answer
-    — an empty line takes it, and with no default an empty line is not an answer at all, so the client
-    asks again.
+    ``questions`` is the call: the questions themselves — :class:`~plyngent.wire.ask.Confirmation`,
+    :class:`~plyngent.wire.ask.Selection`, :class:`~plyngent.wire.ask.FreeText` — in the order they are
+    to be put, and one line to answer each. One tool rather than three, for the reason ``execute`` is one
+    tool with a tree of steps: what differs between a line, a menu, and a block of five is an *array*,
+    not a different reach — and a form is that array with more in it.
+
+    ``title`` leads every question a person reads, because a sequence of lines has no block to put a
+    heading above. A question's ``label`` is what its answer is called when several come back at once;
+    a question with no label is answered by its own words alone.
+
+    The addressing fields a question carries (``session``, ``turn``, ``scope``, ``id``) are the question
+    lane's: they are part of the value because a question on the lane has them, and a call that fills
+    them changes nothing, because where a question belongs is the invocation that carried it.
+
+    The block is one answer or none: a person who backs out of the third question has answered nothing,
+    and half a set of answers is not something a result could name.
     """
 
-    question: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
-    default: str = ""
+    title: Annotated[str, msgspec.Meta(max_length=1000)] = ""
+    questions: Annotated[list[Confirmation | Selection | FreeText], msgspec.Meta(min_length=1, max_length=16)]
 
 
-class AskChoice(ToolArgs, kw_only=True):
-    """Ask the person at the terminal to pick one of a few options, and read back which one.
-
-    ``options`` is the whole menu: an answer that is not in it is not an answer, and the client asks
-    again rather than taking what was typed. ``default`` is a suggested *line*, offered as a
-    pre-filled answer, and it is not an extra option.
-    """
-
-    question: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
-    options: Annotated[list[str], msgspec.Meta(min_length=2, max_length=32)]
-    default: str = ""
-
-
-class AskField(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """One line of a form: what the answer is called, what to ask, and what it may be.
-
-    ``options`` non-empty makes it a menu, and then the answer has to be one of them — the same rule
-    :class:`AskChoice` puts to a person. ``allow_custom`` beside a menu is the one thing a menu cannot
-    say by itself, so such a field is put as a line with the menu written into it and the person's own
-    words are taken as they are; no options is a line either way.
-
-    ``default`` is suggested and is not the answer: an empty line takes it, and with no default an empty
-    line is not an answer at all, so the client asks again.
-    """
-
-    name: Annotated[str, msgspec.Meta(min_length=1, max_length=64)]
-    prompt: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
-    default: str = ""
-    options: Annotated[list[str], msgspec.Meta(max_length=32)] = msgspec.field(default_factory=list)
-    allow_custom: bool = False
-
-
-class AskForm(ToolArgs, kw_only=True):
-    """Put several things to the person at once, and read back one answer per field.
-
-    A form is a question like the other two rather than a new kind of thing: the person is asked one
-    field at a time and what the model reads back is one line per field, named after the field. It
-    exists because a model collecting three related answers should not have to spend three calls saying
-    they belong together — and because the fields are an array, a frontend that can draw a block of
-    labelled fields has something to draw, rather than three names this file happened to pick.
-
-    The form is one answer or none: a person who backs out of the third field has answered nothing, and
-    half a form is not something the kernel could name a field of.
-    """
-
-    title: Annotated[str, msgspec.Meta(min_length=1, max_length=1000)]
-    fields: Annotated[list[AskField], msgspec.Meta(min_length=1, max_length=16)]
-
-
-#: The asking names and the shape the kernel puts to a person for each of them.
-SHAPES: dict[str, type[ToolArgs]] = {
-    "ask_user_line": AskLine,
-    "ask_user_choice": AskChoice,
-    "ask_user_form": AskForm,
-}
+#: The asking name and the shape the kernel puts to a person through it.
+SHAPES: dict[str, type[ToolArgs]] = {"ask_user": AskUser}
 
 #: Why an offer of one tool was not taken. Each is the reason an ``OfferRefused`` carries, so a client
 #: can say which of the rules it broke instead of guessing from a silent refusal.

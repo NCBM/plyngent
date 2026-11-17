@@ -102,7 +102,7 @@ async def test_a_name_this_kernel_has_is_refused_and_the_table_does_not_move(sto
 
     assert f"offer refused: read — {DUPLICATE}" in story.screen(), "the refusal names the rule it broke"
     assert story.toolset_epoch == before, "a refused offer is no change at all"
-    assert "client:c1(2)" in story.requests()[0].system, "and the refused name did not join the client's group"
+    assert "client:c1" not in story.requests()[0].system, "the client's one tool is resident, so no group is left over"
 
 
 async def test_a_schema_that_is_not_an_object_is_refused(story_with: Scripted) -> None:
@@ -171,22 +171,28 @@ async def test_leaving_says_the_tool_set_moved_once_more(story: Story) -> None:
     assert story.toolset_epoch == before + 2, "the client that offered them is gone, and that is one more change"
 
 
-async def test_the_terminal_offers_one_way_of_asking_and_the_other_one_waits(story_with: Scripted) -> None:
-    """E44: the resident one arrives with the connection, the other is asked for like any group."""
-    story = await story_with(calling("tool_require", {"group": "client:c1"}), text("ok"))
+async def test_the_terminal_offers_one_way_of_asking_and_it_is_always_there(story_with: Scripted) -> None:
+    """E44: the asking tool arrives with the connection, because a model that may ask must be able to."""
+    story = await story_with(text("ok"))
 
     await story.type("what can you ask?")
     await story.finished()
 
-    first, second = story.requests()
-    assert {"ask_user_line"} <= _names(first) and "ask_user_choice" not in _names(first)
-    assert "ask_user_choice" in _names(second), "and asking for the group is what brings it"
+    (asked,) = story.requests()
+    assert {"ask_user"} <= _names(asked), "it is resident, so the first request already has it"
+    assert "client:c1" not in asked.system, "and there is no group left to ask for"
 
 
 async def test_a_question_from_the_model_is_one_question(story_with: Scripted) -> None:
     """Acceptance ②: asking a person is not first put to a person for approval (§10.10)."""
     story = await story_with(
-        calling("ask_user_line", {"question": "what should I call it?", "intention": "the name is the user's"}),
+        calling(
+            "ask_user",
+            {
+                "questions": [{"ask": "free-text", "prompt": "what should I call it?"}],
+                "intention": "the name is theirs",
+            },
+        ),
         text("good"),
     )
 
@@ -198,30 +204,43 @@ async def test_a_question_from_the_model_is_one_question(story_with: Scripted) -
         "one question, and not an approval in front of it"
     )
     assert story.questions()[0].prompt == "what should I call it?"
-    assert "calling ask_user_line: the name is the user's" in story.screen(), "the reason travels with the call"
-    assert told(story.requests()[-1]).splitlines() == ["the client ran ask_user_line", "Biscuit"], (
+    assert "calling ask_user: the name is theirs" in story.screen(), "the reason travels with the call"
+    assert told(story.requests()[-1]).splitlines() == ["the client ran ask_user", "Biscuit"], (
         "and the person's line is what the model reads back, under the one line that says where it came from"
     )
 
 
-#: A form of two fields: a line, and a menu (E95). The title and the names are the model's.
+#: One block of two questions: a line and a menu, each labelled. The title and the labels are the model's.
 PROFILE: dict[str, object] = {
     "title": "Profile",
     "intention": "the two answers belong together",
-    "fields": [
-        {"name": "owner", "prompt": "who owns it?"},
-        {"name": "tone", "prompt": "which tone?", "options": ["plain", "fancy"]},
+    "questions": [
+        {"ask": "free-text", "prompt": "who owns it?", "label": "owner"},
+        {"ask": "selection", "prompt": "which tone?", "options": ["plain", "fancy"], "label": "tone"},
     ],
 }
 
 
-async def test_a_form_is_put_one_field_at_a_time_and_read_back_by_field(story_with: Scripted) -> None:
-    """E95: the kernel's shape is a set of fields, and this lane asks them one line at a time."""
-    story = await story_with(
-        calling("tool_require", {"group": "client:c1"}),
-        calling("ask_user_form", PROFILE),
-        text("thanks"),
-    )
+#: A block that asks the three shapes the array can hold, and one of them more than once.
+SETUP: dict[str, object] = {
+    "title": "Setup",
+    "intention": "three answers that belong together",
+    "questions": [
+        {
+            "ask": "selection",
+            "prompt": "which extras?",
+            "options": ["docs", "tests", "ci"],
+            "multiple": True,
+            "label": "extras",
+        },
+        {"ask": "confirmation", "prompt": "commit it?", "label": "commit"},
+    ],
+}
+
+
+async def test_a_block_is_put_one_question_at_a_time_and_read_back_by_label(story_with: Scripted) -> None:
+    """E95: the kernel's shape is an array of questions, and this lane asks them one line at a time."""
+    story = await story_with(calling("ask_user", PROFILE), text("thanks"))
 
     await story.type("ask me two things")
     await story.answer("Ada")
@@ -229,33 +248,47 @@ async def test_a_form_is_put_one_field_at_a_time_and_read_back_by_field(story_wi
     await story.finished()
 
     assert [type(question).__name__ for question in story.questions()] == ["FreeText", "Selection"], (
-        "a field with a menu is a menu, and the rest is a line"
+        "a question with a menu is a menu, and the rest is a line"
     )
     assert [question.prompt for question in story.questions()] == ["Profile: who owns it?", "Profile: which tone?"], (
         "the title leads every line, because there is no block to put it above"
     )
     assert told(story.requests()[-1]).splitlines() == [
-        "the client ran ask_user_form",
+        "the client ran ask_user",
         "owner: Ada",
         "tone: fancy",
-    ], "one line per field, named after the field, and nothing invented"
+    ], "one line per question, named after its label, and nothing invented"
 
 
-async def test_a_form_left_half_answered_is_answered_by_nobody(story_with: Scripted) -> None:
-    """The whole form is one answer or none: half a form is not a result with a name (§0.13, E95)."""
-    story = await story_with(
-        calling("tool_require", {"group": "client:c1"}),
-        calling("ask_user_form", PROFILE),
-        text("fine"),
-    )
+async def test_a_block_can_ask_a_menu_that_takes_several_and_a_yes_or_no(story_with: Scripted) -> None:
+    """The array holds the questions the lane has: one of them takes several answers, one is a yes."""
+    story = await story_with(calling("ask_user", SETUP), text("thanks"))
+
+    await story.type("set it up")
+    await story.answer("docs, ci")
+    await story.answer("y")
+    await story.finished()
+
+    assert [type(question).__name__ for question in story.questions()] == ["Selection", "Confirmation"]
+    assert story.questions()[0].multiple is True, "the question says it wants several, so the line may list them"
+    assert told(story.requests()[-1]).splitlines() == [
+        "the client ran ask_user",
+        "extras: docs, ci",
+        "commit: yes",
+    ], "several picks are one quoted line, and a yes is the word a person reads"
+
+
+async def test_a_block_left_half_answered_is_answered_by_nobody(story_with: Scripted) -> None:
+    """The block is one answer or none: half a block is not a result with a label (§0.13, E95)."""
+    story = await story_with(calling("ask_user", PROFILE), text("fine"))
 
     await story.type("ask me two things")
     await story.answer("Ada")
     await story.decline()
     await story.finished()
 
-    assert "ask_user_form was never answered" in told(story.requests()[-1]), (
-        "a field nobody answered answers nothing, and the first field is not sent on as if it were the form"
+    assert "ask_user was never answered" in told(story.requests()[-1]), (
+        "a question nobody answered answers nothing, and the first one is not sent on as if it were the block"
     )
 
 

@@ -522,14 +522,18 @@ def test_the_asking_tools_are_an_offer_and_never_a_builtin() -> None:
     would be a tool that exists without a client, which is the state the offer exists to end.
     """
     assert not {spec.name for spec in EVERY} & ASKING_NAMES, "asking is a client's tool, not this kernel's"
-    assert "ask_user_line" not in ToolCatalog().names()
+    assert "ask_user" not in ToolCatalog().names()
 
 
-def test_the_terminal_offers_the_three_ways_to_ask_and_nothing_else() -> None:
-    """§10.8: a client offers questions and no other privilege, and it does not shape them itself."""
+def test_the_terminal_offers_one_way_to_ask_and_nothing_else() -> None:
+    """§10.8: a client offers questions and no other privilege, and it does not shape them itself.
+
+    One name and not three, because the questions are one array: a line, a menu, and a block of five are
+    the same tool with a different list, and the array is the kernel's shape rather than the client's.
+    """
     names = {tool.name for tool in offers.TERMINAL.offer}
 
-    assert names == {"ask_user_line", "ask_user_choice", "ask_user_form"} <= ASKING_NAMES
+    assert names == {"ask_user"} <= ASKING_NAMES
     assert set(offers.TERMINAL.handlers) == names, "every tool it offers is one it can run"
     assert all(not tool.schema for tool in offers.TERMINAL.offer), "the shape of a question is the kernel's"
 

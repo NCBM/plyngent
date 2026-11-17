@@ -20,7 +20,7 @@ from plyngent.kernel.client import (
 )
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.toolresult import Hint, Status, Text
-from plyngent.kernel.toolspec import ExternalArgs, Intention, Mutation, Posture, Res
+from plyngent.kernel.toolspec import ExternalArgs, Intention, Mutation, Posture, Res, schema_of
 from plyngent.wire.ask import Returned
 from plyngent.wire.command import OfferedTool
 
@@ -48,17 +48,33 @@ def _one(tool: OfferedTool, *, taken: tuple[str, ...] = ()) -> tuple[ToolSpec | 
 
 def test_an_asking_name_carries_the_kernel_shape_and_not_the_clients() -> None:
     """A terminal says "I can ask" and no more: what a question looks like is the kernel's (§10.8)."""
-    spec, refused = _one(OfferedTool(name="ask_user_line", resident=True))
+    spec, refused = _one(OfferedTool(name="ask_user", resident=True))
     assert spec is not None
 
     assert refused == ()
-    assert spec.args is SHAPES["ask_user_line"], "the kernel's package, byte for byte"
-    assert set(spec.schema()["properties"]) == {"question", "default", "intention"}
+    assert spec.args is SHAPES["ask_user"], "the kernel's package, byte for byte"
+    assert set(spec.schema()["properties"]) == {"questions", "title", "intention"}, (
+        "one array of questions and a heading over them, and the one thing every call may say about itself"
+    )
+
+
+def test_the_asking_shape_is_an_array_of_the_lane_s_own_questions() -> None:
+    """The array's items are the questions themselves, so a form is the same tool with more in it."""
+    schema = schema_of(SHAPES["ask_user"])
+    questions = schema["properties"]["questions"]
+
+    assert questions["type"] == "array"
+    assert questions["minItems"] == 1 and questions["maxItems"] == 16, "a call asks something, and not an hour of it"
+    assert {entry["$ref"].rsplit("/", 1)[-1] for entry in questions["items"]["anyOf"]} == {
+        "Confirmation",
+        "FreeText",
+        "Selection",
+    }, "a line, a menu and a yes-or-no — the three a client can put in front of a person"
 
 
 def test_a_question_is_not_approved_like_a_call_to_a_client() -> None:
     """The tool that *is* the question runs without asking; everything else asks every time (§10.10)."""
-    asked, _ = _one(OfferedTool(name="ask_user_line"))
+    asked, _ = _one(OfferedTool(name="ask_user"))
     called, _ = _one(OfferedTool(name="search", schema=SEARCH))
 
     assert asked is not None
@@ -84,7 +100,7 @@ def test_a_clients_schema_cannot_be_asked_to_say_why() -> None:
 def test_an_offered_tool_travels_in_a_group_named_after_the_connection() -> None:
     """One group per connection, so a client's tools arrive and leave together (§10.8, E44)."""
     specs, refused = specs_from(
-        "c7", (OfferedTool(name="search", schema=SEARCH), OfferedTool(name="ask_user_line")), taken=()
+        "c7", (OfferedTool(name="search", schema=SEARCH), OfferedTool(name="ask_user")), taken=()
     )
 
     assert refused == ()
@@ -97,8 +113,7 @@ def test_an_offered_tool_travels_in_a_group_named_after_the_connection() -> None
     [
         (OfferedTool(name=""), NAMELESS),
         (OfferedTool(name="read", schema=SEARCH), DUPLICATE),
-        (OfferedTool(name="ask_user_line", schema=SEARCH), NOT_YOURS),
-        (OfferedTool(name="ask_user_form", schema=SEARCH), NOT_YOURS),
+        (OfferedTool(name="ask_user", schema=SEARCH), NOT_YOURS),
         (OfferedTool(name="search", schema="["), NOT_AN_OBJECT),
         (OfferedTool(name="search", schema="[]"), NOT_AN_OBJECT),
         (OfferedTool(name="search"), NOT_AN_OBJECT),
