@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as replaced
 
+from plyngent.kernel.budget import estimate
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
@@ -402,7 +403,7 @@ class TurnRunner:
         """
         reply = await state.ctx.round_scope().guard(self._answered(state, request))
         if reply.usage.reported:
-            await self._cost(state, reply)
+            await self._cost(state, reply, request)
         if reply.cut is not None:
             self._emit(
                 AnswerCut(session=state.ctx.session.session_id, turn=state.ctx.turn_id, reason=str(reply.cut)),
@@ -430,14 +431,18 @@ class TurnRunner:
             summary="the last answer hit the output limit",
         )
 
-    async def _cost(self, state: TurnState, reply: Reply) -> None:
-        """Write down what this request cost, and then say it.
+    async def _cost(self, state: TurnState, reply: Reply, request: Request) -> None:
+        """Write down what this request cost, and what it was thought to cost, and then say it.
 
         The row comes first because the two are different readers: the event is the line a person sees
         while the turn is running, and the row is what makes "what has this conversation spent" a question
         that can be asked after the process that spent it is over. E133 keeps the price out of the kernel,
         so the three counts and the model that charged them are what is written — an outside reader adds
         up whatever a price list says, and cannot if the row does not name the model.
+
+        ``estimate`` is of the very ``request`` this reply answers, which is the only payload its
+        ``prompt`` count could belong to: pairing it with anything else would not measure this build's
+        error but the difference between two decks of cards (§10.5, E149).
         """
         ctx = state.ctx
         usage = reply.usage
@@ -450,6 +455,7 @@ class TurnRunner:
                 prompt=usage.prompt,
                 completion=usage.completion,
                 cached=usage.cached,
+                estimate=estimate(request.messages, system=request.system, tools=request.tools),
             ),
             turn=ctx.turn_id,
         )

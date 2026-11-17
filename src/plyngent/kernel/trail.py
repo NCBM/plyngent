@@ -352,6 +352,11 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
     offline. ``cached`` is ``None`` when the provider said nothing, which is not the same as saying
     zero.
 
+    ``estimate`` is what :mod:`plyngent.kernel.budget` thought the same payload would be counted as,
+    written beside the count that was actually charged: the two are one measurement — how far this
+    build's idea of "too big" is from the provider's — and keeping only one of them would make the error
+    unknowable after the fact. A row that predates the field, or a route that counts nothing, says ``0``.
+
     A **root**, and out of the chain with every other bookkeeping row: what a turn's own tally is says
     nothing to a model, and a turn never continues from a number.
     """
@@ -362,6 +367,7 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
     prompt: int = 0
     completion: int = 0
     cached: int | None = None
+    estimate: int = 0
 
 
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
