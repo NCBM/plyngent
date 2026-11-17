@@ -47,6 +47,7 @@ from plyngent.kernel.trail import (
     EFFECT_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
+    TURN_ENDED_TAG,
     USAGE_TAG,
     WITHHELD_TAG,
     AnyRecord,
@@ -58,6 +59,7 @@ from plyngent.kernel.trail import (
     StateChange,
     Summary,
     Trail,
+    TurnEnded,
     Usage,
     Withheld,
     as_message,
@@ -626,6 +628,7 @@ _RECORDS: Mapping[str, type[AnyRecord]] = {
     EFFECT_TAG: Effect,
     CONSENT_TAG: Consent,
     USAGE_TAG: Usage,
+    TURN_ENDED_TAG: TurnEnded,
 }
 
 

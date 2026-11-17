@@ -37,7 +37,7 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
-from plyngent.kernel.trail import Attempt, Effect, Summary
+from plyngent.kernel.trail import Attempt, Effect, Summary, TurnEnded
 from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.wire.event import (
     AnswerCut,
@@ -140,19 +140,41 @@ class TurnRunner:
             raise
         finally:
             _ = await ctx.cancel.settle(ctx.turn_address())
+            ended = await self._ended(state, reason=reason, failure=failure)
             self._emit(
                 TurnFinished(
                     session=session,
                     turn=ctx.turn_id,
                     reason=reason,
-                    ends_at=state.cursor,
+                    ends_at=ended,
                     failure="" if failure is None else str(failure),
                 ),
             )
             ctx.end()
 
-    # -- the compaction -------------------------------------------------------------
+    async def _ended(self, state: TurnState, *, reason: str, failure: Failure | None) -> str:
+        """Write down that this turn ended, and answer the entry a reader finds it at.
 
+        A row and not only the event, for the reason a call's cost is a row: the event is for whoever is
+        watching, and this is for whoever reads the log later. What it adds that nothing else has is that
+        the turn *said* it ended — a journal whose rows simply stop cannot tell a turn that finished from
+        a process that was killed in the middle of one, and the second is the case a person needs to know
+        about, because nothing was settled.
+
+        Below the last entry of the turn rather than beside the chain, because a turn's end is a place the
+        next message really does continue from. Nothing can be written after it: this is the last thing the
+        turn does, which is what makes the row worth trusting as an answer.
+        """
+        ctx = state.ctx
+        entry = await ctx.host.trail.append(
+            ctx.session.session_id,
+            TurnEnded(turn=ctx.turn_id, reason=reason, failure="" if failure is None else str(failure)),
+            begin_after=state.cursor,
+            turn=ctx.turn_id,
+        )
+        return entry.id
+
+    # -- the compaction -------------------------------------------------------------
     async def _summarized(self, state: TurnState) -> TurnState:
         """Ask the model for a summary of the stretch this turn was pointed at, and write that one row.
 

@@ -175,6 +175,31 @@ class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
     reason: str = ""
 
 
+#: The tag one turn's end carries. Spelled here because it is half of the record's identity.
+TURN_ENDED_TAG = "turn-ended"
+
+
+class TurnEnded(Struct, tag=TURN_ENDED_TAG, frozen=True, kw_only=True):
+    """One turn that stopped, and why — the durable half of the ``turn-finished`` event.
+
+    The event is for whoever is watching; this row is for whoever reads the log afterwards, and the fact
+    it carries cannot be worked out from anything else here. A journal whose rows simply stop looks the
+    same whether the turn ended quietly or the process was killed in the middle of it, and "this turn
+    never said it ended" is the only honest name for the second — which a reader can only reach if the
+    first writes a row.
+
+    It is written **below the last entry of the turn**, not as a root, because a turn's end is a place the
+    next message really does continue from (contrast :class:`Attempt` and :class:`Consent`, which are
+    roots because nothing follows them). ``reason`` is text for the reason every closed set kept in a row
+    is, and it is empty for a turn that ran to its own end.
+    """
+
+    turn: int = 0
+    reason: str = ""
+    #: Which kind of trouble ended it, when a model could not be asked — empty otherwise.
+    failure: str = ""
+
+
 #: The tag one call's changes carry. Spelled here because it is half of the record's identity.
 EFFECT_TAG = "effect"
 
@@ -293,7 +318,7 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
 #: compressed into, what it has stopped showing, what became of a request that was never answered, what
 #: one call left different, what one person said when they were asked, and what one request cost.
-type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent | Usage
+type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent | Usage | TurnEnded
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
@@ -310,11 +335,12 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     conversation. A consent is bookkeeping of the same sort, from the other side of the wire: the model is
     not told what a person agreed to before its call ran, and a person reading the row is. A usage is the
     third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
-    the model is told about itself.
+    the model is told about itself. And a turn's end is the fourth: a model reading "turn 3 ended" as part
+    of its conversation would be reading the log rather than the conversation.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded):
         return None
     return record
 
@@ -340,13 +366,16 @@ def preview(record: AnyRecord) -> str:
     A record a model reads says its own text, and a summary says the text it stands for — which is the one
     the person looking for a place to continue from is actually looking for. A consent says the question
     it was, because "consent" alone is a row nobody can act on: which question it was is the whole of what
-    a person reading their own log came for. The rest of the bookkeeping has no words of its own
-    (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
+    a person reading their own log came for; a turn's end says the reason the turn gave, because a row of
+    that kind with nothing after it is the one a person is looking for. The rest of the bookkeeping has no
+    words of its own (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
     """
     if isinstance(record, Summary):
         said = record.text
     elif isinstance(record, Consent):
         said = record.question
+    elif isinstance(record, TurnEnded):
+        said = record.reason
     else:
         message = as_message(record)
         said = "" if message is None else message.text

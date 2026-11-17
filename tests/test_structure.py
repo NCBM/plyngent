@@ -69,6 +69,7 @@ from plyngent.kernel.trail import (
     Effect,
     StateChange,
     Summary,
+    TurnEnded,
     Usage,
     Withheld,
     as_message,
@@ -771,10 +772,15 @@ def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
         Effect,
         Consent,
         Usage,
+        TurnEnded,
     ), "a record nobody classified would be a writer nobody asked about"
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
     assert kinds == {"User", "Assistant", "Result"}, "a message is a message, whichever of the three it is"
-    assert [as_message(record) for record in (StateChange(), Withheld(), Attempt(), Effect(), Consent(), Usage())] == [
+    assert [
+        as_message(record)
+        for record in (StateChange(), Withheld(), Attempt(), Effect(), Consent(), Usage(), TurnEnded())
+    ] == [
+        None,
         None,
         None,
         None,
@@ -783,7 +789,8 @@ def test_nothing_but_a_summary_is_written_as_a_person_speaking() -> None:
         None,
     ], (
         "what a session knows, what it stopped showing, what became of a request, what a call left "
-        "different, what a person was asked and what a request cost are not things a model reads"
+        "different, what a person was asked, what a request cost and that a turn ended are not things a "
+        "model reads"
     )
     says = as_message(Summary(text="it was settled"))
 

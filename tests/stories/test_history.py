@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tests.stories.model import text
+from tests.stories.model import Held, text
 
 from .driver import SESSION
 
@@ -40,7 +40,32 @@ async def test_the_entries_are_shown_in_the_order_they_were_written(story_with: 
         "e1 state-change",
         "e2 user: say something",
         "e3 assistant: hello there",
-    ), "one line per row, named by the id a client continues from"
+        "e4 turn-ended",
+    ), "one line per row, named by the id a client continues from — the turn's own end included"
+
+
+async def test_a_turn_that_was_stopped_says_so_where_the_log_is_read(story_with: Scripted) -> None:
+    """A turn's end is a row and not only an event, which is what a log read afterwards has to go on.
+
+    Nothing else in the journal distinguishes a turn that finished from one whose rows simply stop: the
+    rows of a process that was killed end at the same place a turn's do when it ends quietly. So the end
+    is written down, below the turn's last row, and a person reading the log finds it there — with the
+    reason, because "it ended" and "somebody stopped it" are two different endings.
+    """
+    story = await story_with(Held(text("too late")))
+    await story.type("something slow")
+    await story.press("ctrl-c")
+    await story.until("turn 1 finished: user")
+    read_from = len(story.notices())
+
+    await story.type("/history")
+    await story.settle()
+
+    assert story.notices()[read_from:] == (
+        "e1 state-change",
+        "e2 user: something slow",
+        "e3 turn-ended: user",
+    ), "the row says where the turn ended, and why"
 
 
 async def test_a_conversation_nothing_was_said_in_yet_reads_as_nothing(story_with: Scripted) -> None:
@@ -70,15 +95,25 @@ async def test_the_whole_forest_can_be_read_with_its_parents(story_with: Scripte
 
     rows = await story.client.trajectory(SESSION)
 
-    assert [row.id for row in rows] == ["e1", "e2", "e3", "e4", "e5"], "arrival order, as the journal holds it"
-    assert [row.kind for row in rows] == ["state-change", "user", "assistant", "user", "assistant"]
-    assert [row.begin_after for row in rows] == [None, None, "e2", "e3", "e4"], (
+    assert [row.id for row in rows] == ["e1", "e2", "e3", "e4", "e5", "e6", "e7"], (
+        "arrival order, as the journal holds it"
+    )
+    assert [row.kind for row in rows] == [
+        "state-change",
+        "user",
+        "assistant",
+        "turn-ended",
+        "user",
+        "assistant",
+        "turn-ended",
+    ], "two turns, and each of them says where it ended"
+    assert [row.begin_after for row in rows] == [None, None, "e2", "e3", "e4", "e5", "e6"], (
         "each row names the one it continues, so the chain is in the answer"
     )
-    assert [row.preview for row in rows] == ["", "one", "first", "two", "second"], (
+    assert [row.preview for row in rows] == ["", "one", "first", "", "two", "second", ""], (
         "one line of what each row says, and nothing for a row that has no words of its own"
     )
-    assert [row.children for row in rows] == [0, 1, 1, 1, 0], (
+    assert [row.children for row in rows] == [0, 1, 1, 1, 1, 1, 0], (
         "nothing continues the last one, which is where a turn grows"
     )
 

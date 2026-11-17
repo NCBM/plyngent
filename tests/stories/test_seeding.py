@@ -43,7 +43,7 @@ async def test_a_new_conversation_can_start_from_another_ones_text(story_with: S
     read_from = len(story.notices())
     await story.type("/history --session work")
     await story.settle()
-    assert story.notices()[read_from:] == ("e4 user: one", "e5 assistant: first"), (
+    assert story.notices()[read_from:] == ("e5 user: one", "e6 assistant: first"), (
         "the same text, written down as rows of the new conversation"
     )
 
@@ -125,6 +125,6 @@ async def test_the_conversation_the_text_came_from_is_untouched(story_with: Scri
 
     await story.type("/new --session work --seed-from main --seed-from e3")
 
-    assert [row.preview for row in await story.client.trajectory(SESSION)] == ["", "one", "first"], (
+    assert [row.preview for row in await story.client.trajectory(SESSION)] == ["", "one", "first", ""], (
         "main holds what it held, and the copy lives under its own name"
     )
