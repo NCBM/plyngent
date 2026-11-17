@@ -45,6 +45,9 @@ from plyngent.wire.event import (
     CompactRefused,
     DocumentStored,
     ExportRefused,
+    GoalMode,
+    GoalRefused,
+    GoalSet,
     GrantRevoked,
     KernelLeaving,
     Noticed,
@@ -148,6 +151,8 @@ type _Reported = (
     | Seeded
     | SeedRefused
     | Noticed
+    | GoalSet
+    | GoalRefused
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
@@ -158,12 +163,19 @@ type _Diffed = Changed
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, what it
 #: kept, and what the harness told the model. A document belongs here and not to a turn because the thing
 #: kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded | Noticed
+type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded | Noticed | GoalSet
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
 type _Declined = (
-    CompactRefused | PruneRefused | ExportRefused | ResumeRefused | RouteRefused | RollbackRefused | SeedRefused
+    CompactRefused
+    | PruneRefused
+    | ExportRefused
+    | ResumeRefused
+    | RouteRefused
+    | RollbackRefused
+    | SeedRefused
+    | GoalRefused
 )
 
 #: What one request to a model cost, and whether the answer it brought stopped short.
@@ -742,7 +754,15 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
         case KernelLeaving() | SessionsListed():
             return _connection(event)
         case (
-            Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked() | Seeded() | Noticed()
+            Compacted()
+            | Pruned()
+            | DocumentStored()
+            | Routed()
+            | RolledBack()
+            | GrantRevoked()
+            | Seeded()
+            | Noticed()
+            | GoalSet()
         ):
             return _setting(event)
         case (
@@ -753,6 +773,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | RouteRefused()
             | RollbackRefused()
             | SeedRefused()
+            | GoalRefused()
         ):
             return _declined(event)
         case _ as never:
@@ -789,6 +810,9 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line
             return ((session, Shown(f"document {document} kept ({chars} chars)", "notice")),)
         case Routed(session=session, route=route, epoch=epoch):
             return ((session, Shown(f"route: {route or 'none'} (epoch {epoch})", "notice")),)
+        case GoalSet(session=session, mode=mode):
+            said = "an unfinished plan keeps this conversation going" if mode is GoalMode.ON else "the plan waits"
+            return ((session, Shown(f"goal {mode}: {said}", "notice")),)
         case RolledBack(session=session, revision=revision, target=target, restored=restored):
             counted = "1 path" if len(restored) == 1 else f"{len(restored)} paths"
             said = f"rolled back to {target[:8]}: {counted} put back ({revision[:8]})"
@@ -865,6 +889,9 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one wo
         case RouteRefused(session=session, reason=reason, route=route):
             said = _why(reason).format(route=route, session=session)
             return ((session, Shown(f"route refused: {said}", "refusal")),)
+        case GoalRefused(session=session, reason=reason):
+            said = _why(reason).format(session=session)
+            return ((session, Shown(f"goal refused: {said}", "refusal")),)
         case RollbackRefused(session=session, reason=reason, path=path, version=version, detail=detail):
             said = _why(reason).format(
                 path=path, version=version[:8], detail=f": {detail}" if detail else "", session=session
@@ -914,6 +941,7 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.NOT_YOURS: "the kernel has a shape for this name, and a client may not say what it is",
     Refusal.NO_SHAPE: "this kernel has no shape for that name yet, so there is nothing to offer",
     Refusal.NOT_AN_OBJECT: "the arguments of a client's tool are a JSON object, and this schema is not one",
+    Refusal.NO_GOAL: "a turn is started by a person or by an unfinished plan, and not by a client asking for one",
 }
 
 

@@ -33,9 +33,10 @@ from __future__ import annotations
 import json
 import shlex
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast, get_args, override
+from typing import TYPE_CHECKING, cast, get_args, override
 
 import click
+import msgspec
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
@@ -416,17 +417,20 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
 
     Every command carries ``session`` — the contract gives each one a target — so it is an option here
     too, defaulting to the session in focus rather than to the empty string the wire allows.
+
+    ``sole`` is whether this command's whole argument is the one field besides ``session``: a word with a
+    single value takes it bare (``/goal on``), because an option for it would be a name a person has to
+    type to say a word they already know (§0.13, E117).
     """
     document = _object(json.loads(spec.args))
     name = _text(document.get("$ref")).rpartition("/")[2]
     defs = _object(document.get("$defs"))
     properties = _object(_object(defs.get(name)).get("properties"))
+    fields = {field: schema for field, schema in properties.items() if field not in {"cmd", "session"}}
     options: list[click.Parameter] = []
     pairs: list[str] = []
-    for field_name, schema in properties.items():
-        if field_name in {"cmd", "session"}:
-            continue
-        option, pair, why = _option(field_name, _object(schema), defs)
+    for field_name, schema in fields.items():
+        option, pair, why = _option(field_name, _object(schema), defs, sole=len(fields) == 1)
         if option is None:
             return [], [], why
         if pair:
@@ -438,7 +442,9 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
     return options, pairs, ""
 
 
-def _option(name: str, schema: _Object, defs: _Object) -> tuple[click.Option | None, bool, str]:
+def _option(
+    name: str, schema: _Object, defs: _Object, *, sole: bool = False
+) -> tuple[click.Parameter | None, bool, str]:
     """One field as a click option: its type, whether it is a pair, and why it cannot be spoken.
 
     ``None`` and a reason travel together: a field this client cannot spell has no option at all, and
@@ -450,7 +456,7 @@ def _option(name: str, schema: _Object, defs: _Object) -> tuple[click.Option | N
     offered = schema.get("default")
     branches = [_object(branch) for branch in _objects(schema.get("anyOf"))]
     nullable = any(branch.get("type") == "null" for branch in branches)
-    return _shaped(name, _unwrap(schema, defs), offered=offered, nullable=nullable)
+    return _shaped(name, _unwrap(schema, defs), offered=offered, nullable=nullable, sole=sole)
 
 
 def _unwrap(schema: _Object, defs: _Object) -> _Object:
@@ -465,11 +471,17 @@ def _unwrap(schema: _Object, defs: _Object) -> _Object:
     return schema
 
 
-def _shaped(name: str, schema: _Object, *, offered: object, nullable: bool) -> tuple[click.Option | None, bool, str]:
+def _shaped(
+    name: str, schema: _Object, *, offered: object, nullable: bool, sole: bool = False
+) -> tuple[click.Parameter | None, bool, str]:
     """The option for one field, by the shape its schema has."""
     choices = [str(choice) for choice in _objects(schema.get("enum"))]
     if choices:
         default = None if nullable else offered if offered is not None else ""
+        if sole:
+            # The whole argument of the word is one of a few words, so it is typed bare: an option here
+            # would make a person name a value they are looking at in the help.
+            return click.Argument([name], type=click.Choice(choices), default=default, required=False), False, ""
         # The choices are the option's metavar, so they are already on the line: help here would say
         # the same values a second time, in a narrower column.
         return click.Option([_flag(name)], type=click.Choice(choices), default=default), False, ""
@@ -522,11 +534,12 @@ def _pairs(params: dict[str, object], entry: Entry) -> dict[str, object] | str:
 def _command_value(tag: str, values: dict[str, object]) -> AnyCommand:
     """The value to send: the struct the manifest's schema was taken from, built from parsed fields.
 
-    The cast is honest rather than clever: the keys are that struct's own schema's, and no signature
-    can say so for a class chosen by tag at runtime.
+    Built through ``msgspec`` and not by calling the struct, because a struct does not validate on
+    construction: click answers the *word* a choice was picked from (``"on"``), and a value that skipped
+    the wire's own decoding would arrive at the kernel as a string where the contract says a closed set —
+    a difference only the in-process transport would ever see.
     """
-    fields = cast("dict[str, Any]", values)
-    return cast("AnyCommand", _class_of(tag)(**fields))
+    return cast("AnyCommand", msgspec.convert(values, _class_of(tag)))
 
 
 def _class_of(tag: str) -> type[Command]:
@@ -556,6 +569,34 @@ def _objects(value: object) -> list[object]:
 def _text(value: object) -> str:
     """One JSON string, or the empty one."""
     return value if isinstance(value, str) else ""
+
+
+def _taken(entry: Entry, tail: str) -> Iterator[Completion]:
+    """What one command's half-typed argument may still become.
+
+    Two shapes, read off the same click command the parser uses: a value its bare argument accepts
+    (``/goal o``), or the name of one of its options (``/goal --mod``).
+    """
+    if not tail.startswith("--"):
+        for value in _chosen(entry):
+            if value.startswith(tail):
+                yield Completion(value, start_position=-len(tail))
+        return
+    for param in entry.command.get_params(click.Context(entry.command)):
+        if isinstance(param, click.Option) and param.opts[0].startswith(tail):
+            yield Completion(param.opts[0], start_position=-len(tail), display_meta=param.help or "")
+
+
+def _chosen(entry: Entry) -> tuple[str, ...]:
+    """The values a command's bare argument accepts, and nothing when it has no such argument.
+
+    Read from the same click command the parser uses, so a word that grew or lost its closed set cannot
+    disagree with what completion offers (§0.13, E117).
+    """
+    for param in entry.command.get_params(click.Context(entry.command)):
+        if isinstance(param, click.Argument) and isinstance(param.type, click.Choice):
+            return tuple(str(choice) for choice in param.type.choices)
+    return ()
 
 
 def _usage(entry: Entry) -> str:
@@ -593,27 +634,27 @@ class SlashCompleter(Completer):
 
     @override
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
-        """Complete the word being typed, or the option of the command it names."""
+        """Complete the word being typed, or the argument of the command it names."""
         del complete_event
         text = document.text_before_cursor
         if not text.startswith(SLASH):
             return
         head, _, tail = text.partition(" ")
         if not tail:
-            word = head[len(SLASH) :]
-            for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED}):
-                if candidate.startswith(word):
-                    yield Completion(
-                        f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
-                    )
+            yield from self._words(head, text)
             return
         tag = self._catalog.word(head[len(SLASH) :])
-        if tag is None or not tail.startswith("--"):
-            return
-        entry = self._catalog.offers[tag]
-        for param in entry.command.get_params(click.Context(entry.command)):
-            if isinstance(param, click.Option) and param.opts[0].startswith(tail):
-                yield Completion(param.opts[0], start_position=-len(tail), display_meta=param.help or "")
+        if tag is not None:
+            yield from _taken(self._catalog.offers[tag], tail)
+
+    def _words(self, head: str, text: str) -> Iterator[Completion]:
+        """Every word this client has that starts with what has been typed so far."""
+        word = head[len(SLASH) :]
+        for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED}):
+            if candidate.startswith(word):
+                yield Completion(
+                    f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
+                )
 
     def _summary(self, candidate: str) -> str:
         """What a word does, looked up through the alias that spells it."""

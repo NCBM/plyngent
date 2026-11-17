@@ -83,6 +83,22 @@ class TurnState:
     more: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class TurnEnd:
+    """Where a turn ended, and whether it did anything while it ran.
+
+    ``acted`` is "it asked for at least one tool", and it exists for the one reader that has to decide
+    whether to start another turn: a goal turn that only talked changed nothing a second turn could carry
+    on from, so asking again would be insisting rather than progress (§10.4, E146). ``reason`` is the row's
+    own answer to "did it end on its own", because a turn that was stopped or that failed is a turn a
+    person is done with.
+    """
+
+    ends_at: str
+    acted: bool
+    reason: str = ""
+
+
 class TurnRunner:
     """One turn, from the person's line to the last entry it wrote.
 
@@ -105,13 +121,16 @@ class TurnRunner:
         self._calls = 0
         self._thought_said = False
 
-    async def run(self, text: str) -> None:
+    async def run(self, text: str) -> TurnEnd:
         """Run the turn to its end, which is an answer, a refusal, or somebody stopping it.
 
         The three ends are all one path: the loop leaves when a reply asked for nothing, a cancellation
         is caught and becomes the reason the turn finished, and the ``finally`` is what makes every end
         look the same to the outside — the work joined, what the session owes the model said, the finish
         announced, the turn forgotten.
+
+        A ``GOAL`` turn writes no line of its own: nothing new was said, so what it reads comes from the
+        prompt (:meth:`assemble`) and its history is the one the turn before it left (E146).
         """
         ctx = self._ctx
         session = ctx.session.session_id
@@ -119,11 +138,13 @@ class TurnRunner:
         self._emit(TurnStarted(session=session, turn=ctx.turn_id, begin_after=ctx.begin_after, kind=ctx.kind))
         reason = ""
         failure: Failure | None = None
+        ended = ""
         try:
             if ctx.kind is TurnKind.COMPACT:
                 state = await self._summarized(state)
             else:
-                state = await self._append(state, User(text=text))
+                if ctx.kind is not TurnKind.GOAL:
+                    state = await self._append(state, User(text=text))
                 while True:
                     state = await self._told(state)
                     request = await self.assemble(state)
@@ -162,6 +183,7 @@ class TurnRunner:
                 ),
             )
             ctx.end()
+        return TurnEnd(ends_at=ended, acted=self._calls > 0, reason=reason)
 
     async def _told(self, state: TurnState) -> TurnState:
         """Say the lines this session owes the model, at a boundary where nothing is being asked.
@@ -303,12 +325,22 @@ class TurnRunner:
         view = self._catalog.view(ctx.session.disclosed)
         asked = ctx.host.routes.resolve(ctx.session.route)
         return Request(
-            system=ctx.host.prompt.compose(view),
+            system=ctx.host.prompt.compose(view, continuing=self._carrying_on(state)),
             messages=await self._seen(ctx, messages),
             tools=view.prompts(),
             route="" if asked is None else asked.name,
             cache_key=ctx.session.cache_key,
         )
+
+    def _carrying_on(self, state: TurnState) -> str:
+        """The section a turn the kernel started itself carries, and nothing for any other turn.
+
+        A goal turn has no message of its own — nobody said anything — so what it is asked to do can only
+        live in the prompt, and it is the one section that changes from one request to the next (E146).
+        """
+        if state.ctx.kind is not TurnKind.GOAL:
+            return ""
+        return state.ctx.host.prompt.carrying_on(state.ctx.session.todos.reminder())
 
     async def _seen(self, ctx: TurnCtx, messages: tuple[AnyMessage, ...]) -> tuple[AnyMessage, ...]:
         """The conversation as this route can read it: a picture travels only where both sides can take it.

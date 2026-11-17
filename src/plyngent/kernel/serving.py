@@ -49,12 +49,13 @@ from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
-from plyngent.kernel.turn import TurnRunner
+from plyngent.kernel.turn import TurnEnd, TurnRunner
 from plyngent.wire.command import (
     Cancel,
     Close,
     Compact,
     Export,
+    Goal,
     ListSessions,
     Offer,
     Open,
@@ -71,6 +72,9 @@ from plyngent.wire.event import (
     DocumentStored,
     Entry,
     ExportRefused,
+    GoalMode,
+    GoalRefused,
+    GoalSet,
     GrantRevoked,
     KernelLeaving,
     ListedSession,
@@ -334,7 +338,7 @@ class Serving:
                 await self._bookkeeping(command)
             case Export(session=session, begin_after=begin_after):
                 await self._export(session, begin_after)
-            case SetRoute() | Ungrant():
+            case SetRoute() | Ungrant() | Goal():
                 await self._setting(command)
             case Resume() | Rollback():
                 await self._past(command)
@@ -351,13 +355,29 @@ class Serving:
             case Close(session=session):
                 await self._close(session)
 
-    async def _setting(self, command: SetRoute | Ungrant) -> None:
-        """The two commands that move one of a session's own settings rather than touching the world."""
+    async def _setting(self, command: SetRoute | Ungrant | Goal) -> None:
+        """The commands that move one of a session's own settings rather than touching the world."""
         match command:
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
             case Ungrant(session=session, path=path):
                 await self._ungrant(session, path)
+            case Goal(session=session, mode=mode):
+                await self._goal(session, mode)
+
+    async def _goal(self, session: str, mode: GoalMode | None) -> None:
+        """Answer where the switch stands, or move it first.
+
+        One refusal, which is the one every setting has: a conversation this kernel does not serve. What
+        the answer says is the mode the session now *has*, so the same event answers both halves of the
+        word — a question and a move — and a person reading a screen is told where the switch is either way.
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(GoalRefused(session=session, reason=Refusal.NO_SESSION))
+            return
+        now = await found.set_goal(mode) if mode is not None else found.mode
+        self.link.emit(GoalSet(session=session, mode=now))
 
     async def _ungrant(self, session: str, path: str) -> None:
         """Take back one path this conversation was allowed, and say which of the two happened.
@@ -799,6 +819,11 @@ class Serving:
             # history an aside exists to leave alone, so it is refused by name instead.
             self.link.emit(TurnRefused(session=session, reason=Refusal.NO_ASIDE, holder=0))
             return
+        if kind is TurnKind.GOAL:
+            # The one kind nobody may ask for: a goal turn is this kernel saying "the plan is not
+            # finished", so a client that sends one is asking for a turn on its own authority (E146).
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_GOAL, holder=0))
+            return
         live = found.turns()
         if live:
             self.link.emit(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
@@ -813,19 +838,46 @@ class Serving:
         task.add_done_callback(self._turns.discard)
 
     async def _turn(self, turned: TurnCtx, text: str) -> None:
-        """Run one turn to its end.
+        """Run one turn to its end, and then whatever the goal switch says about the next one.
 
         A turn that raised has already announced that it ended badly and has already stopped being the
         session's live turn — the runner's ``finally`` does both — so there is nothing left to close
         here. Letting the exception out of the task instead would only hand it to a task nobody awaits,
         where the loop's default handler would print it onto the terminal the kernel is not allowed to
         write to.
+
+        The chain is here rather than in the runner because this is where a turn is *started*: a goal turn
+        is one more turn, with its own address, its own cost and its own end row (§10.4, E146).
         """
-        runner = TurnRunner(turned, catalog=self._catalog, executor=self._executor)
+        while True:
+            runner = TurnRunner(turned, catalog=self._catalog, executor=self._executor)
+            try:
+                end = await runner.run(text)
+            except Exception:  # noqa: BLE001 — a turn's failure is reported as an event, not as a traceback
+                return
+            following = await self._following(turned, end)
+            if following is None:
+                return
+            turned, text = following, ""
+
+    async def _following(self, turned: TurnCtx, end: TurnEnd) -> TurnCtx | None:
+        """The turn a goal asks for, or ``None`` when nothing should be started.
+
+        Four answers, and each of them is a way of not insisting: the switch is off, the plan is finished,
+        the turn was stopped or failed (an end other than the empty reason), or it acted on nothing — a
+        model that answered without calling anything has nothing a second turn could carry on from. A
+        turn already running is the fifth: a person may have typed while this one was finishing, and a
+        session has one turn at a time.
+        """
+        session = turned.session
+        if not session.goal or turned.kind is TurnKind.COMPACT:
+            return None
+        if end.reason or not end.acted or not session.todos.reminder() or session.turns():
+            return None
         try:
-            await runner.run(text)
-        except Exception:  # noqa: BLE001 — a turn's failure is reported as an event, not as a traceback
-            return
+            return await session.begin_turn(begin_after=end.ends_at, kind=TurnKind.GOAL)
+        except ValueError:
+            return None
 
     # -- who answers questions -----------------------------------------------------
 

@@ -29,13 +29,28 @@ class TurnKind(StrEnum):
     """What a turn is for, which is also what it is allowed to touch.
 
     ``CHAT`` continues a conversation. ``ASIDE`` reads without writing model history. ``COMPACT``
-    writes one summary entry and nothing else. Nothing here grants exclusivity: with a forest and
-    explicit ``begin_after``, two turns that grow from the same point simply become two branches.
+    writes one summary entry and nothing else. ``GOAL`` is the one kind a person cannot ask for: the
+    kernel starts it itself when an unfinished plan says the work is not done, so it writes no line
+    nobody said and carries the instruction in the prompt instead (§10.4, E146). Nothing here grants
+    exclusivity: with a forest and explicit ``begin_after``, two turns that grow from the same point
+    simply become two branches.
     """
 
     CHAT = "chat"
     ASIDE = "aside"
     COMPACT = "compact"
+    GOAL = "goal"
+
+
+class GoalMode(StrEnum):
+    """Whether an unfinished plan keeps this conversation going.
+
+    Two words and not a boolean, because both have to be sayable: a switch that can only be turned on is
+    a switch somebody has to restart a program to turn off (E146).
+    """
+
+    ON = "on"
+    OFF = "off"
 
 
 class Refusal(StrEnum):
@@ -91,6 +106,9 @@ class Refusal(StrEnum):
     NOT_YOURS = "not-yours"
     NO_SHAPE = "no-shape"
     NOT_AN_OBJECT = "not-an-object"
+    #: A turn nobody asked for: ``goal`` is the one kind only this kernel may start, so a client that
+    #: sends one is refused rather than served (§10.4, E146).
+    NO_GOAL = "no-goal"
 
 
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
@@ -384,6 +402,27 @@ class GrantRevoked(Event, tag="grant-revoked", frozen=True, kw_only=True):
     revoked: bool = False
 
 
+class GoalSet(Event, tag="goal-set", frozen=True, kw_only=True):
+    """Whether an unfinished plan keeps this conversation going, and what it is now (E146).
+
+    One line for a person and one setting for the session: ``on`` means the kernel starts the next turn
+    itself when a turn ends with work left in the plan, so a conversation is not left waiting for somebody
+    to type "go on". What it is *not* is a loop: a goal turn that did not act — no call, nothing to
+    change — ends the chain, because asking a model again for an answer it already gave is insistence
+    rather than progress.
+    """
+
+    session: str = ""
+    mode: GoalMode = GoalMode.OFF
+
+
+class GoalRefused(Event, tag="goal-refused", frozen=True, kw_only=True):
+    """The switch was not moved: this kernel does not serve that conversation."""
+
+    session: str = ""
+    reason: Refusal = Refusal.NO_SESSION
+
+
 class Routed(Event, tag="routed", frozen=True, kw_only=True):
     """This session now asks *route*, and which epoch that is.
 
@@ -646,5 +685,7 @@ type AnyEvent = (
     | AnswerCut
     | Routed
     | RouteRefused
+    | GoalSet
+    | GoalRefused
     | Batch
 )

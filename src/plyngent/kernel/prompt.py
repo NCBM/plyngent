@@ -152,6 +152,20 @@ files it touched, what is still open, and anything the next turn must not repeat
 prose in the third person, in the present tense, and say nothing about being a summary — this text is
 what the conversation becomes."""
 
+#: What the harness says when it starts a turn nobody asked for (E146), and the plan is not finished.
+#:
+#: It is a *directive* and not a message: nothing new was said, so a row saying "carry on" would be words
+#: the person did not say and the harness cannot pretend to. It goes in the prompt of that one request,
+#: which is also what keeps the conversation itself untouched by a mode that only decides when to ask.
+CONTINUING = """\
+Carrying on:
+- Nothing new was said. The plan below is not finished, so take the next step of it yourself — the same
+  way you would if the person had just said "go on".
+- What is left of the plan: {left}
+- If there is nothing you can do about what is left, say so plainly and stop; a turn that waits for the
+  person is the right answer to a task that needs one."""
+
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,16 +202,32 @@ class PromptPlan:
         """The plan this host's skills make, read once — the ordinary way to get one."""
         return cls(skills=catalog_of(skills), engines=tuple(engines))
 
-    def compose(self, view: ToolView) -> str:
+    def compose(self, view: ToolView, *, continuing: str = "") -> str:
         """The whole system message for one request, as the five sections in their one order.
 
         ``view`` is what this session can reach right now, which decides two things: the group sections that
         travel with the groups it has been shown, and the index line that ends the prompt saying what is
         still missing. Nothing else here depends on the session, which is why one plan serves every
         conversation on a host.
+
+        ``continuing`` is the one section that depends on *why* this request is being made, and it is
+        therefore the only one a turn hands in: a turn the kernel started itself says so, and the index line
+        still ends the prompt because what a session cannot reach is a fact about the session rather than
+        about this request (E146).
         """
-        sections = (self.persona, self.directives, *self._arrived(view), self.skills, view.index())
+        sections = (
+            self.persona,
+            self.directives,
+            *self._arrived(view),
+            self.skills,
+            continuing,
+            view.index(),
+        )
         return "\n\n".join(section.strip() for section in sections if section.strip())
+
+    def carrying_on(self, left: str) -> str:
+        """What this program says when it starts a turn itself: the plan, and that nothing new was said."""
+        return CONTINUING.format(left=left)
 
     def summarize(self, asks: str) -> tuple[str, str]:
         """The system message and the instruction for one compaction, in that order.

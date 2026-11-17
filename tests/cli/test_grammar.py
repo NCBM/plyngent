@@ -13,7 +13,8 @@ from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
 from plyngent.cli.grammar import Catalog, Reads, Runs, SlashCompleter, Travels, Wrong, build, decode, help_text
-from plyngent.wire.command import Rollback, SetRoute
+from plyngent.wire.command import Goal, Rollback, SetRoute
+from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
 from plyngent.wire.query import Grants, Skills, Trajectory
 
@@ -42,6 +43,30 @@ def test_an_empty_argument_is_still_an_argument() -> None:
     assert intent == Runs(command=SetRoute(session="main", route="")), (
         "a value the person wrote as empty is empty, not a missing option"
     )
+
+
+def test_a_word_whose_argument_is_one_of_two_words_takes_it_bare() -> None:
+    """E146: ``/goal on`` is the value, and ``/goal`` alone is the question rather than the empty mode.
+
+    A word whose whole argument is a closed set has no option for it: naming the option would make a person
+    type a word they can already see in the help, and the value they type is the same value the wire
+    carries — ``GoalMode``, not the string click read off the line.
+    """
+    catalog = _catalog()
+
+    assert decode("/goal on", catalog, session="main") == Runs(command=Goal(session="main", mode=GoalMode.ON))
+    assert decode("/goal", catalog, session="main") == Runs(command=Goal(session="main")), (
+        "no word at all is the question, which is a mode nobody stated"
+    )
+    assert isinstance(decode("/goal sideways", catalog, session="main"), Wrong), (
+        "a word the command does not have is a complaint, not a mode"
+    )
+
+
+def test_completion_of_a_bare_value_says_which_words_it_takes() -> None:
+    offered = list(SlashCompleter(_catalog()).get_completions(Document("/goal o"), CompleteEvent()))
+
+    assert [one.text for one in offered] == ["off", "on"], "and only the values that start with what was typed"
 
 
 def test_a_switch_is_a_word_without_a_value() -> None:

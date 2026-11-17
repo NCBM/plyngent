@@ -33,9 +33,10 @@ from plyngent.kernel.cancel import CancelToken, Scope
 from plyngent.kernel.host import Host  # noqa: TC001
 from plyngent.kernel.notices import Notices
 from plyngent.kernel.reads import Reads
+from plyngent.kernel.todos import Todos
 from plyngent.kernel.trail import Consent, StateChange
 from plyngent.wire.ask import Agreed, AskSite, Confirmation
-from plyngent.wire.event import TurnKind
+from plyngent.wire.event import GoalMode, TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
@@ -57,6 +58,11 @@ TODOS = "todos"
 #: provider cache keys on (§10.5): the tools move, and the plan moves, and neither has to move for the
 #: other to.
 PROMPT_PLAN = "prompt-plan"
+
+#: The key the goal switch is written under: whether an unfinished plan keeps this conversation going.
+#: A setting like the plan itself, and beside it for the same reason — it is something this conversation
+#: is doing, not something one turn is (§10.4, E146).
+GOAL = "goal"
 
 #: The key the session's route is written under: which of the host's endpoints answers it, and the epoch
 #: that says when that changed. A fourth key in the same vocabulary, and the first one whose value is a
@@ -366,6 +372,47 @@ class Session(Component):
             return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
 
         return await self.change(ROUTE, mutate)
+
+    # -- whether unfinished work keeps the conversation going -----------------------
+
+    @property
+    def mode(self) -> GoalMode:
+        """Where the goal switch stands, as the word a person reads it as.
+
+        A setting nobody wrote is ``off``: a conversation does not start driving itself, and "never chose"
+        and "chose off" are the same thing to everyone who reads it (unlike a route, where an empty name
+        means "whatever the host default is").
+        """
+        return GoalMode.ON if self._state.get(GOAL) == GoalMode.ON.value else GoalMode.OFF
+
+    @property
+    def goal(self) -> bool:
+        """Whether a plan that is not finished drives the next turn by itself (§10.4, E146).
+
+        Read after a turn ends and nowhere else: the switch moves whenever a person moves it, and what it
+        changes is whether the kernel starts another turn — a decision about *time*, which is the one
+        thing a session is allowed to ask of a host.
+        """
+        return self.mode is GoalMode.ON
+
+    async def set_goal(self, mode: GoalMode) -> GoalMode:
+        """Turn the switch on or off, and answer what it is now. A mode it already has writes nothing."""
+
+        def mutate(before: str | None) -> tuple[str | None, GoalMode]:
+            if before == mode.value:
+                return None, mode
+            return mode.value, mode
+
+        return await self.change(GOAL, mutate)
+
+    @property
+    def todos(self) -> Todos:
+        """The plan this conversation wrote down, as the stack it is.
+
+        The same decoder the todo tools read, in the same place they read it from: one setting, one value,
+        and a reader that folds it here rather than in whoever needed it (§10.4, E146).
+        """
+        return Todos.load(self._state.get(TODOS))
 
     # -- which paths this conversation may reach -----------------------------------
 

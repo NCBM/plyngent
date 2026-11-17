@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from msgspec import Struct
 
-from plyngent.wire.event import TurnKind
+from plyngent.wire.event import GoalMode, TurnKind
 from plyngent.wire.scope import CancelReason
 
 
@@ -77,6 +77,21 @@ class SetRoute(Command, tag="set-route", frozen=True, kw_only=True):
     """
 
     route: str = ""
+
+
+class Goal(Command, tag="goal", frozen=True, kw_only=True):
+    """Keep a conversation going while its plan is unfinished — or ask where it stands.
+
+    ``mode`` empty is not a third mode — it is the question. ``/goal`` alone answers where the switch
+    stands, and ``/goal on`` or ``/goal off`` moves it, because a conversation a person is in the middle of
+    is a place where "which is it now?" and "make it be" are the two things they say. The answer is
+    :class:`~plyngent.wire.event.GoalSet` either way, and it always says the mode the session now *has*.
+
+    Nothing about this is a turn's business: the switch moves now, and what it changes is what the kernel
+    does *after* a turn ends (§10.4, E146).
+    """
+
+    mode: GoalMode | None = None
 
 
 class Compact(Command, tag="compact", frozen=True, kw_only=True):
@@ -207,6 +222,7 @@ type AnyCommand = (
     | Submit
     | Cancel
     | SetRoute
+    | Goal
     | Compact
     | Prune
     | Resume

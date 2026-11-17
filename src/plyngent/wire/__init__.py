@@ -62,6 +62,7 @@ from plyngent.wire.command import Close as Close
 from plyngent.wire.command import Command as Command
 from plyngent.wire.command import Compact as Compact
 from plyngent.wire.command import Export as Export
+from plyngent.wire.command import Goal as Goal
 from plyngent.wire.command import ListSessions as ListSessions
 from plyngent.wire.command import Offer as Offer
 from plyngent.wire.command import OfferedTool as OfferedTool
@@ -84,6 +85,9 @@ from plyngent.wire.event import DocumentStored as DocumentStored
 from plyngent.wire.event import Entry as Entry
 from plyngent.wire.event import Event as Event
 from plyngent.wire.event import ExportRefused as ExportRefused
+from plyngent.wire.event import GoalMode as GoalMode
+from plyngent.wire.event import GoalRefused as GoalRefused
+from plyngent.wire.event import GoalSet as GoalSet
 from plyngent.wire.event import GrantRevoked as GrantRevoked
 from plyngent.wire.event import KernelLeaving as KernelLeaving
 from plyngent.wire.event import ListedSession as ListedSession
