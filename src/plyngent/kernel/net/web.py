@@ -29,6 +29,12 @@ configured with.
 **A verb is handed the route the conversation is speaking on** (``on``), because an engine that has more
 than one account charges the one being answered on when it can: the bill stays in one place, and nobody
 has to name an account — which is the one thing a name must never do.
+
+**An engine arrives by a channel naming it.** :class:`Providers` is what a build ships, and a route's
+``provider`` is how one of them is installed: that route's base URL and key become one *account* of that
+engine, so two routes naming the same implementation are one engine with two accounts rather than two
+engines. An engine with no account to configure — one that answers a query over somebody's public index —
+is in a program only because the program asked for it by name.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from plyngent.kernel.cancel import Cancelled
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from plyngent.kernel.lm.route import Route
     from plyngent.kernel.net.client import Gate
 
 
@@ -138,6 +145,69 @@ class Engines:
     @override
     def __repr__(self) -> str:
         return f"Engines({', '.join(self.names())})"
+
+
+#: What an engine asks for when nothing says otherwise: how many hits one search asks for, and how long
+#: one request may take. A program's ``[web]`` replaces these, and a route's own ``[route.web]`` may
+#: replace them again for the one account that needs it.
+DEFAULT_COUNT = 10
+DEFAULT_TIMEOUT = 30.0
+
+
+class EngineFactory(Protocol):
+    """How one implementation turns the routes that name it into the engine those routes give."""
+
+    def __call__(self, routes: Sequence[Route], *, count: int, timeout: float) -> Engine | None:
+        """The engine these routes make, or ``None`` when none of them can charge it."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Provider:
+    """One web implementation this build ships, as something a route and a file can both name.
+
+    ``name`` is what a route's ``provider`` says and what ``[web].engines`` lists — never a vendor's
+    endpoint, which is the route's word. ``dialects`` is what a route naming this provider may speak, and
+    it is the implementation's answer rather than this program's: a web engine and a wire format are two
+    different things, so the one that knows it also knows which wire formats it arrives on.
+
+    ``routed`` is what separates the two kinds of engine: one a route installs by naming it, and one a
+    program has because it asked for it by name. Bing is the second — it answers queries and reads
+    nothing, and there is no endpoint of a model's to configure it on.
+    """
+
+    name: str
+    dialects: tuple[str, ...]
+    engine: EngineFactory
+    routed: bool = True
+
+
+class Providers:
+    """The web implementations this build ships, as one value: a name is looked up, never guessed."""
+
+    providers: tuple[Provider, ...]
+
+    def __init__(self, providers: Sequence[Provider] = ()) -> None:
+        self.providers = tuple(providers)
+
+    def named(self, name: str) -> Provider | None:
+        """The implementation called *name*, or ``None`` — a name a file wrote down is a fact."""
+        for provider in self.providers:
+            if provider.name == name:
+                return provider
+        return None
+
+    def names(self) -> tuple[str, ...]:
+        """What this build calls each of them, in the order they were declared."""
+        return tuple(provider.name for provider in self.providers)
+
+    def routed(self) -> tuple[Provider, ...]:
+        """The ones a route can install, in the order they are collected when nothing says otherwise."""
+        return tuple(provider for provider in self.providers if provider.routed)
+
+    @override
+    def __repr__(self) -> str:
+        return f"Providers({', '.join(self.names())})"
 
 
 @dataclass(frozen=True, slots=True)

@@ -57,6 +57,23 @@ DEFAULT_TIMEOUT = 600.0
 NO_ROUTE_CAPS = Caps(max_output=0)
 
 
+class RouteWeb(Struct, frozen=True, kw_only=True):
+    """``[route.web]``: what this endpoint's web half may do, and the two numbers it speaks for.
+
+    ``share`` is the one word a channel says about being spent by somebody else: a search answering for a
+    conversation that is *not* this route's may charge a shared account, and never an unshared one. The
+    conversation being answered on is not a matter of sharing — it pays for its own searches — which is
+    why a route that shares nothing still works from a session that is speaking on it.
+
+    ``count`` and ``timeout`` are this account's own numbers, overriding the program's: one key may have
+    a smaller quota, and a slow endpoint may deserve longer than the default.
+    """
+
+    share: bool = False
+    count: int | None = None
+    timeout: float | None = None
+
+
 class Route(Struct, frozen=True, kw_only=True):
     """One endpoint of one model: where it is, what it answers in, and what it can do.
 
@@ -82,6 +99,13 @@ class Route(Struct, frozen=True, kw_only=True):
     attempts: tuple[float, ...] = ()
     timeout: float = DEFAULT_TIMEOUT
     headers: tuple[tuple[str, str], ...] = ()
+    #: Which web implementation this endpoint belongs to, by the name it calls itself — ``deepseek``, and
+    #: nothing for a plain compatible endpoint. It is not a second dialect: it says *who* the endpoint is,
+    #: and the implementation is what turns these routes into one web engine.
+    provider: str = ""
+    #: This endpoint's half of the web tools, when it has one: whether other conversations may spend it,
+    #: and the two numbers it overrides. Absent is "nothing is shared".
+    web: RouteWeb | None = None
 
     def codec(self) -> Codec | None:
         """The dialect this route says it speaks, or ``None`` when this build does not speak it.

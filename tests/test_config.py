@@ -21,7 +21,7 @@ from platformdirs import user_data_path
 
 from plyngent import config
 from plyngent.__main__ import main
-from plyngent.kernel.lm.route import Posted
+from plyngent.kernel.lm.route import Posted, RouteWeb
 from plyngent.kernel.model import Request, User
 from plyngent.kernel.pty.registry import (
     DEFAULT_MAX_PER_SESSION,
@@ -143,6 +143,66 @@ def test_two_routes_with_one_name_are_refused(tmp_path: Path) -> None:
 
     with pytest.raises(config.ConfigError, match="two routes are named 'one'"):
         _ = config.load(_written(tmp_path, twice + twice))
+
+
+def test_a_route_may_say_which_implementation_serves_its_web_half(tmp_path: Path) -> None:
+    """``provider`` and ``[route.web]`` are the channel's own half: who it is, and what it may be spent on.
+
+    Nothing about them is a second route: the base URL and the key stay the route's, and the numbers are
+    overrides of the program's — which is why a route that says nothing here shares nothing.
+    """
+    path = _written(
+        tmp_path,
+        ROUTE.format(base="http://x")
+        + 'provider = "deepseek"\n\n[route.web]\nshare = true\ncount = 3\ntimeout = 5.0\n',
+    )
+
+    route = config.load(path).routes.named("local")
+
+    assert route is not None and route.provider == "deepseek"
+    assert route.web == RouteWeb(share=True, count=3, timeout=5.0), "and the three words land where they were meant"
+
+
+def test_a_provider_this_build_does_not_have_is_refused_and_the_ones_it_has_are_named(tmp_path: Path) -> None:
+    """A typo in the one field that decides what a channel can do is refused where a person can see it."""
+    path = _written(tmp_path, ROUTE.format(base="http://x") + 'provider = "deepske"\n')
+
+    with pytest.raises(config.ConfigError, match="does not have") as refused:
+        _ = config.load(path)
+
+    assert "deepseek" in str(refused.value), "and the refusal says what it does have"
+
+
+def test_an_engine_no_route_can_be_configured_with_is_refused(tmp_path: Path) -> None:
+    """An engine with no endpoint is named in ``[web].engines``: a route naming it has nothing to give it."""
+    path = _written(tmp_path, ROUTE.format(base="http://x") + 'provider = "bing"\n')
+
+    with pytest.raises(config.ConfigError, match=r"\[web\]\.engines"):
+        _ = config.load(path)
+
+
+def test_a_provider_and_a_dialect_that_do_not_pair_are_refused(tmp_path: Path) -> None:
+    """The pair is the implementation's to declare: it knows which wire format it answers in."""
+    path = _written(
+        tmp_path,
+        ROUTE.format(base="http://x").replace('dialect = "chat-completions"', 'dialect = "messages"')
+        + 'provider = "deepseek"\n',
+    )
+
+    with pytest.raises(config.ConfigError, match="answers in"):
+        _ = config.load(path)
+
+
+def test_a_route_that_names_no_provider_may_speak_any_dialect_this_build_knows(tmp_path: Path) -> None:
+    """A third-party lookalike needs no provider, and restricting it to one dialect would refuse it."""
+    path = _written(
+        tmp_path,
+        ROUTE.format(base="http://x").replace('dialect = "chat-completions"', 'dialect = "messages"'),
+    )
+
+    route = config.load(path).routes.named("local")
+
+    assert route is not None and (route.provider, route.dialect) == ("", "messages")
 
 
 def test_a_syntax_error_says_where_it_is(tmp_path: Path) -> None:

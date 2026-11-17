@@ -37,7 +37,8 @@ from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
-from plyngent.kernel.net.web import Engines
+from plyngent.kernel.net.shipped import WEB_PROVIDERS
+from plyngent.kernel.net.web import DEFAULT_COUNT, DEFAULT_TIMEOUT, Engines
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
@@ -306,11 +307,12 @@ async def install(
     model has nothing to ask, which is a program nobody configured; one given routes but no model asks
     the route its session names. Both are what :mod:`plyngent.config` hands over (§0.11).
 
-    ``engines`` is the same move for the web half of the net tools: ``None`` is a kernel that has none, and
-    then ``web_fetch`` and ``web_search`` are not in the table at all rather than failing when called. That
-    is the one thing about this program that decides *which* tools exist, and it is decided here because
-    it is a fact about how the program was started (§0.9, E26). Which engines a program has is in turn its
-    own table's answer, and what ``share`` did to it is settled before it arrives.
+    ``engines`` is the same move for the web half of the net tools: ``None`` is "whatever the routes
+    install", which is an engine per implementation a route names in ``provider``, and then ``web_fetch``
+    and ``web_search`` are in the table only when some engine can do that verb. A program with no route
+    naming a provider has neither tool rather than two that fail when called. That is the one thing about
+    this program that decides *which* tools exist, and it is decided here because it is a fact about how
+    the program was started (§0.9, E26).
 
     ``skills`` is where a skill is looked for, and ``None`` is a kernel with no skill tools at all — the
     same move again, for the five of them (§0.10, E36). Which directories those are is
@@ -609,7 +611,7 @@ async def _assembled(
                 kwargs={
                     "skills": skills,
                     "routes": table,
-                    "engines": Engines() if engines is None else engines,
+                    "engines": _engines(table.routes) if engines is None else engines,
                     "prompt": plan,
                     "history": versions_kept,
                 },
@@ -670,6 +672,21 @@ async def _greeting(channel: local.SocketChannel) -> KernelManifest:
 def _workspace_of(root: Path | str) -> Path:
     """The directory a kernel works in, spelled the way its own workspace spells it."""
     return Path(root).expanduser().resolve()
+
+
+def _engines(routes: Iterable[Route]) -> Engines:
+    """The web half of this kernel, from the routes it was given: one engine per implementation they name.
+
+    A route installs an implementation by writing its name in ``provider``, and the implementation turns
+    those routes into its accounts — one per route, and no engine at all when no route names it. Which
+    kinds end up here is therefore a fact about the configuration and not a decision taken in this file;
+    the order is this table's, which is the order ``[web].engines`` writes down when a program says.
+    """
+    declared = tuple(routes)
+    built = [
+        provider.engine(declared, count=DEFAULT_COUNT, timeout=DEFAULT_TIMEOUT) for provider in WEB_PROVIDERS.routed()
+    ]
+    return Engines([engine for engine in built if engine is not None])
 
 
 def _opened(

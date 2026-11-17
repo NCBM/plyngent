@@ -6,6 +6,9 @@ A request has three separable halves and this package keeps them apart:
   request leaves the machine at all. Pure but for one lookup, and it never asks a person.
 * :mod:`plyngent.kernel.net.client` — one request, hop by hop, with a gate asked before each connection.
   It knows HTTP and nothing about who may say yes.
+* :mod:`plyngent.kernel.net.web` — the web half of the tools: a table of engines and the two verbs a model
+  can reach through one. :mod:`~plyngent.kernel.net.shipped` is what this build puts in that table, and
+  ``deepseek`` and ``bing`` are the implementations it names.
 * :mod:`plyngent.kernel.tools.net` — the tools: the arguments, the question a person is asked, and the
   result the model reads. That is where a reason becomes a sentence somebody agrees to.
 

@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import msgspec
 import tomlkit
@@ -39,7 +39,8 @@ from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
-from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes
+from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes, RouteWeb
+from plyngent.kernel.net.shipped import WEB_PROVIDERS
 from plyngent.kernel.paths import normalize
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.registry import (
@@ -99,12 +100,29 @@ class AgentFile(Struct, forbid_unknown_fields=True, kw_only=True):
     tool_directives: str | None = None
 
 
+class RouteWebFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[route.web]``: this endpoint's half of the web tools, when it has one.
+
+    Written as a sub-table rather than three fields in ``[[route]]`` because it answers one question —
+    "what may this endpoint's web half do" — and because a route that says nothing here has no web half at
+    all rather than three defaults that happen to be right.
+    """
+
+    share: bool = False
+    count: Annotated[int, msgspec.Meta(ge=1)] | None = None
+    timeout: Annotated[float, msgspec.Meta(gt=0)] | None = None
+
+
 class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[[route]]``: one endpoint, spelled the way :class:`~plyngent.kernel.lm.route.Route` is.
 
     The fields are the route's, with two differences and both are the point of having a file at all: the
     credential arrives as *the name of the variable that holds it*, and ``caps`` is required because a
     budget is a decision a person makes rather than one this program guesses.
+
+    ``provider`` is a different axis from ``dialect``: the first says *who* the endpoint is (and so what its
+    web half can do), the second how it talks. Empty is a plain compatible endpoint, which is what a
+    third-party lookalike is — it needs no provider to be configured.
     """
 
     name: str
@@ -117,6 +135,8 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     attempts: tuple[float, ...] = ()
     timeout: float = DEFAULT_TIMEOUT
     headers: dict[str, str] | None = None
+    provider: str = ""
+    web: RouteWebFile | None = None
 
 
 class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -268,6 +288,7 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
     if codec_named(one.dialect) is None:
         msg = f"route {one.name!r} names the dialect {one.dialect!r}, which this build does not speak"
         raise ConfigError(msg)
+    _check_provider(one)
     route = Route(
         name=one.name,
         dialect=one.dialect,
@@ -278,8 +299,42 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
         attempts=one.attempts,
         timeout=one.timeout,
         headers=tuple(one.headers.items()) if one.headers else (),
+        provider=one.provider.strip(),
+        web=None if one.web is None else RouteWeb(share=one.web.share, count=one.web.count, timeout=one.web.timeout),
     )
     return route if one.auth is None else msgspec.structs.replace(route, auth=one.auth)
+
+
+def _check_provider(one: RouteFile) -> None:
+    """Refuse a route whose provider cannot serve it, before anything is asked of it.
+
+    Three things a file can get wrong here, and none of them would be visible until a request failed: a
+    provider this build does not have, one no route can be configured with (an engine that has no endpoint
+    and is installed by name instead), and a pair that does not exist — the provider declares the dialects
+    it arrives in, because a web engine and a wire format are two axes and the implementation knows both.
+
+    A route that names no provider is a plain compatible endpoint, and this build speaks three of those:
+    what the pair would restrict is the half that is not there.
+    """
+    name = one.provider.strip()
+    if not name:
+        return
+    known = WEB_PROVIDERS.named(name)
+    if known is None:
+        msg = (
+            f"route {one.name!r} names the provider {name!r}, which this build does not have; "
+            f"it has {WEB_PROVIDERS.names()}"
+        )
+        raise ConfigError(msg)
+    if not known.routed:
+        msg = (
+            f"route {one.name!r} names the provider {name!r}, which no route can be served by: "
+            f"{name!r} has no endpoint to configure, and is named in [web].engines instead"
+        )
+        raise ConfigError(msg)
+    if one.dialect not in known.dialects:
+        msg = f"route {one.name!r} speaks {one.dialect!r}, and {name!r} answers in {' or '.join(known.dialects)}"
+        raise ConfigError(msg)
 
 
 def _secret(one: RouteFile, environment: Mapping[str, str]) -> str:

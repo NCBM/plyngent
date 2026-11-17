@@ -14,9 +14,12 @@ import json
 import pytest
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.net import client
+from plyngent.kernel.lm.caps import Caps
+from plyngent.kernel.lm.route import Route, RouteWeb
+from plyngent.kernel.net import client, deepseek
 from plyngent.kernel.net.bing import parse_rss
 from plyngent.kernel.net.client import Fix, Stopped, _next_hop
+from plyngent.kernel.net.deepseek import Account, DeepSeek, parse_search
 from plyngent.kernel.net.policy import (
     ALLOWED_METHODS,
     Assessed,
@@ -32,7 +35,6 @@ from plyngent.kernel.net.policy import (
     request_headers,
     resolve_location,
 )
-from plyngent.kernel.net.vendor import parse_search
 from plyngent.kernel.net.web import EngineFailed
 
 LOOPBACK = (ipaddress.ip_network("127.0.0.0/8"),)
@@ -272,6 +274,89 @@ def test_a_bing_answer_is_read_into_hits() -> None:
     assert [(hit.title, hit.url, hit.snippet) for hit in parse_rss(document)] == [
         ("T", "https://t.example", "the line")
     ], "an item with no link does not name a page"
+
+
+def _account(route: str, *, shared: bool = False, token: str = "") -> Account:
+    """One account of the engine, as a route in a file would have made it."""
+    return Account(route=route, base_url="https://vendor.example", token=token or route, shared=shared)
+
+
+async def _unasked(_leg: object) -> None:
+    """A gate that is never asked: a vendor's endpoint is not a destination of this machine's."""
+    return
+
+
+async def test_a_search_charges_the_account_the_conversation_is_answered_on() -> None:
+    """Which key pays is the engine's own three steps, and the first of them is the channel being used.
+
+    A conversation talking to one account searches with that account: the bill stays in one place, and
+    nobody — least of all the model — had to name it. What is left is the shared accounts in declaration
+    order, so two routes for one vendor are two tries of one engine rather than two engines.
+    """
+    engine = DeepSeek([_account("ds-a", shared=True), _account("ds-b", shared=True), _account("ds-c", token="c")])
+
+    assert [one.route for one in engine._ordered("ds-b")] == ["ds-b", "ds-a"], (
+        "the route being spoken on, and then what was shared, one account offered once"
+    )
+    assert [one.route for one in engine._ordered("local")] == ["ds-a", "ds-b"], (
+        "a conversation speaking elsewhere reaches what was shared, and nothing else"
+    )
+    assert [one.route for one in engine._ordered("ds-c")] == ["ds-c", "ds-a", "ds-b"], (
+        "an unshared account is charged for its own conversation, with the shared ones behind it"
+    )
+
+
+async def test_a_search_falls_through_an_account_that_will_not_answer(monkeypatch) -> None:
+    """A quota is one account's trouble: the next shared account is asked, and it is the one that pays."""
+    sent: list[tuple[str, str]] = []
+
+    async def _post(account: Account, path: str, body: bytes) -> tuple[int, bytes]:
+        sent.append((account.route, account.token))
+        if account.route == "ds-a":
+            return 429, b""
+        return 200, json.dumps({"results": [{"title": "T", "url": "https://t.example"}]}).encode()
+
+    monkeypatch.setattr(deepseek, "_post", _post)
+    engine = DeepSeek([_account("ds-a", shared=True), _account("ds-b", shared=True)])
+
+    hits = await engine.search("python", gate=_unasked, on="local")
+
+    assert [hit.url for hit in hits] == ["https://t.example"]
+    assert sent == [("ds-a", "ds-a"), ("ds-b", "ds-b")], "one request per account, in the order it asks them"
+
+
+async def test_a_search_with_no_account_to_charge_says_so_rather_than_guessing() -> None:
+    engine = DeepSeek([_account("ds-a")])
+
+    with pytest.raises(EngineFailed) as refused:
+        _ = await engine.search("python", gate=_unasked, on="local")
+
+    assert "no account" in str(refused.value), "a conversation nobody shared with is refused, not billed to a stranger"
+
+
+def test_an_account_takes_its_numbers_from_the_route_that_made_it() -> None:
+    """``[route.web]`` is why an account has numbers of its own: one key may have a smaller quota."""
+    sharing = Route(
+        name="ds-a",
+        dialect="chat",
+        base="https://vendor.example/",
+        secret="A",
+        caps=Caps(max_output=1),
+        provider="deepseek",
+        web=RouteWeb(share=True, count=3, timeout=5.0),
+    )
+    plain = Route(name="ds-b", dialect="chat", base="https://vendor.example", caps=Caps(max_output=1))
+
+    assert deepseek.engine([plain]) is None, "a route that names no provider installs no engine"
+    made = deepseek.engine([sharing], count=10, timeout=30.0)
+    assert made is not None and made.name == "deepseek"
+    account = deepseek._account(sharing, count=10, timeout=30.0)
+    assert (account.route, account.base_url, account.token) == ("ds-a", "https://vendor.example", "A")
+    assert (account.count, account.timeout, account.shared) == (3, 5.0, True), "the route's own numbers win"
+    fallback = deepseek._account(plain, count=10, timeout=30.0)
+    assert (fallback.count, fallback.timeout, fallback.shared) == (10, 30.0, False), (
+        "and a route that says nothing takes the program's, sharing nothing"
+    )
 
 
 def _parsed(url: str) -> ParsedUrl:

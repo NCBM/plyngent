@@ -28,6 +28,7 @@ from plyngent.kernel.client import ASKING_NAMES, CLIENT
 from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
+from plyngent.kernel.lm.route import Route, RouteWeb
 from plyngent.kernel.model import AnyMessage, Request, User
 from plyngent.kernel.net.web import Engine, Engines, Hit, Page
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
@@ -588,6 +589,31 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
     assert {"client_fetch", "web_search", "web_fetch"} <= set(with_backend.names())
+
+
+def test_a_route_installs_the_web_engine_it_names() -> None:
+    """Engines come from the routes, and the tools come from the engines — in that order and no other.
+
+    A route that names no provider is a model endpoint and nothing else, so a program configured with only
+    those has one net tool. One that names an implementation gets that engine, and with it every verb the
+    engine has. ``share`` is not consulted here: whether a tool exists and whose key pays for a search are
+    two questions, and this is the first one.
+    """
+    plain = Route(name="local", dialect="chat-completions", base="http://127.0.0.1:1", caps=Caps(max_output=64))
+    named = Route(
+        name="ds-a",
+        dialect="chat-completions",
+        base="https://vendor.example",
+        caps=Caps(max_output=64),
+        provider="deepseek",
+        web=RouteWeb(share=True),
+    )
+
+    assert boot._engines([plain]).names() == (), "a route that names no provider is not an engine"
+    assert boot._engines([plain, named]).names() == ("deepseek",), "and one that names it installs exactly it"
+    assert [spec.name for spec in net_specs(boot._engines([named]))] == ["web_fetch", "web_search"], (
+        "an engine with both verbs is both tools, and the search is the second one it offers"
+    )
 
 
 def test_a_net_body_is_kept_rather_than_paged_through() -> None:
