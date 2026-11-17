@@ -167,6 +167,8 @@ async def _serve(
     nothing but where the connection comes from (§5 B, E124).
     """
     workspace = Path.cwd() if root is None else root
+    if connect_at is None:
+        _say_engines(settings)
     if serve_at is not None:
         return await _serving(workspace=workspace, settings=settings, endpoint=_address(serve_at, workspace=workspace))
     if connect_at is not None:
@@ -263,6 +265,22 @@ def _address(asked: Path | str, *, workspace: Path) -> Path:
     name it does not care about (§5 B).
     """
     return boot.endpoint_for(workspace) if not asked else Path(asked)
+
+
+def _say_engines(settings: config.Settings) -> None:
+    """Say which web engines this program has, and whose key each may spend — once, to the person.
+
+    A model is told the names of the engines (they are an argument's value domain); this is the other
+    reader, and what it needs is what a search will actually do: ``searching with <engine>: <account> →
+    <account>; <engine>`` says the first account that answers pays, and the second engine is asked only if
+    no account does. It goes to the error stream because it is a remark of the program's, next to where a
+    daemon says where it listens — and a configured program says nothing here when it has no engine.
+    """
+    said = settings.web.notice()
+    if not said:
+        return
+    _ = sys.stderr.write(f"searching with {said}\n")
+    _ = sys.stderr.flush()
 
 
 async def _serving(*, workspace: Path, settings: config.Settings, endpoint: Path) -> int:

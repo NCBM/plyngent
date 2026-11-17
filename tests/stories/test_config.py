@@ -167,3 +167,70 @@ async def test_a_host_whose_file_says_one_terminal_says_the_number_it_hit(
 
     (_, _, too_many) = story.requests()
     assert told(too_many) == "PTY session limit reached (1); close an idle session first", told(too_many)
+
+
+#: One route that serves a model and a web half both, and the web table beside it.
+CONFIGURED = """
+default_route = "ds"
+
+[[route]]
+name = "ds"
+dialect = "chat-completions"
+base = "https://vendor.invalid"
+model = "m"
+caps = { max_output = 64 }
+provider = "deepseek"
+
+[route.web]
+share = true
+"""
+
+
+async def test_a_route_that_names_a_provider_gives_a_program_its_web_tools(
+    tmp_path: Path, transport: str, story_with: Scripted
+) -> None:
+    """``provider`` is what installs a web implementation, and the tools are the verbs it can answer.
+
+    Nothing else says so: no ``[web]`` table, no flag, and no key in the file — the implementation arrives
+    because a route named it, which is the whole difference from a program that only has endpoints.
+    """
+    settings = _settings(tmp_path, CONFIGURED)
+
+    story = await story_with(
+        calling("tool_require", {"group": "net"}),
+        text("both of them"),
+        config=settings,
+    )
+
+    await story.type("what can reach the web?")
+    await story.finished()
+
+    assert told(story.requests()[-1]).endswith("from net: client_fetch, web_fetch, web_search"), told(
+        story.requests()[-1]
+    )
+
+
+async def test_a_program_whose_only_engine_searches_has_no_web_fetch(
+    tmp_path: Path, transport: str, story_with: Scripted
+) -> None:
+    """An engine named in ``[web]`` is one a person asked for, and a keyless one reads no pages.
+
+    The two tools are two verbs, so the table is one tool shorter rather than one refusal longer: what is
+    not in the table is a name nothing has, which is the same answer a program with no engine at all gets.
+    """
+    settings = _settings(tmp_path, CONFIGURED + '\n[web]\nengines = ["bing"]\n')
+
+    story = await story_with(
+        calling("tool_require", {"group": "net"}),
+        calling("web_fetch", {"url": "https://example.com/"}),
+        text("one of them"),
+        config=settings,
+    )
+
+    await story.type("what can reach the web?")
+    await story.finished()
+
+    assert told(story.requests()[1]).endswith("from net: client_fetch, web_search"), told(story.requests()[1])
+    assert "web_fetch failed: no tool is named 'web_fetch'" in story.screen(), (
+        "an engine that cannot read a page does not leave a tool behind that fails when called"
+    )

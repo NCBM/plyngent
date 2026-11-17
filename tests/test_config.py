@@ -23,6 +23,7 @@ from plyngent import config
 from plyngent.__main__ import main
 from plyngent.kernel.lm.route import Posted, RouteWeb
 from plyngent.kernel.model import Request, User
+from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
 from plyngent.kernel.pty.registry import (
     DEFAULT_MAX_PER_SESSION,
     DEFAULT_MAX_SESSIONS,
@@ -203,6 +204,82 @@ def test_a_route_that_names_no_provider_may_speak_any_dialect_this_build_knows(t
     route = config.load(path).routes.named("local")
 
     assert route is not None and (route.provider, route.dialect) == ("", "messages")
+
+
+#: Two routes of one implementation, sharing the same accounts, and the web table that names both engines.
+SHARING = """
+default_route = "ds-a"
+
+[[route]]
+name = "ds-a"
+dialect = "chat-completions"
+base = "https://vendor.example"
+caps = { max_output = 64 }
+provider = "deepseek"
+
+[route.web]
+share = true
+
+[[route]]
+name = "ds-b"
+dialect = "chat-completions"
+base = "https://vendor.example"
+caps = { max_output = 64 }
+provider = "deepseek"
+
+[route.web]
+share = true
+
+[web]
+engines = ["deepseek", "bing"]
+count = 4
+"""
+
+
+def test_the_web_table_is_which_engines_a_program_has_and_in_what_order(tmp_path: Path) -> None:
+    """Written, it is exactly the engines the program has — which is the only way a keyless one arrives."""
+    settings = config.load(_written(tmp_path, SHARING))
+
+    assert settings.web.names() == ("deepseek", "bing"), "the order is the order it asks them in"
+    assert [(one.name, one.accounts) for one in settings.web.engines] == [
+        ("deepseek", ("ds-a", "ds-b")),
+        ("bing", ()),
+    ], "an account is a route that shared itself, and an engine with nothing to configure has none"
+    assert (settings.web.count, settings.web.timeout) == (4, WEB_TIMEOUT), "and the numbers it shares"
+
+
+def test_the_accounts_a_program_will_spend_are_said_once_for_a_person(tmp_path: Path) -> None:
+    """The one line a person reads: which engines, in order, and whose key a search may charge."""
+    assert config.load(_written(tmp_path, SHARING)).web.notice() == "deepseek: ds-a → ds-b; bing"
+
+
+def test_with_no_web_table_a_program_has_the_engines_its_routes_install(tmp_path: Path) -> None:
+    """Naming a provider is what installs an engine, and sharing is only about whose key pays."""
+    body = """
+[[route]]
+name = "ds"
+dialect = "chat-completions"
+base = "https://vendor.example"
+caps = { max_output = 64 }
+provider = "deepseek"
+"""
+
+    settings = config.load(_written(tmp_path, body))
+
+    assert settings.web.names() == ("deepseek",), "one route that names it, so the engine is there"
+    assert settings.web.notice() == "deepseek", "and it shares nothing, so it has no account to list"
+
+
+def test_a_program_whose_routes_name_no_provider_has_no_engine_at_all(tmp_path: Path) -> None:
+    assert config.load(_written(tmp_path, ROUTE.format(base="http://x"))).web.names() == ()
+
+
+def test_an_engine_the_web_table_names_but_this_build_lacks_is_refused(tmp_path: Path) -> None:
+    """A typo in the enable list would be a program with no web tools and no reason why."""
+    with pytest.raises(config.ConfigError, match="does not have") as refused:
+        _ = config.load(_written(tmp_path, '[web]\nengines = ["googel"]\n'))
+
+    assert "bing" in str(refused.value), "and the refusal says which names would have worked"
 
 
 def test_a_syntax_error_says_where_it_is(tmp_path: Path) -> None:

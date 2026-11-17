@@ -609,11 +609,47 @@ def test_a_route_installs_the_web_engine_it_names() -> None:
         web=RouteWeb(share=True),
     )
 
-    assert boot._engines([plain]).names() == (), "a route that names no provider is not an engine"
-    assert boot._engines([plain, named]).names() == ("deepseek",), "and one that names it installs exactly it"
-    assert [spec.name for spec in net_specs(boot._engines([named]))] == ["web_fetch", "web_search"], (
+    assert boot.engines_for([plain]).names() == (), "a route that names no provider is not an engine"
+    assert boot.engines_for([plain, named]).names() == ("deepseek",), "and one that names it installs exactly it"
+    assert [spec.name for spec in net_specs(boot.engines_for([named]))] == ["web_fetch", "web_search"], (
         "an engine with both verbs is both tools, and the search is the second one it offers"
     )
+
+
+def test_an_engine_gives_the_tools_its_verbs_can_answer() -> None:
+    """A verb that is not there is a tool that is not there: nothing promises a page read to Bing."""
+    any_engine = _Any()
+
+    assert [spec.name for spec in net_specs(Engines([Engine(name="only-search", search=any_engine.search)]))] == [
+        "web_search"
+    ], "an engine that only searches is one tool"
+    assert [spec.name for spec in net_specs(Engines([Engine(name="only-pages", page=any_engine.page)]))] == [
+        "web_fetch"
+    ], "and one that only reads pages is the other"
+
+
+def test_the_network_section_names_the_tools_this_kernel_has() -> None:
+    """A prompt must never name a tool that is not in the table, and a search's argument is its value domain.
+
+    The names travel here and nowhere else: a model that cannot read them cannot pass one, and a section
+    that promised ``web_fetch`` to a program with one engine that only searches would be a round lost.
+    """
+    assert "web_search" not in GROUP_PLAYBOOK[Group.NET], "the floor is the tool every kernel has"
+    assert "web_fetch" not in GROUP_PLAYBOOK[Group.NET]
+
+    both = Engine(name="either", search=_Any().search, page=_Any().page)
+    catalog = ToolCatalog((*BUILTIN, *net_specs(Engines([both]))))
+    net_members = dict(catalog.groups())[Group.NET.value]
+    view = ToolView(
+        specs={name: spec for name in net_members if (spec := catalog.get(name)) is not None},
+        groups=catalog.groups(),
+        disclosed=frozenset({Group.NET.value}),
+    )
+
+    said = PromptPlan(engines=("bing", "deepseek")).compose(view)
+
+    assert "— bing, deepseek —" in said, "the value domain of the argument, in the order a search asks"
+    assert "`web_search` finds pages" in said and "`web_fetch` reads one" in said
 
 
 def test_a_net_body_is_kept_rather_than_paged_through() -> None:

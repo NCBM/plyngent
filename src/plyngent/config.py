@@ -35,12 +35,15 @@ from msgspec import Struct
 from platformdirs import user_data_path
 from tomlkit.exceptions import ParseError
 
+from plyngent.boot import engines_for
 from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes, RouteWeb
-from plyngent.kernel.net.shipped import WEB_PROVIDERS
+from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
+from plyngent.kernel.net.web import DEFAULT_COUNT, Web
+from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
 from plyngent.kernel.paths import normalize
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.registry import (
@@ -87,6 +90,20 @@ class SkillsFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
     paths: tuple[str, ...] = ()
     discover: bool = True
+
+
+class WebFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[web]``: which engines a program has, in what order it asks them, and the numbers they share.
+
+    ``engines`` is both an enable list and an order, because a rule that only sorted would leave "is this
+    engine on at all" with two answers. Written, it is exactly the engines the program has — which is how a
+    keyless one (``bing``) is installed at all, since nothing but this can name it. Absent, the program has
+    every implementation one of its routes installs, in the order the routes were declared.
+    """
+
+    engines: tuple[str, ...] = ()
+    count: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_COUNT
+    timeout: Annotated[float, msgspec.Meta(gt=0)] = WEB_TIMEOUT
 
 
 class AgentFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -148,6 +165,7 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     skills: SkillsFile | None = None
     limits: LimitsFile | None = None
     journal: JournalFile | None = None
+    web: WebFile | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +182,7 @@ class Settings:
     """
 
     routes: Routes = field(default_factory=Routes)
+    web: Web = field(default_factory=Web)
     persona: str | None = None
     directives: str | None = None
     skill_paths: tuple[Path, ...] = ()
@@ -251,6 +270,7 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
     limits = parsed.limits or LimitsFile()
     return Settings(
         routes=Routes(routes, default=parsed.default_route),
+        web=_web(parsed.web, routes),
         persona=None if parsed.agent is None else parsed.agent.persona,
         directives=None if parsed.agent is None else parsed.agent.tool_directives,
         skill_paths=tuple(_resolved(one, path) for one in skills.paths),
@@ -263,6 +283,22 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
         journal=_resolved(parsed.journal.path, path) if parsed.journal is not None and parsed.journal.path else None,
         document=document,
     )
+
+
+def _web(declared: WebFile | None, routes: tuple[Route, ...]) -> Web:
+    """The web half one file describes: the engines it names, in the order it names them.
+
+    Two answers from one table, and they are the same answer: what is written is exactly what the program
+    has, and what is not written is every implementation a route installed. A name written here is looked
+    up, so a typo is refused with the names that would have worked rather than quietly installing nothing —
+    which is what "an engine is in the table only because a person asked for it" has to mean in practice.
+    """
+    said = WebFile() if declared is None else declared
+    for name in said.engines:
+        if WEB_PROVIDERS.named(name) is None:
+            msg = f"[web].engines names {name!r}, which this build does not have; it has {WEB_PROVIDERS.names()}"
+            raise ConfigError(msg)
+    return web_half(routes, engines=said.engines or None, count=said.count, timeout=said.timeout)
 
 
 def _routes(declared: list[RouteFile], environment: Mapping[str, str]) -> tuple[Route, ...]:
@@ -403,7 +439,8 @@ def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
     disagree about what the file means; the list of names is the list of what the file may say (§0.11).
     """
     skills = settings.skills(root)
-    plan = PromptPlan.of(skills)
+    engines = engines_for(settings.routes.routes, settings.web)
+    plan = PromptPlan.of(skills, engines=tuple(one.name for one in engines.asking()))
     if settings.persona is not None:
         plan = replace(plan, persona=settings.persona)
     if settings.directives is not None:
@@ -411,6 +448,7 @@ def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
     return {
         "routes": settings.routes.routes,
         "route": settings.routes.default,
+        "engines": engines,
         "skills": skills,
         "prompt": plan,
         "journal": settings.journal,

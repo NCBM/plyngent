@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.toolspec import Group
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping, Sequence
 
     from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.skills import Skills
@@ -69,6 +69,37 @@ How to work here:
 - When one answer needs several calls that do not touch each other, ask for them together. A result too
   long to send is kept whole and handed back as a handle; read it rather than running the call again."""
 
+#: The network section, written for the tools a kernel actually serves: a tool nobody has is not
+#: described, and a name a model cannot read is a name it cannot use. ``engines`` is therefore both a
+#: description and the value domain of ``web_search``'s argument — the only place a model learns them.
+NETWORK_CLOSE = (
+    "A denial is a decision rather than a transient failure — answer it by changing what you ask for, not "
+    "by asking again."
+)
+
+
+def _network(served: Collection[str], engines: Sequence[str]) -> str:
+    """What the network section says for one session's tools, and which engines a search may name.
+
+    ``client_fetch`` asks from this machine and is always there; ``web_search`` and ``web_fetch`` are there
+    only when an engine is, so a program configured without one gets a section about the tool it has. The
+    engine names are listed in the order a search tries them, because that is what leaving the argument out
+    does.
+    """
+    found = ["`client_fetch` asks from the person's own machine"]
+    if "web_search" in served:
+        found.append("`web_search` finds pages")
+    if "web_fetch" in served:
+        found.append("`web_fetch` reads one as the readable text somebody else's network made of it")
+    said = f"The network: {'; '.join(found)}."
+    if "web_search" in served and engines:
+        said += (
+            f" A search may say which engine answers — {', '.join(engines)} — and leaving that out asks them "
+            "in that order, stopping at the first that answers."
+        )
+    return f"{said} {NETWORK_CLOSE}"
+
+
 #: What each group's tools add, and the mistake each one invites. Filled for every :class:`Group`: a
 #: group is a disclosure unit, so its playbook is a unit too — the section arrives when the group is shown
 #: and with the tools it describes, which is what keeps the standing prompt at one compressed block
@@ -93,10 +124,7 @@ decides whether a person is asked — a shell or an interpreter always is, so na
 An interactive program is a terminal: `open_pty` to start one, `read_pty` and `write_pty` to talk to it,
 `write_pty_keys` for control sequences rather than their bytes, and `ask_into_pty` for a secret, which is
 never echoed back into this conversation.""",
-    Group.NET: """\
-The network: `client_fetch` asks from the person's own machine, `web_search` finds pages, and
-`web_fetch` reads one as markdown. A denial is a decision rather than a transient failure — answer it by
-changing what you ask for, not by asking again.""",
+    Group.NET: _network(frozenset({"client_fetch"}), ()),
     Group.SESSION: """\
 The plan a turn is worked through: `todo_push` opens a group of steps, `todo_update` moves one,
 `todo_pop` closes a group, and `todo_list` shows the stack. The numbers a listing prints are positions in
@@ -137,11 +165,14 @@ class PromptPlan:
     persona: str = PERSONA
     directives: str = CORE
     skills: str = ""
+    #: The engines this program can search with, in the order it asks them — the value domain of
+    #: ``web_search``'s ``engine`` argument, and the order leaving it out falls back through.
+    engines: tuple[str, ...] = ()
 
     @classmethod
-    def of(cls, skills: Skills | None) -> PromptPlan:
+    def of(cls, skills: Skills | None, *, engines: Sequence[str] = ()) -> PromptPlan:
         """The plan this host's skills make, read once — the ordinary way to get one."""
-        return cls(skills=catalog_of(skills))
+        return cls(skills=catalog_of(skills), engines=tuple(engines))
 
     def compose(self, view: ToolView) -> str:
         """The whole system message for one request, as the five sections in their one order.
@@ -160,12 +191,24 @@ class PromptPlan:
         Two conditions and not one: a group is described only once it has been asked for, so a session
         that has made no request is not carrying instructions for tools it cannot call; and a group
         somebody asked for in another program's build may have nothing reachable in this one, which is a
-        section about nothing.
+        section about nothing. The section itself is written for the tools that *are* reachable: the net
+        group's depends on whether this kernel has an engine at all, which is why it is not one paragraph
+        in the table (§0.9, E26).
         """
         reached = {group for group, members in view.groups if any(name in view.specs for name in members)}
+        served = frozenset(view.specs)
         return tuple(
-            GROUP_PLAYBOOK[group] for group in sorted(Group) if group in reached and group.value in view.disclosed
+            _described(group, served, self.engines)
+            for group in sorted(Group)
+            if group in reached and group.value in view.disclosed
         )
+
+
+def _described(group: Group, served: Collection[str], engines: Sequence[str]) -> str:
+    """What one group says about itself, worded for the tools this session actually has from it."""
+    if group is Group.NET:
+        return _network(served, engines)
+    return GROUP_PLAYBOOK[group]
 
 
 def catalog_of(skills: Skills | None) -> str:

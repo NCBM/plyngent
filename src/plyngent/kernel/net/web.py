@@ -211,6 +211,50 @@ class Providers:
 
 
 @dataclass(frozen=True, slots=True)
+class Choice:
+    """One engine a program has, and the accounts it may be asked on, in the order it falls back through.
+
+    ``accounts`` is what a person reads, not what a model is told: route names, so that "which key will
+    this spend" is answerable by looking. It is empty for an engine with nothing to configure.
+    """
+
+    name: str
+    accounts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Web:
+    """The web half a program asked for: which engines, in what order, and the numbers they default to.
+
+    A value rather than a registry, because it is what a *file* says: ``[web].engines`` is the enable list
+    and the order, ``count`` and ``timeout`` are what every account that does not override them gets, and
+    the routes each engine may charge are the ones they named. What turns this into engines is the
+    composition root's business.
+    """
+
+    engines: tuple[Choice, ...] = ()
+    count: int = DEFAULT_COUNT
+    timeout: float = DEFAULT_TIMEOUT
+
+    def names(self) -> tuple[str, ...]:
+        """What this program calls its engines, in the order it asks them."""
+        return tuple(one.name for one in self.engines)
+
+    def notice(self) -> str:
+        """One line for a person: the engines in order, and the accounts each may spend.
+
+        A model is told the names (they are an argument's value domain); this is the other reader, and what
+        it is told is what a search will actually do — ``deepseek: ds-a → ds-b; bing`` is "the first account
+        that answers pays, and if neither does, Bing is asked". Empty when the program has no engine.
+        """
+        said = [f"{one.name}: {' → '.join(one.accounts)}" if one.accounts else one.name for one in self.engines]
+        return "; ".join(said)
+
+    def __bool__(self) -> bool:
+        return bool(self.engines)
+
+
+@dataclass(frozen=True, slots=True)
 class Found:
     """What a search came back with: one engine's hits, and what the others said about not answering."""
 

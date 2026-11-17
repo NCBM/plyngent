@@ -37,8 +37,8 @@ from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
 from plyngent.kernel.model import Model, ModelChannel
-from plyngent.kernel.net.shipped import WEB_PROVIDERS
-from plyngent.kernel.net.web import DEFAULT_COUNT, DEFAULT_TIMEOUT, Engines
+from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
+from plyngent.kernel.net.web import Engine, Engines, Web
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
@@ -308,11 +308,12 @@ async def install(
     the route its session names. Both are what :mod:`plyngent.config` hands over (§0.11).
 
     ``engines`` is the same move for the web half of the net tools: ``None`` is "whatever the routes
-    install", which is an engine per implementation a route names in ``provider``, and then ``web_fetch``
-    and ``web_search`` are in the table only when some engine can do that verb. A program with no route
-    naming a provider has neither tool rather than two that fail when called. That is the one thing about
-    this program that decides *which* tools exist, and it is decided here because it is a fact about how
-    the program was started (§0.9, E26).
+    install", which is one engine per implementation a route names in ``provider``, and then ``web_fetch``
+    and ``web_search`` are in the table only when some engine can do that verb. A program with no engine
+    has neither tool rather than two that fail when called. That is the one thing about this program that
+    decides *which* tools exist, and it is decided here because it is a fact about how the program was
+    started (§0.9, E26). Which engines a file asked for — the order, the defaults, the keyless ones — is
+    :func:`engines_for`'s answer, which is what :mod:`plyngent.config` hands in.
 
     ``skills`` is where a skill is looked for, and ``None`` is a kernel with no skill tools at all — the
     same move again, for the five of them (§0.10, E36). Which directories those are is
@@ -588,10 +589,15 @@ async def _assembled(
     kept = _journal_file(root, journal)
     table = Routes(routes or (), default=route)
     asked = model if model is not None else (Posted(table) if table.default else None)
+    # Which web engines this program has is decided before the prompt is, because the prompt names them:
+    # `[web].engines` is the value domain of a search's argument, and a name a model cannot read is a name
+    # it cannot pass (§10.5, E65/E67).
+    web_engines = engines_for(table.routes) if engines is None else engines
     # Read once, here: the skills this program can see are a fact about how it was started, and the prompt
     # they are part of is the front of a cached prefix (§10.5, E65/E66). Nothing in the tree is read for it
     # — a model that wants the workspace's own ``AGENTS.md`` reads it with the `read` call.
-    plan = PromptPlan.of(skills) if prompt is None else prompt
+    answers = tuple(one.name for one in web_engines.asking())
+    plan = PromptPlan.of(skills, engines=answers) if prompt is None else prompt
     # One store per workspace, beside the journal it belongs with — and none at all where nothing can
     # keep one, which is a fact about the machine rather than about the call that asks for it.
     versions_kept = History(root, history_path(kept)) if versions and available() else None
@@ -611,7 +617,7 @@ async def _assembled(
                 kwargs={
                     "skills": skills,
                     "routes": table,
-                    "engines": _engines(table.routes) if engines is None else engines,
+                    "engines": web_engines,
                     "prompt": plan,
                     "history": versions_kept,
                 },
@@ -631,7 +637,7 @@ async def _assembled(
     # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
-    specs = (*BUILTIN, *net_specs(engines), *skill_specs(skills))
+    specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
     manifest = KernelManifest(
         commands=command_specs(),
         caps=(CLIENT_OFFER,),
@@ -674,19 +680,27 @@ def _workspace_of(root: Path | str) -> Path:
     return Path(root).expanduser().resolve()
 
 
-def _engines(routes: Iterable[Route]) -> Engines:
-    """The web half of this kernel, from the routes it was given: one engine per implementation they name.
+def engines_for(routes: Iterable[Route], web: Web | None = None) -> Engines:
+    """The web half of this kernel, from the routes it was given and what the file asked for.
 
     A route installs an implementation by writing its name in ``provider``, and the implementation turns
     those routes into its accounts — one per route, and no engine at all when no route names it. Which
-    kinds end up here is therefore a fact about the configuration and not a decision taken in this file;
-    the order is this table's, which is the order ``[web].engines`` writes down when a program says.
+    kinds end up here is therefore a fact about the configuration rather than a decision taken in this
+    file: the order is ``[web].engines`` when a program said, and the routes' own when it did not. A name
+    nothing implements installs nothing here, because the file that could have written one is where the
+    refusal belongs.
     """
     declared = tuple(routes)
-    built = [
-        provider.engine(declared, count=DEFAULT_COUNT, timeout=DEFAULT_TIMEOUT) for provider in WEB_PROVIDERS.routed()
-    ]
-    return Engines([engine for engine in built if engine is not None])
+    choice = web_half(declared) if web is None else web
+    built: list[Engine] = []
+    for one in choice.engines:
+        provider = WEB_PROVIDERS.named(one.name)
+        if provider is None:
+            continue
+        engine = provider.engine(declared, count=choice.count, timeout=choice.timeout)
+        if engine is not None:
+            built.append(engine)
+    return Engines(built)
 
 
 def _opened(

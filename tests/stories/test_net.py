@@ -678,6 +678,37 @@ async def test_with_no_engine_the_web_tools_are_not_in_the_table(story_with: Scr
     )
 
 
+async def test_a_search_asks_the_engine_the_call_named(story_with: Scripted) -> None:
+    """A name in the argument is which implementation to ask — never which account, and never a guess."""
+    first = Answering(hits=[("A", "https://a.example", "")])
+    second = Answering(hits=[("B", "https://b.example", "")])
+    engines = Engines([Engine(name="one", search=first.search), Engine(name="two", search=second.search)])
+    story = await story_with(calling("web_search", {"query": "python", "engine": "two"}), text("done"), engines=engines)
+
+    await story.require("net")
+    await story.type("ask the second one")
+    await story.finished()
+
+    assert told(story.requests()[-1]) == "1 hit for 'python'\n- B — https://b.example"
+    assert (first.asked, second.asked) == ([], ["python"]), "the engine nobody named was not asked at all"
+
+
+async def test_a_search_naming_an_engine_that_is_not_there_says_which_ones_are(story_with: Scripted) -> None:
+    """A name is a fact, so a wrong one is refused with the ones that would have worked — before any request."""
+    engines = Engines([Engine(name="one", search=Answering().search)])
+    story = await story_with(
+        calling("web_search", {"query": "python", "engine": "googel"}), text("fair"), engines=engines
+    )
+
+    await story.require("net")
+    await story.type("ask the wrong one")
+    await story.finished()
+
+    assert "web_search failed: no engine is named 'googel'; this program searches with one" in story.screen(), (
+        "the refusal names the value domain, because that is the only place a model can learn it"
+    )
+
+
 async def test_a_page_comes_back_as_the_engine_read_it(story_with: Scripted) -> None:
     reader = Reader(
         pages={
