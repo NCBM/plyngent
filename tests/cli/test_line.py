@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 
 from plyngent.cli.line import Cancelled, EndOfInput, PlainEditor, Typed
-from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Written
+from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Picked, Selection, Written
 
 
 def _editor(reading: str) -> tuple[PlainEditor, io.StringIO]:
@@ -39,6 +39,37 @@ async def test_a_question_is_printed_and_asked_again_until_a_line_answers_it() -
 
     assert answer == Agreed(accepted=True, by=By.HUMAN), "the second line is the answer; the first one answered nothing"
     assert notices.getvalue() == "carry on? [y/n]\ncarry on? [y/n]\n", "a file has no prompt, so it is a line"
+
+
+async def test_a_menu_takes_only_one_of_the_words_it_offered() -> None:
+    """A word that is not on the menu answered nothing, so the same question is put again."""
+    editor, notices = _editor("maybe\na\n")
+
+    answer = await editor.ask(Selection(prompt="which one?", options=("a", "b")))
+
+    assert answer == Picked(value="a", by=By.HUMAN)
+    assert notices.getvalue() == "which one? (a/b)\nwhich one? (a/b)\n"
+
+
+async def test_a_menu_that_wants_several_reads_a_list_and_keeps_the_order() -> None:
+    """A comma is the one syntax a line has for a list, and the same word twice is one pick."""
+    editor, notices = _editor("b, a, b\n")
+
+    answer = await editor.ask(Selection(prompt="which ones?", options=("a", "b", "c"), multiple=True))
+
+    assert answer == Picked(values=("b", "a"), by=By.HUMAN), "in the order they were written, each once"
+    assert notices.getvalue() == "which ones? (a/b/c) [one or more, comma-separated]\n", (
+        "the line says how to pick more than one, because a menu otherwise means exactly one"
+    )
+
+
+async def test_a_list_with_one_word_nobody_offered_is_not_an_answer() -> None:
+    """Half a list is not a list: dropping the unknown word would answer a question nobody asked."""
+    editor, _ = _editor("a, z\nc\n")
+
+    answer = await editor.ask(Selection(prompt="which ones?", options=("a", "b", "c"), multiple=True))
+
+    assert answer == Picked(values=("c",), by=By.HUMAN), "the second line is the answer; the first one was refused"
 
 
 async def test_a_question_left_with_no_line_to_answer_it_is_answered_as_unanswered() -> None:

@@ -143,8 +143,8 @@ def _from_text(question: AnyAsk, text: str) -> AnyAnswer | None:
     match question:
         case Confirmation(default=default):
             return _agreed(question.id, text, default=default)
-        case Selection(options=options, default=default):
-            return _picked(question.id, text, options=options, default=default)
+        case Selection(options=options, default=default, multiple=multiple):
+            return _picked(question.id, text, options=options, default=default, multiple=multiple)
         case FreeText(default=default):
             return Written(id=question.id, text=text or (default or ""), by=By.HUMAN)
         case Secret():
@@ -165,12 +165,31 @@ def _agreed(question: int, text: str, *, default: bool | None) -> Agreed | None:
     return None
 
 
-def _picked(question: int, text: str, *, options: tuple[str, ...], default: str | None) -> Picked | None:
-    """One of the options, the suggested one, or nothing when the line named no option."""
+def _picked(
+    question: int,
+    text: str,
+    *,
+    options: tuple[str, ...],
+    default: str | None,
+    multiple: bool = False,
+) -> Picked | None:
+    """One of the options, several of them, the suggested one, or nothing when the line named no option.
+
+    A question answered once is the option the line says and nothing else. A question answered several
+    times is what the line lists, one per comma, in the order they were written and each only once —
+    a comma is the one syntax a line has for a list. A word that is not an option and a line that lists
+    nothing are both "this did not answer it", so the client asks again rather than dropping the part it
+    did not recognise and taking the rest.
+    """
     said = text.strip() or default
-    if said is None or said not in options:
+    if said is None:
         return None
-    return Picked(id=question, value=said, by=By.HUMAN)
+    if not multiple:
+        return None if said not in options else Picked(id=question, value=said, by=By.HUMAN)
+    listed = list(dict.fromkeys(part.strip() for part in said.split(",") if part.strip()))
+    if not listed or any(one not in options for one in listed):
+        return None
+    return Picked(id=question, values=tuple(listed), by=By.HUMAN)
 
 
 #: The directory one session's history lives in, under the same root as the journal.

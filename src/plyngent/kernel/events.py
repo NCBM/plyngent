@@ -100,10 +100,16 @@ class Human(ABC):
         prompt: str,
         options: tuple[str, ...],
         default: str | None = None,
+        multiple: bool = False,
         site: AskSite | None = None,
         timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
     ) -> Picked:
-        """Offer ``options`` and take one; ``default`` is a suggested line, not an extra option."""
+        """Offer ``options`` and take one — or, with ``multiple``, any number of them.
+
+        ``default`` is a suggested line, not an extra option. Which of the two ways a pick comes back is
+        the question's own (:attr:`~plyngent.wire.ask.Selection.multiple`), so it travels with the
+        question rather than being decided by whoever is showing it.
+        """
 
     @abstractmethod
     async def text(
@@ -156,6 +162,7 @@ class Human(ABC):
                     prompt=question.prompt,
                     options=question.options,
                     default=question.default,
+                    multiple=question.multiple,
                     site=site,
                     timeout=question.timeout,
                 )
@@ -200,12 +207,13 @@ class NoSink(Human):
         *,
         prompt: str,
         options: tuple[str, ...],
+        multiple: bool = False,
         default: str | None = None,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Picked:
         """Answer "nothing was picked"."""
-        _ = (prompt, options, default, site, timeout)
+        _ = (prompt, options, default, multiple, site, timeout)
         return Picked(by=By.NOBODY)
 
     @override
@@ -286,12 +294,15 @@ class HumanChannel(Component, Human):
         *,
         prompt: str,
         options: tuple[str, ...],
+        multiple: bool = False,
         default: str | None = None,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Picked:
         """Ask whoever is attached now, and wait for them within the deadline."""
-        return await self._human().choose(prompt=prompt, options=options, default=default, site=site, timeout=timeout)
+        return await self._human().choose(
+            prompt=prompt, options=options, default=default, multiple=multiple, site=site, timeout=timeout
+        )
 
     @override
     async def text(

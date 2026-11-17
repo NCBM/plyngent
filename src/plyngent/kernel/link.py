@@ -63,6 +63,7 @@ from plyngent.wire.ask import (
     Written,
     answer_kind,
     as_agreed,
+    as_picked,
     as_written,
     unanswered,
 )
@@ -210,13 +211,13 @@ class LinkHuman(Human):
         prompt: str,
         options: tuple[str, ...],
         default: str | None = None,
+        multiple: bool = False,
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Picked:
-        """Ask for one of ``options`` and wait for the one answer by id."""
-        question = Selection(prompt=prompt, options=options, default=default, timeout=timeout)
-        answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Picked) else Picked(by=By.NOBODY)
+        """Ask for one of ``options`` — or several, when the question says so — and wait for the answer."""
+        question = Selection(prompt=prompt, options=options, default=default, multiple=multiple, timeout=timeout)
+        return as_picked(await self._link.ask(_placed(question, site)))
 
     @override
     async def text(

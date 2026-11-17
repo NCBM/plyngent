@@ -772,13 +772,22 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
             return _joined(ask.session, focus, f"{prompt} [{_offered(default=default)}]{_weighed(ask)}")
         case Selection(prompt=prompt, options=options, default=default):
             choices = "/".join(options)
-            return _joined(ask.session, focus, f"{prompt} ({choices})" + _suggested(default))
+            return _joined(ask.session, focus, f"{prompt} ({choices}){_many(ask)}{_suggested(default)}")
         case FreeText(prompt=prompt, default=default):
             return _joined(ask.session, focus, prompt + _suggested(default))
         case Secret(prompt=prompt):
             return _joined(ask.session, focus, prompt)
         case _ as never:
             assert_never(never)
+
+
+def _many(ask: Selection) -> str:
+    """How a person says they want several: the one syntax a line has for a list.
+
+    Nothing is added when one answer is what the question wants — a line that says "pick one" where one
+    was the only thing it could mean is noise, and the person would read it as a question about several.
+    """
+    return "" if not ask.multiple else " [one or more, comma-separated]"
 
 
 def _weighed(ask: Confirmation) -> str:

@@ -23,7 +23,7 @@ written nowhere. Four questions and three answers instead:
 question                         answer                      when nobody answers
 ===============================  ==========================  =================================
 ``Confirmation(prompt)``         ``Agreed(accepted)``        the level's fallback (``timeout``)
-``Selection(prompt, options)``   ``Picked(value)``           ``Picked(value=None)``
+``Selection(prompt, options)``   ``Picked(value|values)``    ``Picked(value=None)``
 ``FreeText(prompt)``             ``Written(text)``           ``Written(text=None)``
 ``Secret(prompt)``               ``Written(text)``           ``Written(text=None)``
 ===============================  ==========================  =================================
@@ -46,9 +46,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from msgspec import Struct
+from msgspec import Meta, Struct
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -180,13 +180,18 @@ class Ask(Struct, frozen=True, kw_only=True, tag_field="ask"):
     #: renders it. Empty when the question is not under a turn (a handshake, a session-level approval).
     scope: str = ""
     id: int = 0
-    prompt: str = ""
+    prompt: Annotated[str, Meta(min_length=1, max_length=1000)] = ""
     timeout: float | None = None
     severity: Severity = Severity.CONFIRM
     #: What this question answers when the deadline arrives unanswered, where that can be said as one
     #: word: a yes-or-no question falls back to whatever its level says, and the other three answer
     #: "nothing" whatever it is (see :func:`unanswered`).
     timeout_default: bool = False
+    #: What this answer is *called*, when several are gathered at once: the kernel's asking tool is one
+    #: array of questions, and a form's answer is one line per question — this is the word that line
+    #: starts with. Empty is "this answer has no name of its own", which is what a single question put on
+    #: its own has: the person is looking at one question and a prefix would be noise.
+    label: str = ""
 
 
 class Confirmation(Ask, tag="confirmation", frozen=True, kw_only=True):
@@ -202,7 +207,15 @@ class Confirmation(Ask, tag="confirmation", frozen=True, kw_only=True):
 
 
 class Selection(Ask, tag="selection", frozen=True, kw_only=True):
-    """Pick one of ``options``; ``Picked.value`` is one of them.
+    """Pick from ``options``: one of them, or — with ``multiple`` — any number of them.
+
+    ``Picked.value`` is the single pick; ``Picked.values`` is several, in the order the person gave
+    them. One field for each is a decision rather than an envelope: a question that can only be answered
+    once has no list to read, and a list nobody asked for would make every caller ask "which field is
+    the answer".
+
+    ``multiple`` changes what one line means, so it is the *question's* fact and not the answer's: a
+    person picking several types several, and the client's own syntax for that is its business.
 
     ``default`` is suggested to the human and lives outside ``options`` (it is a pre-filled line, not
     an option), so no default means a blank line is not an answer.
@@ -210,6 +223,9 @@ class Selection(Ask, tag="selection", frozen=True, kw_only=True):
 
     options: tuple[str, ...] = ()
     default: str | None = None
+    #: Whether more than one option may be picked. A question that can only be answered once is the
+    #: ordinary case, so this is off unless somebody says so.
+    multiple: bool = False
 
 
 class FreeText(Ask, tag="free-text", frozen=True, kw_only=True):
@@ -256,9 +272,16 @@ class Agreed(Answer, tag="agreed", frozen=True, kw_only=True):
 
 
 class Picked(Answer, tag="picked", frozen=True, kw_only=True):
-    """The answer to a :class:`Selection`; ``None`` when nobody picked anything."""
+    """The answer to a :class:`Selection`; ``None`` when nobody picked anything.
+
+    ``value`` is one option and ``values`` several — which one is filled is the question's
+    (``Selection.multiple``), and a client that was asked for several and answered with one is answering
+    a question nobody asked. Both empty is nobody picking anything, which is not the same as picking the
+    empty string: an option is a word somebody offered, and none of them is empty.
+    """
 
     value: str | None = None
+    values: tuple[str, ...] = ()
 
 
 class Written(Answer, tag="written", frozen=True, kw_only=True):
@@ -304,6 +327,11 @@ def as_agreed(answer: AnyAnswer) -> Agreed:
 def as_written(answer: AnyAnswer) -> Written:
     """A line of prose or a secret, read the same way: ``None`` is the absence of an answer."""
     return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
+
+
+def as_picked(answer: AnyAnswer) -> Picked:
+    """A pick from a set, read the same way; nothing picked is both fields empty."""
+    return answer if isinstance(answer, Picked) else Picked(by=By.NOBODY)
 
 
 def unanswered(ask: AnyAsk, *, by: By = By.TIMEOUT) -> AnyAnswer:
