@@ -8,7 +8,7 @@ turns into a claim (E90).
 
 from __future__ import annotations
 
-from plyngent.cli.render import Shown, notice, question, render
+from plyngent.cli.render import _REFUSALS, Shown, notice, question, render
 from plyngent.wire.ask import Confirmation, Severity
 from plyngent.wire.event import (
     AssistantText,
@@ -16,6 +16,7 @@ from plyngent.wire.event import (
     CompactRefused,
     Pruned,
     PruneRefused,
+    Refusal,
     ToolReturned,
     TurnFinished,
     TurnRefused,
@@ -46,19 +47,29 @@ def test_a_turn_that_ended_is_bookkeeping_and_one_that_failed_is_a_refusal() -> 
 
 
 def test_a_refusal_and_an_asking_cost_are_not_bookkeeping() -> None:
-    assert render(TurnRefused(reason="no model")) == (Shown("turn refused: no model", "refusal"),)
-    assert render(CompactRefused(reason="nothing to do")) == (Shown("compact refused: nothing to do", "refusal"),)
+    assert render(TurnRefused(reason=Refusal.NO_MODEL)) == (
+        Shown("turn refused: this kernel has no model installed, so it cannot run a turn", "refusal"),
+    )
+    assert render(CompactRefused(reason=Refusal.NOTHING_TO_KEEP)) == (
+        Shown("compact refused: a summary with no text compresses nothing", "refusal"),
+    )
     assert render(Usage(turn=1, prompt=10, completion=2)) == (Shown("turn 1 tokens 10+2", "usage"),)
 
 
 def test_a_prune_is_bookkeeping_and_a_refused_one_is_a_refusal() -> None:
     pruned = render(Pruned(entry="e9", targets=("e1", "e2")))
-    refused = render(PruneRefused(reason="a prune with no entries hides nothing"))
+    refused = render(PruneRefused(reason=Refusal.NOTHING_TO_PRUNE))
 
     assert pruned == (Shown("prune e9 written (2 withheld)", "notice"),), (
         "how much it hid is the one number a prune has"
     )
     assert refused == (Shown("prune refused: a prune with no entries hides nothing", "refusal"),)
+
+
+def test_every_refusal_has_a_sentence_and_every_sentence_a_refusal() -> None:
+    """A kind the renderer has no words for is a refusal a person reads as a crash, and the reverse is
+    a sentence nobody can reach — so the two sets are held equal rather than kept in step by hand."""
+    assert set(_REFUSALS) == set(Refusal)
 
 
 def test_a_batch_is_read_the_way_its_items_would_have_been() -> None:

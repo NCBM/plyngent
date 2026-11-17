@@ -89,6 +89,7 @@ from plyngent.wire.event import ListedSession as ListedSession
 from plyngent.wire.event import OfferRefused as OfferRefused
 from plyngent.wire.event import Pruned as Pruned
 from plyngent.wire.event import PruneRefused as PruneRefused
+from plyngent.wire.event import Refusal as Refusal
 from plyngent.wire.event import ResumeRefused as ResumeRefused
 from plyngent.wire.event import RollbackRefused as RollbackRefused
 from plyngent.wire.event import RolledBack as RolledBack

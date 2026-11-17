@@ -36,6 +36,7 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.toolresult import Effects, Text, ToolResult
 from plyngent.kernel.toolspec import ExternalArgs, Intention, Mutation, Res, ToolArgs, ToolSpec
 from plyngent.wire.ask import AskSite, Confirmation, FreeText, Invocation, Returned, Selection
+from plyngent.wire.event import Refusal
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
@@ -83,19 +84,6 @@ class AskUser(ToolArgs, kw_only=True):
 
 #: The asking name and the shape the kernel puts to a person through it.
 SHAPES: dict[str, type[ToolArgs]] = {"ask_user": AskUser}
-
-#: Why an offer of one tool was not taken. Each is the reason an ``OfferRefused`` carries, so a client
-#: can say which of the rules it broke instead of guessing from a silent refusal.
-DUPLICATE = "a tool of this name already exists, and a name is how the model asks for one"
-NAMELESS = "a tool without a name is one nothing could call"
-NOT_YOURS = "the kernel has a shape for this name, and a client may not say what it is"
-#: Unreachable while every asking name has a shape (a test says so), and kept because the branch below
-#: indexes :data:`SHAPES`: a name added to one set and not the other has to be a refusal, not a crash.
-NO_SHAPE = "this kernel has no shape for that name yet, so there is nothing to offer"
-NOT_AN_OBJECT = "the arguments of a client's tool are a JSON object, and this schema is not one"
-
-#: Why a whole offer was refused, said once for a connection that cannot take one at all.
-NO_CAPABILITY = "this connection does not take offers from its client"
 
 #: How much of a call's arguments one declaration carries: a journal line, not a copy of the call.
 DECLARED_ARGUMENT_CHARS = 60
@@ -187,7 +175,7 @@ class Offers(Component):
 
 def specs_from(
     client: str, tools: Iterable[OfferedTool], *, taken: Collection[str]
-) -> tuple[tuple[ToolSpec, ...], tuple[tuple[str, str], ...]]:
+) -> tuple[tuple[ToolSpec, ...], tuple[tuple[str, Refusal], ...]]:
     """What one offer becomes: the tools it may attach, and the ones refused with why.
 
     ``taken`` is every name this kernel already has — its own tools, and whatever an earlier offer left
@@ -199,7 +187,7 @@ def specs_from(
     """
     group = f"{CLIENT}:{client}"
     attached: list[ToolSpec] = []
-    refused: list[tuple[str, str]] = []
+    refused: list[tuple[str, Refusal]] = []
     seen: set[str] = set(taken)
     for tool in tools:
         reason = _refusal(tool, taken=seen)
@@ -249,17 +237,17 @@ def answered(client: str, tool: str, arguments: str, returned: Returned) -> Tool
     return ToolResult.of(Failure.CLIENT, lost, effects=effects)
 
 
-def _refusal(tool: OfferedTool, *, taken: Collection[str]) -> str | None:
+def _refusal(tool: OfferedTool, *, taken: Collection[str]) -> Refusal | None:
     """Why this offer of one tool cannot be taken, or ``None`` when it can."""
     if not tool.name:
-        return NAMELESS
+        return Refusal.NAMELESS
     if tool.name in taken:
-        return DUPLICATE
+        return Refusal.DUPLICATE
     if tool.name in ASKING_NAMES:
         if tool.schema:
-            return NOT_YOURS
-        return None if tool.name in SHAPES else NO_SHAPE
-    return None if _is_object(tool.schema) else NOT_AN_OBJECT
+            return Refusal.NOT_YOURS
+        return None if tool.name in SHAPES else Refusal.NO_SHAPE
+    return None if _is_object(tool.schema) else Refusal.NOT_AN_OBJECT
 
 
 def _asked(tool: OfferedTool, group: str) -> ToolSpec:

@@ -9,10 +9,6 @@ import pytest
 
 from plyngent.kernel.client import (
     ASKING_NAMES,
-    DUPLICATE,
-    NAMELESS,
-    NOT_AN_OBJECT,
-    NOT_YOURS,
     SHAPES,
     answered,
     declaration,
@@ -23,6 +19,7 @@ from plyngent.kernel.toolresult import Hint, Status, Text
 from plyngent.kernel.toolspec import ExternalArgs, Intention, Mutation, Posture, Res, schema_of
 from plyngent.wire.ask import Returned
 from plyngent.wire.command import OfferedTool
+from plyngent.wire.event import Refusal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -111,12 +108,12 @@ def test_an_offered_tool_travels_in_a_group_named_after_the_connection() -> None
 @pytest.mark.parametrize(
     ("tool", "reason"),
     [
-        (OfferedTool(name=""), NAMELESS),
-        (OfferedTool(name="read", schema=SEARCH), DUPLICATE),
-        (OfferedTool(name="ask_user", schema=SEARCH), NOT_YOURS),
-        (OfferedTool(name="search", schema="["), NOT_AN_OBJECT),
-        (OfferedTool(name="search", schema="[]"), NOT_AN_OBJECT),
-        (OfferedTool(name="search"), NOT_AN_OBJECT),
+        (OfferedTool(name=""), Refusal.NAMELESS),
+        (OfferedTool(name="read", schema=SEARCH), Refusal.DUPLICATE),
+        (OfferedTool(name="ask_user", schema=SEARCH), Refusal.NOT_YOURS),
+        (OfferedTool(name="search", schema="["), Refusal.NOT_AN_OBJECT),
+        (OfferedTool(name="search", schema="[]"), Refusal.NOT_AN_OBJECT),
+        (OfferedTool(name="search"), Refusal.NOT_AN_OBJECT),
     ],
 )
 def test_an_offer_is_refused_one_tool_at_a_time(tool: OfferedTool, reason: str) -> None:
@@ -136,7 +133,7 @@ def test_a_second_offer_of_one_name_inside_the_same_command_is_refused_too() -> 
     )
 
     assert len(specs) == 1, "the first one is the tool"
-    assert refused == (("search", DUPLICATE),), "and the second is a name that already answered"
+    assert refused == (("search", Refusal.DUPLICATE),), "and the second is a name that already answered"
 
 
 def test_every_asking_name_is_refused_or_shaped_but_never_both() -> None:

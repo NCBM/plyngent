@@ -12,12 +12,11 @@ import json
 from typing import TYPE_CHECKING
 
 from plyngent.cli.offers import TERMINAL, ClientTools
-from plyngent.kernel.client import DUPLICATE, NO_CAPABILITY, NOT_AN_OBJECT
 from plyngent.kernel.resources import Root
 from plyngent.kernel.skills import Skills
 from plyngent.wire.ask import Invocation, Returned
 from plyngent.wire.command import Offer, OfferedTool
-from plyngent.wire.event import OfferRefused
+from plyngent.wire.event import OfferRefused, Refusal
 from plyngent.wire.manifest import CLIENT_OFFER
 from tests.stories.model import calling, text, told
 
@@ -100,7 +99,10 @@ async def test_a_name_this_kernel_has_is_refused_and_the_table_does_not_move(sto
 
     await story.type("what can you do?")
 
-    assert f"offer refused: read — {DUPLICATE}" in story.screen(), "the refusal names the rule it broke"
+    assert (
+        "offer refused: read — a tool of this name already exists, and a name is how the model asks for one"
+        in story.screen()
+    ), "the refusal names the rule it broke"
     assert story.toolset_epoch == before, "a refused offer is no change at all"
     assert "client:c1" not in story.requests()[0].system, "the client's one tool is resident, so no group is left over"
 
@@ -112,7 +114,10 @@ async def test_a_schema_that_is_not_an_object_is_refused(story_with: Scripted) -
 
     await story.type("what can you do?")
 
-    assert f"offer refused: lookup — {NOT_AN_OBJECT}" in story.screen()
+    assert (
+        "offer refused: lookup — the arguments of a client's tool are a JSON object, and this schema is not one"
+        in story.screen()
+    )
     assert "lookup" not in _names(story.requests()[0]), "nothing was attached, so nothing is offered"
 
 
@@ -139,7 +144,7 @@ async def test_a_connection_that_did_not_say_it_takes_offers_is_refused_the_whol
     event = await asyncio.wait_for(anext(other.events()), 2.0)
 
     assert isinstance(event, OfferRefused)
-    assert (event.name, event.reason) == ("", NO_CAPABILITY), "refused as a connection, not tool by tool"
+    assert (event.name, event.reason) == ("", Refusal.NO_CAPABILITY), "refused as a connection, not tool by tool"
     assert story.toolset_epoch == before, "and nothing about any session moved"
 
 
@@ -157,7 +162,7 @@ async def test_a_second_connection_is_served_by_the_same_kernel(story_with: Scri
     event = await asyncio.wait_for(anext(other.events()), 2.0)
 
     assert isinstance(event, OfferRefused)
-    assert (event.name, event.reason) == ("skill_read", DUPLICATE), "a name this kernel already answers to"
+    assert (event.name, event.reason) == ("skill_read", Refusal.DUPLICATE), "a name this kernel already answers to"
 
 
 async def test_leaving_says_the_tool_set_moved_once_more(story: Story) -> None:

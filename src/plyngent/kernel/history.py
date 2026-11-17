@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from plyngent.wire.event import Refusal
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -87,26 +89,37 @@ def history_path(journal: Path | str) -> Path:
 
 
 class Unreadable(Exception):  # noqa: N818 — a store that cannot answer is a state, not a failed call
-    """The store could not be read or written: git said no, and said why."""
+    """The store could not do what was asked, and why — a value, so the reader says it in words.
 
+    ``detail`` is the store's own account when the store is what said no (a git that refused), because
+    those are not this kernel's words to rewrite. Everything else is one of the refusals a reader knows.
+    """
 
-#: Why a rollback cannot happen at all, and why it cannot happen over what is on disk now.
-NO_VERSIONS_KEPT = "this workspace has no versions to go back to"
-NOTHING_MOVED = "nothing in that version changed a path, so there is nothing to put back"
+    reason: Refusal
+    detail: str
 
-
-def _refused_by_disk(name: str, undo: str) -> str:
-    """Why one path was not put back: it is not what that version left, so something else wrote it."""
-    return f"{name} is not what version {undo[:8]} left, so it was not put back"
-
-
-def _outside_version(name: str) -> str:
-    """Why a version's own path was refused: a rollback may only land inside the tree it is about."""
-    return f"{name!r} is not a path a version of this workspace could hold"
+    def __init__(self, reason: Refusal, *, detail: str = "") -> None:
+        super().__init__(detail or str(reason))
+        self.reason = reason
+        self.detail = detail
 
 
 class Unwilling(Exception):  # noqa: N818 — a rollback that would lose somebody's work is a refusal
-    """The disk no longer holds what the version left, so putting it back would throw a change away."""
+    """The disk no longer holds what the version left, so putting it back would throw a change away.
+
+    Carries the path and the version the refusal is about, because the sentence a person reads names
+    both and the reader is the one that writes it.
+    """
+
+    reason: Refusal
+    path: str
+    version: str
+
+    def __init__(self, reason: Refusal, *, path: str = "", version: str = "") -> None:
+        super().__init__(str(reason))
+        self.reason = reason
+        self.path = path
+        self.version = version
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,11 +343,11 @@ class History:
         """The rollback itself: refuse what would be lost, put the bytes back, record that it happened."""
         undo = version or self._head()
         if not undo:
-            raise Unreadable(NO_VERSIONS_KEPT)
+            raise Unreadable(Refusal.NOTHING_KEPT)
         target = self._parent(undo)
         moved = paths or self._changed(undo)
         if not moved:
-            raise Unreadable(NOTHING_MOVED)
+            raise Unreadable(Refusal.NOTHING_MOVED)
         self._only_if_ours(undo, moved, force=force)
         modes = self._held(target)
         restored: list[str] = []
@@ -367,13 +380,13 @@ class History:
             here = self._hashed([leaf], write=False)[0] if (leaf.exists() or leaf.is_symlink()) else None
             if force or here == held.get(name):
                 continue
-            raise Unwilling(_refused_by_disk(name, undo))
+            raise Unwilling(Refusal.DISK_MOVED, path=name, version=undo)
 
     def _inside(self, name: str) -> Path:
         """The path a version names, refusing one that would land outside the tree it belongs to."""
         named = Path(name)
         if named.is_absolute() or ".." in named.parts:
-            raise Unwilling(_outside_version(name))
+            raise Unwilling(Refusal.OUTSIDE, path=name)
         return self.root / named
 
     def _diff(self, older: str, newer: str, paths: tuple[str, ...], context: int) -> str:
@@ -421,7 +434,7 @@ class History:
         )
         if done.returncode != 0:
             says = done.stderr.decode("utf-8", "replace").strip()
-            raise Unreadable(says or f"git {args[0]} answered {done.returncode}")
+            raise Unreadable(Refusal.STORE, detail=says or f"git {args[0]} answered {done.returncode}")
         return done.stdout
 
 

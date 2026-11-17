@@ -39,8 +39,8 @@ from composat import Declaration
 from composat.errors import KeyInTransitError
 
 from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
-from plyngent.kernel.client import NO_CAPABILITY, ClientOffers, Offers, specs_from
-from plyngent.kernel.documents import refuses
+from plyngent.kernel.client import ClientOffers, Offers, specs_from
+from plyngent.kernel.documents import MAX_TEXT_CHARS
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.history import Unreadable, Unwilling
@@ -77,6 +77,7 @@ from plyngent.wire.event import (
     OfferRefused,
     Pruned,
     PruneRefused,
+    Refusal,
     ResumeRefused,
     RollbackRefused,
     RolledBack,
@@ -330,9 +331,15 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(ResumeRefused(session=session, reason=NO_SESSION))
+            self.link.emit(ResumeRefused(session=session, reason=Refusal.NO_SESSION))
             return
-        self.link.emit(ResumeRefused(session=session, reason=_no_other_store(store)))
+        self.link.emit(
+            ResumeRefused(
+                session=session,
+                reason=Refusal.UNKNOWN_STORE if store else Refusal.NO_SECOND_STORE,
+                store=store,
+            )
+        )
 
     async def _past(self, command: Resume | Rollback) -> None:
         """The two commands about what this session and its workspace already were.
@@ -356,19 +363,27 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(RollbackRefused(session=session, reason=NO_SESSION))
+            self.link.emit(RollbackRefused(session=session, reason=Refusal.NO_SESSION))
             return
         store = found.host.history
         if store is None:
-            self.link.emit(RollbackRefused(session=session, reason=NO_VERSIONS))
+            self.link.emit(RollbackRefused(session=session, reason=Refusal.NO_VERSIONS))
             return
         if found.turns():
-            self.link.emit(RollbackRefused(session=session, reason=A_TURN_IS_RUNNING))
+            self.link.emit(RollbackRefused(session=session, reason=Refusal.TURN_RUNNING))
             return
         try:
             undone = await store.undo(version=version, paths=paths, force=force)
         except (Unreadable, Unwilling) as exc:
-            self.link.emit(RollbackRefused(session=session, reason=str(exc)))
+            self.link.emit(
+                RollbackRefused(
+                    session=session,
+                    reason=exc.reason,
+                    path=getattr(exc, "path", ""),
+                    version=getattr(exc, "version", ""),
+                    detail=getattr(exc, "detail", ""),
+                )
+            )
             return
         self.link.emit(
             RolledBack(session=session, revision=undone.revision, target=undone.target, restored=undone.restored)
@@ -422,23 +437,23 @@ class Serving:
         would either duplicate what is there or interleave with a turn that is using it.
         """
         if self._session(session) is not None:
-            self.link.emit(SeedRefused(session=session, reason=_already_open(session)))
+            self.link.emit(SeedRefused(session=session, reason=Refusal.ALREADY_OPEN))
             return False
         host = self._host()
         if host is None:
-            self.link.emit(SeedRefused(session=session, reason=NO_HOST))
+            self.link.emit(SeedRefused(session=session, reason=Refusal.NO_HOST))
             return False
         trail = host.trail
         if await trail.entry(source, entry) is None:
-            self.link.emit(SeedRefused(session=session, reason=_no_such_seed(entry, source)))
+            self.link.emit(SeedRefused(session=session, reason=Refusal.NO_SUCH_SOURCE, source=source, entry=entry))
             return False
         try:
             carried = await trail.derive(source, entry)
-        except ValueError as exc:
-            self.link.emit(SeedRefused(session=session, reason=str(exc)))
+        except ValueError:
+            self.link.emit(SeedRefused(session=session, reason=Refusal.CHAIN_BROKEN, source=source, entry=entry))
             return False
         if not carried:
-            self.link.emit(SeedRefused(session=session, reason=NOTHING_TO_CARRY))
+            self.link.emit(SeedRefused(session=session, reason=Refusal.NOTHING_TO_CARRY))
             return False
         parent: str | None = None
         for message in carried:
@@ -479,7 +494,7 @@ class Serving:
         attached is the one case that leaves the table alone: there is no change to count.
         """
         if CLIENT_OFFER not in self.link.manifest.caps:
-            self.link.emit(OfferRefused(reason=NO_CAPABILITY))
+            self.link.emit(OfferRefused(reason=Refusal.NO_CAPABILITY))
             return
         before = self._offers_now()
         client = before.attached.id if before.attached is not None else f"c{before.issued + 1}"
@@ -550,11 +565,11 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(RouteRefused(session=session, reason=NO_SESSION))
+            self.link.emit(RouteRefused(session=session, reason=Refusal.NO_SESSION))
             return
         known = found.host.routes
         if route and known.named(route) is None:
-            self.link.emit(RouteRefused(session=session, reason=f"no route named {route!r} here"))
+            self.link.emit(RouteRefused(session=session, reason=Refusal.NO_ROUTE, route=route))
             return
         name, epoch = await found.set_route(route)
         asked = known.resolve(name)
@@ -584,23 +599,22 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(CompactRefused(session=session, reason=NO_SESSION))
+            self.link.emit(CompactRefused(session=session, reason=Refusal.NO_SESSION))
             return
         if not text:
-            self.link.emit(CompactRefused(session=session, reason=NOTHING_TO_KEEP))
+            self.link.emit(CompactRefused(session=session, reason=Refusal.NOTHING_TO_KEEP))
             return
         if replaces is not None:
             missing = [named for named in replaces if await found.host.trail.entry(session, named) is None]
             if missing:
-                said = f"no entry {missing[0]!r} in session {session}"
-                self.link.emit(CompactRefused(session=session, reason=said))
+                self.link.emit(CompactRefused(session=session, reason=Refusal.NOT_A_SPAN, entry=missing[0]))
                 return
         try:
             entry = await found.host.trail.append(
                 session, Summary(text=text, replaces=replaces), begin_after=begin_after
             )
-        except ValueError as exc:
-            self.link.emit(CompactRefused(session=session, reason=str(exc)))
+        except ValueError:
+            self.link.emit(CompactRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return
         _ = await found.note_compaction()
         self.link.emit(Compacted(session=session, entry=entry.id, chars=len(text)))
@@ -618,7 +632,7 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(ExportRefused(session=session, reason=NO_SESSION))
+            self.link.emit(ExportRefused(session=session, reason=Refusal.NO_SESSION))
             return
         trail = found.host.trail
         end = begin_after
@@ -627,16 +641,17 @@ class Serving:
             end = None if head is None else head.id
         try:
             messages = await trail.derive(session, end)
-        except ValueError as exc:
-            self.link.emit(ExportRefused(session=session, reason=str(exc)))
+        except ValueError:
+            self.link.emit(ExportRefused(session=session, reason=Refusal.CHAIN_BROKEN, entry=end or ""))
             return
         if not messages:
-            self.link.emit(ExportRefused(session=session, reason=NOTHING_TO_EXPORT))
+            self.link.emit(ExportRefused(session=session, reason=Refusal.NOTHING_TO_EXPORT))
             return
         transcript_text = transcript(messages)
-        refusal = refuses(transcript_text)
-        if refusal is not None:
-            self.link.emit(ExportRefused(session=session, reason=refusal))
+        if len(transcript_text) > MAX_TEXT_CHARS:
+            self.link.emit(
+                ExportRefused(session=session, reason=Refusal.TOO_BIG, chars=len(transcript_text), limit=MAX_TEXT_CHARS)
+            )
             return
         kept = await found.host.documents.put(
             session, transcript_text, summary=f"conversation exported ({len(messages)} messages)"
@@ -657,15 +672,15 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(PruneRefused(session=session, reason=NO_SESSION))
+            self.link.emit(PruneRefused(session=session, reason=Refusal.NO_SESSION))
             return
         if not targets:
-            self.link.emit(PruneRefused(session=session, reason=NOTHING_TO_PRUNE))
+            self.link.emit(PruneRefused(session=session, reason=Refusal.NOTHING_TO_PRUNE))
             return
         trail = found.host.trail
         for target in targets:
             if await trail.entry(session, target) is None:
-                self.link.emit(PruneRefused(session=session, reason=_no_such_prune(target, session)))
+                self.link.emit(PruneRefused(session=session, reason=Refusal.NO_SUCH_TARGET, entry=target))
                 return
         head = await trail.head(session)
         entry = await trail.append(
@@ -690,19 +705,19 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(TurnRefused(session=session, reason=NO_SESSION, holder=0))
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
             return
         if not found.host.model.installed:
-            self.link.emit(TurnRefused(session=session, reason=NO_MODEL, holder=0))
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
             return
         live = found.turns()
         if live:
-            self.link.emit(TurnRefused(session=session, reason=BUSY, holder=live[0].turn_id))
+            self.link.emit(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
             return
         try:
             turned = await found.begin_turn(begin_after=begin_after, kind=kind)
-        except ValueError as exc:
-            self.link.emit(TurnRefused(session=session, reason=str(exc), holder=0))
+        except ValueError:
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return
         task = asyncio.create_task(self._turn(turned, text))
         self._turns.add(task)
@@ -834,61 +849,6 @@ class Serving:
         """
         entry = await trail.head(session)
         return "" if entry is None else entry.id
-
-
-#: Why a ``Submit`` named a session this kernel is not serving: it was never opened, or it was closed.
-NO_SESSION = "no such session here: open one first"
-
-#: Why a ``Submit`` did not start a turn: nothing is installed to ask, and pretending otherwise would be
-#: the kernel inventing what the model said.
-NO_MODEL = "this kernel has no model installed, so it cannot run a turn"
-
-#: Why a ``Submit`` was refused while a turn was live: one turn at a time, and ``holder`` names the one.
-BUSY = "a turn is already running in this session"
-
-#: Why an ``Open`` could not seed a new session: this kernel's own host is not up, so nothing can be
-#: written down for a conversation it is not serving.
-NO_HOST = "this kernel's host is not up, so there is nowhere to write a conversation"
-
-#: Why an ``Open`` could not seed a new session: the source projects to no messages at all.
-NOTHING_TO_CARRY = "there is nothing to copy: that conversation has no messages to carry"
-
-#: Why a ``Rollback`` did nothing: this kernel keeps no versions, so there is nothing to go back to.
-NO_VERSIONS = "this kernel keeps no versions of this workspace"
-
-#: Why a ``Rollback`` waited: the bytes on disk are the ones a live turn's calls are still producing.
-A_TURN_IS_RUNNING = "a turn is running in this session, so the workspace is still being written"
-
-#: Why a ``Compact`` wrote nothing: an empty summary would stand for everything and say nothing.
-NOTHING_TO_KEEP = "a summary with no text compresses nothing"
-
-#: Why a ``Prune`` wrote nothing: there is nothing to stop showing.
-NOTHING_TO_PRUNE = "a prune with no entries hides nothing"
-
-#: Why an ``Export`` wrote nothing: there is no conversation to write down.
-NOTHING_TO_EXPORT = "there is nothing to export: this conversation has no messages yet"
-
-
-def _no_other_store(store: str) -> str:
-    """Why a resume did nothing: a conversation here is opened rather than pointed at another journal."""
-    if store:
-        return f"no store named {store!r}: this workspace keeps one journal, and nothing else to point at"
-    return "a conversation here is resumed by opening it: this workspace keeps one journal, and no second one"
-
-
-def _already_open(session: str) -> str:
-    """Why a conversation was not seeded: it is being served, so copying into it would land beside a turn."""
-    return f"{session} is already open here, so nothing was copied into it"
-
-
-def _no_such_seed(entry: str, source: str) -> str:
-    """Why a conversation was not seeded: only a row that exists has text to carry."""
-    return f"no entry {entry!r} in session {source}: only a row that exists can be copied from"
-
-
-def _no_such_prune(target: str, session: str) -> str:
-    """Why a prune named nothing that exists: a prune can only hide an entry this session has."""
-    return f"no entry {target!r} in session {session}: a prune can only hide an entry that exists"
 
 
 def _resident(offered: Iterable[OfferedTool], attached: tuple[ToolSpec, ...]) -> frozenset[str]:

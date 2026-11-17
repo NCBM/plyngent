@@ -49,6 +49,7 @@ from plyngent.wire.event import (
     OfferRefused,
     Pruned,
     PruneRefused,
+    Refusal,
     ResumeRefused,
     RollbackRefused,
     RolledBack,
@@ -67,6 +68,8 @@ from plyngent.wire.event import (
 from plyngent.wire.query import AnyReply, Forest, GrantTable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from plyngent.wire.ask import AnyAsk
     from plyngent.wire.event import AnyEvent, ListedSession
 
@@ -573,11 +576,12 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
         case TurnFinished(session=session, turn=turn, reason=reason, failure=failure):
             said = f"turn {turn} failed ({failure}): {reason}" if failure else _finished(turn, reason)
             return ((session, Shown(said, "refusal" if failure else "notice")),)
-        case TurnRefused(session=session, reason=reason, holder=holder):
+        case TurnRefused(session=session, reason=reason, holder=holder, entry=entry):
             holder_note = f" (turn {holder} is in the way)" if holder else ""
-            return ((session, Shown(f"turn refused: {reason}{holder_note}", "refusal")),)
+            said = _why(reason).format(entry=entry, session=session)
+            return ((session, Shown(f"turn refused: {said}{holder_note}", "refusal")),)
         case OfferRefused(name=name, reason=reason):
-            said = f"offer refused: {name} — {reason}" if name else f"offer refused: {reason}"
+            said = f"offer refused: {name} — {_why(reason)}" if name else f"offer refused: {_why(reason)}"
             return (("", Shown(said, "refusal")),)
         case _ as never:
             assert_never(never)
@@ -712,24 +716,85 @@ def _difference(line: str) -> Role:
 
 
 def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one word per refusal, on purpose
-    """What the kernel would not do, and why: the same sentence with a different word at the front."""
+    """What the kernel would not do, and why: the same sentence with a different word at the front.
+
+    The kernel sent a value and not a sentence (:class:`~plyngent.wire.event.Refusal`), so the words are
+    written here — ``_REFUSALS`` for the ones that need nothing but the kind, and the event's own fields
+    where the refusal is *about* something: which entry, which route, how many characters.
+    """
     match event:
-        case CompactRefused(session=session, reason=reason):
-            return ((session, Shown(f"compact refused: {reason}", "refusal")),)
-        case PruneRefused(session=session, reason=reason):
-            return ((session, Shown(f"prune refused: {reason}", "refusal")),)
-        case ExportRefused(session=session, reason=reason):
-            return ((session, Shown(f"export refused: {reason}", "refusal")),)
-        case ResumeRefused(session=session, reason=reason):
-            return ((session, Shown(f"resume refused: {reason}", "refusal")),)
-        case SeedRefused(session=session, reason=reason):
-            return ((session, Shown(f"seed refused: {reason}", "refusal")),)
-        case RouteRefused(session=session, reason=reason):
-            return ((session, Shown(f"route refused: {reason}", "refusal")),)
-        case RollbackRefused(session=session, reason=reason):
-            return ((session, Shown(f"rollback refused: {reason}", "refusal")),)
+        case CompactRefused(session=session, reason=reason, entry=entry):
+            said = _why(reason).format(entry=entry, session=session)
+            return ((session, Shown(f"compact refused: {said}", "refusal")),)
+        case PruneRefused(session=session, reason=reason, entry=entry):
+            said = _why(reason).format(entry=entry, session=session)
+            return ((session, Shown(f"prune refused: {said}", "refusal")),)
+        case ExportRefused(session=session, reason=reason, entry=entry, chars=chars, limit=limit):
+            said = _why(reason).format(entry=entry, session=session, chars=chars, limit=limit)
+            return ((session, Shown(f"export refused: {said}", "refusal")),)
+        case ResumeRefused(session=session, reason=reason, store=store):
+            said = _why(reason).format(store=store, session=session)
+            return ((session, Shown(f"resume refused: {said}", "refusal")),)
+        case SeedRefused(session=session, reason=reason, source=source, entry=entry):
+            said = _why(reason).format(entry=entry, source=source, session=session)
+            return ((session, Shown(f"seed refused: {said}", "refusal")),)
+        case RouteRefused(session=session, reason=reason, route=route):
+            said = _why(reason).format(route=route, session=session)
+            return ((session, Shown(f"route refused: {said}", "refusal")),)
+        case RollbackRefused(session=session, reason=reason, path=path, version=version, detail=detail):
+            said = _why(reason).format(
+                path=path, version=version[:8], detail=f": {detail}" if detail else "", session=session
+            )
+            return ((session, Shown(f"rollback refused: {said}", "refusal")),)
         case _ as never:
             assert_never(never)
+
+
+#: What each refusal says, in the words a person reads.
+#:
+#: One entry per member of :class:`~plyngent.wire.event.Refusal` — a test holds the two sets equal — and
+#: the braces are the event's own fields, formatted by the case above. Sentences that need nothing named
+#: carry no braces at all, so a formatting call leaves them alone.
+_REFUSALS: Mapping[Refusal, str] = {
+    Refusal.NO_SESSION: "no such session here: open one first",
+    Refusal.NO_MODEL: "this kernel has no model installed, so it cannot run a turn",
+    Refusal.BUSY: "a turn is already running in this session",
+    Refusal.NO_HOST: "this kernel's host is not up, so there is nowhere to write a conversation",
+    Refusal.NO_SUCH_ENTRY: "no entry {entry!r} in session {session}: an entry can only continue one that exists",
+    Refusal.NOT_A_SPAN: "no entry {entry!r} in session {session}",
+    Refusal.NO_SUCH_TARGET: "no entry {entry!r} in session {session}: a prune can only hide an entry that exists",
+    Refusal.NO_SUCH_SOURCE: "no entry {entry!r} in session {source}: only a row that exists can be copied from",
+    Refusal.CHAIN_BROKEN: "no entry {entry!r} in session {session}: the chain from that entry is broken",
+    Refusal.NO_ROUTE: "no route named {route!r} here",
+    Refusal.NO_SECOND_STORE: (
+        "a conversation here is resumed by opening it: this workspace keeps one journal, and no second one"
+    ),
+    Refusal.UNKNOWN_STORE: "no store named {store!r}: this workspace keeps one journal, and nothing else to point at",
+    Refusal.ALREADY_OPEN: "{session} is already open here, so nothing was copied into it",
+    Refusal.NOTHING_TO_KEEP: "a summary with no text compresses nothing",
+    Refusal.NOTHING_TO_PRUNE: "a prune with no entries hides nothing",
+    Refusal.NOTHING_TO_EXPORT: "there is nothing to export: this conversation has no messages yet",
+    Refusal.NOTHING_TO_CARRY: "there is nothing to copy: that conversation has no messages to carry",
+    Refusal.TOO_BIG: "{chars} characters is more than this build will keep ({limit}): ask for a window of it instead",
+    Refusal.NO_VERSIONS: "this kernel keeps no versions of this workspace",
+    Refusal.NOTHING_KEPT: "this workspace has no versions to go back to",
+    Refusal.NOTHING_MOVED: "nothing in that version changed a path, so there is nothing to put back",
+    Refusal.DISK_MOVED: "{path} is not what version {version} left, so it was not put back",
+    Refusal.OUTSIDE: "{path!r} is not a path a version of this workspace could hold",
+    Refusal.STORE: "the store could not do that{detail}",
+    Refusal.TURN_RUNNING: "a turn is running in this session, so the workspace is still being written",
+    Refusal.NO_CAPABILITY: "this connection does not take offers from its client",
+    Refusal.DUPLICATE: "a tool of this name already exists, and a name is how the model asks for one",
+    Refusal.NAMELESS: "a tool without a name is one nothing could call",
+    Refusal.NOT_YOURS: "the kernel has a shape for this name, and a client may not say what it is",
+    Refusal.NO_SHAPE: "this kernel has no shape for that name yet, so there is nothing to offer",
+    Refusal.NOT_AN_OBJECT: "the arguments of a client's tool are a JSON object, and this schema is not one",
+}
+
+
+def _why(reason: Refusal) -> str:
+    """The words one refusal is written in, before anything is put in them."""
+    return _REFUSALS[reason]
 
 
 def _asking(event: _Asked) -> tuple[_Row, ...]:

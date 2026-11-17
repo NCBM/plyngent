@@ -38,6 +38,58 @@ class TurnKind(StrEnum):
     COMPACT = "compact"
 
 
+class Refusal(StrEnum):
+    """Why a command or a turn did nothing, as the closed set of answers a client can switch on.
+
+    The kernel says *which* one and never how it reads: a refusal is a value, and the sentence is the
+    rendering end's business — the same split :class:`~plyngent.kernel.failure.Failure` makes for a tool
+    result, and for the same reason. Two readers exist (a person in front of a terminal, and whatever a
+    program writes for them), and a sentence composed in the kernel would be prose standing where a fact
+    belongs: untyped, unswitchable, and impossible to say in another language without a lookup table.
+
+    Everything that is *about* the refusal — which entry, which route, how many characters — travels in
+    the event's own fields, so the words a client builds are built from data. ``detail`` is the one escape
+    hatch and it is reserved for what a program outside this kernel said (a store's own words): those are
+    not this kernel's prose to rewrite, and pretending a refused git call has a closed kind that says
+    everything would be inventing information.
+    """
+
+    NO_SESSION = "no-session"
+    NO_MODEL = "no-model"
+    BUSY = "busy"
+    NO_HOST = "no-host"
+    #: A pointer into an entry this conversation does not have: a parent, a summary's span, a prune's
+    #: target, or the row a copy was asked to read from. Four answers because they are four claims.
+    NO_SUCH_ENTRY = "no-such-entry"
+    NOT_A_SPAN = "not-a-span"
+    NO_SUCH_TARGET = "no-such-target"
+    NO_SUCH_SOURCE = "no-such-source"
+    #: A row this conversation has, whose parent pointer leads nowhere: the chain up from it is broken.
+    CHAIN_BROKEN = "chain-broken"
+    NO_ROUTE = "no-route"
+    NO_SECOND_STORE = "no-second-store"
+    UNKNOWN_STORE = "unknown-store"
+    ALREADY_OPEN = "already-open"
+    NOTHING_TO_KEEP = "nothing-to-keep"
+    NOTHING_TO_PRUNE = "nothing-to-prune"
+    NOTHING_TO_EXPORT = "nothing-to-export"
+    NOTHING_TO_CARRY = "nothing-to-carry"
+    TOO_BIG = "too-big"
+    NO_VERSIONS = "no-versions"
+    NOTHING_KEPT = "nothing-kept"
+    NOTHING_MOVED = "nothing-moved"
+    DISK_MOVED = "disk-moved"
+    OUTSIDE = "outside"
+    STORE = "store"
+    TURN_RUNNING = "turn-running"
+    NO_CAPABILITY = "no-capability"
+    DUPLICATE = "duplicate"
+    NAMELESS = "nameless"
+    NOT_YOURS = "not-yours"
+    NO_SHAPE = "no-shape"
+    NOT_AN_OBJECT = "not-an-object"
+
+
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
     """Something the kernel says outward, in the order it was emitted.
 
@@ -120,11 +172,13 @@ class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
 
     ``holder`` names the turn whose state conflicted, so the frontend can say "waiting on turn 7"
     instead of inventing a message. The kernel does not queue: retrying is the caller's business.
+    ``entry`` is the entry the turn was asked to continue, when that is what was wrong with it.
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NO_SESSION
     holder: int = 0
+    entry: str = ""
 
 
 class ListedSession(Struct, frozen=True, kw_only=True):
@@ -165,11 +219,14 @@ class CompactRefused(Event, tag="compact-refused", frozen=True, kw_only=True):
     """A compaction wrote nothing, and why.
 
     An event and not a receipt, for the reason every outcome here is one (D5): a command has no reply,
-    so what came of it is said on the lane everything else is said on.
+    so what came of it is said on the lane everything else is said on. ``entry`` is the row the refusal
+    is about — the one the summary was told to continue, or the first of the span it was told to stand
+    for that this conversation does not have.
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NOTHING_TO_KEEP
+    entry: str = ""
 
 
 class Pruned(Event, tag="pruned", frozen=True, kw_only=True):
@@ -195,18 +252,23 @@ class PruneRefused(Event, tag="prune-refused", frozen=True, kw_only=True):
     """A prune wrote nothing, and why — a target this session does not have, or nothing named at all."""
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NOTHING_TO_PRUNE
+    entry: str = ""
 
 
 class ExportRefused(Event, tag="export-refused", frozen=True, kw_only=True):
     """An export wrote nothing, and why: there is no such conversation to write, or nothing in it.
 
     An export that worked is said with :class:`DocumentStored`, because that is what happened — a
-    document was kept — and the handle it names is the way back to it.
+    document was kept — and the handle it names is the way back to it. ``chars`` and ``limit`` are the
+    two numbers of the one refusal that has any: a transcript past what this build will keep.
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NOTHING_TO_EXPORT
+    entry: str = ""
+    chars: int = 0
+    limit: int = 0
 
 
 class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
@@ -219,7 +281,9 @@ class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NO_SECOND_STORE
+    #: The journal the command named, when it named one: an empty name is the other half of the answer.
+    store: str = ""
 
 
 class Seeded(Event, tag="seeded", frozen=True, kw_only=True):
@@ -243,10 +307,14 @@ class SeedRefused(Event, tag="seed-refused", frozen=True, kw_only=True):
 
     The copy is one act and it either happened whole or not at all: a session half-filled with another
     one's text is a conversation nobody can account for, and the reason says which end refused.
+    ``source`` and ``entry`` are the row the copy was asked to start from, when that is the end that
+    refused.
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NOTHING_TO_CARRY
+    source: str = ""
+    entry: str = ""
 
 
 class RolledBack(Event, tag="rolled-back", frozen=True, kw_only=True):
@@ -270,11 +338,15 @@ class RollbackRefused(Event, tag="rollback-refused", frozen=True, kw_only=True):
 
     The second reason is the one worth having: putting a version back over bytes somebody else wrote
     would be exactly the kind of quiet loss the approval gate exists to prevent, so it is refused by name
-    rather than forced by default.
+    rather than forced by default. ``path`` and ``version`` are what the refusal is about when it is
+    about one path, and ``detail`` is the store's own words when the store is what said no.
     """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NO_VERSIONS
+    path: str = ""
+    version: str = ""
+    detail: str = ""
 
 
 class GrantRevoked(Event, tag="grant-revoked", frozen=True, kw_only=True):
@@ -315,10 +387,15 @@ class Routed(Event, tag="routed", frozen=True, kw_only=True):
 
 
 class RouteRefused(Event, tag="route-refused", frozen=True, kw_only=True):
-    """A session's route was not changed, and why. Said on the same lane every outcome is said on."""
+    """A session's route was not changed, and why. Said on the same lane every outcome is said on.
+
+    ``route`` is the name the command carried when the name is what was wrong with it — route names are
+    the person's to type, so a refusal about one has to say which one.
+    """
 
     session: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NO_SESSION
+    route: str = ""
 
 
 class DocumentStored(Event, tag="document-stored", frozen=True, kw_only=True):
@@ -454,7 +531,7 @@ class OfferRefused(Event, tag="offer-refused", frozen=True, kw_only=True):
     """
 
     name: str = ""
-    reason: str = ""
+    reason: Refusal = Refusal.NO_CAPABILITY
 
 
 class Batch(Event, tag="batch", frozen=True, kw_only=True):
