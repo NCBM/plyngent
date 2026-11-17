@@ -57,6 +57,34 @@ async def test_a_call_reads_what_the_call_before_it_wrote(story_with: Scripted) 
     )
 
 
+async def test_a_command_reads_the_file_another_command_wrote_in_the_same_answer(story_with: Scripted) -> None:
+    """Neither call names its path as a field: a redirect and an input file are inside the tree.
+
+    That is the case the walk exists for. ``roles`` names one argument per path, and a tree of commands
+    has nothing to name, so before ``execute`` said where its own paths are the pair would have started at
+    once and the read would have found whatever was on disk a moment earlier.
+    """
+    story = await story_with(
+        _batch(
+            _asked("execute", steps=[{"argv": ["echo", "hi"], "pipe": "out.txt"}], intention="write the note"),
+            _asked(
+                "execute",
+                steps=[{"argv": ["cat"], "stdin": {"type": "file", "path": "out.txt"}}],
+                intention="and read it back",
+            ),
+        ),
+        text("done"),
+    )
+
+    await story.type("write it and read it")
+    await story.finished()
+
+    (_, second) = story.requests()
+    read = second.messages[-1]
+    assert read.tool == "execute"
+    assert "hi" in read.text, "the read waited for the write, because both calls named that one file"
+
+
 async def test_a_command_sees_the_files_its_own_answer_wrote(story_with: Scripted) -> None:
     story = await story_with(
         _batch(

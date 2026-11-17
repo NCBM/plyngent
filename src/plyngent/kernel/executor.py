@@ -39,9 +39,12 @@ policies raise a posture rather than asking, the override goes.
 
 What is *not* here: a cap on the result. ``meta.chars`` already measures what the model will read, and
 truncation is "move the body to the document store and keep the handle" — which needs the store, so it
-is not a number this layer invents. Nor are the paths inside an ``execute``: its ``argv``, its pipes and
-its ``stdin`` live in a tree of steps, and ``roles`` is flat, so the graph sees a command's ``cwd`` and
-nothing else. Two calls that change files and depend on each other through a program are two answers.
+is not a number this layer invents. The paths inside an ``execute`` are here, though: a tool whose
+arguments are a tree declares what it finds in it (:attr:`~plyngent.kernel.toolspec.ToolSpec.holds`), so
+the graph sees the file a node reads and the file a redirect writes, and two calls that touch one of
+those are ordered like any other two. What it still cannot see is a path a program chooses while it
+runs: a call that spells none and lets its argv decide is invisible to the schedule, and two of those
+that depend on each other are two answers.
 """
 
 from __future__ import annotations

@@ -10,11 +10,13 @@ is left here is the third, and the one only a tree has:
   actually started, in the order they started, plus the effects they caused. A program exiting non-zero
   is in that record, not in the status: the call did what it was asked.
 
-What this layer cannot declare is the paths inside the tree. ``roles`` is flat — one argument name, one
-role — so it can see ``cwd`` and cannot see ``pipe: "out.txt"`` or ``stdin: {"type": "file"}``. The
-batch graph of §10.12 therefore schedules on the top-level path only; until a role can be declared at a
-depth, the answer is that a model cannot rely on two calls in one batch seeing each other's files
-through a redirect it made.
+What this layer declares is the paths inside the tree: ``holds`` walks the nodes and names the file each
+one reads and the file a ``pipe`` redirects into, because ``roles`` is a table of argument names and a
+tree has none to name. Those are the two files the gate resolves per node, so what a batch locks and
+what a command touches are one list — a directory a command runs in is deliberately not among them, since
+a lock is per path and ``sub`` says nothing about ``sub/x.txt``. What is still not declarable is the paths
+a *program* chooses while it runs: a call that spells no path and lets its argv decide is a call the
+scheduler cannot see, which is why two such calls that depend on each other are two answers.
 """
 
 from __future__ import annotations
@@ -28,15 +30,17 @@ from plyngent.kernel.access import AccessMode
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
-from plyngent.kernel.process import Batch, Execution, Failfast, Ran, validate
+from plyngent.kernel.process import Batch, Execution, Failfast, FromFile, Ran, validate
 from plyngent.kernel.process import run as run_tree
 from plyngent.kernel.toolresult import Effects, Hint, Meta, ProcessControl, ToolResult
 from plyngent.kernel.tools import lifted
 from plyngent.kernel.tools.process.gate import CommandGate
-from plyngent.kernel.toolspec import Group, Mutation, Res, Role, ToolArgs, ToolSpec
+from plyngent.kernel.toolspec import Group, Mutation, Reach, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import PathRefused
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
     from plyngent.kernel.env import Env
     from plyngent.kernel.workspace import Workspace
 
@@ -171,6 +175,37 @@ def _hints(batch: Batch) -> tuple[Hint, ...]:
     )
 
 
+def _reached(args: ExecuteArgs) -> tuple[Reach, ...]:
+    """Every file this call's tree names: what each node reads as its input, and where one writes.
+
+    ``roles`` can name the call's own ``cwd`` and nothing deeper, so this is the rest of it — and it is
+    only the two files, because a directory a command runs in is not a thing two calls have to take turns
+    over: a lock is per path and not per tree, so holding ``sub`` would say nothing about ``sub/x.txt``.
+    These two are the paths the gate resolves for a node as well, so the walk here and the walk there see
+    the same nodes, and a path that is locked and approved is a path the command will really use (§10.12).
+
+    Nothing is resolved here: these are the values as the model spelled them, and the executor resolves
+    them the way it resolves every other declared path.
+    """
+    reached: list[Reach] = []
+    for node in _nodes(args.steps):
+        if isinstance(node.stdin, FromFile):
+            reached.append(Reach(value=node.stdin.path, role=Role.READ))
+        if isinstance(node.pipe, str):
+            reached.append(Reach(value=node.pipe, role=Role.WRITE))
+    return tuple(reached)
+
+
+def _nodes(steps: Sequence[Execution]) -> Iterator[Execution]:
+    """Every node of a tree, in the order the model wrote them: a command, then what follows it."""
+    for node in steps:
+        yield node
+        yield from _nodes(node.then)
+        yield from _nodes(node.else_)
+        if isinstance(node.pipe, Execution):
+            yield from _nodes((node.pipe,))
+
+
 EXECUTE = ToolSpec(
     name="execute",
     group=Group.PROCESS,
@@ -181,6 +216,7 @@ EXECUTE = ToolSpec(
     # declared, and the baseline still reads `AUTO` because `EXEC` is consulted before `OUTSIDE`.
     mutates=Mutation.OUTSIDE | Mutation.WORKSPACE,
     roles={"cwd": Role.CWD},
+    holds=_reached,
 )
 
 SPECS: tuple[ToolSpec, ...] = (EXECUTE,)

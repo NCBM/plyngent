@@ -30,8 +30,10 @@ from plyngent.kernel.history import History
 from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import Call
 from plyngent.kernel.paths import key
+from plyngent.kernel.process import Execution, FromFile
 from plyngent.kernel.toolresult import Effects, ToolResult
 from plyngent.kernel.tools import fs
+from plyngent.kernel.tools.process.execution import ExecuteArgs
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import Workspace
 from plyngent.wire.ask import AskSite
@@ -107,6 +109,31 @@ def test_a_call_holds_what_it_resolved_with_the_role_it_declared(tmp_path) -> No
         (Role.READ, key(tmp_path / "a.txt")),
         (Role.WRITE, key(tmp_path / "b.txt")),
     ], "both paths, each with what the call does to it"
+    assert not refused
+
+
+def test_a_command_holds_the_files_its_tree_names(tmp_path) -> None:
+    """``roles`` names one field and a tree has none, so ``execute`` walks its own: the two files the gate
+    resolves for a node — the input it reads and where a redirect writes.
+
+    The order is the order the model wrote them, because that is the order the graph reads: a batch that
+    could not see these would let a call read a file another call was still writing.
+    """
+    execute = ToolCatalog().get("execute")
+    assert execute is not None
+    args = ExecuteArgs(
+        steps=[
+            Execution(argv=["echo", "hi"], pipe="out.txt"),
+            Execution(argv=["cat"], stdin=FromFile(path="in.txt"), cwd="sub"),
+        ]
+    )
+
+    held, refused = _paths(_ctx(tmp_path), execute, args)
+
+    assert [(item.role, key(item.path)) for item in held] == [
+        (Role.WRITE, key(tmp_path / "out.txt")),
+        (Role.READ, key(tmp_path / "in.txt")),
+    ], "each node's files, and nothing about the directory it runs in"
     assert not refused
 
 
