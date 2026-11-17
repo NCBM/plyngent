@@ -28,7 +28,7 @@ from plyngent.kernel.toolresult import Status, Text
 from plyngent.kernel.tools.process import pty
 from plyngent.kernel.toolspec import Res
 from plyngent.kernel.workspace import Workspace
-from plyngent.wire.ask import AskSite
+from plyngent.wire.ask import AnyAnswer, AnyAsk, AskSite
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -72,6 +72,10 @@ class _Ctx:
 
     def site(self, *segments: str) -> AskSite:
         return AskSite(session=self.session.session_id, turn=1, scope="/".join(("1", "r0", *segments)))
+
+    async def ask(self, question: AnyAsk, *, call: str = "", at: str = "") -> AnyAnswer:
+        """Put the question to this host's channel: what a turn does, without a journal to write to."""
+        return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
 
 
 #: Everything a call may reach: these tests are about what a tool does, not about what it declared.

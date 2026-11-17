@@ -34,7 +34,7 @@ from plyngent.kernel.tools import lifted
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Remember, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.trash import Kind, Trouble, to_trash
 from plyngent.kernel.workspace import Denied, PathRefused
-from plyngent.wire.ask import Severity
+from plyngent.wire.ask import Confirmation, Severity, as_agreed
 
 if TYPE_CHECKING:
     from plyngent.kernel.cancel import Scope
@@ -307,15 +307,18 @@ async def request_directory_access(env: Env, args: AccessArgs) -> ToolResult:
             Failure.LIMIT,
             f"this conversation already holds {MAX_GRANTS} grants, which is the limit",
         )
-    agreed = await env.human.confirm(
-        prompt=f"allow {args.mode.value} on {shown} for this conversation?",
-        # A grant reaches past the workspace, which is the row of the table that says ``danger``: what it
-        # hands out outlives this call, and nothing here can check what is done through it.
-        severity=Severity.DANGER,
-        site=env.site(),
+    answer = as_agreed(
+        await env.ask(
+            Confirmation(
+                prompt=f"allow {args.mode.value} on {shown} for this conversation?",
+                # A grant reaches past the workspace, which is the row of the table that says ``danger``:
+                # what it hands out outlives this call, and nothing here can check what is done through it.
+                severity=Severity.DANGER,
+            )
+        )
     )
-    if not agreed.accepted:
-        return ToolResult.unagreed(agreed, about=f"{args.mode.value} on {shown}")
+    if not answer.accepted:
+        return ToolResult.unagreed(answer, about=f"{args.mode.value} on {shown}")
     _ = await env.grant(target, need)
     return ToolResult.ok(f"allowed {args.mode.value}: {shown}")
 

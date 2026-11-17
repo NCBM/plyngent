@@ -346,10 +346,14 @@ def _runs(name: str) -> Callable[[Env, Any], Awaitable[ToolResult]]:
     any of them does — and a per-tool handler would be the kernel pretending it did. It reaches the
     client through :attr:`~plyngent.kernel.env.Env.client`, so the declaration is checked like any
     other resource.
+
+    Where the invocation belongs is the call's own address plus ``client``, spelled here the same way
+    :meth:`~plyngent.kernel.session.TurnCtx.ask` spells a question's: an offered call is answered by
+    somebody outside, and a frontend holding several conversations puts it under the right one.
     """
 
     async def run(env: Env, args: Any) -> ToolResult:
-        return await env.client.run(name, _arguments(args), env.site("client"))
+        return await env.client.run(name, _arguments(args), env.address("client"))
 
     return run
 

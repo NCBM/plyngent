@@ -25,7 +25,7 @@ from plyngent.kernel.process import FromFile, Permit, Refused
 from plyngent.kernel.toolresult import DenialKind, denial_says, kind_of
 from plyngent.kernel.tools import lifting_hints
 from plyngent.kernel.workspace import Denied, PathRefused
-from plyngent.wire.ask import Agreed, Severity
+from plyngent.wire.ask import Agreed, Confirmation, Severity, as_agreed
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,7 +108,7 @@ async def agreed(env: Env, argv: list[str], *, where: str = "") -> Refused | tup
 
 async def _asked(env: Env, prompt: str) -> Agreed:
     """Put one question to a person, at the level a program is, and answer what they said."""
-    return await env.human.confirm(prompt=prompt, severity=Severity.DANGER, site=env.site("gate"))
+    return as_agreed(await env.ask(Confirmation(prompt=prompt, severity=Severity.DANGER), at="gate"))
 
 
 def _denylist_prompt(program: str, *, where: str) -> str:

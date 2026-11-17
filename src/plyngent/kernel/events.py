@@ -12,6 +12,8 @@ Four rules the shape is built around:
   :meth:`~Human.choose` offers options, :meth:`~Human.text` takes a line, :meth:`~Human.secret` takes
   a line that is not echoed. A caller that wanted "a line, but maybe secretly" would have to decide
   which it meant anyway; saying it in the verb is what makes the answer's type follow from the call.
+  :meth:`~Human.put` is those four taken as a **value** — the question as it arrives from a tool — and
+  is written once here in terms of them, so that no channel and no caller has to match on the kinds.
 * **An answer carries what the question asked for.** ``Agreed`` holds a bool, ``Picked`` the chosen
   value, ``Written`` the text — and ``None`` in the last two is "nobody wrote anything", which is a
   different thing from the empty string.
@@ -31,7 +33,20 @@ from typing import TYPE_CHECKING, override
 
 from composat import Component
 
-from plyngent.wire.ask import Agreed, AskSite, By, Picked, Severity, Written
+from plyngent.wire.ask import (
+    Agreed,
+    AnyAnswer,
+    AnyAsk,
+    AskSite,
+    By,
+    Confirmation,
+    FreeText,
+    Picked,
+    Secret,
+    Selection,
+    Severity,
+    Written,
+)
 
 if TYPE_CHECKING:
     from plyngent.wire.event import AnyEvent
@@ -114,6 +129,42 @@ class Human(ABC):
         The value goes back in the answer and straight to where it was needed; it is never carried
         into an event, a result or a journal (R2.1 D6).
         """
+
+    async def put(self, question: AnyAsk, *, site: AskSite | None = None) -> AnyAnswer:
+        """Put whichever of the four this value is, and answer what came back.
+
+        The value form of the four verbs, because a caller can be holding a question rather than
+        asking one — a tool reaches this through :meth:`~plyngent.kernel.env.Env.ask`. It is concrete
+        here rather than abstract so that every channel — the connection's, the headless one, a test
+        double — answers it by implementing the same four verbs and nothing else.
+
+        ``timeout`` is the question's own (:attr:`~plyngent.wire.ask.Ask.timeout`), not an argument:
+        how long a question is worth waiting for is part of the question, and a second parameter could
+        disagree with it.
+        """
+        match question:
+            case Confirmation():
+                return await self.confirm(
+                    prompt=question.prompt,
+                    default=question.default,
+                    severity=question.severity,
+                    site=site,
+                    timeout=question.timeout,
+                )
+            case Selection():
+                return await self.choose(
+                    prompt=question.prompt,
+                    options=question.options,
+                    default=question.default,
+                    site=site,
+                    timeout=question.timeout,
+                )
+            case Secret():
+                return await self.secret(prompt=question.prompt, site=site, timeout=question.timeout)
+            case FreeText():
+                return await self.text(
+                    prompt=question.prompt, default=question.default, site=site, timeout=question.timeout
+                )
 
 
 class NoSink(Human):

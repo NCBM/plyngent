@@ -61,7 +61,7 @@ from plyngent.kernel.paths import display, key
 from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Mutation, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
-from plyngent.wire.ask import By
+from plyngent.wire.ask import By, Confirmation, as_agreed
 from plyngent.wire.event import Changed, DocumentStored, ToolCalled, ToolReturned
 
 if TYPE_CHECKING:
@@ -345,17 +345,17 @@ class ToolExecutor:
         asking = spec.asking(args)
         if asking.posture is Posture.AUTO or node.refused:
             return None
-        subjects, scoped = _subjects(ctx, spec, asking.remember, node.held)
+        subjects, scoped = _subjects(ctx, spec, node.args, asking.remember, node.held)
         approvals = ctx.host.approvals
         if not approvals.needs(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity):
             return None
         question = f"allow {spec.name}" + (f" on {subjects}" if subjects else "") + "?"
-        agreed = await ctx.host.human.confirm(
-            prompt=question, severity=asking.severity, site=ctx.site(node.call, "approve")
+        answer = as_agreed(
+            await ctx.ask(Confirmation(prompt=question, severity=asking.severity), call=node.call, at="approve")
         )
-        if not agreed.accepted:
-            return ToolResult.unagreed(agreed, about="this call")
-        if agreed.by is not By.POLICY:
+        if not answer.accepted:
+            return ToolResult.unagreed(answer, about="this call")
+        if answer.by is not By.POLICY:
             # A policy's yes is not a person's: it is what this program was started to do, so it says
             # nothing about the next call and is not written into what this host has been told.
             approvals.agree(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity)
@@ -392,7 +392,7 @@ def _why(args: object) -> str:
 
 
 def _subjects(
-    ctx: TurnCtx, spec: ToolSpec, remember: Remember | None, held: tuple[Held, ...]
+    ctx: TurnCtx, spec: ToolSpec, args: object, remember: Remember | None, held: tuple[Held, ...]
 ) -> tuple[str, tuple[str, ...]]:
     """What an approval of this call is about: something to say, and something to remember it by.
 
@@ -400,12 +400,20 @@ def _subjects(
     ``a/../b`` and ``b`` are one approval. A session names itself, because the table belongs to the host
     and an approval in one conversation must not answer for another. A host-scoped approval covers
     everything, so its key is empty: there is only one host.
+
+    A tool whose subject is one of its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.subject`)
+    names that value instead, so the person is asked about the one skill or directory the call is about
+    rather than about the tool in general.
     """
     if any(role in _ACCESS for role in (spec.roles or {}).values()):
         if not held:
             return "", ()
         names = ", ".join(display(item.path, root=ctx.host.workspace.root) for item in held)
         return names, tuple(sorted(key(item.path) for item in held))
+    if spec.subject:
+        named = argument(args, spec.subject)
+        if isinstance(named, str) and named:
+            return named, (named,)
     if remember is Remember.SESSION:
         return ctx.session.session_id, (ctx.session.session_id,)
     return "", ()

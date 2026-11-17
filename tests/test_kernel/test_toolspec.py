@@ -259,6 +259,20 @@ def test_a_role_that_names_no_field_is_refused_when_the_tool_is_declared() -> No
         )
 
 
+def test_a_subject_that_names_no_field_is_refused_when_the_tool_is_declared() -> None:
+    """What a question is about is an argument, so a declaration that names nothing is a typo."""
+    with pytest.raises(ValueError, match="does not have"):
+        _ = ToolSpec(
+            name="typo",
+            group=Group.SKILLS,
+            args=Probe,
+            run=_run,
+            uses=Res.SKILLS,
+            mutates=Mutation.OUTSIDE,
+            subject="Title",
+        )
+
+
 def test_the_approval_is_derived_from_what_the_tool_declares() -> None:
     assert _asking(_spec()) == (Posture.AUTO, None, Severity.ROUTINE), "a read asks nobody"
     assert _asking(_spec(uses=Res.HUMAN)) == (Posture.AUTO, None, Severity.DANGER), (

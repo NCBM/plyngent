@@ -28,7 +28,7 @@ from plyngent.kernel.net import client, policy, web
 from plyngent.kernel.toolresult import DenialKind, Effects, Hint, Part, Text, ToolResult, kind_of
 from plyngent.kernel.tools.document import kept, kept_bytes
 from plyngent.kernel.toolspec import Group, Mutation, Res, ToolArgs, ToolSpec
-from plyngent.wire.ask import Agreed, By
+from plyngent.wire.ask import Agreed, By, Confirmation, as_agreed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -163,12 +163,15 @@ class _Questions:
         reasons = self.env.net.needs(assessment, method=leg.method, has_body=leg.has_body)
         if not reasons:
             return None
-        agreed = await self.env.human.confirm(
-            prompt=_asked(leg, reasons), severity=policy.weight(reasons), site=self.env.site("gate")
+        answer = as_agreed(
+            await self.env.ask(
+                Confirmation(prompt=_asked(leg, reasons), severity=policy.weight(reasons)),
+                at="gate",
+            )
         )
-        if not agreed.accepted:
-            return _unagreed(leg, agreed)
-        if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons) and agreed.by is not By.POLICY:
+        if not answer.accepted:
+            return _unagreed(leg, answer)
+        if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons) and answer.by is not By.POLICY:
             # The one reason that is about the machine rather than about this request, so agreeing to it is
             # agreeing to that host and port and it is not asked about again. Cleartext and a payload are
             # facts about *this* request: remembering one of them would agree to a request nobody described.

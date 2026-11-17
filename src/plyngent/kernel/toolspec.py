@@ -241,6 +241,7 @@ class ToolSpec:
     widens what is reachable), ``remember`` overrides what an ``ONCE`` is keyed on, ``severity``
     overrides the level the baseline would give it, and ``escalates`` says which argument values make
     the ordinary use of the tool irreversible — and how heavy that use is.
+    ``subject`` is not one of them: it says what a question is *about*, not whether it is asked.
     """
 
     name: str
@@ -250,6 +251,11 @@ class ToolSpec:
     uses: Res
     mutates: Mutation = Mutation.NONE
     roles: Mapping[str, Role] | None = None
+    #: Which argument names what this call is *about*, so the question a person is asked can say it:
+    #: ``skill_create`` names its ``name``, and the person reads "allow skill_create on tidy-notes?".
+    #: The value has to be a string, and empty means nothing to say — the same rule a subjectless call
+    #: has, since "about nothing" is not something a question can be about.
+    subject: str = ""
     intention: Intention | None = None
     posture: Posture | None = None
     remember: Remember | None = None
@@ -272,6 +278,12 @@ class ToolSpec:
             if name not in declared:
                 msg = f"{self.name}: names an argument {name!r} that {self._args_name()} does not have"
                 raise ValueError(msg)
+        if self.subject and self.subject not in declared:
+            msg = (
+                f"{self.name}: takes its subject from an argument {self.subject!r} "
+                f"that {self._args_name()} does not have"
+            )
+            raise ValueError(msg)
         for name, level in escalates.items():
             self._check_escalation(name, level)
         if self.intention is None:

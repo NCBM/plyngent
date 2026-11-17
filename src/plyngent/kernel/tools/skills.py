@@ -593,6 +593,7 @@ SKILL_CREATE = ToolSpec(
     # ``OUTSIDE`` and nothing else: the directory is not the workspace's, so no path policy can judge one
     # call — which is what makes the posture ``ALWAYS`` and the intention required, derived rather than
     # written down here (§10.10, E37).
+    subject="name",
     uses=Res.PATHS | Res.SKILLS,
     mutates=Mutation.OUTSIDE,
 )
@@ -602,6 +603,7 @@ SKILL_EDIT = ToolSpec(
     group=Group.SKILLS,
     args=SkillEditArgs,
     run=skill_edit,
+    subject="name",
     uses=Res.PATHS | Res.SKILLS,
     mutates=Mutation.OUTSIDE,
     guard=one_form,

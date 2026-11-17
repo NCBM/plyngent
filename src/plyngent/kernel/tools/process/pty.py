@@ -31,7 +31,7 @@ from plyngent.kernel.tools import lifted
 from plyngent.kernel.tools.process.gate import agreed
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import PathRefused
-from plyngent.wire.ask import Severity
+from plyngent.wire.ask import Confirmation, FreeText, Secret, Severity, as_agreed, as_written
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -209,13 +209,10 @@ async def ask_into_pty(env: Env, args: AskIntoPtyArgs) -> ToolResult:
     if env.pty.get(args.session_id) is None:
         return ToolResult.of(Failure.MISSING, f"no such PTY session: {args.session_id}")
     prompt = args.message.strip() or ("Secret" if args.secret else "Input")
-    where = env.site("answer")
-    written = await (
-        env.human.secret(prompt=prompt, site=where) if args.secret else env.human.text(prompt=prompt, site=where)
-    )
-    if written.text is None:
+    answer = as_written(await env.ask(Secret(prompt=prompt) if args.secret else FreeText(prompt=prompt), at="answer"))
+    if answer.text is None:
         return ToolResult.of(Failure.BLOCKED, "the human gave no answer, so nothing was written")
-    payload = written.text + ("\n" if args.submit else "")
+    payload = answer.text + ("\n" if args.submit else "")
     try:
         await env.pty.write(args.session_id, payload)
     except PtyError as exc:
@@ -258,13 +255,17 @@ async def _consent(env: Env, session: PtySession) -> ToolResult | None:
     """
     if not env.pty_policy.needs_consent(session):
         return None
-    agreed = await env.human.confirm(
-        prompt=f"change PTY session {session.session_id}, which is still running?",
-        severity=Severity.CONFIRM,
-        site=env.site("consent"),
+    answer = as_agreed(
+        await env.ask(
+            Confirmation(
+                prompt=f"change PTY session {session.session_id}, which is still running?",
+                severity=Severity.CONFIRM,
+            ),
+            at="consent",
+        )
     )
-    if not agreed.accepted:
-        return ToolResult.unagreed(agreed, about=f"changing PTY session {session.session_id}")
+    if not answer.accepted:
+        return ToolResult.unagreed(answer, about=f"changing PTY session {session.session_id}")
     env.pty_policy.approve(session.session_id)
     return None
 
@@ -298,13 +299,17 @@ async def _room(env: Env) -> ToolResult | None:
         return ToolResult.of(Failure.LIMIT, reached)
     if not env.pty.over_its_room(env.session) or not env.pty_policy.needs_room(env.session):
         return None
-    agreed = await env.human.confirm(
-        prompt=f"open another PTY session? this one already has {env.pty.max_per_session}",
-        severity=Severity.CONFIRM,
-        site=env.site("room"),
+    answer = as_agreed(
+        await env.ask(
+            Confirmation(
+                prompt=f"open another PTY session? this one already has {env.pty.max_per_session}",
+                severity=Severity.CONFIRM,
+            ),
+            at="room",
+        )
     )
-    if not agreed.accepted:
-        return ToolResult.unagreed(agreed, about="another PTY session for this conversation")
+    if not answer.accepted:
+        return ToolResult.unagreed(answer, about="another PTY session for this conversation")
     env.pty_policy.allow_more(env.session)
     return None
 

@@ -7,8 +7,10 @@ had already started changing something. The declaration then answers "what does 
 anybody reading its source (§10.1).
 
 Three things are always there, because they are the address rather than a resource: which session the
-call belongs to, the cancellation scope a piece of work under it is stopped through, and the place a
-question asked from it belongs. Everything else is one property per resource, granted by the flag.
+call belongs to, which route the conversation is speaking on, and the cancellation scope a piece of
+work under it is stopped through. A question's place is not a fourth: it is built from the call's own
+address plus the segment the asker names (:meth:`Env.ask`), so no caller can put a question under
+somebody else's turn. Everything else is one property per resource, granted by the flag.
 """
 
 from __future__ import annotations
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.client import Client
     from plyngent.kernel.documents import Documents
-    from plyngent.kernel.events import Human
     from plyngent.kernel.net.policy import NetPolicy
     from plyngent.kernel.net.web import Engines
     from plyngent.kernel.pty.policy import PtyPolicy
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.session import Session, TurnCtx
     from plyngent.kernel.skills import Skills
     from plyngent.kernel.workspace import Workspace
-    from plyngent.wire.ask import AskSite
+    from plyngent.wire.ask import AnyAnswer, AnyAsk, AskSite
 
 #: The resources that may put a question to a person, and why each of them does.
 #:
@@ -45,7 +46,9 @@ if TYPE_CHECKING:
 #: ``PTY`` is a live process, where a write cannot be taken back and asking first is the only way to
 #: have agreed to it. ``NET`` is a request that leaves this machine: whether it may be made is a judgement
 #: about a destination nobody can see from the arguments alone (§0.9). Those four are not four spellings
-#: of one thing: they are the reasons a tool legitimately reaches a human, and a tool with none cannot.
+#: of one thing: they are the reasons a tool legitimately asks a person, and a tool with none cannot.
+#: They grant one verb (:meth:`Env.ask`) because the reason is about *whether* a tool may ask, not about
+#: which of the four questions it has.
 ASKING: Res = Res.HUMAN | Res.EXEC | Res.PTY | Res.NET
 
 
@@ -99,8 +102,13 @@ class Env:
         """The cancellation handle for one piece of work under this call."""
         return self._ctx.scope(self._call, *segments)
 
-    def site(self, *segments: str) -> AskSite:
-        """Where a question asked from here belongs: under this call, under this turn."""
+    def address(self, *segments: str) -> AskSite:
+        """Where something asked from here belongs: under this call, under this turn.
+
+        The place half of the address, for the two things that leave the process and come back — a
+        question to a person (:meth:`ask`) and a call to a client — so both are put where the call is
+        and neither can guess.
+        """
         return self._ctx.site(self._call, *segments)
 
     @override
@@ -227,12 +235,24 @@ class Env:
         self._granted(Res.NET, "net")
         return self._ctx.host.net
 
-    @property
-    def human(self) -> Human:
-        """The asking hand. Granted by whichever of :data:`ASKING` this tool declared."""
+    async def ask(self, question: AnyAsk, *, at: str = "") -> AnyAnswer:
+        """Put one question to a person outside this process: a call's only way out of it.
+
+        One verb for four questions rather than four methods, because what differs between them is a
+        *value* — which kind of question this is — and not a different reach. A form with one method per
+        kind would be four names a tool could learn separately and four places to remember that a
+        question is what the audit is about; ``execute`` is one tool with one entry for the same reason.
+
+        ``at`` names the part of this call the question belongs under (``gate``, ``consent``), and it is
+        a segment rather than a whole address on purpose: the call's own address is this object's, so a
+        question cannot be put under a turn it was not asked from.
+
+        Granted by whichever of :data:`ASKING` this tool declared. A tool that may not ask anybody
+        cannot reach this at all, and is told so the same way a missing resource tells it.
+        """
         if not self._uses & ASKING:
-            self._refused("human", ASKING)
-        return self._ctx.host.human
+            self._refused("ask", ASKING)
+        return await self._ctx.ask(question, call=self._call, at=at)
 
     @property
     def client(self) -> Client:

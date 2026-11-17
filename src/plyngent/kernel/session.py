@@ -40,6 +40,8 @@ from plyngent.wire.scope import CancelReason, CancelScope
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
+    from plyngent.wire.ask import AnyAnswer, AnyAsk
+
 #: The key a session's tool disclosure is written under. One key in the journal's state vocabulary, and
 #: the first one written: what a session has been shown, and the epoch that says which tool set it is.
 DISCLOSURE = "disclosure"
@@ -114,6 +116,19 @@ class TurnCtx:
         carry it.
         """
         return AskSite(session=self.session.session_id, turn=self.turn_id, scope=str(self.address(*segments)))
+
+    async def ask(self, question: AnyAsk, *, call: str = "", at: str = "") -> AnyAnswer:
+        """Put one question to whoever is outside, and answer what came back.
+
+        The one place a question leaves the kernel: a tool reaches it through
+        :meth:`~plyngent.kernel.env.Env.ask`, the executor through its own approval, and nothing else
+        asks — so "this process asked somebody" has one meaning, and no second road can grow beside it.
+
+        ``call`` is the call's segment of the turn's address and ``at`` is the part of that call the
+        question belongs to (``gate``, ``consent``, ``approve``). The two build the question's place,
+        ``3/r0/tool-1/gate``, so a frontend holding several conversations shows it under the right one.
+        """
+        return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
 
     def round_scope(self) -> Scope:
         """The cancellation handle for the round itself."""

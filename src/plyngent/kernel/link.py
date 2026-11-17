@@ -62,6 +62,8 @@ from plyngent.wire.ask import (
     Severity,
     Written,
     answer_kind,
+    as_agreed,
+    as_written,
     unanswered,
 )
 from plyngent.wire.frame import Wire
@@ -199,8 +201,7 @@ class LinkHuman(Human):
         (R2.1 D13) is still the connection, and this adds nothing of its own to it.
         """
         question = Confirmation(prompt=prompt, default=default, severity=severity, timeout=timeout)
-        answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Agreed) else Agreed(by=By.NOBODY)
+        return as_agreed(await self._link.ask(_placed(question, site)))
 
     @override
     async def choose(
@@ -228,8 +229,7 @@ class LinkHuman(Human):
     ) -> Written:
         """Ask for a line, with ``default`` suggested, and wait for the one answer by id."""
         question = FreeText(prompt=prompt, default=default, timeout=timeout)
-        answer = await self._link.ask(_placed(question, site))
-        return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
+        return as_written(await self._link.ask(_placed(question, site)))
 
     @override
     async def secret(
@@ -240,8 +240,7 @@ class LinkHuman(Human):
         timeout: float | None = None,
     ) -> Written:
         """Ask for a line that is not echoed, offering no suggestion, and wait for the one answer."""
-        answer = await self._link.ask(_placed(Secret(prompt=prompt, timeout=timeout), site))
-        return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
+        return as_written(await self._link.ask(_placed(Secret(prompt=prompt, timeout=timeout), site)))
 
 
 def _placed[Q: Ask](question: Q, site: AskSite | None) -> Q:

@@ -31,6 +31,7 @@ from plyngent.kernel.session import TODOS
 from plyngent.kernel.todos import OPEN, Todos, TodoStatus
 from plyngent.kernel.toolresult import Hint, Meta, Part, Text, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, ToolArgs, ToolSpec, argument
+from plyngent.wire.ask import FreeText, as_written
 
 if TYPE_CHECKING:
     from plyngent.kernel.env import Env
@@ -124,8 +125,10 @@ async def wait(env: Env, args: WaitArgs) -> ToolResult:
         # inside the call's own scope, so the cancellation a person sends from outside still stops it.
         await asyncio.sleep(args.seconds)
         return ToolResult.ok(f"waited {limit}: nobody is at a terminal to say anything")
-    said = await env.human.text(prompt=f"waiting up to {limit} — {args.intention}", timeout=args.seconds)
-    match said.text:
+    answer = as_written(
+        await env.ask(FreeText(prompt=f"waiting up to {limit} — {args.intention}", timeout=args.seconds), at="wait")
+    )
+    match answer.text:
         case None:
             return ToolResult.ok(f"nobody spoke in {limit}")
         case "":

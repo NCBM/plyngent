@@ -289,6 +289,23 @@ def answer_kind(ask: AnyAsk) -> type[AnyAnswer]:
             return Written
 
 
+def as_agreed(answer: AnyAnswer) -> Agreed:
+    """A yes-or-no answer, read as the one kind its question admits.
+
+    :func:`answer_kind` says a question of one kind is answered in its own kind, so a caller that asked a
+    ``Confirmation`` is handed an ``Agreed`` and nothing else — and this is the line that says so once,
+    rather than every caller narrowing the union by hand. An answer of another kind is a channel
+    answering something nobody asked, and it reads as nobody at all: the one answer that can never be
+    taken for consent.
+    """
+    return answer if isinstance(answer, Agreed) else Agreed(by=By.NOBODY)
+
+
+def as_written(answer: AnyAnswer) -> Written:
+    """A line of prose or a secret, read the same way: ``None`` is the absence of an answer."""
+    return answer if isinstance(answer, Written) else Written(by=By.NOBODY)
+
+
 def unanswered(ask: AnyAsk, *, by: By = By.TIMEOUT) -> AnyAnswer:
     """What a question answers when nobody answered it, and who that silence belongs to.
 

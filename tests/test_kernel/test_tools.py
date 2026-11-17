@@ -29,6 +29,7 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
 from plyngent.kernel.tools import fs, session
 from plyngent.kernel.toolspec import ArgsError, Res
+from plyngent.wire.ask import Confirmation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,14 +75,14 @@ def _env(root: Path, *, trash_enabled: bool = True) -> Env:
     return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tools=_VIEW)
 
 
-def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
+async def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
     env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1", tools=_VIEW)
 
     assert env.workspace.root == tmp_path.resolve(), "a declared resource answers"
     with pytest.raises(AttributeError, match="pty"):
         _ = env.pty
-    with pytest.raises(AttributeError, match="human"):
-        _ = env.human
+    with pytest.raises(AttributeError, match="ask"):
+        _ = await env.ask(Confirmation(prompt="anything?"))
 
 
 async def test_a_wait_with_nobody_to_ask_still_sleeps(tmp_path: Path) -> None:

@@ -456,8 +456,8 @@ async def test_a_create_nobody_agreed_to_writes_nothing(story_with: Scripted, tm
     await story.type("make me a skill")
     await story.decline()
 
-    assert [question.prompt for question in story.questions()] == ["allow skill_create?"], (
-        "the question names the call; the skill's name is in the arguments a person can already see"
+    assert [question.prompt for question in story.questions()] == ["allow skill_create on fresh?"], (
+        "the question names the skill this call would write, because that is what the person is deciding about"
     )
     assert not (store.roots[0].path / "fresh").exists(), "a decline wrote nothing at all"
     assert await _told(story) == "the human did not allow this call"
@@ -632,8 +632,8 @@ async def test_two_edits_are_two_questions_and_one_write_is_one(story_with: Scri
     await story.finished()
 
     assert [question.prompt for question in story.questions()] == [
-        "allow skill_edit?",
-        "allow skill_edit?",
+        "allow skill_edit on alpha?",
+        "allow skill_edit on alpha?",
         "allow write_file on notes.txt?",
     ], "a skill write is never remembered, and a path write is remembered by its path"
     assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "x"
