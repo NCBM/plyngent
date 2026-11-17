@@ -60,7 +60,9 @@ OUTPUT_BUDGET = 128_000
 
 #: Variables a caller may not inject: each one changes how a program *it did not write* loads code.
 #: ``PYTHONPATH`` is deliberately absent — ``PYTHONPATH=src pytest`` is how a project runs its own
-#: tests, and a tool that refused it would be refusing the most ordinary command there is.
+#: tests, and a tool that refused it would be refusing the most ordinary command there is. Removing one
+#: of these is not the same act as setting it: a name that is taken away cannot change how anything
+#: loads, so a null is allowed where a value is not.
 DENIED_ENV: frozenset[str] = frozenset(
     {
         "LD_PRELOAD",
@@ -107,11 +109,17 @@ class Execution(Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     ``pipe`` is either the next command in the chain or a file to write this one's output into — a
     string is a redirection, not a program. A node reached through a pipe is *fed*, and asking for
     another input on top of that is an error rather than a silent winner.
+
+    ``env`` is an overlay on the environment this program was started with: a name given a value is set,
+    and a name given ``None`` is **taken away**. Taking one away is what a caller has to be able to do to
+    be the author of its own command rather than the inheritor of this one's — an ``GIT_DIR`` inherited
+    from the program that started this one points a command at the wrong repository, and no value a
+    caller could give it says "the one you would find yourself".
     """
 
     argv: list[str]
     cwd: str | None = None
-    env: dict[str, str] | None = None
+    env: dict[str, str | None] | None = None
     stdin: FromText | FromFile | None = None
     timeout_secs: float | None = None
     failfast: Failfast | None = None
@@ -124,8 +132,8 @@ class Execution(Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
         if not self.argv:
             msg = "argv must not be empty"
             raise ValueError(msg)
-        for name in self.env or {}:
-            if name.upper() in DENIED_ENV:
+        for name, value in (self.env or {}).items():
+            if value is not None and name.upper() in DENIED_ENV:
                 msg = f"env may not set {name}: it changes how a program loads code, not what it does"
                 raise ValueError(msg)
         if isinstance(self.pipe, str) and not self.pipe:
@@ -263,7 +271,7 @@ async def run(
     tree: Sequence[Execution],
     *,
     cwd: Path,
-    env: Mapping[str, str] | None = None,
+    env: Mapping[str, str | None] | None = None,
     failfast: Failfast = True,
     extra_timeout_secs: float = 0.0,
     gate: Gate,
@@ -292,7 +300,7 @@ class _Run:
     """The state of one call: what ran, what it cost, and whether it stopped."""
 
     cwd: Path
-    env: Mapping[str, str] | None
+    env: Mapping[str, str | None] | None
     failfast: Failfast
     extra_timeout_secs: float
     gate: Gate
@@ -309,7 +317,7 @@ class _Run:
         self,
         *,
         cwd: Path,
-        env: Mapping[str, str] | None,
+        env: Mapping[str, str | None] | None,
         failfast: Failfast,
         extra_timeout_secs: float,
         gate: Gate,
@@ -512,11 +520,19 @@ class _Run:
         self.stopped = Refused(Failure.LIMIT, f"stopped: {reason}")
         return True
 
-    def _environment(self, overlay: Mapping[str, str] | None) -> dict[str, str] | None:
-        """The child's environment: this process's, the call's, then the node's — in that order."""
+    def _environment(self, overlay: Mapping[str, str | None] | None) -> dict[str, str] | None:
+        """The child's environment: this process's, the call's, then the node's — in that order.
+
+        A name given a null is removed rather than set to nothing, because those are different
+        environments to most programs: an empty ``GIT_DIR`` is a directory that does not exist, and
+        no ``GIT_DIR`` at all is the repository the command would find for itself. The three layers are
+        applied in order and the removal happens at the end, so a node can take away a name its call set
+        and a call can take away one this program was started with.
+        """
         if self.env is None and overlay is None:
             return None
-        return {**os.environ, **(self.env or {}), **(overlay or {})}
+        child: dict[str, str | None] = {**os.environ, **(self.env or {}), **(overlay or {})}
+        return {name: value for name, value in child.items() if value is not None}
 
     async def _write(self, sink: Path, text: str) -> Refused | None:
         """Put a command's output where the call asked for it.

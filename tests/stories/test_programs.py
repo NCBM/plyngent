@@ -9,6 +9,7 @@ verdict, so a story that wants a verdict has to look at the status line.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from plyngent.cli.policy import Policy
@@ -124,6 +125,46 @@ async def test_a_shell_is_asked_about_every_time_and_the_answer_is_not_remembere
     assert len(asked) == 2, "the second call is asked again rather than trading on the first answer"
     assert all(prompt.startswith("run sh -c") for prompt in asked), asked
     assert all("runs code given on its own command line" in prompt for prompt in asked), "and says why"
+
+
+async def test_a_call_can_take_a_name_out_of_the_environment(story_with: Scripted) -> None:
+    """A command inherits what this program was started with, and inheriting is not always what was meant.
+
+    ``GIT_DIR`` is the case this exists for: this program keeps its own versions by setting one, and a
+    command that inherited it would be pointed at a repository nobody named. A null in the overlay is how
+    a caller says "none of that here", which is the one thing no value can say — an empty one is a
+    directory that does not exist.
+    """
+    was = os.environ.get("PLYNGENT_STORY_LEAK")
+    os.environ["PLYNGENT_STORY_LEAK"] = "inherited"
+    try:
+        story = await story_with(
+            calling(
+                "execute",
+                {
+                    "steps": [
+                        {
+                            "argv": ["sh", "-c", "echo ${PLYNGENT_STORY_LEAK-absent}"],
+                            "env": {"PLYNGENT_STORY_LEAK": None},
+                        }
+                    ],
+                    "intention": "ask what the environment says",
+                },
+            ),
+            text("nothing"),
+            policy=_YES,
+        )
+
+        await story.type("run it")
+        await story.finished()
+    finally:
+        if was is None:
+            del os.environ["PLYNGENT_STORY_LEAK"]
+        else:
+            os.environ["PLYNGENT_STORY_LEAK"] = was
+
+    (_, ran) = story.requests()
+    assert "absent" in told(ran), "the name the caller took away is the one the command does not see"
 
 
 async def test_a_failure_with_nothing_after_it_is_still_a_result(story_with: Scripted) -> None:

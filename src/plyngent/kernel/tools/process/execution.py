@@ -49,7 +49,7 @@ class ExecuteArgs(ToolArgs, kw_only=True):
         {
           "argv": ["pytest", "-q"],       # required: a program and its arguments, never a shell line
           "cwd": ".",                     # optional; else the parent's, else the call's
-          "env": {"FOO": "1"},            # optional overlay on the call's environment
+          "env": {"FOO": "1"},            # overlay: a value sets a name, a null takes one away
           "stdin": {"type": "text", "text": "..."},   # or {"type": "file", "path": "..."}
           "timeout_secs": 30,             # optional; else 30, plus extra_timeout_secs
           "failfast": true,               # true/"simple", "pipefail", or false
@@ -74,7 +74,7 @@ class ExecuteArgs(ToolArgs, kw_only=True):
 
     steps: list[Execution]
     cwd: str = "."
-    env: dict[str, str] | None = None
+    env: dict[str, str | None] | None = None
     failfast: Failfast = True
     extra_timeout_secs: float = 0.0
 
