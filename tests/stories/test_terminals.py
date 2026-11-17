@@ -93,6 +93,65 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
     assert any(line.startswith(f"close_pty ok: closed PTY session {used}") for line in story.screen()), story.screen()
 
 
+async def test_a_terminal_that_has_said_too_much_is_still_readable(story_with: Scripted) -> None:
+    """E148: a spent budget is a number in the answer, not a terminal nobody can read again.
+
+    The budget bounds what a *model* is handed. A read that answered "spent" would leave the bytes in the
+    tty, and a child that keeps writing blocks there for the rest of its life — so the read happens, the
+    newest window comes back, and what fell out of it is said as ``dropped``.
+    """
+    story = await story_with(
+        calling(
+            "open_pty",
+            {"command": ["/bin/sh", "-c", "yes zz | head -c 2000; echo MARK; sleep 300"], "intention": "flood"},
+        ),
+        _by_session("read_pty", max_bytes=8192, timeout=5.0, until="MARK"),
+        _by_session("read_pty", max_bytes=64, timeout=5.0),
+        _by_session("close_pty"),
+        text("it talks too much"),
+        limits=Limits(session_output_budget=1024),
+    )
+
+    await story.require("process")
+
+    # The first read spends the budget before the mark it asked for; the second one is still a read.
+    await story.type("talk to the terminal")
+    for _ in range(2):
+        await story.answer("y")
+    await story.finished()
+
+    (_, _, first, second, closed) = story.requests()
+    assert "budget_exhausted=true" in told(first).splitlines(), (
+        "the first read is bounded by the budget, and says the terminal is over it"
+    )
+    assert told(first).startswith("read 1024 chars"), told(first)
+    assert "dropped=0" not in told(second).splitlines(), "a read past the budget says what it lost"
+    assert "--- data ---" in told(second)
+    assert told(second).split("--- data ---\n")[-1].strip(), "and what comes back is a window, not nothing"
+    assert "closed PTY session" in told(closed)
+
+
+async def test_closing_hands_back_what_the_child_said_last(story_with: Scripted) -> None:
+    """A close is the last chance for the bytes nobody read: the tail goes out with the answer (E148)."""
+    story = await story_with(
+        calling("open_pty", {"command": ["/bin/sh", "-c", "echo last words; sleep 300"], "intention": "leave a tail"}),
+        _by_session("close_pty"),
+        text("it said something before it went"),
+    )
+
+    await story.require("process")
+
+    await story.type("close it")
+    # A shell is a danger-level question, and closing a child that is still running is another one.
+    for _ in range(2):
+        await story.answer("y")
+    await story.finished()
+
+    (_, _, closed) = story.requests()
+    assert "closed PTY session" in told(closed)
+    assert "last words" in told(closed), "the bytes were in the tty buffer, and the close is where they come out"
+
+
 async def test_a_program_that_is_not_there_opens_a_terminal_that_says_so(story_with: Scripted) -> None:
     """A terminal whose command cannot start is a terminal, not a failed call: the complaint is output."""
     story = await story_with(

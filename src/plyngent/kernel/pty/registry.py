@@ -52,6 +52,12 @@ DEFAULT_MAX_PER_SESSION = 2
 DEFAULT_IDLE_TTL_SECONDS = 600.0
 DEFAULT_SESSION_OUTPUT_BUDGET = 256_000
 DEFAULT_CLOSE_GRACE_SECONDS = 0.5
+#: How much one drained read may move before it answers, whatever the terminal held. A budget is a bound
+#: on what a *model* is handed; a child that keeps writing past it must still be drained, or it blocks on
+#: a full tty buffer for the rest of its life — but a drain nobody bounds is a call that never returns.
+DRAIN_BYTES = 256_000
+#: How much of an over-budget read is offered to the caller as context, on top of what the answer needs.
+DRAIN_CHUNK = 16_384
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +129,10 @@ class PtyReadResult:
     truncated: bool = False
     matched: bool = False
     budget_exhausted: bool = False
+    #: Bytes that were read off the terminal and not handed over, because the session's budget was spent
+    #: (E148). The read itself still happened: what a model gets is the newest window, and what it lost is
+    #: a number rather than a terminal that refuses to be read again.
+    dropped: int = 0
 
 
 @dataclass(frozen=True)
@@ -132,6 +142,9 @@ class PtyCloseResult:
     alive: bool
     exit_code: int | None
     message: str = ""
+    #: What the child had said and nobody had read, as the newest window of it — a close is the last
+    #: chance to hand those bytes over rather than let them die with the fd (E148).
+    data: str = ""
 
 
 class PtyRegistry(Component):
@@ -295,8 +308,9 @@ class PtyRegistry(Component):
         """Read what the child wrote.
 
         Without ``until``, waits up to ``wait_seconds`` for any data. With ``until``, polls until the
-        substring appears, the child dies, the deadline passes, or the session's output budget is
-        spent.
+        substring appears, the child dies, or the deadline passes. A session that has spent its budget is
+        read anyway — the terminal is drained and the newest window comes back with ``dropped`` beside it
+        (E148) — because leaving the fd full blocks the child in ``write(2)``.
         """
         if max_bytes < 1:
             msg = "max_bytes must be >= 1"
@@ -317,12 +331,22 @@ class PtyRegistry(Component):
         session.reading = True
         try:
             if (session.output_budget - session.bytes_read) <= 0:
+                # Over budget is not "unreadable": the fd is drained all the same — leaving it full would
+                # block the child in `write(2)` for the rest of its life — and what comes back is the
+                # newest window of it, with the rest said as a number (E148).
+                data, dropped = await self._drained(
+                    session, max_bytes=max_bytes, wait_seconds=wait_seconds, until=until
+                )
+                said = data.decode(errors="replace")
                 return PtyReadResult(
                     session_id=session_id,
                     alive=session.alive,
                     exit_code=session.exit_code,
-                    data="",
+                    data=said,
+                    truncated=dropped > 0,
+                    matched=bool(until) and until in said,
                     budget_exhausted=True,
+                    dropped=dropped,
                 )
 
             chunks, matched = await self._collect(session, max_bytes=max_bytes, wait_seconds=wait_seconds, until=until)
@@ -400,6 +424,10 @@ class PtyRegistry(Component):
             )
         session.closing = True
 
+        # The last thing a child said is still in the tty buffer when the kill arrives, so it is taken
+        # here and handed back with the answer: a close is the one call that cannot lose it (E148).
+        said = await self._last_words(session)
+
         exit_code: int | None = None
         try:
             exit_code = await self.broker.close(session.pty_id, grace_seconds=max(0.0, grace_seconds))
@@ -417,7 +445,20 @@ class PtyRegistry(Component):
             alive=False,
             exit_code=session.exit_code,
             message="closed",
+            data=said,
         )
+
+    async def _last_words(self, session: PtySession) -> str:
+        """What is waiting to be read, once and without waiting — or nothing when the broker is gone.
+
+        A read on a session whose broker has been replaced is not an answer to anything, and a close must
+        still close: the tail is a courtesy, and the teardown is the job.
+        """
+        try:
+            data = await self.broker.read(session.pty_id, max_bytes=DRAIN_CHUNK, wait_seconds=0.0)
+        except PtyError:
+            return ""
+        return "" if not data else data.decode(errors="replace")
 
     async def close_owned(self, owner: str) -> list[int]:
         """Close every session ``owner`` opened, and say which ones they were.
@@ -568,3 +609,45 @@ class PtyRegistry(Component):
         session.bytes_read += len(data)
         session.last_activity = time.time()
         return data
+
+    async def _drained(
+        self, session: PtySession, *, max_bytes: int, wait_seconds: float, until: str | None
+    ) -> tuple[bytes, int]:
+        """Read what a spent session still holds, keeping the newest ``max_bytes`` and counting the rest.
+
+        A budget bounds what a *model* is handed; it is not a licence to stop reading, because a full tty
+        buffer blocks the child in ``write(2)`` for the rest of its life. So the fd is still drained, the
+        tail is what comes back, and how much fell out of the window is the number beside it (E148).
+
+        Nothing is waited for unless the caller asked for a match: a read that answers at once is a read a
+        model that forgot to read anything can still afford.
+        """
+        kept = bytearray()
+        dropped = 0
+        moved = 0
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (max(0.0, wait_seconds) if until is not None else 0.0)
+        while True:
+            remaining = deadline - loop.time()
+            chunk = await self.broker.read(
+                session.pty_id,
+                max_bytes=DRAIN_CHUNK,
+                wait_seconds=max(0.0, min(DEFAULT_PTY_POLL_TIMEOUT, remaining)),
+            )
+            self._mirror(session)
+            if not chunk:
+                if until is not None and until in kept.decode(errors="replace"):
+                    break
+                if remaining <= 0 or not session.alive:
+                    break
+                continue
+            moved += len(chunk)
+            session.last_activity = time.time()
+            kept += chunk
+            if len(kept) > max_bytes:
+                cut = len(kept) - max_bytes
+                del kept[:cut]
+                dropped += cut
+            if moved >= DRAIN_BYTES:
+                break
+        return bytes(kept), dropped

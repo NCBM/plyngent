@@ -58,9 +58,13 @@ class ReadPtyArgs(ToolArgs, kw_only=True):
     """Read what a PTY session wrote, with its state.
 
     Without ``until``, waits up to ``timeout`` seconds for any data; with it, polls until that substring
-    appears, the child dies, the deadline passes, or the session's output budget is spent. Empty data
-    with ``alive=true`` means nothing was ready — not that the child has finished. Only one read per
-    session at a time: two would split the byte stream between them.
+    appears, the child dies, or the deadline passes. Empty data with ``alive=true`` means nothing was
+    ready — not that the child has finished. Only one read per session at a time: two would split the
+    byte stream between them.
+
+    A session that has spent its output budget is still readable: the terminal is drained all the same,
+    ``data`` is the newest window of it, and ``dropped`` says how many bytes fell out of the window. A
+    chatty child is then not a terminal nobody can read again.
     """
 
     session_id: int
@@ -200,6 +204,8 @@ async def close_pty(env: Env, args: ClosePtyArgs) -> ToolResult:
     if not result.closed:
         return ToolResult.of(Failure.MISSING, f"no such PTY session: {args.session_id}")
     body = _state(result.session_id, alive=False, exit_code=result.exit_code)
+    if result.data:
+        body = f"{body}\n--- data ---\n{result.data}"
     effects = Effects(external=(f"closed pty session {result.session_id}",))
     return ToolResult.ok(f"closed PTY session {result.session_id}", body=Text(value=body), effects=effects)
 
@@ -232,7 +238,13 @@ async def ask_into_pty(env: Env, args: AskIntoPtyArgs) -> ToolResult:
 
 
 async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
-    """The half of both write verbs that touches the terminal."""
+    """The half of both write verbs that touches the terminal.
+
+    What the child says back is *not* read here, on purpose: one reader per session is the rule that keeps
+    an ``until`` read from having half its stream taken, so a write that drained the terminal would make a
+    legitimate read fail (or abandon a parked one). The fix for a model that forgets to read is the read
+    itself being affordable after the budget is spent (E148), not a second reader in the write path.
+    """
     session = env.pty.get(session_id)
     if session is not None:
         refused = await _consent(env, session)
@@ -332,6 +344,7 @@ def _read(result: PtyReadResult) -> str:
             f"matched={'true' if result.matched else 'false'}",
             f"truncated={'true' if result.truncated else 'false'}",
             f"budget_exhausted={'true' if result.budget_exhausted else 'false'}",
+            f"dropped={result.dropped}",
         )
     )
     state = _state(result.session_id, alive=result.alive, exit_code=result.exit_code)

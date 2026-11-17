@@ -161,6 +161,43 @@ async def test_bytes_go_through_and_are_raw(tmp_path) -> None:
     assert done.ok, done.failed
 
 
+async def test_a_session_past_its_budget_still_drains(tmp_path) -> None:
+    """E148: the budget bounds what is handed over, not whether the terminal can be read at all.
+
+    A read that answered "spent" left the bytes in the tty, and a child that keeps writing blocks there
+    for the rest of its life. So the fd is drained all the same: the newest window comes back and how much
+    fell out of it is a number beside it.
+    """
+    assembly = _one_host(tmp_path, session_output_budget=1024)
+    host_a = _key(Host, "ws-a")
+    started = await assembly.start(host_a)
+    assert started.ok, started.failed
+    a = assembly.instance(host_a)
+    assert isinstance(a, Host)
+
+    session = await a.pty.open(["/bin/sh", "-c", "yes zz"], cwd=tmp_path)
+    handed = 0
+    chunk = await a.pty.read(session.session_id, max_bytes=4096, wait_seconds=5.0)
+    for _ in range(64):
+        handed += len(chunk.data)
+        if chunk.budget_exhausted:
+            break
+        chunk = await a.pty.read(session.session_id, max_bytes=4096, wait_seconds=5.0)
+
+    assert chunk.budget_exhausted, "the budget runs out, however many reads it takes to say so"
+    assert handed == 1024, "and what was handed over is exactly the budget, not more"
+
+    after = await a.pty.read(session.session_id, max_bytes=8, wait_seconds=5.0)
+
+    assert after.budget_exhausted, "and the session is still over it"
+    assert after.data and set(after.data) <= {"z", "\r", "\n"}, "what comes back is the newest window"
+    assert len(after.data) == 8
+    assert after.dropped > 0, "the rest is said as a number rather than a terminal nobody can read"
+
+    done = await assembly.stop(*assembly.keys())
+    assert done.ok, done.failed
+
+
 async def test_a_read_does_not_leave_a_thread_behind(tmp_path) -> None:
     """R1 验收 4: a read parks the loop on the master fd, not on a thread of its own.
 
