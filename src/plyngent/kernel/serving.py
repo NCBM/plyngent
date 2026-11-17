@@ -48,7 +48,7 @@ from plyngent.kernel.host import Host
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
-from plyngent.kernel.trail import Summary, Withheld, kind_of, preview, transcript
+from plyngent.kernel.trail import TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
 from plyngent.kernel.turn import TurnRunner
 from plyngent.wire.command import (
     Cancel,
@@ -108,7 +108,7 @@ from plyngent.wire.query import (
 from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from composat import Assembly
 
@@ -215,7 +215,8 @@ class Serving:
                 )
                 return GrantTable(id=query.id, reached=held)
             case Trajectory(session=session):
-                return Forest(id=query.id, entries=await self._trajectory(session))
+                entries = await self._trajectory(session)
+                return Forest(id=query.id, entries=entries, unfinished=_unfinished(entries))
             case Skills():
                 return self._skills(query.id)
             case Turns(session=session):
@@ -937,6 +938,18 @@ class Serving:
         """
         entry = await trail.head(session)
         return "" if entry is None else entry.id
+
+
+def _unfinished(entries: Sequence[Entry]) -> tuple[int, ...]:
+    """Which turns of this conversation have rows and no end row of their own.
+
+    A value and not a sentence, and not a verdict either: a turn that is running right now has no end row
+    for the same reason a turn a killed process left behind does not, and which of the two it is is a
+    different question with its own read (``Turns``). What this answers is the one thing a journal can:
+    which turns in *this* log nothing has yet said the end of.
+    """
+    ended = {entry.turn for entry in entries if entry.kind == TURN_ENDED_TAG}
+    return tuple(sorted({entry.turn for entry in entries if entry.turn} - ended))
 
 
 def _resident(offered: Iterable[OfferedTool], attached: tuple[ToolSpec, ...]) -> frozenset[str]:

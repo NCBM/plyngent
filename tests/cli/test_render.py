@@ -8,12 +8,13 @@ turns into a claim (E90).
 
 from __future__ import annotations
 
-from plyngent.cli.render import _REFUSALS, Shown, notice, question, render
+from plyngent.cli.render import _REFUSALS, Shown, notice, question, render, unfinished
 from plyngent.wire.ask import Confirmation, Severity
 from plyngent.wire.event import (
     AssistantText,
     Batch,
     CompactRefused,
+    Entry,
     Pruned,
     PruneRefused,
     Refusal,
@@ -22,6 +23,7 @@ from plyngent.wire.event import (
     TurnRefused,
     Usage,
 )
+from plyngent.wire.query import Forest, LiveTurn
 
 
 def test_a_message_is_the_conversation_itself() -> None:
@@ -64,6 +66,23 @@ def test_a_prune_is_bookkeeping_and_a_refused_one_is_a_refusal() -> None:
         "how much it hid is the one number a prune has"
     )
     assert refused == (Shown("prune refused: a prune with no entries hides nothing", "refusal"),)
+
+
+def test_a_turn_the_journal_has_no_end_for_is_said_out_unless_it_is_still_running() -> None:
+    """The absence of an end row is a fact; what it means needs the second fact, which is who is running.
+
+    A turn that is working has no end row yet, and saying so about it would be a report of an abandoned
+    turn made while it is being written — so the reading is left to the side that can see both answers.
+    """
+    forest = Forest(
+        entries=(Entry(id="e2", kind="user", turn=1), Entry(id="e5", kind="user", turn=2)),
+        unfinished=(1, 2),
+    )
+
+    assert unfinished(forest, (LiveTurn(turn=1, kind="chat"),)) == (
+        "turn 2 has rows and no end: nothing settled it",
+    ), "the one that is not running here is the one nothing settled"
+    assert unfinished(Forest(unfinished=(3,)), ()) == ("turn 3 has rows and no end: nothing settled it",)
 
 
 def test_every_refusal_has_a_sentence_and_every_sentence_a_refusal() -> None:

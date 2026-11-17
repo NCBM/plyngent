@@ -131,9 +131,14 @@ class Forest(Reply, tag="forest", frozen=True, kw_only=True):
 
     Empty is an answer and not a refusal: a conversation nothing has been written in yet holds no rows,
     and so does one this kernel is not serving — which is how a person learns there is nothing to walk.
+
+    ``unfinished`` names the turns that have rows here and no row saying they ended. It is a value and not
+    a verdict: a turn that is still running has no end row either, and only the kernel's own answer at this
+    moment (``LiveTurns``) tells the two apart — so the reading of it belongs to whoever can see both.
     """
 
     entries: tuple[Entry, ...] = ()
+    unfinished: tuple[int, ...] = ()
 
 
 class LiveTurn(Struct, frozen=True, kw_only=True):

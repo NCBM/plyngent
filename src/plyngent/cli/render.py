@@ -645,6 +645,25 @@ def held(answer: AnyReply) -> tuple[str, ...]:
             assert_never(never)
 
 
+def unfinished(forest: Forest, live: tuple[LiveTurn, ...]) -> tuple[str, ...]:
+    """The turns a journal has no end for, except the ones this kernel is still running.
+
+    A journal says a turn ended by carrying a row that says so, so a turn with rows and no such row is one
+    nothing finished — still working, or half-written by a process that died. Which of the two is a fact
+    the kernel has and a log does not (:class:`~plyngent.wire.query.LiveTurns`), so the running ones are
+    left out here and what remains is what somebody else's death left behind.
+
+    One line per turn rather than a count, because the number is only useful with the turn it names: what a
+    person does with this line is go and look at that stretch of their log.
+    """
+    running = {turn.turn for turn in live}
+    return tuple(
+        f"turn {number} has rows and no end: nothing settled it"
+        for number in forest.unfinished
+        if number not in running
+    )
+
+
 def _live(turns: tuple[LiveTurn, ...]) -> tuple[str, ...]:
     """Which turns of one conversation are still working, one line each — or the line that says none is.
 

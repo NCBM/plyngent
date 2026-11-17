@@ -52,13 +52,13 @@ from plyngent.cli.grammar import Catalog, Composes, Help, Reads, Runs, Travels, 
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.policy import Policy, Tally
-from plyngent.cli.render import Stage, held, notice
+from plyngent.cli.render import Stage, held, notice, unfinished
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Submit
 from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
-from plyngent.wire.query import AnyQuery, Unanswered
+from plyngent.wire.query import AnyQuery, Forest, LiveTurn, Trajectory, Unanswered
 from plyngent.wire.scope import CancelReason
 
 if TYPE_CHECKING:
@@ -567,14 +567,32 @@ class App:
         said to everybody: it is what one client asked for, so it goes where this client's own lines go
         — the same place ``/help`` writes. A connection that ended while the question was out is the same
         departure any other command would have found.
+
+        A conversation's rows are followed by one line per turn the journal has no end for, which takes a
+        second read: whether such a turn is *still running* is this kernel's answer at this moment, and a
+        report that called a working turn abandoned would be wrong about the one thing it exists to say.
         """
         try:
             answer = await self.client.query(query)
         except Unanswered:
             return GONE
-        for row in held(answer):
+        found = unfinished(answer, await self._live(query)) if isinstance(answer, Forest) else ()
+        for row in (*held(answer), *found):
             await self._screen.tell(notice(row))
         return None
+
+    async def _live(self, query: AnyQuery) -> tuple[LiveTurn, ...]:
+        """Which turns of that conversation are running, or nothing when this connection cannot say.
+
+        A read that is not answered is not a reason to fail the one before it: the rows were read, and the
+        only thing missing is the sentence about them.
+        """
+        if not isinstance(query, Trajectory):
+            return ()
+        try:
+            return await self.client.turns(query.session)
+        except Unanswered:
+            return ()
 
     async def _travel(self, entry: str) -> int | None:
         """Stand somewhere else in this conversation: what the next message will continue.
