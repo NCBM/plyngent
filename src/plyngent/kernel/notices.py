@@ -63,7 +63,7 @@ def marked(text: str) -> str:
     return f"{NOTICE_MARKER}\n{text}" if text else ""
 
 
-def elided(hidden: int, *, by: str, reason: str = "") -> str:
+def elided(hidden: int, *, by: str, reason: str = "", kept: str = "") -> str:
     """What a model is told when part of the conversation stops being shown to it.
 
     Two acts read as two sentences, because they are not the same thing to whoever continues the work: a
@@ -72,17 +72,27 @@ def elided(hidden: int, *, by: str, reason: str = "") -> str:
     the only thing that differs. The closing sentence is the one that matters either way: a model handed a
     history with a hole in it must not read the hole as "nothing happened", or the first thing it does is
     ask for it again.
+
+    ``kept`` is the handle line of the stretch, when there is one, and it is followed by the call that
+    reads it back — a handle whose verb a model has to guess is a handle it will not use. A person's prune
+    never has one: they said stop showing it, and handing the model a way in would be undoing that.
     """
     entries = counted(hidden, "earlier entry")
+    opening = f"Hidden from you: {entries} of this conversation"
     if by == BY_BUDGET:
-        why = "put aside because this conversation outgrew the room this route gives it, and kept rather than lost"
+        said = f"{opening}, put aside because it outgrew the room this route gives it"
+        if kept:
+            said += f". They are kept, not gone:\n{kept}"
+            said += "\nRead that with `read(document_id=…)` when it matters"
+        else:
+            said += ". They are still in the log, where a person can read them back"
     elif reason.strip():
-        why = f"put away by the person working with you, who said: {reason.strip()}"
+        said = f"{opening}, put away by the person working with you, who said: {reason.strip()}"
     else:
-        why = "put away by the person working with you"
+        said = f"{opening}, put away by the person working with you"
     return (
-        f"Hidden from you: {entries} of this conversation, {why}. What you read below is not the whole "
-        "conversation, so do not assume that a decision or a result you cannot see did not happen."
+        f"{said}. What you read below is not the whole conversation, so do not assume that a decision or a "
+        "result you cannot see did not happen."
     )
 
 

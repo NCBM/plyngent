@@ -34,14 +34,25 @@ from msgspec.structs import replace as replaced
 
 from plyngent.kernel.budget import estimate
 from plyngent.kernel.cancel import Cancelled
-from plyngent.kernel.documents import picture_media
+from plyngent.kernel.documents import picture_media, refuses
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Part, Picture, Reply, Request, Result, User
 from plyngent.kernel.notices import ELIDED, LIMIT, elided, elision_summary
-from plyngent.kernel.render import render
-from plyngent.kernel.toolresult import OUTCOMES, ToolResult
-from plyngent.kernel.trail import BY_BUDGET, Attempt, Effect, Notice, Summary, TurnEnded, Withheld, as_message
+from plyngent.kernel.render import render, render_part
+from plyngent.kernel.toolresult import OUTCOMES, Document, ToolResult
+from plyngent.kernel.trail import (
+    BY_BUDGET,
+    Attempt,
+    Effect,
+    Notice,
+    Summary,
+    TurnEnded,
+    Withheld,
+    as_message,
+    transcript,
+)
 from plyngent.kernel.trail import Usage as UsageRow
+from plyngent.kernel.words import counted
 from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
@@ -426,13 +437,15 @@ class TurnRunner:
         size = estimate(messages, system=system, tools=tools)
         if not room or size <= room:
             return state, messages
-        targets = await self._put_aside(state, room=room, size=size)
-        if not targets:
+        taken = await self._put_aside(state, room=room, size=size)
+        if not taken:
             msg = (
                 f"this conversation needs {size} tokens and this route holds {room}, and nothing in it is "
                 "old enough to put aside"
             )
             raise _TooLongError(msg)
+        targets = tuple(row.id for row, _message in taken)
+        kept = await self._kept(state, [message for _row, message in taken])
         ctx = state.ctx
         entry = await ctx.host.trail.append(
             ctx.session.session_id,
@@ -446,7 +459,7 @@ class TurnRunner:
         self._emit(Pruned(session=ctx.session.session_id, entry=entry.id, targets=targets, reason=OUTGREW))
         ctx.session.notices.say(
             ELIDED,
-            elided(len(targets), by=BY_BUDGET),
+            elided(len(targets), by=BY_BUDGET, kept=kept),
             summary=elision_summary(len(targets), by=BY_BUDGET),
         )
         # The elision is the second number a provider's prefix cache keys on: what the next prompt holds
@@ -477,8 +490,14 @@ class TurnRunner:
         room = asked.caps.context_window - asked.caps.max_output
         return max(0, room)
 
-    async def _put_aside(self, state: TurnState, *, room: int, size: int) -> tuple[str, ...]:
-        """Which entries to put aside: whole rounds, oldest first, until the rest fits in half the room.
+    async def _put_aside(
+        self,
+        state: TurnState,
+        *,
+        room: int,
+        size: int,
+    ) -> tuple[tuple[Entry, AnyMessage], ...]:
+        """Which entries to put aside, and what they said: whole rounds, oldest first, to half the room.
 
         Read off the chain every time rather than remembered, because "what is still shown" is a fact
         about the log: an earlier checkpoint already hid a stretch, and what this one may hide is what
@@ -496,14 +515,36 @@ class TurnRunner:
             here = rows[here].begin_after
         hidden = {target for row in chain if isinstance(row.payload, Withheld) for target in row.payload.targets}
         wanted, freed = size - room // 2, 0
-        targets: list[str] = []
+        taken: list[tuple[Entry, AnyMessage]] = []
         for round_ in _rounds(chain, hidden=hidden, skipping=ctx.turn_id):
             if freed >= wanted:
                 break
             for row, message in round_:
-                targets.append(row.id)
+                taken.append((row, message))
                 freed += estimate((message,))
-        return tuple(targets)
+        return tuple(taken)
+
+    async def _kept(self, state: TurnState, messages: Sequence[AnyMessage]) -> str:
+        """The stretch as one document, and the line that names it — or nothing when it cannot be kept.
+
+        A budget puts things aside; it does not decide they are worth forgetting. So the text goes into
+        the store beside the journal, as the transcript it was read from, and the line the model is handed
+        is the one a handle always is — the call that reads it back is the one every other kept body
+        arrives with (E56/E149).
+
+        Nothing is kept when the store would refuse it: a body past the store's own limit is a body no
+        handle can stand for, and the sentence then says what is true instead of promising a handle.
+        """
+        ctx = state.ctx
+        text = transcript(messages)
+        if refuses(text) is not None:
+            return ""
+        handle = await ctx.host.documents.put(
+            ctx.session.session_id,
+            text,
+            summary=f"{counted(len(messages), 'earlier entry')} put aside",
+        )
+        return render_part(Document(document_id=handle.id, summary=handle.summary, chars=handle.chars))
 
     async def _shown(self, state: TurnState) -> tuple[AnyMessage, ...]:
         """The conversation as this route can read it, pictures and all — the value a request carries."""

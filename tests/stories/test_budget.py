@@ -1,9 +1,9 @@
 """A conversation that stops fitting the route it is on: what is put aside, and what is said about it.
 
-A budget is invisible until it acts, and when it acts it does two things a person can see: it writes a
-checkpoint — a prune row, and the line the model reads about it — and, when nothing can be put aside, it
-ends the turn at the wall instead of sending a request a provider would reject. Both are stories, because
-both are things this program does to a conversation somebody is having (E149).
+A budget is invisible until it acts, and when it acts it does things a person can see: it writes a
+checkpoint — a prune row, the text it kept, and the line the model reads about both — and, when nothing can
+be put aside, it ends the turn at the wall instead of sending a request a provider would reject. Both are
+stories, because both are things this program does to a conversation somebody is having (E149).
 
 Every window here is a real one, and it has to be: this program's standing prompt — a persona, the
 playbook and thirteen tool declarations — is nearly six thousand tokens. The numbers below are chosen
@@ -35,11 +35,15 @@ WRITTEN = re.compile(r"prune e\d+ written \((\d+) withheld\)")
 #: And the line the model is owed about it, said at the boundary where it can be read.
 NOTICED = re.compile(r"notice e\d+ written: \d+ earlier entries put aside to fit the window")
 
-#: What the model reads instead of the stretch: model-visible wording, so it is pinned here.
-ELISION = (
-    f"{NOTICE_MARKER}\n"
-    "Hidden from you: 2 earlier entries of this conversation, put aside because this conversation outgrew "
-    "the room this route gives it, and kept rather than lost. What you read below is not the whole "
+#: The three lines the model reads instead of the stretch. The handle's id is the store's to make, so it
+#: is matched rather than written down; the wording around it is model-visible and pinned.
+HIDDEN = (
+    "Hidden from you: 2 earlier entries of this conversation, put aside because it outgrew the room this "
+    "route gives it. They are kept, not gone:"
+)
+KEPT = re.compile(r"\[d\d+\] 2 earlier entries put aside \(\d+ chars\)")
+TAIL = (
+    "Read that with `read(document_id=…)` when it matters. What you read below is not the whole "
     "conversation, so do not assume that a decision or a result you cannot see did not happen."
 )
 
@@ -77,9 +81,17 @@ async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_as
     assert any(NOTICED.fullmatch(line) for line in story.screen()), (
         f"and the model is owed a line about it: {story.screen()!r}"
     )
-    assert story.requests()[-1].messages == (User(text="a second question"), Note(text=ELISION)), (
-        "the round that no longer fitted is gone from what the model reads, and the hole it left is named"
+    said = story.requests()[-1].messages
+    assert said[0] == User(text="a second question"), (
+        "the round that no longer fitted is gone from what the model reads"
     )
+    assert isinstance(said[1], Note), f"and the hole it left is named: {said!r}"
+    assert said[1].text.split("\n")[0] == NOTICE_MARKER
+    assert said[1].text.split("\n")[1] == HIDDEN, said[1].text
+    assert KEPT.fullmatch(said[1].text.split("\n")[2]) is not None, (
+        f"what was put aside is one document, and the line names it: {said[1].text!r}"
+    )
+    assert said[1].text.split("\n")[3] == TAIL, "and says the call that reads it back"
 
 
 async def test_a_conversation_that_cannot_fit_at_all_ends_at_the_wall(story_with: Scripted) -> None:
