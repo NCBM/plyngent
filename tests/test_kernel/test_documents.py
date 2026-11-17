@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import aiosqlite
 import pytest
 
 from plyngent.kernel.documents import (
@@ -164,45 +163,6 @@ async def test_the_same_bytes_are_kept_once_in_a_session(tmp_path: Path) -> None
         assert other.id != first.id, "and sessions never share a row"
         as_picture = await store.put("main", "same\n", summary="pretending", media="image/png")
         assert as_picture.id != first.id, "a row is content and media: the same bytes are not the same picture"
-    finally:
-        await store.close()
-
-
-async def test_a_file_from_the_older_shape_keeps_its_content_and_gains_the_column(tmp_path: Path) -> None:
-    """The first step of the ladder: add the column, index it, lose nothing (R10)."""
-    path = tmp_path / "documents.db"
-    older = await aiosqlite.connect(str(path), isolation_level=None)
-    try:
-        _ = await older.executescript(
-            """
-            CREATE TABLE document (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                media TEXT NOT NULL,
-                chars INTEGER NOT NULL,
-                created INTEGER NOT NULL,
-                content BLOB NOT NULL
-            );
-            PRAGMA user_version = 1;
-            """
-        )
-        _ = await older.execute(
-            "INSERT INTO document (session, summary, media, chars, created, content) "
-            "VALUES ('main', 'from before', 'text/plain', 6, 0, ?)",
-            (b"kept\n",),
-        )
-    finally:
-        await older.close()
-
-    store = await _opened(path)
-    try:
-        listed = await store.listing("main")
-        assert [item.summary for item in listed] == ["from before"], "the row written by the older build is still here"
-        found = await store.get("main", listed[0].id)
-        assert found is not None and found.data == b"kept\n"
-        again = await store.put("main", "kept\n", summary="now")
-        assert again.id != listed[0].id, "a row from before deduplication has no hash, so nothing matches it"
     finally:
         await store.close()
 

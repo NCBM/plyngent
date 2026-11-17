@@ -128,13 +128,11 @@ def refuses(content: str | bytes) -> str | None:
     return f"{size} {unit} is more than this build will keep ({cap}): ask for a window of it instead"
 
 
-#: The shape this build writes, and the first step of its ladder.
+#: The shape this build writes.
 #:
-#: ``sha256`` arrived with deduplication, so a file written before it is one column short and
-#: :meth:`Documents._upgraded` adds it: the column is nullable, and a row from the older build keeps no
-#: hash and is simply never matched by a later ``put`` — nothing is thrown away to gain an index. The
-#: version is stamped once the shape is right rather than by this script, because a script that stamped it
-#: would claim a shape that an older file does not have yet.
+#: ``sha256`` is what makes the same bytes kept once per session: a row written with a hash is matched by
+#: a later ``put`` of the same bytes and media, or not at all. The index that answers that question is
+#: part of the shape rather than a later step, because there is no released file that predates it.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS document (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,10 +145,9 @@ CREATE TABLE IF NOT EXISTS document (
     content BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS document_session ON document (session);
+CREATE UNIQUE INDEX IF NOT EXISTS document_same ON document (session, sha256, media);
+PRAGMA user_version = 1;
 """
-
-#: The shape this build expects, which a file written by an earlier one has to be brought up to.
-_VERSION = 2
 
 #: What one document is read as, by everything that does not want its bytes.
 _COLUMNS = "SELECT id, summary, media, chars FROM document"
@@ -248,7 +245,7 @@ class Documents(Component):
         await self.close()
 
     async def open(self) -> None:
-        """Make the directory, open the file, and bring the shape up to this build's."""
+        """Make the directory, open the file, and lay down the shape it has to have."""
         if self._db is not None:
             return
         if not self._temporary:
@@ -259,27 +256,10 @@ class Documents(Component):
             _ = await db.execute("PRAGMA journal_mode = WAL")
             _ = await db.execute("PRAGMA busy_timeout = 5000")
             _ = await db.executescript(_SCHEMA)
-            await self._upgraded(db)
         except BaseException:
             self._db = None
             await db.close()
             raise
-
-    async def _upgraded(self, db: aiosqlite.Connection) -> None:
-        """Bring a file written by an earlier build up to this one: one column, one index, nothing lost.
-
-        The first step of this store's ladder, and the reason it is a step rather than a fresh script: a
-        person's ``documents.db`` predates the deduplication, and dropping their content to gain an index
-        would be the store throwing away something it was asked to keep. A row from that build keeps no
-        hash, which means it is never matched by a later ``put`` — it stays readable, and it is not part of
-        the same-bytes-kept-once promise, which is a promise about what happens next.
-        """
-        async with db.execute("PRAGMA table_info(document)") as cursor:
-            columns = {str(row[1]) for row in await cursor.fetchall()}
-        if "sha256" not in columns:
-            _ = await db.execute("ALTER TABLE document ADD COLUMN sha256 BLOB")
-        _ = await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS document_same ON document (session, sha256, media)")
-        _ = await db.execute(f"PRAGMA user_version = {_VERSION}")
 
     async def close(self) -> None:
         """Give the file back; a store already closed answers this by doing nothing."""

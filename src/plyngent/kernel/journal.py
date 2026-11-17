@@ -101,13 +101,17 @@ def _slug(name: str) -> str:
     return slug or "workspace"
 
 
-#: Schema version 1: one row per entry, one counter per session for turn ids.
+#: Schema version 1: one row per entry, one counter per session for turn ids, one cached projection.
 #:
 #: ``id`` is the row number and the only thing an entry id is made of (``'e' || id``); ``parent`` is a
 #: row of this same table rather than the id's text, because a parent is a row and nothing needs to read
 #: one out of the other. Every object is created only if it is absent, which is what makes a step that
 #: was interrupted halfway re-runnable: a script that created half its indexes is a script that can run
 #: again.
+#:
+#: ``projection`` is what a model was shown for one chain end, so a second read is a row rather than a
+#: walk: ``entry`` is a row of ``entry`` and ``projector`` the code that computed it, and the pair is the
+#: cache key.
 _SCHEMA_1 = """
 CREATE TABLE IF NOT EXISTS entry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,14 +128,6 @@ CREATE TABLE IF NOT EXISTS turn_no (
     session TEXT PRIMARY KEY,
     next INTEGER NOT NULL
 );
-"""
-
-#: Schema version 2: what a model was shown for one chain end, so a second read is a row rather than a walk.
-#:
-#: ``entry`` is a row of ``entry`` and ``projector`` the version of the code that computed this row: the
-#: pair is the cache key, and the version is what makes a new projector invalidate everything it made
-#: without a migration that has to know what changed.
-_SCHEMA_2 = """
 CREATE TABLE IF NOT EXISTS projection (
     session TEXT NOT NULL,
     entry INTEGER NOT NULL,
@@ -143,15 +139,12 @@ CREATE TABLE IF NOT EXISTS projection (
 
 #: The schema versions, in order. Step *n* is the answer to "how does the log look at version *n*", and
 #: the list is append-only: a change to a released step is a new step.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_1,)
 
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
-#: rebuildable and may therefore be dropped rather than migrated. Version 2 reads a ``summary`` as the
-#: message it stands for; version 1 skipped it, and nothing it wrote can be true of a chain that has one.
-#: Version 3 honours a prune (:class:`~plyngent.kernel.trail.Withheld`): a chain that carries one no
-#: longer projects to what version 2 wrote down for it.
-PROJECTOR = 3
+#: rebuildable and may therefore be dropped rather than migrated.
+PROJECTOR = 1
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 
