@@ -170,6 +170,25 @@ class AnswerCut(Event, tag="answer-cut", frozen=True, kw_only=True):
     reason: str = ""
 
 
+class Noticed(Event, tag="noticed", frozen=True, kw_only=True):
+    """The harness told the model something, and where it was written.
+
+    A reminder is a row a model reads (:class:`~plyngent.kernel.trail.Notice`), so this event is the
+    durable fact's announcement rather than the fact — but a person still needs to see it, and they need
+    the entry id for the same reason a compaction's is needed: it is a place the conversation continues
+    from, and it is what ``/history`` will list.
+
+    ``summary`` is the sentence the writer put in the row for people, passed through rather than composed
+    here: the words that say what a reminder was about belong where it was decided, and this lane only
+    ever carries facts. A reminder that no longer holds is announced the same way and says so in its own
+    summary.
+    """
+
+    session: str = ""
+    entry: str = ""
+    summary: str = ""
+
+
 class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
     """A turn was not started.
 
@@ -581,6 +600,7 @@ type AnyEvent = (
     TurnStarted
     | TurnFinished
     | TurnRefused
+    | Noticed
     | SessionsListed
     | Compacted
     | CompactRefused

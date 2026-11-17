@@ -15,6 +15,7 @@ from plyngent.wire.event import (
     Batch,
     CompactRefused,
     Entry,
+    Noticed,
     Pruned,
     PruneRefused,
     Refusal,
@@ -56,6 +57,17 @@ def test_a_refusal_and_an_asking_cost_are_not_bookkeeping() -> None:
         Shown("compact refused: a summary with no text compresses nothing", "refusal"),
     )
     assert render(Usage(turn=1, prompt=10, completion=2)) == (Shown("turn 1 tokens 10+2", "usage"),)
+
+
+def test_a_notice_is_announced_in_the_words_its_writer_chose() -> None:
+    """E142: the sentence a person reads is the one the row carries, not one composed on this side.
+
+    Which means the line says where it was written — an entry id is a place the conversation continues
+    from, and it is what `/history` will list — and then the summary as it stands.
+    """
+    assert render(Noticed(entry="e7", summary="2 things are still on your list")) == (
+        Shown("notice e7 written: 2 things are still on your list", "notice"),
+    )
 
 
 def test_a_prune_is_bookkeeping_and_a_refused_one_is_a_refusal() -> None:

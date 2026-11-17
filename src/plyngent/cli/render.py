@@ -46,6 +46,7 @@ from plyngent.wire.event import (
     ExportRefused,
     GrantRevoked,
     KernelLeaving,
+    Noticed,
     OfferRefused,
     Pruned,
     PruneRefused,
@@ -144,6 +145,7 @@ type _Reported = (
     | GrantRevoked
     | Seeded
     | SeedRefused
+    | Noticed
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
@@ -151,9 +153,10 @@ type _Reported = (
 #: result rather than after a turn.
 type _Diffed = Changed
 
-#: What a session is now, said as one line: its summary, its route, what it stopped showing, and what it
-#: kept. A document belongs here and not to a turn because the thing kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded
+#: What a session is now, said as one line: its summary, its route, what it stopped showing, what it
+#: kept, and what the harness told the model. A document belongs here and not to a turn because the thing
+#: kept may have been kept outside one.
+type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded | Noticed
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
@@ -711,7 +714,9 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     match event:
         case KernelLeaving() | SessionsListed():
             return _connection(event)
-        case Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked() | Seeded():
+        case (
+            Compacted() | Pruned() | DocumentStored() | Routed() | RolledBack() | GrantRevoked() | Seeded() | Noticed()
+        ):
             return _setting(event)
         case (
             CompactRefused()
@@ -741,7 +746,11 @@ def _connection(event: KernelLeaving | SessionsListed) -> tuple[_Row, ...]:
 
 def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line per kind of news, on purpose
     """What one of this session's settings is now: what it was compressed into, what it hides, what it
-    kept, which route answers it, and what was copied into it."""
+    kept, which route answers it, what was copied into it, and what the harness told the model.
+
+    A notice's line is the row's own summary rather than a sentence built here: what a reminder was about
+    was decided where it was written, and this lane is not the place to work it out again.
+    """
     match event:
         case Seeded(session=session, source=source, count=count):
             return ((session, Shown(f"seeded {count} messages from {source}", "notice")),)
@@ -760,6 +769,8 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line
         case GrantRevoked(session=session, path=path, revoked=revoked):
             said = f"{path} is no longer allowed" if revoked else f"{path} was not allowed"
             return ((session, Shown(said, "notice")),)
+        case Noticed(session=session, entry=entry, summary=summary):
+            return ((session, Shown(f"notice {entry} written: {summary}", "notice")),)
         case _ as never:
             assert_never(never)
 

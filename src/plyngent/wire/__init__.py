@@ -86,6 +86,7 @@ from plyngent.wire.event import ExportRefused as ExportRefused
 from plyngent.wire.event import GrantRevoked as GrantRevoked
 from plyngent.wire.event import KernelLeaving as KernelLeaving
 from plyngent.wire.event import ListedSession as ListedSession
+from plyngent.wire.event import Noticed as Noticed
 from plyngent.wire.event import OfferRefused as OfferRefused
 from plyngent.wire.event import Pruned as Pruned
 from plyngent.wire.event import PruneRefused as PruneRefused
