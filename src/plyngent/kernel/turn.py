@@ -8,7 +8,8 @@ answer in :meth:`~TurnRunner.dispatch`, and what happens when somebody interrupt
 
 Nothing else writes to the journal during a turn. The person's line, the model's answer and every tool
 result go through :meth:`~TurnRunner._append`, so "what the history holds" has one author and a turn
-that stops halfway still leaves a chain somebody can resume from.
+that stops halfway still leaves a chain somebody can resume from — and a line the session owes the model
+goes through :meth:`~TurnRunner._notice`, which is the one row that has to announce where it landed.
 
 Two rules this file is built around:
 
@@ -37,13 +38,14 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
-from plyngent.kernel.trail import Attempt, Effect, Summary, TurnEnded
+from plyngent.kernel.trail import Attempt, Effect, Notice, Summary, TurnEnded
 from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
     AssistantText,
     Compacted,
+    Noticed,
     TurnFinished,
     TurnKind,
     TurnStarted,
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolCatalog
     from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.model import AnyMessage
+    from plyngent.kernel.notices import Pending
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.trail import AnyRecord
     from plyngent.wire.event import AnyEvent
@@ -102,7 +105,8 @@ class TurnRunner:
 
         The three ends are all one path: the loop leaves when a reply asked for nothing, a cancellation
         is caught and becomes the reason the turn finished, and the ``finally`` is what makes every end
-        look the same to the outside — the work joined, the finish announced, the turn forgotten.
+        look the same to the outside — the work joined, what the session owes the model said, the finish
+        announced, the turn forgotten.
         """
         ctx = self._ctx
         session = ctx.session.session_id
@@ -116,6 +120,7 @@ class TurnRunner:
             else:
                 state = await self._append(state, User(text=text))
                 while True:
+                    state = await self._told(state)
                     request = await self.assemble(state)
                     reply = await self.call(state, request)
                     state = await self.dispatch(state, reply)
@@ -140,7 +145,8 @@ class TurnRunner:
             raise
         finally:
             _ = await ctx.cancel.settle(ctx.turn_address())
-            ended = await self._ended(state, reason=reason, failure=failure)
+            state = await self._told(state)
+            ended = await self._ended(state.cursor, reason=reason, failure=failure)
             self._emit(
                 TurnFinished(
                     session=session,
@@ -152,7 +158,41 @@ class TurnRunner:
             )
             ctx.end()
 
-    async def _ended(self, state: TurnState, *, reason: str, failure: Failure | None) -> str:
+    async def _told(self, state: TurnState) -> TurnState:
+        """Say the lines this session owes the model, at a boundary where nothing is being asked.
+
+        Two boundaries and one rule. The top of every round, before the request is assembled, so that the
+        model reads on *this* turn's next request what this turn just changed — a plan updated by a call
+        is what the next round is for. And the settle, before the end row, so ``turn-ended`` stays the
+        last line of a turn while the projection still ends with the reminder.
+
+        Never in the middle of a round: a row appended between an answer and its results would sit inside
+        the stretch a request was built from, and the next projection would read a conversation the
+        request that produced it never saw.
+        """
+        ctx = state.ctx
+        for _key, pending in ctx.session.notices.owed():
+            state = await self._notice(state, pending)
+        return state
+
+    async def _notice(self, state: TurnState, pending: Pending) -> TurnState:
+        """Write one line the session owes the model, and say where it landed.
+
+        Its own append rather than :meth:`_append` because it is the one row that announces itself: the id
+        is what a person's line names, so it comes back from the same call that wrote it rather than being
+        read off the state afterwards.
+        """
+        ctx = state.ctx
+        entry = await ctx.host.trail.append(
+            ctx.session.session_id,
+            Notice(text=pending.body, summary=pending.summary),
+            begin_after=state.cursor,
+            turn=ctx.turn_id,
+        )
+        self._emit(Noticed(session=ctx.session.session_id, entry=entry.id, summary=pending.summary))
+        return replace(state, cursor=entry.id)
+
+    async def _ended(self, cursor: str | None, *, reason: str, failure: Failure | None) -> str:
         """Write down that this turn ended, and answer the entry a reader finds it at.
 
         A row and not only the event, for the reason a call's cost is a row: the event is for whoever is
@@ -163,13 +203,14 @@ class TurnRunner:
 
         Below the last entry of the turn rather than beside the chain, because a turn's end is a place the
         next message really does continue from. Nothing can be written after it: this is the last thing the
-        turn does, which is what makes the row worth trusting as an answer.
+        turn does, which is what makes the row worth trusting as an answer — and it is why the cursor is a
+        parameter rather than read off the state: what the session owed the model is written above it.
         """
-        ctx = state.ctx
+        ctx = self._ctx
         entry = await ctx.host.trail.append(
             ctx.session.session_id,
             TurnEnded(turn=ctx.turn_id, reason=reason, failure="" if failure is None else str(failure)),
-            begin_after=state.cursor,
+            begin_after=cursor,
             turn=ctx.turn_id,
         )
         return entry.id

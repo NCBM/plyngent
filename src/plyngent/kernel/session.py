@@ -31,6 +31,7 @@ from plyngent.kernel.cancel import CancelToken, Scope
 
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
 from plyngent.kernel.host import Host  # noqa: TC001
+from plyngent.kernel.notices import Notices
 from plyngent.kernel.reads import Reads
 from plyngent.kernel.trail import Consent, StateChange
 from plyngent.wire.ask import Agreed, AskSite, Confirmation
@@ -202,6 +203,9 @@ class Session(Component):
 
     host: Host = require()
     session_id: str
+    #: What this conversation still owes the model: the sentences fired since the last line was written,
+    #: and the order they are said in (:class:`~plyngent.kernel.notices.Notices`).
+    notices: Notices
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
     _lock: asyncio.Lock
@@ -209,6 +213,7 @@ class Session(Component):
     def __init__(self, session_id: str) -> None:
         super().__init__()
         self.session_id = session_id
+        self.notices = Notices()
         self._turns = {}
         self._state = {}
         self._lock = asyncio.Lock()
