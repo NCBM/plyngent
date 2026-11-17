@@ -239,6 +239,10 @@ class Effects:
     #: has to be taken while the paths are still the ones this call left (the executor's own lock is
     #: what says so) and a handler cannot know it exists.
     revision: str = ""
+    #: How many files the tree held when this call's own paths could not be found *and* it was too big to
+    #: compare, or ``0`` when nothing was given up on. It is the other half of the empty ``revision``:
+    #: "there was nothing to keep" and "this call was too big to look at" read the same without it.
+    unswept: int = 0
 
 
 @dataclass(frozen=True, slots=True)

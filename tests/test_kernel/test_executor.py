@@ -31,7 +31,7 @@ from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import Call
 from plyngent.kernel.paths import key
 from plyngent.kernel.process import Execution, FromFile
-from plyngent.kernel.toolresult import Effects, ToolResult
+from plyngent.kernel.toolresult import Effects, Status, ToolResult
 from plyngent.kernel.tools import fs
 from plyngent.kernel.tools.process.execution import ExecuteArgs
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
@@ -308,6 +308,42 @@ async def test_a_program_that_cannot_say_what_it_wrote_is_swept(tmp_path) -> Non
 
 
 @pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")
+async def test_a_tree_too_big_to_compare_says_so_instead_of_saying_nothing(tmp_path, monkeypatch) -> None:
+    """A sweep past the bound keeps no version, and the effect carries the number it gave up at.
+
+    No story can see this: the row's words are its kind, and what changed about the call is a number in
+    the bookkeeping rather than a line on the screen. Silence is the one answer that would be wrong — a
+    row with no version reads as a call that changed nothing, which is exactly what a program that ran
+    past the bound did not do.
+    """
+
+    async def ran(env: Env, args: object) -> ToolResult:
+        _ = args
+        for name in ("one.txt", "two.txt"):
+            (env.workspace.root / name).write_text("a line\n", encoding="utf-8")
+        return ToolResult.ok("ran", effects=Effects(external=("ran: make",)))
+
+    spec = ToolSpec(
+        name="execute",
+        group=Group.PROCESS,
+        args=_CommandArgs,
+        run=ran,
+        uses=Res.EXEC | Res.PATHS,
+        mutates=Mutation.WORKSPACE,
+        posture=Posture.AUTO,
+    )
+    monkeypatch.setattr("plyngent.kernel.executor.SWEEP_PATHS", 1)
+    store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
+    executor = ToolExecutor(ToolCatalog([spec]))
+    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "run"})))
+
+    results = await executor.batch(_ctx(tmp_path, history=store), [asked])
+
+    assert results[0].effects.revision == "", "the version is what the bound costs"
+    assert results[0].effects.unswept == 2, "and the record says how big the tree was when it stopped"
+
+
+@pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")
 async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None:
     """The sweep compares content, so a command that only read the tree leaves no version behind."""
 
@@ -318,7 +354,7 @@ async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None
     spec = ToolSpec(
         name="execute",
         group=Group.PROCESS,
-        args=_PathArgs,
+        args=_CommandArgs,
         run=ran,
         uses=Res.EXEC,
         mutates=Mutation.WORKSPACE,
@@ -326,7 +362,9 @@ async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None
     )
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
     executor = ToolExecutor(ToolCatalog([spec]))
+    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "list"})))
 
-    results = await executor.batch(_ctx(tmp_path, history=store), [_asked("tool-1", "execute", "x")])
+    results = await executor.batch(_ctx(tmp_path, history=store), [asked])
 
+    assert results[0].status is Status.OK, "the sweep ran: a call that never got that far says nothing"
     assert results[0].effects.revision == ""

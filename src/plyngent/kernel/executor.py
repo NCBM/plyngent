@@ -104,6 +104,19 @@ SWEEP_PATHS = 5_000
 
 
 @dataclass(frozen=True, slots=True)
+class _Swept:
+    """What one sweep came to: the paths it found different, or how big the tree was when it gave up.
+
+    One value rather than two answers, because the two are the same question asked twice: a sweep either
+    compared the tree and knows what moved, or it looked at a tree too big to compare and knows how big.
+    """
+
+    changed: tuple[Path, ...] = ()
+    #: How many files the tree held when it was over the bound, and ``0`` when the tree was compared.
+    counted: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class Held:
     """One path a call declared, resolved, and the role the declaration gave it.
 
@@ -303,6 +316,10 @@ class ToolExecutor:
         started, and its argv names no files (§10.12) — is swept instead: the tree is enumerated by the
         kernel's own rules and compared with the version in force, so what a build or a formatter wrote
         is still kept, under the same one-version-per-call rule.
+
+        A sweep that gave up says so in the effect (:attr:`~plyngent.kernel.toolresult.Effects.unswept`),
+        because "there is no version" and "this call was too big to compare" are not the same fact and a
+        person reading the log later is the one who has to know which of the two happened.
         """
         store = ctx.host.history
         if store is None:
@@ -310,7 +327,10 @@ class ToolExecutor:
         changed = result.effects.changed
         try:
             if not changed and node.spec is not None and node.spec.mutates & Mutation.WORKSPACE:
-                changed = await self._swept(ctx, store, scope=scope)
+                swept = await self._swept(ctx, store, scope=scope)
+                if swept.counted:
+                    return replace(result, effects=replace(result.effects, unswept=swept.counted))
+                changed = swept.changed
             if not changed:
                 return result
             revision = await store.record(changed, says=f"{node.name} {node.call}", scope=scope)
@@ -318,23 +338,25 @@ class ToolExecutor:
             return result
         return replace(result, effects=replace(result.effects, revision=revision))
 
-    async def _swept(self, ctx: TurnCtx, store: History, *, scope: Scope) -> tuple[Path, ...]:
+    async def _swept(self, ctx: TurnCtx, store: History, *, scope: Scope) -> _Swept:
         """What a program left behind, read off the tree because the call cannot say.
 
         The walk is the kernel's own (the same one a listing uses: its ignore rules, its hidden
         directories, its denylist), never ``git add`` — a sweep by git would apply a second set of
         ignore rules to the same tree and record files this kernel deliberately does not look at.
 
-        A tree too big to walk is not walked: the effect still says the program ran, and the call costs
-        no stall. That bound is the honest one — a version nobody could afford to take is worse than a
-        record that says where it stopped.
+        A tree too big to compare is not compared: the effect still says the program ran, and the call
+        costs no stall. That bound is the honest one — a version nobody could afford to take is worse
+        than a record that says where it stopped — and the number it gives up at is the answer rather
+        than silence, because a log that says nothing about a version reads like a call that changed
+        nothing.
         """
         root = ctx.host.workspace.root
         listing = await scope.blocking(walk, ctx.host.workspace, root)
         files = [root / entry.relative for entry in listing.entries if not entry.is_dir]
         if len(files) > SWEEP_PATHS:
-            return ()
-        return await store.differing(await store.head(scope=scope), files, scope=scope)
+            return _Swept(counted=len(files))
+        return _Swept(changed=await store.differing(await store.head(scope=scope), files, scope=scope))
 
     async def _approve(self, ctx: TurnCtx, node: _Call) -> ToolResult | None:
         """Put this call to a person when its posture says to; ``None`` when nothing has to be asked.

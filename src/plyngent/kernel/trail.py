@@ -197,7 +197,11 @@ class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
 
     ``external`` and ``approvals`` are the other two things a result knows about itself, carried up for
     the same reason: what a call did should not be readable only from an event lane that has scrolled
-    away. They are **not** the audit of who agreed — an approval here is a grant a yes was kept for, not
+    away. ``unswept`` is the third and the odd one: a call that could not say what it changed is
+    compared against the tree, and a tree too big to compare is a call whose change was not kept — a fact
+    that would otherwise be indistinguishable, in this row, from a call that changed nothing.
+
+    They are **not** the audit of who agreed — an approval here is a grant a yes was kept for, not
     every question that was put. That audit is :class:`Consent`, which is one row per question, and it
     is the only thing that can answer "which danger questions did a policy answer" (§10.13, E111).
     """
@@ -211,6 +215,10 @@ class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
     changed: tuple[str, ...] = ()
     external: tuple[str, ...] = ()
     approvals: tuple[str, ...] = ()
+    #: How many files the tree held when this call's change was too big to compare, or ``0``. A row with
+    #: this and no ``revision`` says the call ran and was not kept, which is a different fact from a call
+    #: that left nothing behind.
+    unswept: int = 0
 
 
 #: The tag one question put to a person carries. Its own record kind, and the fifth of them: a state change

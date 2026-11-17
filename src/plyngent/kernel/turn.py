@@ -395,7 +395,7 @@ class TurnRunner:
         because "these paths are not what you last saw" is true whether or not this host keeps bytes.
         """
         effects = result.effects
-        if not (effects.changed or effects.external or effects.approvals):
+        if not (effects.changed or effects.external or effects.approvals or effects.unswept):
             return state
         return await self._append(
             state,
@@ -407,6 +407,7 @@ class TurnRunner:
                 changed=tuple(str(one) for one in effects.changed),
                 external=effects.external,
                 approvals=effects.approvals,
+                unswept=effects.unswept,
             ),
         )
 
