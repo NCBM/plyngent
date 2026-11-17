@@ -115,6 +115,24 @@ def test_a_route_without_its_output_ceiling_is_refused(tmp_path: Path) -> None:
         _ = config.load(path)
 
 
+def test_a_route_that_never_states_its_window_is_a_route_without_a_denominator(tmp_path: Path) -> None:
+    """``context_window`` is the opposite case: it changes nothing a request carries, so silence is allowed.
+
+    A third-party endpoint's window is a fact its provider knows and this file may not, and a required
+    field would refuse a configuration that was complete apart from a number nothing is sent with.
+    """
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { max_output = 8 }\n',
+    )
+
+    settings = config.load(path)
+    route = settings.routes.named("one")
+
+    assert route is not None, "the file named it, so the table has it"
+    assert route.caps.context_window == 0, "zero is 'this route never said'"
+
+
 def test_a_dialect_this_build_does_not_speak_is_refused(tmp_path: Path) -> None:
     """A route naming a dialect nobody implemented is an endpoint nothing can post to, said at the start."""
     path = _written(

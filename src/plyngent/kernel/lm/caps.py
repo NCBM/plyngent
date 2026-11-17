@@ -43,7 +43,7 @@ class PrefixCache(StrEnum):
 
 
 class Caps(Struct, frozen=True, kw_only=True):
-    """One route's model, as the six things anything downstream has to know about it."""
+    """One route's model, as the seven things anything downstream has to know about it."""
 
     #: Whether a picture reaches the model at all. False is "send the words, not the pixels", which is
     #: what a tool's handle already says in prose.
@@ -59,6 +59,11 @@ class Caps(Struct, frozen=True, kw_only=True):
     #: How many tokens an answer may take. Not defaulted: it is a budget somebody picks, and a dialect
     #: that must state it would otherwise pick for them.
     max_output: int
+    #: How many tokens this model can hold at once, counting what it was asked and what it answers. Zero
+    #: is "this route never said" — a third-party endpoint's window is a fact its provider knows and this
+    #: file might not, and a denominator nobody stated must not read as a small one. Nothing a request
+    #: carries depends on it: it is the number a frontend divides by when it says how full the context is.
+    context_window: int = 0
     #: Which cache mechanism this route's requests carry.
     prefix_cache: PrefixCache = PrefixCache.NONE
     #: Whether an answer may arrive in pieces. It is one bit and not two: a fragment of an *argument* is

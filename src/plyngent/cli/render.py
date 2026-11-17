@@ -429,6 +429,7 @@ class Stage:
     _prompt: int
     _completion: int
     _context: int
+    _window: int
 
     def __init__(
         self,
@@ -453,6 +454,9 @@ class Stage:
         self._prompt = 0
         self._completion = 0
         self._context = 0
+        # The denominator a route announced, or zero when it never said: a share is only said when both
+        # halves of it are known, and a window nobody stated is not a small one.
+        self._window = 0
 
     def push(self, event: AnyEvent, *, width: int = DEFAULT_WIDTH) -> Frame:
         """What this event puts on the screen, as the conversation and as this client's own rows."""
@@ -472,6 +476,8 @@ class Stage:
     def _routed(self, event: Routed, width: int) -> Frame:
         """A route, which is either where this conversation *is* or something that happened to it."""
         self._routes[event.session] = event.route
+        if event.session == self._session:
+            self._window = event.context_window
         if event.opening:
             # The answer to attaching is the state this client started in, and a row for it would say a
             # thing nobody did (§5 A, E131).
@@ -517,8 +523,19 @@ class Stage:
         if self._mode:
             fields.append(self._mode)
         if self._context:
-            fields.append(f"context {self._context} tokens")
+            fields.append(self._fullness())
         return self._bar("  ".join(fields))
+
+    def _fullness(self) -> str:
+        """How much of what the route can hold the last request used: a share when the window is known.
+
+        Two numbers and a percentage, or the count alone — never a percentage against a window nobody
+        announced, which would be a number this client made up (E128).
+        """
+        if not self._window:
+            return f"context {self._context} tokens"
+        share = 100 * self._context // self._window
+        return f"context {self._context}/{self._window} ({share}%)"
 
     def _tally(self, turn: int) -> Shown:
         """One row saying what the turn cost, in the three numbers a person can act on."""

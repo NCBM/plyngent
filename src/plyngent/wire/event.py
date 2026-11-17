@@ -384,6 +384,9 @@ class Routed(Event, tag="routed", frozen=True, kw_only=True):
     route: str = ""
     epoch: int = 0
     opening: bool = False
+    #: How many tokens the route's model can hold at once, or zero when that route never said. It travels
+    #: with the route announcement because it is the same fact: which model answers, and what it can take.
+    context_window: int = 0
 
 
 class RouteRefused(Event, tag="route-refused", frozen=True, kw_only=True):

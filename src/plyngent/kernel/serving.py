@@ -514,7 +514,13 @@ class Serving:
             return
         asked = found.host.routes.resolve(found.route)
         self.link.emit(
-            Routed(session=session, route="" if asked is None else asked.name, epoch=found.route_epoch, opening=True)
+            Routed(
+                session=session,
+                route="" if asked is None else asked.name,
+                epoch=found.route_epoch,
+                opening=True,
+                context_window=0 if asked is None else asked.caps.context_window,
+            )
         )
 
     async def _close(self, session: str) -> None:
@@ -618,7 +624,14 @@ class Serving:
             return
         name, epoch = await found.set_route(route)
         asked = known.resolve(name)
-        self.link.emit(Routed(session=session, route="" if asked is None else asked.name, epoch=epoch))
+        self.link.emit(
+            Routed(
+                session=session,
+                route="" if asked is None else asked.name,
+                epoch=epoch,
+                context_window=0 if asked is None else asked.caps.context_window,
+            )
+        )
 
     async def _compact(
         self,

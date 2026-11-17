@@ -32,9 +32,15 @@ if TYPE_CHECKING:
 DRAWN = ("│", "╰", "╭", "┌", "└")
 
 
-def _route(name: str) -> Route:
+def _route(name: str, *, window: int = 0) -> Route:
     """One endpoint a story can name, with nothing behind it: the scripted model answers, not this."""
-    return Route(name=name, dialect="messages", base=f"http://{name}.invalid/v1", model="m", caps=Caps(max_output=64))
+    return Route(
+        name=name,
+        dialect="messages",
+        base=f"http://{name}.invalid/v1",
+        model="m",
+        caps=Caps(max_output=64, context_window=window),
+    )
 
 
 async def test_a_turn_says_where_the_conversation_is(story_with: Scripted) -> None:
@@ -69,6 +75,41 @@ async def test_a_turn_says_what_it_cost(story_with: Scripted) -> None:
         "the same three numbers, written down where a reader who was not here can find them"
     )
     assert rows[0].route == "", "the session never chose one, so the row names none rather than guessing"
+
+
+async def test_the_context_row_says_a_share_when_the_route_stated_a_window(story_with: Scripted) -> None:
+    """A percentage needs a denominator, and the denominator is the model's fact rather than a guess.
+
+    E128 kept this row at an absolute number while ``Caps`` had no window to divide by; the number lives
+    on the route announcement, so a route that stated one gets the share and a route that did not gets the
+    count alone rather than a percentage of something this client made up.
+    """
+    story = await story_with(
+        Reply(text="hello", usage=Cost(prompt=250, completion=10)),
+        routes=(_route("roomy", window=1000),),
+        route="roomy",
+    )
+
+    await story.type("hi")
+    await story.finished()
+
+    said = [line for line in story.notices() if "context" in line]
+    assert said, story.notices()
+    assert all("context 250/1000 (25%)" in line for line in said), said
+    assert not [line for line in said if "tokens" in line], "two numbers and a share, not three claims"
+
+
+async def test_a_route_that_never_said_its_window_gets_the_count_alone(story_with: Scripted) -> None:
+    story = await story_with(
+        Reply(text="hello", usage=Cost(prompt=250, completion=10)), routes=(_route("quiet"),), route="quiet"
+    )
+
+    await story.type("hi")
+    await story.finished()
+
+    said = [line for line in story.notices() if "context" in line]
+    assert said, story.notices()
+    assert all("context 250 tokens" in line for line in said), "no window, no percentage"
 
 
 async def test_a_call_says_how_long_it_took(story_with: Scripted) -> None:
