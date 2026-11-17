@@ -32,7 +32,7 @@ from msgspec import Struct
 from plyngent.wire.ask import SEVERITIES, Severity
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable, Iterable, Mapping
     from typing import Any
 
     from plyngent.kernel.env import Env
@@ -95,6 +95,21 @@ class Role(StrEnum):
 #: The roles that name a path: a tool with one of these resolves something through the workspace, so it
 #: has to declare :attr:`Res.PATHS` or its handler could not be honoured in the first place.
 _PATH_ROLES: frozenset[Role] = frozenset({Role.READ, Role.WRITE, Role.CWD})
+
+
+@dataclass(frozen=True, slots=True)
+class Reach:
+    """One path a call names, and what it is for — the value a tool hands out when its arguments are a tree.
+
+    ``roles`` is a table of argument names and is enough for every tool whose paths are its own fields.
+    A tool whose arguments nest (:class:`~plyngent.kernel.process.Execution` inside ``steps``) has no field
+    to name, so it answers with these instead: what the argument says, and the role it plays there. The
+    difference matters and is not cosmetic — these are what a batch locks and what an approval is keyed
+    by (§10.12), so a tool that could not say them was a tool whose calls could not be ordered.
+    """
+
+    value: str
+    role: Role
 
 
 class Group(StrEnum):
@@ -251,6 +266,12 @@ class ToolSpec:
     uses: Res
     mutates: Mutation = Mutation.NONE
     roles: Mapping[str, Role] | None = None
+    #: Where this tool's paths are when they are not its own fields: ``roles`` names one argument per
+    #: path, and a tool whose arguments are a tree has nothing to name. Such a tool says it here instead
+    #: — the decoded argument package in, one :class:`Reach` per path out — and the executor resolves and
+    #: locks those exactly as it does the flat ones. It is a declaration and not a check: what a call
+    #: reaches is still one list, computed in one place, whether it came from a table or a walk.
+    holds: Callable[[Any], Iterable[Reach]] | None = None
     #: Which argument names what this call is *about*, so the question a person is asked can say it:
     #: ``skill_create`` names its ``name``, and the person reads "allow skill_create on tidy-notes?".
     #: The value has to be a string, and empty means nothing to say — the same rule a subjectless call
@@ -288,10 +309,7 @@ class ToolSpec:
             self._check_escalation(name, level)
         if self.intention is None:
             object.__setattr__(self, "intention", _asked_for(self.uses, self.mutates))
-        named = {name for name, role in roles.items() if role in _PATH_ROLES}
-        if named and not self.uses & Res.PATHS:
-            msg = f"{self.name}: {', '.join(sorted(named))} is a path, so the tool has to declare Res.PATHS"
-            raise ValueError(msg)
+        self._paths_are_declared(roles)
         if self.intention is Intention.REQUIRED and "intention" not in declared:
             msg = f"{self.name}: needs every call to say why, but its own schema declares no 'intention'"
             raise ValueError(msg)
@@ -300,6 +318,24 @@ class ToolSpec:
             if resolved is None:
                 msg = f"{self.name}: approved once per what? declare a Remember for a once-only posture"
                 raise ValueError(msg)
+
+    def _paths_are_declared(self, roles: Mapping[str, Role]) -> None:
+        """A tool that resolves paths has to say it does — whether it names them or walks for them.
+
+        Two declarations mean "this tool touches something in the workspace": a ``roles`` table with a
+        path role in it, and a ``holds`` that finds them. Both are the same claim to
+        :attr:`Res.PATHS`, so a declaration carrying either without the flag is refused here rather than
+        turning into a call that reaches a path nothing resolved (R6).
+        """
+        if self.uses & Res.PATHS:
+            return
+        named = {name for name, role in roles.items() if role in _PATH_ROLES}
+        if named:
+            msg = f"{self.name}: {', '.join(sorted(named))} is a path, so the tool has to declare Res.PATHS"
+            raise ValueError(msg)
+        if self.holds is not None:
+            msg = f"{self.name}: says where its own paths are, so the tool has to declare Res.PATHS"
+            raise ValueError(msg)
 
     def schema(self) -> dict[str, Any]:
         """The JSON Schema the model is given; identical bytes for identical declarations."""

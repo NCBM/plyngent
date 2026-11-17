@@ -259,6 +259,19 @@ def test_a_role_that_names_no_field_is_refused_when_the_tool_is_declared() -> No
         )
 
 
+def test_a_tool_that_says_where_its_paths_are_has_to_say_it_has_any() -> None:
+    """``holds`` is the declaration for a tree, and a tree of paths is still paths: same flag or no tool."""
+    with pytest.raises(ValueError, match=r"Res\.PATHS"):
+        _ = ToolSpec(
+            name="tree",
+            group=Group.PROCESS,
+            args=Probe,
+            run=_run,
+            uses=Res.EXEC,
+            holds=lambda _args: (),
+        )
+
+
 def test_a_subject_that_names_no_field_is_refused_when_the_tool_is_declared() -> None:
     """What a question is about is an argument, so a declaration that names nothing is a typo."""
     with pytest.raises(ValueError, match="does not have"):

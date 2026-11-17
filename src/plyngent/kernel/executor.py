@@ -409,8 +409,12 @@ def _subjects(
     A tool whose subject is one of its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.subject`)
     names that value instead, so the person is asked about the one skill or directory the call is about
     rather than about the tool in general.
+
+    A tool that says where its own paths are (:attr:`~plyngent.kernel.toolspec.ToolSpec.holds`) is keyed
+    by them like any other: the question a batch's locks answer and the question a person answers have to
+    be about the same paths, or a yes would be remembered for something the call never touched.
     """
-    if any(role in _ACCESS for role in (spec.roles or {}).values()):
+    if spec.holds is not None or any(role in _ACCESS for role in (spec.roles or {}).values()):
         if not held:
             return "", ()
         names = ", ".join(display(item.path, root=ctx.host.workspace.root) for item in held)
@@ -427,21 +431,26 @@ def _subjects(
 def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...], bool]:
     """Every path this call declares, resolved with its role, and whether any of them was refused.
 
-    Resolution is per argument rather than all-or-nothing: a call naming two paths and getting one
-    refused still reads or writes the other, so what it holds is the paths it will really touch — under
-    the role it declared for each, because that is what a batch orders calls by. An argument that is
-    empty names no path at all: a tool with two locators leaves the other one blank, and a blank is not
-    a request for the workspace root. A refused path is
-    reported rather than guessed at: nothing touches a path the workspace will not resolve, so there is no
-    lock to take for it, but "this call named a path and it was refused" is a different fact from "this
-    call named no path", and both the approval and the batch read the difference.
+    A call's paths come from one of two places and are resolved the same way either way: a table of
+    argument names (:attr:`~plyngent.kernel.toolspec.ToolSpec.roles`) for a tool whose paths are its own
+    fields, and a walk over its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.holds`) for one whose
+    arguments are a tree. Resolution is per path rather than all-or-nothing: a call naming two paths and
+    getting one refused still reads or writes the other, so what it holds is the paths it will really
+    touch — under the role it declared for each, because that is what a batch orders calls by. An argument
+    that is empty names no path at all: a tool with two locators leaves the other one blank, and a blank is
+    not a request for the workspace root. A refused path is reported rather than guessed at: nothing
+    touches a path the workspace will not resolve, so there is no lock to take for it, but "this call named
+    a path and it was refused" is a different fact from "this call named no path", and both the approval
+    and the batch read the difference.
     """
     workspace = ctx.host.workspace
     grants = ctx.session.grants
     held: list[Held] = []
     refused = False
-    for name, role in (spec.roles or {}).items():
-        value = argument(args, name)
+    named = [(argument(args, name), role) for name, role in (spec.roles or {}).items()]
+    if spec.holds is not None:
+        named.extend((reach.value, reach.role) for reach in spec.holds(args))
+    for value, role in named:
         if role not in _ACCESS or not isinstance(value, str) or not value:
             continue
         try:
