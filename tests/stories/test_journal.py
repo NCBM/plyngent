@@ -13,7 +13,9 @@ import re
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.journal import MEMORY_JOURNAL, journal_path
-from plyngent.kernel.model import Assistant, User
+from plyngent.kernel.model import Assistant, Reply, User
+from plyngent.kernel.model import Usage as Cost
+from plyngent.kernel.trail import Usage as Spent
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, text
 
@@ -70,6 +72,35 @@ async def test_a_restarted_client_continues_the_conversation_it_left(tmp_path: P
             Assistant(text="the first answer"),
             User(text="and another"),
         ), "the model was given the conversation the process that ended had written"
+    finally:
+        await second.close()
+
+
+async def test_what_a_conversation_spent_outlives_the_process_that_spent_it(tmp_path: Path, transport: str) -> None:
+    """The tally a turn says aloud is read once and gone; a price is added up afterwards, offline."""
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+    first = await Story.start(
+        root,
+        transport=transport,
+        model=ScriptedModel([Reply(text="noted", usage=Cost(prompt=11, completion=2, cached=5))]),
+        journal=journal,
+    )
+    try:
+        await first.type("a first thought")
+        assert await first.stop() == 0
+    finally:
+        await first.close()
+
+    second = await Story.start(root, transport=transport, model=ScriptedModel([]), journal=journal)
+    try:
+        rows = [
+            row.payload for row in await second.host.trail.entries(second.session) if isinstance(row.payload, Spent)
+        ]
+
+        assert [(row.turn, row.prompt, row.completion, row.cached) for row in rows] == [(1, 11, 2, 5)], (
+            "a second process reads what the first one spent, three counts and nothing to infer"
+        )
     finally:
         await second.close()
 

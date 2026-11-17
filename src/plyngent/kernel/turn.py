@@ -38,6 +38,7 @@ from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, 
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
 from plyngent.kernel.trail import Attempt, Effect
+from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.wire.event import AnswerCut, AssistantDelta, AssistantText, TurnFinished, TurnStarted, Usage
 
 if TYPE_CHECKING:
@@ -220,9 +221,10 @@ class TurnRunner:
         under the turn's, so a cancel of either stops this, and the request is cancelled instead of being
         left running while the turn says it finished.
 
-        What the asking cost is said outward here rather than by the model: a model answers a value, and
-        every event on this lane is the kernel's to emit. An answer that stopped short is said the same
-        way, because both are facts about the request that just came back and neither is the turn's end.
+        What the asking cost is said outward and written down here rather than by the model: a model
+        answers a value, and every event on this lane is the kernel's to emit. An answer that stopped short
+        is said the same way, because both are facts about the request that just came back and neither is
+        the turn's end.
 
         What the model *is saying* is said outward while it is still saying it — one event per fragment,
         as they arrive — but the answer this returns is the whole one, because that is what the turn
@@ -231,20 +233,45 @@ class TurnRunner:
         """
         reply = await state.ctx.round_scope().guard(self._answered(state, request))
         if reply.usage.reported:
-            self._emit(
-                Usage(
-                    session=state.ctx.session.session_id,
-                    turn=state.ctx.turn_id,
-                    prompt=reply.usage.prompt,
-                    completion=reply.usage.completion,
-                    cached=reply.usage.cached,
-                ),
-            )
+            await self._cost(state, reply)
         if reply.cut is not None:
             self._emit(
                 AnswerCut(session=state.ctx.session.session_id, turn=state.ctx.turn_id, reason=str(reply.cut)),
             )
         return reply
+
+    async def _cost(self, state: TurnState, reply: Reply) -> None:
+        """Write down what this request cost, and then say it.
+
+        The row comes first because the two are different readers: the event is the line a person sees
+        while the turn is running, and the row is what makes "what has this conversation spent" a question
+        that can be asked after the process that spent it is over. E133 keeps the price out of the kernel,
+        so the three counts and the model that charged them are what is written — an outside reader adds
+        up whatever a price list says, and cannot if the row does not name the model.
+        """
+        ctx = state.ctx
+        usage = reply.usage
+        _ = await ctx.host.trail.append(
+            ctx.session.session_id,
+            UsageRow(
+                turn=ctx.turn_id,
+                route=ctx.session.route,
+                epoch=ctx.session.route_epoch,
+                prompt=usage.prompt,
+                completion=usage.completion,
+                cached=usage.cached,
+            ),
+            turn=ctx.turn_id,
+        )
+        self._emit(
+            Usage(
+                session=ctx.session.session_id,
+                turn=ctx.turn_id,
+                prompt=usage.prompt,
+                completion=usage.completion,
+                cached=usage.cached,
+            ),
+        )
 
     async def _answered(self, state: TurnState, request: Request) -> Reply:
         """Every fragment of the answer said outward as it arrives, and then the answer itself."""

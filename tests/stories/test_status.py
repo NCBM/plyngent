@@ -18,6 +18,7 @@ from plyngent.kernel.lm import Caps
 from plyngent.kernel.lm.route import Route
 from plyngent.kernel.model import Reply
 from plyngent.kernel.model import Usage as Cost
+from plyngent.kernel.trail import Usage as Spent
 from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
@@ -63,6 +64,11 @@ async def test_a_turn_says_what_it_cost(story_with: Scripted) -> None:
     assert tally, story.notices()
     assert "1 step" in tally[0], "one request to the model, and 'one step' rather than '1 steps'"
     assert "1200+30 tokens" in tally[0], "what was sent and what came back"
+    rows = [row.payload for row in await story.host.trail.entries(story.session) if isinstance(row.payload, Spent)]
+    assert [(row.prompt, row.completion, row.cached) for row in rows] == [(1200, 30, None)], (
+        "the same three numbers, written down where a reader who was not here can find them"
+    )
+    assert rows[0].route == "", "the session never chose one, so the row names none rather than guessing"
 
 
 async def test_a_call_says_how_long_it_took(story_with: Scripted) -> None:

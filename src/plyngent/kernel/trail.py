@@ -251,16 +251,47 @@ class Consent(Struct, tag=CONSENT_TAG, frozen=True, kw_only=True):
     accepted: bool | None = None
 
 
+#: The tag what one request cost carries. Its own kind, and the sixth: the five before it are what a
+#: conversation says, knows, becomes, hides and leaves behind; this one is what it has spent.
+USAGE_TAG = "usage"
+
+
+class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
+    """What one request to the model cost, as a row rather than as an event that has scrolled past.
+
+    :class:`~plyngent.wire.event.Usage` says the same three numbers while a turn is running, and that is
+    all it is: an event is read once and gone, so "what has this conversation cost" could not be asked
+    after the process that spent it was over. Nothing here is money — E133 keeps pricing out of the
+    kernel: three counts plus the model that charged them is what an outside reader needs to add up
+    whatever a price list says.
+
+    ``route`` and ``epoch`` are written here for the reason :class:`Attempt` writes its own: a price is
+    a fact about a model, not about a turn, and a row that does not name the model cannot be priced
+    offline. ``cached`` is ``None`` when the provider said nothing, which is not the same as saying
+    zero.
+
+    A **root**, and out of the chain with every other bookkeeping row: what a turn's own tally is says
+    nothing to a model, and a turn never continues from a number.
+    """
+
+    turn: int = 0
+    route: str = ""
+    epoch: int = 0
+    prompt: int = 0
+    completion: int = 0
+    cached: int | None = None
+
+
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
 #: compressed into, what it has stopped showing, what became of a request that was never answered, what
-#: one call left different, and what one person said when they were asked.
-type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent
+#: one call left different, what one person said when they were asked, and what one request cost.
+type AnyRecord = AnyMessage | StateChange | Summary | Withheld | Attempt | Effect | Consent | Usage
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
     """What a model reads of one record, or ``None`` when it is not a record a model reads.
 
-    Five records have a meaning of their own and none is a message. A state change is a fact about the
+    Six records have a meaning of their own and none is a message. A state change is a fact about the
     session, and is dropped. A summary is read as one message — the person's turn it stands in for — with
     the heading saying what it is, because a model handed an unannounced block of prose as its own history
     would take it for something somebody said. An attempt is bookkeeping: the answer it stands for never
@@ -269,11 +300,13 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     (:meth:`~plyngent.kernel.trail.Trail.derive` applies it). An effect is bookkeeping a person reads:
     the result above it already told the model what happened, and what a path used to hold is not the
     conversation. A consent is bookkeeping of the same sort, from the other side of the wire: the model is
-    not told what a person agreed to before its call ran, and a person reading the row is.
+    not told what a person agreed to before its call ran, and a person reading the row is. A usage is the
+    third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
+    the model is told about itself.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
-    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage):
         return None
     return record
 
