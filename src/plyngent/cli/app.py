@@ -127,6 +127,7 @@ class App:
     _cursor: str | None
     _listings: deque[_Asked]
     _goodbye: asyncio.Event
+    _stirred: asyncio.Event
     _stage: Stage
 
     def __init__(
@@ -177,6 +178,10 @@ class App:
         # leave knowing it has read everything it asked for.
         self._listings = deque()
         self._goodbye = asyncio.Event()
+        # Set by whatever the kernel says, and read as "something arrived" rather than as a count: a
+        # client waiting out a turn only needs to know it should ask again, and the watermark it compares
+        # is what makes a line that arrived while it was asking impossible to miss (§5 A).
+        self._stirred = asyncio.Event()
         # What the kernel is saying right now, and where this conversation stands while it says it: only
         # a client knows what a person has already read, so only a client can say what a message looks
         # like when it arrives in pieces (E94), whether it has a screen to grow one on (E100), and how
@@ -314,6 +319,7 @@ class App:
         """
         async for event in self.client.events():
             self._seen = max(self._seen, event.seq)
+            self._stirred.set()
             if not self._swallowed(event):
                 await self._drawn(event)
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
@@ -462,6 +468,12 @@ class App:
 
         A connection that is already gone answers nothing, and that is not a reason to wait: the event
         lane ending is the other way out, and whichever comes first ends the goodbye.
+
+        The listing is the goodbye of everything this client *sent*, and that is not the whole of what it
+        asked for: a turn is a task the kernel started beside the command lane and reports the end of by
+        an event, so a pipe that sends a message and closes would leave while the answer was still being
+        written. The fact that says otherwise is the kernel's own — which turns it is running
+        (:meth:`_quiet`) — and waiting for it is the last thing a program reading a pipe does.
         """
         self._listings.append(_Asked.GOODBYE)
         if not self.client.submit(ListSessions()):
@@ -473,6 +485,45 @@ class App:
         for task in pending:
             _ = task.cancel()
             _ = await asyncio.gather(task, return_exceptions=True)
+        await self._quiet()
+
+    async def _quiet(self) -> None:
+        """Wait until this conversation has nothing in flight, asking again after each thing it says.
+
+        One read answers a snapshot — which turns of this conversation the kernel is running now — and a
+        snapshot is all a read is, because what a client does with "still working" is its own business
+        (E134). So the waiting is this side's: ask, and when the answer is not empty, wait for the kernel
+        to say something and ask again. The end of a turn is a thing it says, so the loop ends when the
+        turn does — and a connection that ends first ends it too, since nothing more will be read.
+        """
+        while True:
+            heard = self._seen
+            try:
+                live = await self.client.turns(self.session)
+            except Unanswered:
+                return
+            if not live:
+                return
+            if not await self._stirred_after(heard):
+                return
+
+    async def _stirred_after(self, heard: int) -> bool:
+        """Wait until the kernel has said something past ``heard``; ``False`` when it never will again.
+
+        The number rather than a flag, and that is the whole of the care here: an event that arrived
+        while the read was out has already moved the watermark, so a client waiting on a flag it had just
+        cleared could wait for a line it had already been told. The event lane ending is the other way
+        out, and it is the same departure every other wait in this loop has.
+        """
+        while self._seen == heard and not self._leaving.is_set():
+            stirred = asyncio.create_task(self._stirred.wait())
+            left = asyncio.create_task(self._leaving.wait())
+            _, pending = await asyncio.wait({stirred, left}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                _ = task.cancel()
+                _ = await asyncio.gather(task, return_exceptions=True)
+            self._stirred.clear()
+        return not self._leaving.is_set()
 
     async def _said(self, line: str) -> int | None:
         """One line's meaning, and the exit code it earns if the connection was gone."""

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from plyngent.wire.event import AnyEvent, Entry
     from plyngent.wire.flow import Ack
     from plyngent.wire.manifest import KernelManifest
-    from plyngent.wire.query import AnyQuery, AnyReply
+    from plyngent.wire.query import AnyQuery, AnyReply, LiveTurn
 
 
 class KernelLink(Protocol):
@@ -103,6 +103,16 @@ class KernelLink(Protocol):
         one continues, so a client that wants the branches has them without a second question. A session
         this kernel is not serving answers nothing, which is the truth about a conversation that was
         never opened (E134).
+        """
+        ...
+
+    async def turns(self, session: str) -> tuple[LiveTurn, ...]:
+        """Which turns of this conversation are running, oldest first — empty when none is.
+
+        A snapshot rather than a wait, for the reason it is a read at all: the kernel answers what it is
+        doing now, and a client that wants to be told when that changes asks again after the next event
+        (E134). What a turn is *doing* is deliberately absent — a sentence about the middle of a turn goes
+        stale between the write and the read, and the address plus the kind is what a reader can act on.
         """
         ...
 

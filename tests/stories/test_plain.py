@@ -22,6 +22,7 @@ from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor
 from tests.stories.driver import SETTLE_PAUSE, SETTLE_TRIES
+from tests.stories.model import Held, ScriptedModel, text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,6 +96,42 @@ async def test_a_pipe_written_in_one_go_still_reads_what_it_asked_for(tmp_path: 
     asked = out.getvalue()
     assert asked.count("sessions:") == 1, "the answer was drawn once, and the goodbye's was not"
     assert "main" in asked, "and it is the listing the person asked for"
+
+
+async def test_a_pipe_waits_for_the_turn_a_message_started(tmp_path: Path) -> None:
+    """The end of the input is not the end of the work, because a message is answered by a turn.
+
+    A command has a receipt the goodbye can wait on — the listing — and a turn has none: it is a task the
+    kernel started and reports the end of by an event, so a program that left when the last line was read
+    would drop the answer that line asked for. The model here is held until this story lets it go, which
+    is what makes the difference observable: the loop is still there, waiting, and what it is waiting for
+    is the end of the turn rather than another line.
+    """
+    reading, writing = os.pipe()
+    with os.fdopen(reading, "r", encoding="utf-8") as stream, os.fdopen(writing, "w", encoding="utf-8") as feed:
+        held = Held(text("about time"))
+        kernel = await install(tmp_path / "workspace", journal=tmp_path / "journal.db", model=ScriptedModel([held]))
+        try:
+            out, err = io.StringIO(), io.StringIO()
+            editor = PlainEditor(session="main", stream=stream, err=err)
+            catalog = build(kernel.client.manifest, session="main")
+            app = App(kernel.client, session="main", catalog=catalog, editor=editor, out=out, err=err)
+            running = asyncio.create_task(app.run())
+
+            _ = feed.write("a thought\n")
+            _ = feed.flush()
+            feed.close()
+            await _until(out, "turn 1 started (chat)")
+            await asyncio.sleep(SETTLE_PAUSE)
+            assert not running.done(), "the end of the input is not the end of the turn it started"
+
+            held.ready.set()
+            code = await asyncio.wait_for(running, timeout=SETTLE_TRIES * SETTLE_PAUSE)
+        finally:
+            await kernel.close()
+
+    assert code == 0
+    assert "about time" in out.getvalue(), "the answer the message asked for was read before the program left"
 
 
 async def _until(stream: TextIO, wanted: str) -> None:
