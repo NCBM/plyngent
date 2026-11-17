@@ -46,9 +46,10 @@ from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.history import Unreadable, Unwilling
 from plyngent.kernel.host import Host
 from plyngent.kernel.link import LinkHuman
+from plyngent.kernel.notices import ELIDED, elided, elision_summary
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.session import Session
-from plyngent.kernel.trail import TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
+from plyngent.kernel.trail import BY_PERSON, TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
 from plyngent.kernel.turn import TurnEnd, TurnRunner
 from plyngent.wire.command import (
     Cancel,
@@ -771,6 +772,11 @@ class Serving:
         Every target is checked before anything is written: a list naming one entry this session does not
         have writes nothing at all rather than hiding the half of it that did exist, because a prune that
         half happened is a history nobody can account for.
+
+        What the model is told about it is a line the session *owes* rather than a row written here — the
+        command may arrive while a turn is in flight, and a message appended inside a round would sit
+        between an answer and its results. So the elision is one sentence on the next boundary, and a
+        history that stops showing something stops quietly no more (E149).
         """
         found = self._session(session)
         if found is None:
@@ -786,7 +792,16 @@ class Serving:
                 return
         head = await trail.head(session)
         entry = await trail.append(
-            session, Withheld(targets=targets, reason=reason), begin_after=None if head is None else head.id
+            session,
+            Withheld(targets=targets, reason=reason, by=BY_PERSON),
+            begin_after=None if head is None else head.id,
+        )
+        # What the model is told is owed rather than written here: a prune may land while a turn is in
+        # flight, and a message appended inside a round would sit between an answer and its results.
+        found.notices.say(
+            ELIDED,
+            elided(len(targets), by=BY_PERSON, reason=reason),
+            summary=elision_summary(len(targets), by=BY_PERSON),
         )
         self.link.emit(Pruned(session=session, entry=entry.id, targets=targets, reason=reason))
 

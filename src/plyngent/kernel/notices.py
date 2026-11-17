@@ -28,7 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.trail import NOTICE_MARKER
+from plyngent.kernel.trail import BY_BUDGET, NOTICE_MARKER
+from plyngent.kernel.words import counted
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,7 +46,50 @@ PLAN = "plan"
 #: The cut's writer: the last answer stopped at the output limit, so the model knows it was not finished.
 LIMIT = "limit"
 
-DECLARED: tuple[str, ...] = (PLAN, LIMIT)
+#: The elision's writer: what this conversation no longer shows, and why. First, because it is about the
+#: shape of the history a model is about to read, while the plan is about what to do next with it.
+ELIDED = "elided"
+
+DECLARED: tuple[str, ...] = (ELIDED, PLAN, LIMIT)
+
+
+def marked(text: str) -> str:
+    """What a model reads for a sentence *text*, marker included — or nothing when there is no sentence.
+
+    The marker is added in the one place a row is built from a sentence, so no writer has to remember it
+    and no row can be written without it: the byte a model reads and the byte the log keeps are one
+    string.
+    """
+    return f"{NOTICE_MARKER}\n{text}" if text else ""
+
+
+def elided(hidden: int, *, by: str, reason: str = "") -> str:
+    """What a model is told when part of the conversation stops being shown to it.
+
+    Two acts read as two sentences, because they are not the same thing to whoever continues the work: a
+    person put this away on purpose, or the conversation outgrew the room this route gives it. Both open
+    with the same three words — *hidden from you* — because that is the fact, and the clause after it is
+    the only thing that differs. The closing sentence is the one that matters either way: a model handed a
+    history with a hole in it must not read the hole as "nothing happened", or the first thing it does is
+    ask for it again.
+    """
+    entries = counted(hidden, "earlier entry")
+    if by == BY_BUDGET:
+        why = "put aside because this conversation outgrew the room this route gives it, and kept rather than lost"
+    elif reason.strip():
+        why = f"put away by the person working with you, who said: {reason.strip()}"
+    else:
+        why = "put away by the person working with you"
+    return (
+        f"Hidden from you: {entries} of this conversation, {why}. What you read below is not the whole "
+        "conversation, so do not assume that a decision or a result you cannot see did not happen."
+    )
+
+
+def elision_summary(hidden: int, *, by: str) -> str:
+    """The one line a person reads about the same act, on the screen and in a listing's preview."""
+    entries = counted(hidden, "earlier entry")
+    return f"the person hid {entries}" if by != BY_BUDGET else f"{entries} put aside to fit the window"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,10 +103,10 @@ class Pending:
     def body(self) -> str:
         """What the row says: the marked sentence, or nothing when the reminder stopped being true.
 
-        The marker is added here, once, so no writer has to remember it and no row can be written without
-        it — the byte a model reads and the byte the log keeps are one string.
+        The marker is added by :func:`marked`, which is the only place it is added — so no writer has to
+        remember it, and no row can be written without it.
         """
-        return f"{NOTICE_MARKER}\n{self.text}" if self.text else ""
+        return marked(self.text)
 
 
 class Notices:

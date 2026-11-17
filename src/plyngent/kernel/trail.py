@@ -191,6 +191,14 @@ class Attempt(Struct, tag=ATTEMPT_TAG, frozen=True, kw_only=True):
 #: The tag a prune carries. Spelled here because it is half of the record's identity.
 WITHHELD_TAG = "prune"
 
+#: A person asked for this stretch to stop being shown. The default, and what every row written before
+#: the distinction existed means.
+BY_PERSON = "person"
+
+#: The budget asked: the conversation stopped fitting, so the oldest whole rounds were put aside. Nobody
+#: wanted these words gone — which is why what they said is kept rather than merely hidden (E149).
+BY_BUDGET = "budget"
+
 
 class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
     """Entries a conversation has stopped showing a model, without taking them out of the log.
@@ -201,12 +209,19 @@ class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
     whole stretch — which is what "reversible" means here: nothing was rewritten, so pointing a turn at
     an older entry gets the text back.
 
-    It is not a message: nobody is told which words were taken away. It is bookkeeping that *changes a
-    projection*, which is why the projector's own version moved the day it arrived.
+    It is not a message of its own: the line a model reads about the elision is a
+    :class:`Notice` written after it (:data:`BY_PERSON` / :data:`BY_BUDGET` say who asked, and the notice
+    says what it cost) — because the two acts are different. A person pruning means "stop showing this";
+    a conversation that outgrew its window means "put this aside, keep it" — and a model that cannot tell
+    them apart would read a deliberate silence as the same thing as a full buffer.
+
+    ``by`` is text rather than a closed set because it is a stored field: a row written by today's build
+    has to stay readable when the set of reasons grows, the way :attr:`Attempt.failure` does.
     """
 
     targets: tuple[str, ...] = ()
     reason: str = ""
+    by: str = BY_PERSON
 
 
 #: The tag one turn's end carries. Spelled here because it is half of the record's identity.

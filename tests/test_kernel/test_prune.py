@@ -3,14 +3,18 @@
 The claim is that a prune is *placement* rather than deletion: the entry goes where the conversation ends,
 a projection walking from there stops handing over what it names, and a branch taken from before it still
 reads the whole stretch. Two of those three are things no story can see — the log is the only place "the
-text is still there" is observable — so they are asserted here, on a journal and nothing else.
+text is still there" is observable — so they are asserted here, on a journal and nothing else. The last one
+is a claim of a third kind: what a payload written by a build that had no `by` still means, which is also
+only readable off a stored shape.
 """
 
 from __future__ import annotations
 
+import msgspec
+
 from plyngent.kernel.journal import SqliteTrail
 from plyngent.kernel.model import Assistant, User
-from plyngent.kernel.trail import Withheld
+from plyngent.kernel.trail import BY_PERSON, Withheld
 
 
 async def _spoken() -> tuple[SqliteTrail, str, str]:
@@ -72,3 +76,13 @@ async def test_a_prune_of_a_prune_hides_nothing_more() -> None:
         )
     finally:
         await trail.close()
+
+
+def test_a_prune_written_before_there_was_reason_to_say_who_asked_is_a_persons_prune() -> None:
+    """The field is text with a default, so a payload from a build that had no ``by`` still decodes —
+    and it decodes as the only thing a prune could mean then: somebody chose to stop showing this."""
+    stored = msgspec.json.encode({"targets": ["e1"], "reason": "said too much"})
+
+    found = msgspec.json.decode(stored, type=Withheld)
+
+    assert found.by == BY_PERSON, "a row written before the distinction existed is the person's, not the budget's"

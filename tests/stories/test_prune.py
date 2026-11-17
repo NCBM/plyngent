@@ -14,7 +14,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.model import User
+from plyngent.kernel.model import Note, User
+from plyngent.kernel.trail import NOTICE_MARKER
 from tests.stories.model import text
 
 if TYPE_CHECKING:
@@ -27,8 +28,19 @@ if TYPE_CHECKING:
 #: The line a prune earns on the screen, with a count of what it hid.
 WRITTEN = re.compile(r"prune e\d+ written \((\d+) withheld\)")
 
+#: The line the elision itself earns, at the boundary where it is said to the model.
+NOTICED = re.compile(r"notice e\d+ written: the person hid 1 earlier entry")
+
 #: What a listing says about a session that has a head: the name, and where the conversation ends.
 LISTED = re.compile(r"sessions: main \((e\d+)\)")
+
+#: What the model is told: the marker, and the sentence — model-visible wording, so it is pinned here.
+ELISION = (
+    f"{NOTICE_MARKER}\n"
+    "Hidden from you: 1 earlier entry of this conversation, put away by the person working with you, who "
+    "said: said too much. What you read below is not the whole conversation, so do not assume that a "
+    "decision or a result you cannot see did not happen."
+)
 
 
 async def test_a_prune_hides_what_it_names_from_the_next_turn(story_with: Scripted) -> None:
@@ -40,8 +52,13 @@ async def test_a_prune_hides_what_it_names_from_the_next_turn(story_with: Script
     await story.type("a second thought")
 
     assert any(WRITTEN.fullmatch(line) for line in story.screen()), f"the prune says what it hid: {story.screen()!r}"
-    assert story.requests()[-1].messages == (User(text="a first thought"), User(text="a second thought")), (
-        "the answer it named is gone from what the model reads, and the person's own words are not"
+    assert any(NOTICED.fullmatch(line) for line in story.screen()), (
+        f"and the elision is said to the model at the next boundary: {story.screen()!r}"
+    )
+    told = story.requests()[-1].messages
+    assert told == (User(text="a first thought"), User(text="a second thought"), Note(text=ELISION)), (
+        "the answer it named is gone from what the model reads, the person's own words are not, and the hole "
+        "is named — at the round's own boundary, so the line is the last thing the model reads before it answers"
     )
 
 
