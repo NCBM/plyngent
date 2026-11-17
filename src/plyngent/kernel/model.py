@@ -32,6 +32,7 @@ verbs, so a turn that had to know a provider would be a turn that could not be r
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import TYPE_CHECKING, override
 
 from composat import Component
@@ -75,16 +76,41 @@ class User(Message, tag="user", frozen=True, kw_only=True):
     text: str = ""
 
 
+class Thought(Struct, frozen=True, kw_only=True):
+    """One thing a model thought before it answered, in the parts a dialect may need given back.
+
+    A model that thinks out loud returns the thinking beside the answer, and two of the three dialects
+    demand it back on the next round: ``chat`` wants the text as ``reasoning_content``, ``messages``
+    wants the text *and* the opaque signature that came with it, and a thinking block a provider redacted
+    into its own ciphertext has to be handed back byte for byte. So a thought is a value and not a string:
+    ``text`` is what a person reads, ``signature`` is what one dialect signs it with, and ``sealed`` is a
+    thought this build never read at all.
+
+    ``text`` and ``sealed`` are never both set — a block either said something to this build or it did not
+    — and a dialect that cannot spell one of those parts writes nothing rather than inventing a shape.
+    """
+
+    text: str = ""
+    signature: str = ""
+    sealed: str = ""
+
+
 class Assistant(Message, tag="assistant", frozen=True, kw_only=True):
     """What the model answered: something it said, and the calls it asked for, in one message.
 
     One message rather than two — a text and a set of calls — because they arrived together: a request
     that named three tools is one answer, and splitting it would let an interruption leave calls
     attributed to a message that never arrived.
+
+    ``thoughts`` is what it thought before it said any of it. It is part of the same message for the same
+    reason, and it is kept for a reason of its own: a round that asked for a tool is one a thinking
+    endpoint refuses to read back without the thinking it did, so dropping it costs the next request
+    rather than merely the display (§10.4, E145).
     """
 
     text: str = ""
     calls: tuple[Call, ...] = ()
+    thoughts: tuple[Thought, ...] = ()
 
 
 class Picture(Struct, frozen=True, kw_only=True):
@@ -233,21 +259,40 @@ class Reply(Struct, frozen=True, kw_only=True):
 
     text: str = ""
     calls: tuple[Call, ...] = ()
+    thoughts: tuple[Thought, ...] = ()
     usage: Usage = Usage()
     cut: Failure | None = None
 
 
+class Part(StrEnum):
+    """Which half of an answer a fragment belongs to.
+
+    Two and not three: what a model *says* and what it *thinks* are the two things that arrive a piece at
+    a time, and a call is not a fragment of either — a call is a value, and half a JSON argument is not a
+    thing to act on (§10.5). The distinction is the kernel's because the kernel is which one has to write
+    ``reasoning_content`` and which one goes in the message.
+    """
+
+    TEXT = "text"
+    THOUGHT = "thought"
+
+
 class Delta(Struct, frozen=True, kw_only=True):
-    """A piece of what a model is saying, before the answer it belongs to exists.
+    """A piece of what a model is saying — or thinking — before the answer it belongs to exists.
 
     Only words, and only ever words: a *call* is not a fragment even when a route streams its arguments
     in pieces, because a call is not something anybody reads — it is a value the turn acts on, and half
     a JSON argument is not a thing to act on (that is why ``Caps`` has one streaming flag and not two).
     A stream therefore ends with the :class:`Reply` that says what the whole answer was, and a reader
     that only wants the answer never looks at these.
+
+    ``part`` says which of the two a piece is, because this is the only place the two are one vocabulary.
+    A thought is not what the model said and a reader must be able to tell them apart; what a client does
+    about that (a dim line, no line at all) is the client's business.
     """
 
     text: str = ""
+    part: Part = Part.TEXT
 
 
 class NoModel(Exception):  # noqa: N818 — a missing model is a state of the kernel, not a failure of a call

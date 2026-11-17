@@ -35,7 +35,7 @@ from msgspec.structs import replace as replaced
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Picture, Reply, Request, Result, User
+from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Part, Picture, Reply, Request, Result, User
 from plyngent.kernel.notices import LIMIT
 from plyngent.kernel.render import render
 from plyngent.kernel.toolresult import OUTCOMES, ToolResult
@@ -45,6 +45,7 @@ from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
     AssistantText,
+    AssistantThought,
     Compacted,
     Noticed,
     TurnFinished,
@@ -94,12 +95,15 @@ class TurnRunner:
     _catalog: ToolCatalog
     _executor: ToolExecutor
     _calls: int
+    #: Whether this round's thinking has already been said in pieces, so dispatch does not say it twice.
+    _thought_said: bool
 
     def __init__(self, ctx: TurnCtx, *, catalog: ToolCatalog, executor: ToolExecutor) -> None:
         self._ctx = ctx
         self._catalog = catalog
         self._executor = executor
         self._calls = 0
+        self._thought_said = False
 
     async def run(self, text: str) -> None:
         """Run the turn to its end, which is an answer, a refusal, or somebody stopping it.
@@ -428,17 +432,32 @@ class TurnRunner:
         )
 
     async def _answered(self, state: TurnState, request: Request) -> Reply:
-        """Every fragment of the answer said outward as it arrives, and then the answer itself."""
+        """Every fragment of the answer said outward as it arrives, and then the answer itself.
+
+        A fragment is said in the vocabulary its half of the answer belongs to — words as
+        :class:`~plyngent.wire.event.AssistantDelta`, thinking as
+        :class:`~plyngent.wire.event.AssistantThought` — because the two are two things a person reads
+        differently and a client may keep one and drop the other (§10.4, E145). What was said in pieces
+        is remembered for the round so that a whole thought is not written twice (:meth:`dispatch`).
+        """
         async for piece in state.ctx.host.model.stream(request):
             if isinstance(piece, Delta):
-                if piece.text:
-                    self._emit(
-                        AssistantDelta(session=state.ctx.session.session_id, turn=state.ctx.turn_id, text=piece.text),
-                    )
+                self._spoken(state, piece)
                 continue
             return piece
         msg = "the model's stream ended without the answer it was adding up to"
         raise ModelFailed(Failure.PROTOCOL, msg)
+
+    def _spoken(self, state: TurnState, piece: Delta) -> None:
+        """One fragment outward, as the half of the answer it is a fragment of."""
+        if not piece.text:
+            return
+        session, turn = state.ctx.session.session_id, state.ctx.turn_id
+        if piece.part is Part.THOUGHT:
+            self._thought_said = True
+            self._emit(AssistantThought(session=session, turn=turn, text=piece.text))
+            return
+        self._emit(AssistantDelta(session=session, turn=turn, text=piece.text))
 
     async def dispatch(self, state: TurnState, reply: Reply) -> TurnState:
         """Write what the model answered, then run every call it asked for, as one batch.
@@ -452,7 +471,15 @@ class TurnRunner:
         the model asked for them — one round has to leave one history, whichever call came back first.
         """
         ctx = state.ctx
-        said = await self._append(state, Assistant(text=reply.text, calls=reply.calls))
+        thought = self._thought_said
+        self._thought_said = False
+        if not thought:
+            # A route that does not stream its thinking said none of it yet: what it thought is said here,
+            # in one piece each, so a person reads it whether or not the route could send it early.
+            for one in reply.thoughts:
+                if one.text:
+                    self._emit(AssistantThought(session=ctx.session.session_id, turn=ctx.turn_id, text=one.text))
+        said = await self._append(state, Assistant(text=reply.text, calls=reply.calls, thoughts=reply.thoughts))
         if reply.text:
             self._emit(AssistantText(session=ctx.session.session_id, turn=ctx.turn_id, text=reply.text))
         if not reply.calls:

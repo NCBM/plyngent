@@ -13,7 +13,10 @@ Two things it does differently from the other two, both of them this endpoint's 
   so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.vision``.
 
 A thinking *budget* is not written: this endpoint takes an effort level, which is a different fact from
-the number of tokens a route is willing to spend, and this build only has the number.
+the number of tokens a route is willing to spend, and this build only has the number. What an answer
+thinks anyway arrives as a ``reasoning`` item in front of what it said, and that item goes back with the
+round: this endpoint refuses a request that carries a tool round's calls without the reasoning they came
+with.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
-from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Usage, User
+from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 
 if TYPE_CHECKING:
     from typing import Any
@@ -80,6 +83,7 @@ class Responses(Codec):
         return Reply(
             text=_said(output),
             calls=_calls(output),
+            thoughts=_thoughts(output),
             usage=_usage(document),
             cut=_CUT.get(as_text(as_dict(as_dict(document).get("incomplete_details")).get("reason"))),
         )
@@ -108,6 +112,9 @@ def _items(message: AnyMessage) -> list[Body]:
         return [{"role": "developer", "content": [{"type": "input_text", "text": message.text}]}]
     if isinstance(message, Assistant):
         said: list[Body] = []
+        thinking = _thinked(message.thoughts)
+        if thinking is not None:
+            said.append(thinking)
         if message.text:
             said.append({"role": "assistant", "content": [{"type": "output_text", "text": message.text}]})
         said.extend(
@@ -116,6 +123,16 @@ def _items(message: AnyMessage) -> list[Body]:
         )
         return said
     return [_output(message)]
+
+
+def _thinked(thoughts: tuple[Thought, ...]) -> Body | None:
+    """One round's thinking as the item this dialect reads it back from, or nothing when it had none.
+
+    Not an empty item when the thinking was empty: this endpoint refuses a reasoning item with no part in
+    it, and a round that thought nothing is a round that owes nothing.
+    """
+    parts = [{"type": "reasoning_text", "text": thought.text} for thought in thoughts if thought.text]
+    return {"type": "reasoning", "content": parts} if parts else None
 
 
 def _output(message: Result) -> Body:
@@ -150,6 +167,17 @@ def _said(output: list[Any]) -> str:
             if as_dict(part).get("type") == "output_text"
         )
     return "".join(said)
+
+
+def _thoughts(output: list[Any]) -> tuple[Thought, ...]:
+    """What the answer thought, as the reasoning items it put in front of what it said."""
+    return tuple(
+        Thought(text=as_text(part.get("text")))
+        for item in (as_dict(one) for one in output)
+        if item.get("type") == "reasoning"
+        for part in (as_dict(one) for one in as_list(item.get("content")))
+        if part.get("type") == "reasoning_text" and as_text(part.get("text"))
+    )
 
 
 def _calls(output: list[Any]) -> tuple[Call, ...]:

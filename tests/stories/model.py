@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, override
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.model import Call, Delta, Model, ModelFailed, Reply
+from plyngent.kernel.model import Call, Delta, Model, ModelFailed, Part, Reply
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterable
@@ -66,11 +66,15 @@ class Streamed:
     :class:`Held`: it is what lets a story read the screen *while the answer is still coming*, which is
     the one thing about a stream that is invisible once the turn has ended. ``None`` is a stream that
     runs straight through, which is the ordinary case.
+
+    ``thought`` is what it thinks before it says any of ``pieces``, in the pieces it thinks it in — the
+    same stream, the same ``ready``, and a different half of the answer (E145).
     """
 
     pieces: tuple[str, ...]
     reply: Reply
     ready: asyncio.Event | None = None
+    thought: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,10 @@ class ScriptedModel(Model):
         if not isinstance(step, Streamed):
             yield await _settled(step)
             return
+        for piece in step.thought:
+            yield Delta(text=piece, part=Part.THOUGHT)
+            if step.ready is not None:
+                await step.ready.wait()
         for piece in step.pieces:
             yield Delta(text=piece)
             if step.ready is not None:

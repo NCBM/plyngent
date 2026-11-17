@@ -41,6 +41,7 @@ from plyngent.kernel.model import (
     Picture,
     Request,
     Result,
+    Thought,
     ToolDecl,
     User,
 )
@@ -250,6 +251,81 @@ def test_what_an_answer_asked_for_arrives_as_calls() -> None:
     for reply in (chart, spoken):
         assert reply.calls == (Call(id="a", tool="read", arguments='{"path":"x"}'),)
         assert reply.cut is None
+
+
+def test_a_thought_is_given_back_with_the_round_in_each_dialects_own_spelling() -> None:
+    """E145: the thinking is not a display, it is part of the next request.
+
+    A thinking endpoint refuses a tool round whose thinking went missing, so what is asserted is the
+    body the *following* round would send. The block dialect is the strict one — it needs the text and
+    the signature the endpoint signed it with — and what a provider redacted is ciphertext that has to
+    go back byte for byte. ``chat`` has one string and no signature, and invents neither.
+    """
+    thoughts = (Thought(text="look first", signature="s1"), Thought(sealed="cipher"))
+    answer = Assistant(
+        text="calling",
+        calls=(Call(id="c1", tool="listdir", arguments='{"path":"."}'),),
+        thoughts=thoughts,
+    )
+    request = _request(messages=(User(text="hi"), answer))
+
+    spoken = _body(Messages(), request, caps=_caps())["messages"][1]["content"]
+    assert spoken[:2] == [
+        {"type": "thinking", "thinking": "look first", "signature": "s1"},
+        {"type": "redacted_thinking", "data": "cipher"},
+    ], "the thinking is a block of the same message, and it comes before what it led to"
+    assert spoken[2] == {"type": "text", "text": "calling"}
+
+    chat = _body(Chat(), request, caps=_caps())["messages"][2]
+    assert chat["reasoning_content"] == "look first", "one string, and the part this build cannot spell is not invented"
+
+    items = _body(Responses(), request, caps=_caps())["input"]
+    assert items[1] == {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "look first"}]}, (
+        "the reasoning item stands in front of what the round said, which is where the endpoint reads it"
+    )
+    assert items[2]["role"] == "assistant", "and what the round said follows it, in the order it was said"
+
+
+def test_an_answer_that_thought_is_read_as_the_thought_it_was() -> None:
+    """The other half: three ways of saying it, read into the one value the next round writes back."""
+    chat = Chat().decode(
+        b'{"choices":[{"message":{"role":"assistant","content":"ok","reasoning_content":"hmm"},'
+        b'"finish_reason":"stop"}],"usage":{}}'
+    )
+    spoken = Messages().decode(
+        b'{"content":[{"type":"thinking","thinking":"hmm","signature":"s1"},'
+        b'{"type":"redacted_thinking","data":"cipher"},{"type":"text","text":"ok"}],'
+        b'"stop_reason":"end_turn","usage":{}}'
+    )
+    items = Responses().decode(
+        b'{"output":[{"type":"reasoning","content":[{"type":"reasoning_text","text":"hmm"}]},'
+        b'{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{}}'
+    )
+
+    assert chat.thoughts == (Thought(text="hmm"),), "this dialect signs nothing, so nothing is invented"
+    assert spoken.thoughts == (Thought(text="hmm", signature="s1"), Thought(sealed="cipher")), (
+        "an unreadable block is kept as what it is rather than dropped for being unreadable"
+    )
+    assert items.thoughts == (Thought(text="hmm"),)
+    assert chat.text == spoken.text == items.text == "ok", "and the answer beside it is untouched"
+
+
+def test_an_answer_that_thought_nothing_owes_nothing() -> None:
+    """A round with no thinking writes no field: an empty one is a shape the endpoint did not use."""
+    request = _request(
+        messages=(User(text="hi"), Assistant(text="calling", calls=(Call(id="c1", tool="go", arguments="{}"),)))
+    )
+
+    assert "reasoning_content" not in _body(Chat(), request, caps=_caps())["messages"][2]
+    assert [item.get("type") for item in _body(Responses(), request, caps=_caps())["input"]] == [
+        None,
+        None,
+        "function_call",
+    ], "a person's line, the answer, and the call it asked for — and no reasoning item at all"
+    assert _body(Messages(), request, caps=_caps())["messages"][1]["content"] == [
+        {"type": "text", "text": "calling"},
+        {"type": "tool_use", "id": "c1", "name": "go", "input": {}},
+    ]
 
 
 def test_the_cached_share_is_read_in_whichever_spelling_the_endpoint_reports() -> None:

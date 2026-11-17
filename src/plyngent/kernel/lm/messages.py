@@ -14,6 +14,9 @@ shape this file:
 
 Two more things are this dialect's alone and are read off ``Caps``: ``max_tokens`` is **required** —
 there is no request without it — and a thinking budget is a token count rather than an effort level.
+That budget is the only place in this build that asks a model to think out loud, and what comes back is
+the one thing this dialect refuses to see dropped: the next round carries it, signature and all, because
+a round whose thinking went missing is a round the endpoint will not read (§10.4, E145).
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ import msgspec
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema, spelled
-from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Usage, User
+from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 from plyngent.kernel.toolresult import Status
 
 if TYPE_CHECKING:
@@ -81,6 +84,7 @@ class Messages(Codec):
         return Reply(
             text=_said(blocks),
             calls=_calls(blocks),
+            thoughts=_thoughts(blocks),
             usage=_usage(document),
             cut=_CUT.get(as_text(as_dict(document).get("stop_reason"))),
         )
@@ -123,13 +127,28 @@ def _spoke(message: AnyMessage) -> tuple[str, list[Body]]:
     if isinstance(message, User):
         return "user", [{"type": "text", "text": message.text}]
     if isinstance(message, Assistant):
-        blocks: list[Body] = [{"type": "text", "text": message.text}] if message.text else []
+        blocks: list[Body] = [_thought(thought) for thought in message.thoughts]
+        if message.text:
+            blocks.append({"type": "text", "text": message.text})
         blocks.extend(
             {"type": "tool_use", "id": call.id, "name": call.tool, "input": spelled(call.arguments)}
             for call in message.calls
         )
         return "assistant", blocks
     return "user", [_result(message)]
+
+
+def _thought(thought: Thought) -> Body:
+    """One thought as this dialect's block for it, in whichever of the two forms it arrived in.
+
+    A thought comes back with the signature it was signed with, because that is what makes it the same
+    thought to whoever reads it; one that was redacted has no text this build could read and is handed
+    back as the ciphertext it is. Both are written first in the message, which is where a thinking block
+    has to be for the endpoint to recognise the round (§10.4, E145).
+    """
+    if thought.sealed:
+        return {"type": "redacted_thinking", "data": thought.sealed}
+    return {"type": "thinking", "thinking": thought.text, "signature": thought.signature}
 
 
 def _result(message: Result) -> Body:
@@ -192,6 +211,22 @@ def _said(blocks: Any) -> str:
     return "".join(
         as_text(as_dict(block).get("text")) for block in as_list(blocks) if as_dict(block).get("type") == "text"
     )
+
+
+def _thoughts(blocks: Any) -> tuple[Thought, ...]:
+    """What the answer thought, in the order the blocks arrived.
+
+    Two block kinds and both are kept: a ``thinking`` block is text this build can read *and* a signature
+    only the endpoint can, and a ``redacted_thinking`` block is ciphertext neither can — but both have to
+    be given back with the round, so neither may be dropped for being unreadable.
+    """
+    kept: list[Thought] = []
+    for block in (as_dict(one) for one in as_list(blocks)):
+        if block.get("type") == "thinking":
+            kept.append(Thought(text=as_text(block.get("thinking")), signature=as_text(block.get("signature"))))
+        elif block.get("type") == "redacted_thinking":
+            kept.append(Thought(sealed=as_text(block.get("data"))))
+    return tuple(kept)
 
 
 def _calls(blocks: Any) -> tuple[Call, ...]:

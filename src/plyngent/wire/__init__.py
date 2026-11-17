@@ -75,6 +75,7 @@ from plyngent.wire.command import Ungrant as Ungrant
 from plyngent.wire.event import AnswerCut as AnswerCut
 from plyngent.wire.event import AnyEvent as AnyEvent
 from plyngent.wire.event import AssistantText as AssistantText
+from plyngent.wire.event import AssistantThought as AssistantThought
 from plyngent.wire.event import Batch as Batch
 from plyngent.wire.event import Changed as Changed
 from plyngent.wire.event import Compacted as Compacted

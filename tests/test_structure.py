@@ -305,9 +305,9 @@ def test_every_line_an_event_makes_says_what_kind_of_line_it_is() -> None:
         if shown.role not in roles
     ]
 
-    assert wrong == [], "a line whose role is not one of the seven has no reader the frontend knows"
-    assert roles == {"assistant", "tool", "notice", "refusal", "usage", "added", "removed"}, (
-        "and the seven are the whole set"
+    assert wrong == [], "a line whose role is not one of the eight has no reader the frontend knows"
+    assert roles == {"assistant", "tool", "notice", "refusal", "usage", "thought", "added", "removed"}, (
+        "and the eight are the whole set"
     )
 
 

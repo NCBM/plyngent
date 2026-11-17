@@ -14,7 +14,8 @@ Two things this dialect cannot do, and they are said here rather than discovered
 * **A thinking budget has no portable spelling.** ``responses`` carries an effort level and
   ``messages`` carries a token budget; here a vendor invents ``reasoning`` or ``thinking`` and the next
   one spells it differently. So the flag is not written at all — a route that wants thinking out loud
-  belongs on one of the other two.
+  belongs on one of the other two. What thinking *comes back* anyway is read, kept and handed back
+  (``reasoning_content``), because a vendor that produces it refuses the next round without it.
 
 **The one thing it does that the others do not yet**: it reads a streamed answer (``sse``). Each frame
 carries a fragment of what the model is saying, and the calls it asks for arrive as fragments keyed by an
@@ -28,7 +29,19 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, document, frames, schema
-from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Note, Reply, Result, Usage, User
+from plyngent.kernel.model import (
+    Assistant,
+    Call,
+    Delta,
+    ModelFailed,
+    Note,
+    Part,
+    Reply,
+    Result,
+    Thought,
+    Usage,
+    User,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -97,6 +110,7 @@ class Chat(Codec):
         return Reply(
             text=_said(message),
             calls=_calls(message),
+            thoughts=_thoughts(message),
             usage=_usage(document),
             cut=_CUT.get(as_text(first.get("finish_reason"))),
         )
@@ -115,6 +129,7 @@ class Chat(Codec):
         frame that is not JSON is.
         """
         said: list[str] = []
+        thought: list[str] = []
         partial: dict[int, _Pending] = {}
         cut: Failure | None = None
         usage = Usage()
@@ -129,11 +144,15 @@ class Chat(Codec):
             if text:
                 said.append(text)
                 yield Delta(text=text)
+            thinking = as_text(delta.get("reasoning_content"))
+            if thinking:
+                thought.append(thinking)
+                yield Delta(text=thinking, part=Part.THOUGHT)
             _pending(partial, as_list(delta.get("tool_calls")))
             reason = as_text(as_dict(choices[0]).get("finish_reason")) if choices else ""
             if reason:
                 cut = _CUT.get(reason)
-        yield Reply(text="".join(said), calls=_assembled(partial), usage=usage, cut=cut)
+        yield Reply(text="".join(said), calls=_assembled(partial), thoughts=_kept(thought), usage=usage, cut=cut)
 
     @override
     def explain(self, payload: bytes) -> str:
@@ -213,8 +232,25 @@ def _message(message: User | Assistant | Result | Note, note_role: NoteRole) -> 
                 {"id": call.id, "type": "function", "function": {"name": call.tool, "arguments": _spelled(call)}}
                 for call in message.calls
             ]
+        if message.thoughts:
+            # This dialect has one string for a thought and no signature, so what it is handed back is the
+            # text it gave. A round that thought nothing gets no field at all: this endpoint is only owed
+            # reasoning when it produced some, and asking it for a shape it did not use is noise in a
+            # prefix somebody caches (§10.5).
+            said["reasoning_content"] = "".join(thought.text for thought in message.thoughts)
         return said
     return {"role": "tool", "tool_call_id": message.call, "content": message.text}
+
+
+def _thoughts(message: Any) -> tuple[Thought, ...]:
+    """What one answer thought, in this dialect's one string for it."""
+    return _kept([as_text(as_dict(message).get("reasoning_content"))])
+
+
+def _kept(thought: list[str]) -> tuple[Thought, ...]:
+    """The thinking a stream gathered, as the one thought this dialect spells it as."""
+    said = "".join(thought)
+    return (Thought(text=said),) if said else ()
 
 
 def _spelled(call: Call) -> str:

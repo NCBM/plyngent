@@ -17,7 +17,7 @@ import pytest
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Chat
 from plyngent.kernel.lm.codec import frames
-from plyngent.kernel.model import Call, Delta, ModelFailed, Reply
+from plyngent.kernel.model import Call, Delta, ModelFailed, Part, Reply, Thought
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -81,6 +81,32 @@ async def test_a_frame_split_inside_a_character_does_not_mangle_it() -> None:
 
     assert len(frames_read) == 1
     assert "你好" in frames_read[0]
+
+
+async def test_a_streamed_answer_says_its_thinking_before_its_words() -> None:
+    """A thought is a fragment of its own half: same stream, same reply, and the two never mix.
+
+    A vendor that streams ``reasoning_content`` says it in the same frames as the answer, so the only
+    thing that keeps them apart is the half the fragment belongs to (E145).
+    """
+    body = (
+        b'data: {"choices":[{"delta":{"reasoning_content":"hm"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"reasoning_content":"m"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    pieces = [piece async for piece in Chat().stream(_chunks(body))]
+    answer = pieces[-1]
+
+    assert [(piece.part, piece.text) for piece in pieces if isinstance(piece, Delta)] == [
+        (Part.THOUGHT, "hm"),
+        (Part.THOUGHT, "m"),
+        (Part.TEXT, "ok"),
+    ]
+    assert isinstance(answer, Reply)
+    assert answer.text == "ok"
+    assert answer.thoughts == (Thought(text="hmm"),), "what was thought is one thought once the stream ends"
 
 
 async def test_a_stream_that_is_not_json_is_a_protocol_failure_naming_the_stream() -> None:

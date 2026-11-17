@@ -38,6 +38,7 @@ from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
     AssistantText,
+    AssistantThought,
     Batch,
     Changed,
     Compacted,
@@ -100,10 +101,11 @@ WINDOW_ROWS = 8
 #: What kind of line this is — the closed set the frontend chooses a style from, and nothing else.
 #:
 #: ``assistant`` is the conversation itself, ``tool`` is what a tool did, ``notice`` is the kernel's
-#: account of its own bookkeeping, ``refusal`` is something that did not happen and why, and ``usage``
-#: is what an asking cost. The five are kept apart because they are five different things to read, and
-#: a sixth must be a decision rather than a colour that happens to fall through.
-type Role = Literal["assistant", "tool", "notice", "refusal", "usage", "added", "removed"]
+#: account of its own bookkeeping, ``refusal`` is something that did not happen and why, ``usage``
+#: is what an asking cost, and ``thought`` is what the model thought before it said the answer. The six
+#: are kept apart because they are six different things to read, and a seventh must be a decision rather
+#: than a colour that happens to fall through.
+type Role = Literal["assistant", "tool", "notice", "refusal", "usage", "thought", "added", "removed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +122,7 @@ class Shown:
 
 
 #: What a turn said or did: the conversation itself, rather than the kernel's account of it.
-type _Said = AssistantText | AssistantDelta | ToolCalled | ToolReturned
+type _Said = AssistantText | AssistantDelta | AssistantThought | ToolCalled | ToolReturned
 
 #: What the kernel says about a turn: when it began, how it ended, and what it reported meanwhile.
 type _Turned = TurnStarted | TurnFinished | TurnRefused | OfferRefused
@@ -194,7 +196,7 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS, diff: bool = True) ->
     match event:
         case Batch(items=items):
             return tuple(line for item in items for line in render(item, focus=focus, diff=diff))
-        case AssistantText() | AssistantDelta() | ToolCalled() | ToolReturned():
+        case AssistantText() | AssistantDelta() | AssistantThought() | ToolCalled() | ToolReturned():
             rows = _said(event)
         case Usage() | AnswerCut():
             rows = _asking(event)
@@ -256,6 +258,8 @@ class Fold:
     _who: str
     _turn: int
     _streamed: bool
+    #: Which half of the answer the text being held belongs to, so it is closed as what it was.
+    _part: Role
 
     def __init__(self, *, markdown: bool = False) -> None:
         self._markdown = markdown
@@ -265,6 +269,7 @@ class Fold:
         self._who = ""
         self._turn = 0
         self._streamed = False
+        self._part = "assistant"
 
     def push(self, event: AnyEvent, *, focus: str = DEFAULT_FOCUS, width: int = DEFAULT_WIDTH) -> Painted:
         """What this event puts on the screen, in the order it is written.
@@ -282,7 +287,9 @@ class Fold:
                 lines += self.push(item, focus=focus, width=width).lines
             return Painted(lines, self._window)
         if isinstance(event, AssistantDelta):
-            return self._gathered(event, focus, width)
+            return self._gathered(event, "assistant", focus, width)
+        if isinstance(event, AssistantThought):
+            return self._gathered(event, "thought", focus, width)
         if isinstance(event, AssistantText) and self._was_streamed(event):
             # The message the fragments added up to, said again: what it was still holding is finished
             # and the message itself is dropped (E94).
@@ -299,28 +306,37 @@ class Fold:
         """
         return self._closed(focus, width)
 
-    def _gathered(self, event: AssistantDelta, focus: str, width: int) -> Painted:
-        """One fragment: whatever it finished becomes final, and the rest is the window."""
+    def _gathered(self, event: AssistantDelta | AssistantThought, part: Role, focus: str, width: int) -> Painted:
+        """One fragment: whatever it finished becomes final, and the rest is the window.
+
+        ``part`` is which of the two a fragment belongs to, and it is the *closing* rule as well as the
+        drawing one: a thought and the answer it led to are two blocks, so the thought is finished the
+        moment the answer starts, and neither is held across the other.
+        """
         # Another turn talking before this one closed: nothing can be held from two turns at once, because
         # the screen is one column and only one of them can be the open one. A new turn also starts its own
-        # spacing — the blank line a block is set apart with belongs to the message it is in.
-        if (self._who, self._turn) != (event.session, event.turn):
+        # spacing — the blank line a block is set apart with belongs to the message it is in. The same goes
+        # for the other half of the answer: a thought finishes when the words begin.
+        if (self._who, self._turn) != (event.session, event.turn) or self._part != part:
             started = self._closed(focus, width).lines
             self._wrote = False
         else:
             started = ()
-        self._who, self._turn, self._streamed = event.session, event.turn, True
+        self._who, self._turn, self._part = event.session, event.turn, part
+        # Only a fragment of the *answer* makes the message that follows it one already said: a thought is
+        # never said again as a whole, so it must not make the words that come after it disappear.
+        self._streamed = self._streamed or part == "assistant"
         self._text += event.text
         if not self._markdown:
             whole, self._text = _ended(self._text)
-            return Painted(started + tuple(_named(event.session, focus, Shown(line, "assistant")) for line in whole))
+            return Painted(started + tuple(_named(event.session, focus, Shown(line, part)) for line in whole))
         blocks, self._text = markdown.chunks(self._text)
-        lines = started + tuple(line for block in blocks for line in self._block(block, focus, width))
-        window = self._rows(self._text, focus, width)
+        lines = started + tuple(line for block in blocks for line in self._block(block, part, focus, width))
+        window = self._rows(self._text, part, focus, width)
         if len(window) > WINDOW_ROWS:
             # Taller than a window may be, so it is final as it stands and the block starts again: a
             # screen that cannot take these rows back can at least stop pretending they will change.
-            lines += self._spaced(window)
+            lines += self._spaced(window, part)
             self._wrote = True
             self._text, window = "", ()
         self._window = window
@@ -333,34 +349,41 @@ class Fold:
     def _closed(self, focus: str, width: int) -> Painted:
         """Everything still being held becomes final: a line in one lane, a block in the other."""
         text, self._text, self._window = self._text, "", ()
+        part, self._part = self._part, "assistant"
+        self._streamed = False
         if not text:
             return Painted()
+        if not self._markdown and part != "assistant":
+            # A thought is a screen's business. A pipe gets the conversation — the words the model said —
+            # because a script reading a transcript is not reading a model's thinking, and a block of it
+            # with nothing to mark it off would read as something the model said (§0.13, E94).
+            return Painted()
         if self._markdown:
-            return Painted(self._block(text, focus, width))
-        return Painted((_named(self._who, focus, Shown(text, "assistant")),))
+            return Painted(self._block(text, part, focus, width))
+        return Painted((_named(self._who, focus, Shown(text, part)),))
 
-    def _block(self, block: str, focus: str, width: int) -> tuple[Shown, ...]:
+    def _block(self, block: str, part: Role, focus: str, width: int) -> tuple[Shown, ...]:
         """One closed block, set apart from what came before it the way markdown's blank line was."""
-        rows = self._rows(block, focus, width)
+        rows = self._rows(block, part, focus, width)
         if not rows:
             return ()
-        spaced = self._spaced(rows)
+        spaced = self._spaced(rows, part)
         self._wrote = True
         return spaced
 
-    def _spaced(self, rows: tuple[Shown, ...]) -> tuple[Shown, ...]:
+    def _spaced(self, rows: tuple[Shown, ...], part: Role) -> tuple[Shown, ...]:
         """A block with the blank line in front of it that its own blank line stood for.
 
         A block is rendered on its own, so the separation markdown would have drawn between two of them is
         not in either one of them; it is written here, and only where something came before.
         """
-        return (Shown("", "assistant"), *rows) if self._wrote else rows
+        return (Shown("", part), *rows) if self._wrote else rows
 
-    def _rows(self, text: str, focus: str, width: int) -> tuple[Shown, ...]:
+    def _rows(self, text: str, part: Role, focus: str, width: int) -> tuple[Shown, ...]:
         """One piece of markdown as the rows it takes — a final block and a window are drawn alike."""
         if not text.strip():
             return ()
-        return tuple(_named(self._who, focus, Shown(row, "assistant")) for row in markdown.lines(text, width=width))
+        return tuple(_named(self._who, focus, Shown(row, part)) for row in markdown.lines(text, width=width))
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,7 +502,7 @@ class Stage:
                 one = self.push(item, width=width)
                 frame = Frame(Painted(frame.said.lines + one.said.lines, one.said.window), (*frame.told, *one.told))
             return frame
-        if isinstance(event, AssistantText | AssistantDelta):
+        if isinstance(event, AssistantText | AssistantDelta | AssistantThought):
             # A fragment is the fold's in every respect, including the message it adds up to (E94).
             return Frame(said=self._fold.push(event, focus=self._session, width=width))
         if isinstance(event, Routed):
@@ -499,7 +522,7 @@ class Stage:
 
     def _said(self, event: AnyEvent, width: int) -> Painted:
         """The conversation's own rows for one event, with this stage's row where it belongs."""
-        if isinstance(event, AssistantText | AssistantDelta):
+        if isinstance(event, AssistantText | AssistantDelta | AssistantThought):
             # Only a fragment needs the fold's own rules: what it is holding, and the message it adds up
             # to (E94). Everything else is one event with its rows in it, and this is what ``Fold``
             # would have done with it — with the one answer a stage has and a fold does not.
@@ -585,6 +608,10 @@ def _said(event: _Said) -> tuple[_Row, ...]:
             # :class:`Fold`, which holds them until a newline makes a line of them, because a fragment
             # has no line in it yet (E94).
             return tuple((session, Shown(line, "assistant")) for line in (text.splitlines() or [""]))
+        case AssistantThought(session=session, text=text):
+            # A thought is drawn as one only where a person is reading a screen; :class:`Fold` is what
+            # decides that, and this is the same line for a reader that asked for it directly.
+            return tuple((session, Shown(line, "thought")) for line in (text.splitlines() or [""]))
         case ToolCalled(session=session, tool=tool, intention=intention):
             text = f"calling {tool}" + (f": {intention}" if intention else "")
             return ((session, Shown(text, "tool")),)
@@ -995,6 +1022,7 @@ STYLES: dict[Role, str] = {
     "notice": "ansibrightblack",
     "refusal": "ansired",
     "usage": "ansibrightblack",
+    "thought": "italic ansibrightblack",
     "added": "ansigreen",
     "removed": "ansired",
 }

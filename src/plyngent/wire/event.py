@@ -500,6 +500,26 @@ class AssistantDelta(Event, tag="assistant-delta", frozen=True, kw_only=True):
     text: str = ""
 
 
+class AssistantThought(Event, tag="assistant-thought", frozen=True, kw_only=True):
+    """A fragment of what the model is *thinking*, which is not yet what it is saying.
+
+    Its own event rather than a flag on :class:`AssistantDelta`, because the two are two things a person
+    reads differently and one of them may be read at all while the other is not: a client that draws the
+    answer progressively may drop these entirely, and a client that keeps them must not mix them into the
+    answer's text. Nothing here is journaled either — the thinking a turn stands behind is a field of the
+    message it wrote (:class:`~plyngent.kernel.model.Thought`), and this is only the part of it that had
+    arrived when it arrived (E145).
+
+    It is emitted for a streamed thought and for a whole one alike: a route that cannot stream sends its
+    thinking as one piece of this event and nothing more, so there is no second vocabulary to learn for
+    the case where the answer did not arrive in pieces.
+    """
+
+    session: str = ""
+    turn: int = 0
+    text: str = ""
+
+
 class ToolCalled(Event, tag="tool-called", frozen=True, kw_only=True):
     """The model asked for a tool, and the call is about to be made.
 
@@ -618,6 +638,7 @@ type AnyEvent = (
     | KernelLeaving
     | AssistantText
     | AssistantDelta
+    | AssistantThought
     | ToolCalled
     | ToolReturned
     | OfferRefused
