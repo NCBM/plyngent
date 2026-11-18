@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from plyngent.wire.ask import AnyAnswer, AnyAsk, Invocation, Returned
+    from plyngent.wire.bind import Bind
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent, Entry
     from plyngent.wire.flow import Ack
@@ -40,12 +41,23 @@ if TYPE_CHECKING:
 class KernelLink(Protocol):
     """What a client holds: one connection, and no way to speak as the kernel.
 
-    ``manifest`` is filled before the value is handed over, so there is no handshake call to forget:
-    whichever transport knows how to ask for it (a socket, a pipe) does so once, at connect, and the
-    client reads the same field either way (R2.1 D7).
+    ``manifest`` is filled before the value is handed over, so reading what the kernel is needs no
+    handshake call: whichever transport knows how to ask for it (a socket, a pipe) does so once, at
+    connect, and the client reads the same field either way (R2.1 D7). What the kernel learns about the
+    client is the other direction and *is* a call — :meth:`bind` — because it is a value somebody has to
+    send: a connection that skipped it is one no kernel serves.
     """
 
     manifest: KernelManifest
+
+    def bind(self, bind: Bind) -> bool:
+        """Say which version of the contract this client speaks, before anything else is sent.
+
+        One value, once: a kernel is entitled to refuse a connection it cannot read, so a client whose
+        version a kernel does not speak must be able to say so without having sent a command. ``False``
+        is the connection already being gone, and it is not a receipt for the version.
+        """
+        ...
 
     def submit(self, command: AnyCommand) -> bool:
         """Hand a command over; ``False`` when this connection is already gone.
@@ -146,6 +158,16 @@ class KernelSide(Protocol):
     """
 
     manifest: KernelManifest
+
+    async def declared(self) -> Bind | None:
+        """Read the one value a client owes before it may be served, or ``None`` if it never came.
+
+        This is the kernel's half of :meth:`KernelLink.bind`, and it is read once: what a client is does
+        not change while a connection lives, and a second declaration would be a second opinion about
+        the same thing. ``None`` is the client leaving without saying anything, which a kernel answers
+        the way it answers a version it does not speak — by not serving the connection.
+        """
+        ...
 
     def emit(self, event: AnyEvent) -> None:
         """Say something outward without waiting for anyone to see it."""

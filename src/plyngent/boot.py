@@ -46,8 +46,9 @@ from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
+from plyngent.wire.bind import Bind
 from plyngent.wire.frame import Wire
-from plyngent.wire.manifest import CLIENT_OFFER, KernelManifest, command_specs
+from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION, KernelManifest, command_specs
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -218,11 +219,11 @@ class Installed:
             )
             serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
             self._others.append(_Held(serving, link, task))
-            return link
+            return _begun(link)
         far = await local.connect(self._listening.endpoint)
         near = await self._listening.accept()
         held = _accepted(self._kernel, near, manifest=manifest)
-        client = Link(far, manifest=await _greeting(far), ledger=self._kernel.ledger)
+        client = _begun(Link(far, manifest=await _greeting(far), ledger=self._kernel.ledger))
         self._others.append(_Held(held.serving, held.link, held.task, (near, far), client))
         return client
 
@@ -391,13 +392,13 @@ async def install(
         near = await listening.accept()
         held = _accepted(kernel, near)
         link, serving, task = held.link, held.serving, held.task
-        client: KernelLink = Link(channel, manifest=await _greeting(channel), ledger=kernel.ledger)
+        client: KernelLink = _begun(Link(channel, manifest=await _greeting(channel), ledger=kernel.ledger))
         streams = (near, channel)
     else:
         link = _opened(
             InProcChannel(), kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded
         )
-        client = link
+        client = _begun(link)
         serving, task = _served(kernel.assembly, host, link, kernel.specs)
     watch = asyncio.create_task(_replace_the_broker(kernel.assembly, Declaration(PtyBroker).key))
     return Installed(
@@ -541,10 +542,13 @@ async def serve(
 async def connect(endpoint: Path | str) -> KernelLink:
     """The far end of a kernel somebody else is serving: one connection, and what it said it is.
 
-    The manifest arrives before the connection is handed over, so there is no handshake to forget: a
+    The manifest arrives before the connection is handed over, so there is one thing less to forget: a
     frontend that holds this value already knows which commands exist (R2.1 D7). What it cannot know is
     whether the program it reached is this one, which is why an address that answers and then says
-    nothing is refused here rather than failing at the first command.
+    nothing is refused here rather than failing at the first command — and why the version in that
+    manifest is compared before the value is handed over. The other half of the same exchange is this
+    client's own: :func:`_begun` says which version *it* speaks, because a kernel is entitled to the
+    same opinion about who may connect to it.
     """
     named = Path(endpoint)
     try:
@@ -559,7 +563,15 @@ async def connect(endpoint: Path | str) -> KernelLink:
         await channel.flushed()
         msg = f"{named} answered, and then said nothing about what it is"
         raise NoKernelError(msg) from None
-    return Link(channel, manifest=manifest)
+    link = Link(channel, manifest=manifest)
+    try:
+        return _begun(link)
+    except NoKernelError:
+        # A kernel this program cannot read is a connection with no future: it is closed here rather
+        # than left open behind a sentence that is about to end the run.
+        link.close()
+        await link.finished()
+        raise
 
 
 async def _assembled(
@@ -653,6 +665,28 @@ async def _assembled(
         DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         Grades() if grades is None else grades,
     )
+
+
+def _begun(link: Link) -> KernelLink:
+    """The client's half of the handshake: the kernel's version compared, this client's version said.
+
+    Two numbers, and the point of both is that neither end adapts to the other: this program can read a
+    kernel only if the kernel writes the contract it was written against, and a kernel is entitled to
+    the same opinion about this client. So a greeting that names another version is a sentence here,
+    before a single command is sent — a command is exactly the thing that would be misread — and a
+    greeting this program can read is answered with what this client is.
+
+    Nothing is waited for on the way out: what the kernel makes of the declaration arrives the way every
+    other departure does, as the connection ending.
+    """
+    if link.manifest.protocol_version != PROTOCOL_VERSION:
+        msg = (
+            f"the kernel that answered speaks version {link.manifest.protocol_version} of the contract, "
+            f"and this program speaks {PROTOCOL_VERSION}"
+        )
+        raise NoKernelError(msg)
+    _ = link.bind(Bind())
+    return link
 
 
 def _greeted(manifest: KernelManifest, channel: Channel) -> None:

@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     from plyngent.kernel.channel import Channel
+    from plyngent.wire.bind import Bind
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent, Entry
     from plyngent.wire.flow import Ack
@@ -474,6 +475,21 @@ class Link:
         if self._events.silent():
             self._hang_up()
 
+    async def declared(self) -> Bind | None:
+        """Read the one value a client owes before it may be served, or ``None`` when it never came.
+
+        Read from the lane rather than kept in a field, for the reason every other arrival here is read
+        where it arrives: in one process the two faces are one object, so a value this side stored when
+        the other side sent it would be a shortcut past the lane that no socket can honour.
+
+        The lane is not dropped on close the way a question is, because it is not something the kernel
+        waits on after it has been read: a declaration arrives at the head of the stream or it does not
+        arrive at all.
+        """
+        async for declared in cast("AsyncIterator[Bind]", self._channel.read(Wire.BIND)):
+            return declared
+        return None
+
     async def ask(self, ask: AnyAsk) -> AnyAnswer:
         """Ask somebody outside, and wait for that one answer — or for the deadline.
 
@@ -578,6 +594,15 @@ class Link:
         if self._closed:
             return False
         return self._channel.send(Wire.COMMAND, command)
+
+    def bind(self, bind: Bind) -> bool:
+        """Say which version of the contract this client speaks, and say it before anything else.
+
+        Handed over rather than compared here: the number is a claim about *this* client, and the two
+        ends are entitled to different opinions about it — a kernel that does not speak it stops serving
+        the connection, and this side learns that the way it learns every other departure: its lanes end.
+        """
+        return self._channel.send(Wire.BIND, bind)
 
     def ack(self, ack: Ack) -> None:
         """Say how far this client has rendered: the resume point and the heartbeat, in one number.

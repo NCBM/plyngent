@@ -11,12 +11,19 @@ asserted directly; everything after it is the same program as every other story.
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from plyngent.boot import NoKernelError, connect, endpoint_for, serve
+from plyngent.kernel import local
 from plyngent.kernel.local import temporary_endpoint
+from plyngent.wire.bind import Bind
+from plyngent.wire.command import Open
+from plyngent.wire.frame import Wire
+from plyngent.wire.manifest import PROTOCOL_VERSION, KernelManifest
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, text
 
@@ -131,6 +138,52 @@ async def test_an_address_nobody_is_serving_says_so(tmp_path: Path) -> None:
     """A frontend pointed at a path with nothing behind it is a sentence, not a traceback."""
     with pytest.raises(NoKernelError):
         _ = await connect(temporary_endpoint())
+
+
+async def test_a_client_that_speaks_another_version_is_not_served(daemon) -> None:
+    """A contract this kernel does not speak is a connection it cannot read, so it serves none of it.
+
+    The refusal is not a value on a lane: a refusal would have to be written *in* the contract, and this
+    is the one case where the two ends have not agreed about what the contract is. What such a client
+    gets is the connection ending — the same departure every other one is — and the greeting it has
+    already read is what says which of the two is out of date.
+    """
+    endpoint = await daemon()
+    channel = await local.connect(Path(endpoint))
+    try:
+        _ = await anext(channel.read(Wire.HELLO))
+        _ = channel.send(Wire.BIND, Bind(protocol_version=PROTOCOL_VERSION + 1))
+        _ = channel.send(Wire.COMMAND, Open(session="main"))
+
+        assert [event async for event in channel.read(Wire.EVENT)] == [], "nothing of it was served"
+    finally:
+        channel.close()
+        await channel.flushed()
+
+
+async def test_a_kernel_that_speaks_another_version_is_a_sentence(tmp_path: Path) -> None:
+    """The number in the greeting is compared before a command is sent, so a stranger is a sentence.
+
+    A command is exactly the value that would be misread, so there is nothing to try: the version is
+    compared at the handshake and an address that is not this program ends the run there.
+    """
+    named = temporary_endpoint()
+    listening = await local.Listening.at(named)
+    greeting = asyncio.create_task(_greeted_as_stranger(listening))
+    try:
+        with pytest.raises(NoKernelError, match=f"speaks version {PROTOCOL_VERSION + 1} of the contract"):
+            _ = await connect(named)
+    finally:
+        await greeting
+        await listening.stop()
+
+
+async def _greeted_as_stranger(listening: local.Listening) -> None:
+    """Answer one connection the way a kernel of a later contract would: a greeting, and nothing else."""
+    near = await listening.accept()
+    _ = near.send(Wire.HELLO, KernelManifest(protocol_version=PROTOCOL_VERSION + 1, workspace="/w"))
+    near.close()
+    await near.flushed()
 
 
 async def test_a_workspace_carries_the_name_another_program_reaches_it_by(daemon, tmp_path: Path) -> None:

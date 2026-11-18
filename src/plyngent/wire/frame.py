@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from plyngent.wire.ask import AnyAnswer, AnyAsk, Invocation, Returned
+from plyngent.wire.bind import Bind
 from plyngent.wire.command import AnyCommand
 from plyngent.wire.event import AnyEvent, Batch
 from plyngent.wire.flow import Ack
@@ -49,6 +50,10 @@ class Wire(StrEnum):
     #: because there is no other way to hand a value over before the connection is in use; one process
     #: does not, because the two faces are one object and the manifest is already theirs.
     HELLO = "hello"
+    #: Client to kernel, once, at the head of the stream: which version of the contract it speaks. It
+    #: travels on a lane of its own for the reason the greeting does — it has to be readable before
+    #: either end may read anything else, and a value a kernel cannot read must not arrive as a command.
+    BIND = "bind"
     #: Client to kernel, never dropped and never reordered.
     COMMAND = "command"
     #: Client to kernel: how far this client has rendered, and the heartbeat in one number.
@@ -86,6 +91,7 @@ KINDS: dict[Wire, int] = {
     Wire.INVOCATION: 7,
     Wire.QUERY: 8,
     Wire.REPLY: 9,
+    Wire.BIND: 10,
 }
 
 _LANES: dict[int, Wire] = {kind: wire for wire, kind in KINDS.items()}
@@ -105,6 +111,7 @@ _DECODERS: dict[Wire, msgspec.msgpack.Decoder[Any]] = {
     Wire.INVOCATION: msgspec.msgpack.Decoder(Invocation),
     Wire.QUERY: msgspec.msgpack.Decoder(AnyQuery),
     Wire.REPLY: msgspec.msgpack.Decoder(AnyReply),
+    Wire.BIND: msgspec.msgpack.Decoder(Bind),
 }
 
 

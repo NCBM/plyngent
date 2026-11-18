@@ -94,7 +94,7 @@ from plyngent.wire.event import (
     TurnKind,
     TurnRefused,
 )
-from plyngent.wire.manifest import CLIENT_OFFER
+from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION
 from plyngent.wire.query import (
     Forest,
     Grants,
@@ -177,6 +177,14 @@ class Serving:
     async def run(self) -> None:
         """Be this connection's kernel until the client stops asking, then let the host go.
 
+        The first thing it does is read what the client declared itself to be, because a connection this
+        kernel cannot read is not one it may serve: a client that speaks another version of the contract
+        has not sent a command these shapes describe, and a client that says nothing has agreed to
+        nothing. Both are answered the same way — the connection ends before a session exists — and
+        neither is answered *in words*, because a refusal would have to be written in the contract, and
+        this is the one case where the two ends have not agreed about it. The kernel's own version is in
+        the greeting, so which of the two is out of date is the client's to say.
+
         The loop ends for one of two reasons and both mean the same thing here: the client closed the
         connection, or :meth:`stop` did. Either way the questions in flight have already been refused
         by the link, and the only thing left to undo is who answers them.
@@ -185,6 +193,10 @@ class Serving:
         behind a turn: a client asking what it may reach is answered while a model is still thinking,
         and neither question is the other's business.
         """
+        declared = await self.link.declared()
+        if declared is None or declared.protocol_version != PROTOCOL_VERSION:
+            self.link.close()
+            return
         await self._attach()
         reading = asyncio.create_task(self._reading())
         try:

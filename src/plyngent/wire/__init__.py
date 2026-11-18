@@ -10,6 +10,7 @@ Four kinds of traffic, and the difference between them is what a transport may d
 ============================  ==============  ===========================================
 what                          direction       what a transport may do
 ============================  ==============  ===========================================
+:class:`Bind`                 client → kernel once, at the head; nothing else may be read first
 :class:`Command`              client → kernel never dropped, never reordered
 :class:`Event`                kernel → client may be coalesced into a :class:`Batch`
 :class:`AnyAsk` / :class:`AnyAnswer`  both            never dropped, correlated, has a deadline
@@ -56,6 +57,7 @@ from plyngent.wire.ask import Severity as Severity
 from plyngent.wire.ask import Written as Written
 from plyngent.wire.ask import answer_kind as answer_kind
 from plyngent.wire.ask import unanswered as unanswered
+from plyngent.wire.bind import Bind as Bind
 from plyngent.wire.command import AnyCommand as AnyCommand
 from plyngent.wire.command import Cancel as Cancel
 from plyngent.wire.command import Close as Close
