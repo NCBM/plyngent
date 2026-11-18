@@ -7,12 +7,14 @@ was refused, never from this module.
 
 Two refusals, and the difference is the whole point of having two:
 
-* :class:`OutsideWorkspace` — no root and no grant covers the path. A grant (or a temporary
-  workspace) can lift it, so the tool layer that knows those tools says so. The names travel back on
-  the refusal, with the one argument a refusal can fill in for each: this module does not compose
-  sentences about tools it cannot see.
+* :class:`OutsideWorkspace` — no root and no grant covers the path. A grant can lift it, so the tool
+  layer that knows those tools says so. The names travel back on the refusal, with the one argument a
+  refusal can fill in for each: this module does not compose sentences about tools it cannot see.
 * :class:`Denied` — the configured path denylist matches. No grant lifts it, and a tool must not
   offer one.
+
+A temporary workspace is not a root here: it belongs to the conversation that asked for it, so it is the
+caller's own scratch that reaches it and nobody else's (E152).
 
 The root is taken as given rather than checked: a root that is gone is a problem for the tools that
 touch it, and a workspace whose directory was unmounted must not fail to exist.
@@ -31,7 +33,7 @@ from plyngent.kernel.paths import normalize
 from plyngent.kernel.temps import TempWorkspaces
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
 
 class PathRefused(Exception):  # noqa: N818 — a refusal is the workspace's answer, not a fault
@@ -151,7 +153,12 @@ class Workspace:
         self._apply(config)
 
     def close(self) -> None:
-        """Let go of what the workspace owns; the host calls this on its way down."""
+        """Let go of what the workspace owns; the host calls this on its way down.
+
+        Every conversation's scratch goes with it, because the host is what counted them: a session that
+        is closed reclaims its own (:meth:`~plyngent.kernel.serving.Serving._close`), and this is the one
+        that catches the rest (E152).
+        """
         _ = self.temps.clear()
 
     def _apply(self, config: WorkspaceConfig) -> None:
@@ -168,15 +175,22 @@ class Workspace:
         need: AccessMode = AccessMode.WRITE,
         *,
         grants: Mapping[Path, AccessMode] | None = None,
+        scratch: str | None = None,
     ) -> Path:
         """Resolve *path* to an absolute path this workspace allows, or refuse it.
 
-        Relative paths resolve against :attr:`root`; an absolute path is taken as it is. ``need`` is
-        what the caller is about to do with the result, and ``grants`` are the extra ``path → mode``
-        tables of whoever is asking — the session's, typically — passed in rather than reached for.
+        Relative paths resolve against :attr:`root`; an absolute path is taken as it is. ``need`` is what
+        the caller is about to do with the result, and ``grants`` are the extra ``path → mode`` tables of
+        whoever is asking — the session's, typically — passed in rather than reached for. ``scratch`` is
+        the caller's own conversation, and it is the only one whose temporary workspace this call may
+        reach: a directory somebody else asked for is not a root, it is somebody else's (E152).
         """
         resolved = normalize(path, base=self.root)
-        if not self.under_roots(resolved) and not self.access.covers(resolved, need, extra=grants):
+        if (
+            not self.under_roots(resolved)
+            and not self.under_scratch(resolved, scratch)
+            and not self.access.covers(resolved, need, extra=grants)
+        ):
             raise OutsideWorkspace(
                 Path(path),
                 resolved=resolved,
@@ -189,12 +203,18 @@ class Workspace:
         return resolved
 
     def under_roots(self, resolved: Path) -> bool:
-        """Whether *resolved* is under the root or under one of the extra roots.
+        """Whether *resolved* is under the root every conversation of this host works in."""
+        return resolved == self.root or resolved.is_relative_to(self.root)
 
-        The extra roots are the temporary workspaces; they arrive with the object that owns them,
-        so a caller never passes a root list around.
+    def under_scratch(self, resolved: Path, owner: str | None) -> bool:
+        """Whether *resolved* is under one of the temporary workspaces one conversation asked for.
+
+        ``None`` is a caller with no conversation of its own — nothing here is reachable then, which is
+        the strict half of "a scratch belongs to whoever asked for it".
         """
-        return any(resolved == root or resolved.is_relative_to(root) for root in self._roots())
+        if owner is None:
+            return False
+        return any(resolved == one or resolved.is_relative_to(one) for one in self.temps.paths(owner))
 
     def denied_by(self, resolved: Path, *, directory: bool = False) -> str | None:
         """The denylist pattern *resolved* matches, or ``None``.
@@ -210,7 +230,3 @@ class Workspace:
             if pattern and pattern.replace("\\", "/") in text:
                 return pattern
         return None
-
-    def _roots(self) -> Sequence[Path]:
-        """The root first, then whatever else this workspace allows wholesale."""
-        return (self.root, *self.temps.paths())

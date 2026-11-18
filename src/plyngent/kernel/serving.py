@@ -581,12 +581,21 @@ class Serving:
         )
 
     async def _close(self, session: str) -> None:
-        """Stop serving a session; its PTYs go back to the host on the way down."""
+        """Stop serving a session: its PTYs go back to the host, and its scratch goes with it.
+
+        Scratch outlives a turn and not a conversation (E152), so this is where it is reclaimed: the
+        directories were made for this session and no other conversation could reach them, and keeping
+        them until the host went down would hold the slots of sessions nobody has open any more.
+        """
         declaration = self._declaration(session)
         declared = self.assembly.keys()
         if declaration.key not in declared:
             return
+        found = self._session(session)
+        workspace = None if found is None else found.host.workspace
         _ = await self.assembly.evict(declaration.key)
+        if workspace is not None:
+            _ = workspace.temps.clear(owner=session)
 
     # -- what a client offers ------------------------------------------------------
 

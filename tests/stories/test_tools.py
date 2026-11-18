@@ -479,6 +479,34 @@ async def test_a_temporary_workspace_is_written_in_and_gone_when_the_host_stops(
     assert not made[0].exists(), "the scratch directory goes when the host does"
 
 
+async def test_closing_a_conversation_takes_its_scratch_with_it(story_with: Scripted) -> None:
+    """A scratch belongs to the conversation that asked for it, and its lifetime is that conversation's.
+
+    The slot it holds is the reason this is a rule and not tidiness: a conversation that spent the host's
+    allowance and then went away used to leave the next one with a refusal until the process ended (E152).
+    """
+    made: list[Path] = []
+
+    def scratch(request: Request) -> Reply:
+        made.append(_made(request))
+        return text("made one")
+
+    story = await story_with(calling("new_temporary_workspace", {"prefix": "story"}), scratch)
+    try:
+        await story.require("fs")
+        await story.type("make me somewhere to work")
+        await story.finished()
+
+        assert made[0].is_dir(), "the directory the tool handed out"
+
+        await story.type("/close")
+        await story.settle()
+
+        assert not made[0].exists(), "the conversation that asked for it is gone, so it is too"
+    finally:
+        await story.close()
+
+
 async def test_a_write_makes_the_directories_it_needs(story_with: Scripted) -> None:
     story = await story_with(calling("write_file", {"path": "a/b/c.txt", "content": "hi"}), text("done"))
 

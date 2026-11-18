@@ -130,11 +130,26 @@ class Env:
         """Resolve *path* the way every path tool does: with this conversation's own grants.
 
         The one way to ask, so that a path a person allowed once resolves the same way in every tool —
-        and so that no tool has to remember to pass a table it cannot reach. Granted by
-        :attr:`Res.PATHS`, because the grants are a path tool's business rather than the history's.
+        and so that no tool has to remember to pass a table it cannot reach. ``scratch`` is the same
+        conversation's own temporary workspaces, which is the only scratch this call may reach: one
+        conversation cannot read another's (E152). Granted by :attr:`Res.PATHS`, because the grants are a
+        path tool's business rather than the history's.
         """
         self._granted(Res.PATHS, "resolve")
-        return self._ctx.host.workspace.resolve(path, need, grants=self._ctx.session.grants)
+        return self._ctx.host.workspace.resolve(
+            path, need, grants=self._ctx.session.grants, scratch=self._ctx.session.session_id
+        )
+
+    @property
+    def scratch(self) -> str:
+        """Which conversation's scratch space this call belongs to.
+
+        The name a temporary workspace is made for, and the one whose directories :meth:`resolve` will
+        reach: a scratch belongs to whoever asked for it, so the tool that makes one has to say who is
+        asking (E152). Granted by :attr:`Res.PATHS`.
+        """
+        self._granted(Res.PATHS, "scratch")
+        return self._ctx.session.session_id
 
     @property
     def grants(self) -> Mapping[Path, AccessMode]:

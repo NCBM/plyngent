@@ -1,14 +1,18 @@
-"""Scratch directories, owned by one host and removed by it.
+"""Scratch directories, owned by one conversation and removed with it.
 
-A temporary workspace is a real directory under the system temp dir plus the host's promise to hand
-it to tools: paths inside it resolve like paths inside the workspace root. When the host goes down
-the directories go with it — for good, not to the trash, because nobody restores scratch space and a
-trash on the temp volume would only collect it.
+A temporary workspace is a real directory under the system temp dir plus a host's promise to hand it to
+one conversation's tools: paths inside it resolve like paths inside the workspace root, for the
+conversation that asked and for nobody else. Ownership is not decoration — a scratch nobody else may name
+is what a scratch *is* — and a directory with no owner is one that three questions cannot answer: who may
+reach it, how long it lives, and what a sentence about it disappearing would even be about.
 
-The limit exists because every temporary workspace is also an entry in a listing a human reads, and a
-few of them are useful while a thousand are noise. It is per host, like everything else here: two
-hosts in one process do not share a directory, do not share a count, and do not clean up each
-other's scratch space.
+The directories go with their conversation: when it is closed, or when the host goes down. Removal is for
+good rather than to the trash, because nobody restores scratch space and a trash on the temp volume would
+only collect it (E152).
+
+The limit exists because every temporary workspace is also an entry in a listing a human reads, and a few
+of them are useful while a thousand are noise. It is per host, like the counters beside it: two hosts in
+one process do not share a directory, do not share a count, and do not clean up each other's scratch.
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from plyngent.kernel.cancel import Scope
 
 # Max concurrent temporary workspaces one host may hand out.
@@ -39,28 +45,37 @@ class TooManyWorkspacesError(TempWorkspaceError):
 
 
 class TempWorkspaces:
-    """The scratch directories one host owns, in the order they were created."""
+    """The scratch directories one host owns, in the order they were created, each with its owner.
+
+    The owner is a session id, and nothing here knows what a session is: this is a table of which
+    conversation asked for which directory, and the one thing it is for is that a directory can be
+    named, counted, and removed one conversation at a time.
+    """
 
     limit: int
-    _owned: list[Path]
+    _owned: dict[Path, str]
 
     def __init__(self, limit: int = MAX_TEMPORARY_WORKSPACES) -> None:
         self.limit = limit
-        self._owned = []
+        self._owned = {}
 
-    def paths(self) -> tuple[Path, ...]:
-        """The directories tools may reach, for a workspace's root list."""
-        return tuple(self._owned)
+    def paths(self, owner: str) -> tuple[Path, ...]:
+        """The directories one conversation may reach."""
+        return tuple(path for path, held in self._owned.items() if held == owner)
 
-    def owned(self) -> tuple[Path, ...]:
-        """The directories this host created, and so has to remove."""
-        return tuple(self._owned)
+    def count_for(self, owner: str) -> int:
+        """How many directories one conversation holds — what "its scratch went away" is counted in."""
+        return sum(1 for held in self._owned.values() if held == owner)
+
+    def owner_of(self, path: Path | str) -> str | None:
+        """Which conversation a directory belongs to, or ``None`` when this host did not make it."""
+        return self._owned.get(_resolved(path))
 
     def __len__(self) -> int:
         return len(self._owned)
 
-    async def create(self, prefix: str = _DEFAULT_PREFIX, *, scope: Scope) -> Path:
-        """Make a scratch directory under the system temp dir and hand it out.
+    async def create(self, prefix: str = _DEFAULT_PREFIX, *, owner: str, scope: Scope) -> Path:
+        """Make a scratch directory under the system temp dir and hand it to one conversation.
 
         Making a directory is a blocking call, so it runs off the loop: a host that stalled its own
         turns on a filesystem syscall would be a host whose PTY reads stopped too. It runs on *scope*'s
@@ -76,32 +91,41 @@ class TempWorkspaces:
         except OSError as exc:
             msg = f"failed to create temporary workspace: {exc}"
             raise TempWorkspaceError(msg) from exc
-        self._owned.append(created)
+        self._owned[created] = owner
         return created
 
     def release(self, path: Path | str) -> None:
-        """Stop handing out *path*; the directory itself is left where it is."""
-        resolved = Path(path).expanduser().resolve()
-        while resolved in self._owned:
-            self._owned.remove(resolved)
+        """Stop handing out *path*: the directory is gone, or it moved out of scratch space.
 
-    def clear(self) -> int:
-        """Remove every owned directory; returns how many were removed from disk.
+        Silent for a path this host did not make, which is the ordinary case rather than an error: every
+        delete hands its target here, and almost none of them is a scratch directory.
+        """
+        _ = self._owned.pop(_resolved(path), None)
 
-        Only a path still under the system temp dir is deleted. Anything else is unregistered and
-        left alone: a directory that moved out of scratch space is no longer ours to remove, and the
-        honest answer there is to forget it, not to delete it.
+    def clear(self, owner: str | None = None) -> int:
+        """Remove one conversation's directories — or every one of them — saying how many left the disk.
+
+        Only a path still under the system temp dir is deleted. Anything else is unregistered and left
+        alone: a directory that moved out of scratch space is no longer ours to remove, and the honest
+        answer there is to forget it, not to delete it.
         """
         removed = 0
-        owned = tuple(self._owned)
-        self._owned.clear()
-        for path in owned:
+        gone: Sequence[Path] = tuple(self._owned)
+        for path in gone:
+            if owner is not None and self._owned.get(path) != owner:
+                continue
+            del self._owned[path]
             if not under_system_temp(path):
                 continue
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
                 removed += 1
         return removed
+
+
+def _resolved(path: Path | str) -> Path:
+    """A path spelled the way this table spells it: the one thing every key here is stored as."""
+    return Path(path).expanduser().resolve()
 
 
 def _sanitize_prefix(prefix: str) -> str:

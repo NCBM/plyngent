@@ -311,7 +311,11 @@ async def request_directory_access(env: Env, args: AccessArgs) -> ToolResult:
         return lifted(Denied(target, denied))
     need = _MODES[args.mode]
     shown = display(target, root=workspace.root)
-    if workspace.under_roots(target) or workspace.access.covers(target, need, extra=env.grants):
+    if (
+        workspace.under_roots(target)
+        or workspace.under_scratch(target, env.scratch)
+        or workspace.access.covers(target, need, extra=env.grants)
+    ):
         return ToolResult.ok(f"already accessible: {shown}")
     if len(env.grants) >= MAX_GRANTS:
         return ToolResult.of(
@@ -348,7 +352,7 @@ class TemporaryArgs(ToolArgs, kw_only=True):
 async def new_temporary_workspace(env: Env, args: TemporaryArgs) -> ToolResult:
     """Hand out one scratch directory under the system temp dir, and say where it is."""
     try:
-        made = await env.workspace.temps.create(args.prefix, scope=env.scope())
+        made = await env.workspace.temps.create(args.prefix, owner=env.scratch, scope=env.scope())
     except TooManyWorkspacesError as exc:
         return ToolResult.of(Failure.LIMIT, str(exc))
     except TempWorkspaceError as exc:
@@ -618,6 +622,10 @@ async def _deleted(env: Env, target: Path, args: DeleteArgs) -> ToolResult:
         return ToolResult.of(Failure.BLOCKED, exc.trouble.said, hints=_trash_hint(exc.trouble))
     except OSError as exc:
         return ToolResult.of(Failure.of(exc), f"delete failed: {exc}", effects=Effects(changed=(target,)))
+    # A directory this host handed out as scratch stops being one when it is gone, which is what gives
+    # the slot back: nothing else ever removed one, so a conversation that deleted its own scratch would
+    # otherwise keep the room counted until the host went down (E152).
+    env.workspace.temps.release(target)
     return ToolResult.ok(f"deleted {summary} {args.path}", effects=Effects(changed=(target,)))
 
 

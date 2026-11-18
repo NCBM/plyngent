@@ -479,7 +479,12 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
         if role not in _ACCESS or not isinstance(value, str) or not value:
             continue
         try:
-            held.append(Held(workspace.resolve(value, _ACCESS[role], grants=grants), role))
+            held.append(
+                Held(
+                    workspace.resolve(value, _ACCESS[role], grants=grants, scratch=ctx.session.session_id),
+                    role,
+                )
+            )
         except PathRefused:
             refused = True
     return tuple(held), refused

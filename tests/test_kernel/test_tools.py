@@ -41,9 +41,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _Session:
-    """As much of a session as a path tool needs: no grants, since nothing here was allowed one."""
+    """As much of a session as a path tool needs: no grants, since nothing here was allowed one.
+
+    ``session_id`` is what a temporary workspace is made for and the only owner whose scratch a call may
+    reach (E152), so it is here even though none of these tests makes one.
+    """
 
     grants: dict[Path, AccessMode] = field(default_factory=dict)
+    session_id: str = "s1"
 
 
 @dataclass(frozen=True)
