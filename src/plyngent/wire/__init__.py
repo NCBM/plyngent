@@ -65,6 +65,7 @@ from plyngent.wire.command import Command as Command
 from plyngent.wire.command import Compact as Compact
 from plyngent.wire.command import Export as Export
 from plyngent.wire.command import Goal as Goal
+from plyngent.wire.command import Inherit as Inherit
 from plyngent.wire.command import ListSessions as ListSessions
 from plyngent.wire.command import Offer as Offer
 from plyngent.wire.command import OfferedTool as OfferedTool

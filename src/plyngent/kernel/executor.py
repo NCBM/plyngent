@@ -371,7 +371,7 @@ class ToolExecutor:
         if asking.posture is Posture.AUTO or node.refused:
             return None
         subjects, scoped = _subjects(ctx, spec, node.args, asking.remember, node.held)
-        approvals = ctx.host.approvals
+        approvals = ctx.session.approvals
         if not approvals.needs(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity):
             return None
         question = f"allow {spec.name}" + (f" on {subjects}" if subjects else "") + "?"
@@ -387,7 +387,7 @@ class ToolExecutor:
             return ToolResult.unagreed(answer, about="this call")
         if answer.by is not By.POLICY:
             # A policy's yes is not a person's: it is what this program was started to do, so it says
-            # nothing about the next call and is not written into what this host has been told.
+            # nothing about the next call and is not written into what this conversation has been told.
             approvals.agree(asking.posture, remember=asking.remember, key=scoped, severity=asking.severity)
         return None
 
@@ -427,9 +427,9 @@ def _subjects(
     """What an approval of this call is about: something to say, and something to remember it by.
 
     A path is keyed by :func:`~plyngent.kernel.paths.key` — the same normalization a lock uses — so
-    ``a/../b`` and ``b`` are one approval. A session names itself, because the table belongs to the host
-    and an approval in one conversation must not answer for another. A host-scoped approval covers
-    everything, so its key is empty: there is only one host.
+    ``a/../b`` and ``b`` are one approval. A conversation-wide approval is keyed by nothing, because the
+    table it is written into already belongs to that conversation (E156); its row still differs from a
+    ``Remember.HOST`` one, since the scope a person meant is part of the key.
 
     A tool whose subject is one of its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.subject`)
     names that value instead, so the person is asked about the one skill or directory the call is about
@@ -449,7 +449,9 @@ def _subjects(
         if isinstance(named, str) and named:
             return named, (named,)
     if remember is Remember.SESSION:
-        return ctx.session.session_id, (ctx.session.session_id,)
+        # The table is this conversation's, so "this session" needs no name in the key; the sentence a
+        # person reads still says which conversation, because that is what is being asked about.
+        return ctx.session.session_id, ()
     return "", ()
 
 

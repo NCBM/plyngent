@@ -58,6 +58,7 @@ from plyngent.wire.command import (
     Compact,
     Export,
     Goal,
+    Inherit,
     ListSessions,
     Offer,
     Open,
@@ -369,8 +370,8 @@ class Serving:
     async def _serving(self, command: Open | Close) -> None:
         """The two commands that say which conversations this kernel serves: admit one, or evict one."""
         match command:
-            case Open(session=session, seed_from=seed):
-                await self._open(session, seed)
+            case Open(session=session, seed_from=seed, inherit=inherit):
+                await self._open(session, seed, inherit)
             case Close(session=session):
                 await self._close(session)
 
@@ -511,13 +512,19 @@ class Serving:
             case Prune(session=session, targets=targets, reason=reason):
                 await self._prune(session, targets, reason)
 
-    async def _open(self, session: str, seed_from: tuple[str, str] | None) -> None:
+    async def _open(self, session: str, seed_from: tuple[str, str] | None, inherit: Inherit) -> None:
         """Start serving a session, unless it is already served — and, if asked, from another's text.
 
         ``Open`` is idempotent because a frontend that reattaches has the same session in mind; what it
         may not have is a second copy of it. Seeding is the one form that needs entries to point at, so it
         is done first: a copy that refused has written nothing, and the session is not admitted either,
         because an empty conversation would be a worse answer than the reason.
+
+        ``inherit`` is what the new conversation is told to carry besides the text, and
+        ``Inherit.APPROVALS`` is the only value that carries anything: the answers the source was given
+        move into the new conversation's table. It happens after the session is admitted because a
+        conversation's approvals are the session's own (E156); a source this kernel is not serving has no
+        table to carry, which is the same answer as asking about a conversation nobody has open.
 
         The opening answers with the route this session stands at, whether or not it was already
         served: a client that has just attached is told where it is rather than having to ask, and the
@@ -529,7 +536,22 @@ class Serving:
         declared = self.assembly.keys()
         if declaration.key not in declared:
             _ = await self.assembly.admit(declaration)
+        if seed_from is not None and inherit is Inherit.APPROVALS:
+            self._carry_approvals(session, seed_from[0])
         self._say_route(session)
+
+    def _carry_approvals(self, session: str, source: str) -> None:
+        """Give *session* every answer *source* was given, and nothing else.
+
+        Two sessions this kernel is not serving have nothing to move between them, so a missing one is
+        not a refusal: the conversation that is here simply starts with the questions still to be asked,
+        which is the conservative half of the same rule.
+        """
+        target = self._session(session)
+        earlier = self._session(source)
+        if target is None or earlier is None:
+            return
+        target.approvals.inherit(earlier.approvals)
 
     async def _seed(self, session: str, source: str, entry: str) -> bool:
         """Fill a conversation with another one's text, and answer whether it happened.

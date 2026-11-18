@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.model import Result
 from plyngent.kernel.trail import Consent
+from plyngent.wire.command import Inherit, Open, Submit
 from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
@@ -181,3 +182,76 @@ async def test_reading_is_never_asked_about(story_with: Scripted) -> None:
     await story.until("listdir ok")
 
     assert story.questions() == (), "a read changes nothing, so there is nothing to agree to"
+
+
+async def test_a_conversation_opened_beside_it_is_asked_the_same_question(story_with: Scripted) -> None:
+    """A yes answers the conversation that gave it, so the one beside it starts over (E156)."""
+    story = await _written_once(story_with)
+
+    await _opened(story, "beside", Inherit.NONE)
+    await _says(story, "beside", "change it again")
+    await story.answer("y")
+    await story.settle()
+
+    assert [question.prompt for question in story.questions()] == [
+        "allow edit_replace on notes.txt?",
+        "allow edit_replace on notes.txt?",
+    ], "the same call on the same path, asked again because it is another conversation's to answer"
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "three"
+
+
+async def test_a_seeded_conversation_is_asked_the_questions_again(story_with: Scripted) -> None:
+    """Text travels by default and answers do not: the copy has to hear the question for itself."""
+    story = await _written_once(story_with)
+
+    await _opened(story, "copy", Inherit.NONE)
+    await _says(story, "copy", "change it again")
+    await story.answer("y")
+    await story.settle()
+
+    assert [question.prompt for question in story.questions()] == ["allow edit_replace on notes.txt?"] * 2
+
+
+async def test_carrying_the_answers_into_the_copy_is_said_on_the_command(story_with: Scripted) -> None:
+    """``inherit=approvals`` is the one thing a client may ask to carry besides the text (E156)."""
+    story = await _written_once(story_with)
+
+    await _opened(story, "copy", Inherit.APPROVALS)
+    await _says(story, "copy", "change it again")
+    await story.settle()
+
+    assert [question.prompt for question in story.questions()] == ["allow edit_replace on notes.txt?"], (
+        "the answer the source was given covers the copy, so nobody is asked twice about it"
+    )
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "three"
+
+
+async def _written_once(story_with: Scripted) -> Story:
+    """A conversation that was allowed one change, with a second turn's script left to run."""
+    story = await story_with(
+        calling("edit_replace", {"path": "notes.txt", "old_string": "one", "new_string": "two"}),
+        text("changed"),
+        calling("edit_replace", {"path": "notes.txt", "old_string": "two", "new_string": "three"}),
+        text("changed again"),
+    )
+    _ = (story.workspace / "notes.txt").write_text("one", encoding="utf-8")
+
+    await story.type("change the note")
+    await story.answer("y")
+    await story.finished(1)
+    return story
+
+
+async def _opened(story: Story, name: str, inherit: Inherit) -> None:
+    """Open a conversation beside this one, carrying its text and — if asked — the answers it was given."""
+    head = await story.host.trail.head(story.session)
+    assert head is not None, "the conversation this story is in has written nothing to copy"
+    opened = Open(session=name, seed_from=(story.session, head.id), inherit=inherit)
+    assert story.client.submit(opened), "the connection was already gone, so the open went nowhere"
+    await story.settle()
+
+
+async def _says(story: Story, session: str, said: str) -> None:
+    """Say one line in a conversation this frontend is not the view of: a turn is per session."""
+    assert story.client.submit(Submit(session=session, text=said)), "the connection was already gone"
+    await story.settle()

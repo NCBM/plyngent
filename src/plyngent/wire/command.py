@@ -16,6 +16,8 @@ a fresh session" is — ``Compact`` itself never knows a session exists.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from msgspec import Struct
 
 from plyngent.wire.event import GoalMode, TurnKind
@@ -28,15 +30,32 @@ class Command(Struct, frozen=True, kw_only=True, tag_field="cmd"):
     session: str = ""
 
 
+class Inherit(StrEnum):
+    """What a new conversation is told to carry over from the one it is copied from.
+
+    ``NONE`` is the default and means the text and nothing else: a conversation that inherits another's
+    grants, plan or approvals on its own would be a permission somebody else granted, wearing the shape
+    of convenience. ``APPROVALS`` is the one exception a client may *ask* for, and the case it exists for
+    is compaction: a person who just had the same conversation folded into a new one should not be asked
+    the same questions again (E156).
+    """
+
+    NONE = "none"
+    APPROVALS = "approvals"
+
+
 class Open(Command, tag="open", frozen=True, kw_only=True):
     """Start a conversation, or copy another one's text into it.
 
     ``seed_from`` is ``(session, entry)`` where ``entry`` is the **last** entry of the chain to copy.
-    Only the projected text travels: no pointer, no grants, no todo, no route, no name. A new session
-    inheriting another's approvals would be a privilege escalation dressed as convenience.
+    Only the projected text travels: no pointer, no grants, no todo, no route, no name. ``inherit`` is
+    what a client may ask to carry beside the text, and ``APPROVALS`` is the only value that carries
+    anything — said explicitly, because a permission that widens without being asked for is not
+    convenience but an escalation (E156).
     """
 
     seed_from: tuple[str, str] | None = None
+    inherit: Inherit = Inherit.NONE
 
 
 class Close(Command, tag="close", frozen=True, kw_only=True):

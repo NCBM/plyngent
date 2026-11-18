@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, override
 from composat import Component, require
 
 # Not type-only imports: ``require()`` resolves each field's annotation from this module's globals.
-from plyngent.kernel.approvals import Approvals
 from plyngent.kernel.client import Offers  # noqa: TC001
 from plyngent.kernel.documents import Documents  # noqa: TC001
 from plyngent.kernel.events import HumanChannel  # noqa: TC001
@@ -79,10 +78,6 @@ class Host(Component):
     # registry's: the registry holds children, and a decision about whether a person has to agree is not
     # a fact about a child.
     pty_policy: PtyPolicy
-    # What this host has already been told it may do, keyed by what a person means by "don't ask again".
-    # A plain field rather than a component: it is a table with no lifecycle, and the host is what lives
-    # exactly as long as an approval should.
-    approvals: Approvals
     # Which machines this host has already been told it may contact, and which requests have to be agreed
     # to at all. Its own table rather than a row in ``approvals``: an agreement here is about one machine
     # at one port, which is not one of the four things an approval is remembered by (§0.9, E27).
@@ -123,7 +118,6 @@ class Host(Component):
         self.workspace = Workspace(root)
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
-        self.approvals = Approvals()
         self.net = NetPolicy()
         self.locks = Locks()
         self.skills = skills

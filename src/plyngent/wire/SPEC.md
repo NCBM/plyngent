@@ -81,6 +81,12 @@ client's to send: `goal` is started by the kernel when an unfinished plan says t
 (`no-goal`), and `aside` is declared and not implemented (`no-aside`). Both are refused by name, which is
 a refusal a client can be written against.
 
+`open.seed_from` is `(session, entry)` — the last entry of the chain to copy — and only the projected text
+travels: no pointer, no grants, no todo, no route, no name. `open.inherit` is an `Inherit`, `none` (the
+default) or `approvals`, and it is the one thing a client may ask to carry beside the text: a conversation
+whose predecessor was just folded into it should not put the same questions to a person again. Nothing
+else is inherited, and `approvals` has to be said explicitly.
+
 ## Reads
 
 | word | answer | what it asks |

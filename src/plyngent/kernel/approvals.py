@@ -1,19 +1,22 @@
-"""What this host has already been told it may do, keyed by what a person means by "don't ask again".
+"""What one conversation has already been told it may do, keyed by what a person means by "don't ask again".
 
-A path is not a program and neither is a session: an approval to change one file says nothing about
+A path is not a program and neither is a conversation: an approval to change one file says nothing about
 another, and one to type into a live terminal cannot be scoped to a file. So every entry is a
 :class:`~plyngent.kernel.toolspec.Remember` together with the subjects it covers — and nothing else: no
 expiry, no inheritance from a directory to the files under it, and no widening from one call to the next.
 
-**An entry also remembers how heavy the question was.** A yes is an answer to the question that was
-put, so it covers that call and anything no heavier: agreeing to create a file in a directory does not
-agree to replace one there, and the two arrive at the same path with the same posture. Without the
-level in the table, "once per path" is one permission however it was asked for.
+**An entry also remembers how heavy the question was.** A yes is an answer to the question that was put,
+so it covers that call and anything no heavier: agreeing to create a file in a directory does not agree to
+replace one there, and the two arrive at the same path with the same posture. Without the level in the
+table, "once per path" is one permission however it was asked for.
 
-The table has one owner (the host) even though some of its contents are session-scoped. Two tables would
-need a rule for *which one* asks, and a rule that answers "the session's" for one tool and "the host's"
-for another is how a refusal becomes an approval nobody can find. A session-scoped approval is instead a
-key that names its session: one table, no leak between sessions.
+**The table belongs to the conversation that answered.** It used to be the host's, keyed by session id so
+that one conversation's yes could not answer for another — which meant a second conversation in the same
+tree was silently given the first one's answers (E156). Authorization is a conversation's (E153), so this
+is a field of the session: a yes is a convenience for the conversation that gave it, held in memory for as
+long as this process serves that conversation, and gone when the conversation is closed and opened again.
+Asking again is the safe direction to be wrong in, and the one place where carrying answers over is worth
+it — compaction, which folds a conversation into a new one — says so explicitly (:class:`Inherit`).
 
 Nothing here asks anybody. This answers what is already agreed to; the executor is what puts a question
 when the answer is no.
@@ -37,7 +40,7 @@ type Scoped = tuple[Remember, tuple[str, ...]]
 
 
 class Approvals:
-    """The approvals one host remembers, each with the level it was given at."""
+    """The approvals one conversation remembers, each with the level it was given at."""
 
     _once: dict[Scoped, Severity]
 
@@ -76,6 +79,18 @@ class Approvals:
         granted = self._once.get(scoped)
         if granted is None or _rank(severity) > _rank(granted):
             self._once[scoped] = severity
+
+    def inherit(self, earlier: Approvals) -> None:
+        """Take every row *earlier* holds, keeping the heavier of two answers for one row.
+
+        For the one caller that may ask: a new conversation seeded from an old one, with
+        :class:`~plyngent.wire.command.Inherit.APPROVALS` on the command. A row that is already here is
+        never made lighter — the merge is the same rule :meth:`agree` uses, applied twice over.
+        """
+        for scoped, granted in earlier._once.items():
+            here = self._once.get(scoped)
+            if here is None or _rank(granted) > _rank(here):
+                self._once[scoped] = granted
 
 
 def _rank(severity: Severity) -> int:

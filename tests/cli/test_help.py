@@ -30,8 +30,9 @@ EXPECTED: dict[str, str] = {
     "  Start a conversation, or copy another one's text into it.\n"
     "\n"
     "Options:\n"
-    "  --seed-from TEXT  give this option twice\n"
-    "  --session TEXT    the conversation to act on  [default: main]",
+    "  --inherit [approvals|none]\n"
+    "  --seed-from TEXT            give this option twice\n"
+    "  --session TEXT              the conversation to act on  [default: main]",
     "close": "Usage: close [OPTIONS]\n"
     "\n"
     "  Stop serving a conversation. Its entries stay on disk.\n"

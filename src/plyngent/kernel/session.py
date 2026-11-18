@@ -27,6 +27,7 @@ import msgspec
 from composat import Component, require
 
 from plyngent.kernel.access import AccessMode, mode_covers, parse_access_mode
+from plyngent.kernel.approvals import Approvals
 from plyngent.kernel.cancel import CancelToken, Scope
 
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
@@ -202,7 +203,8 @@ class Session(Component):
     the same conversation and neither is wrong.
 
     What it does keep is what it has been told about itself: the tool groups it has been shown, how
-    often its tool set has changed, the todo stack, and the paths it may reach outside the workspace.
+    often its tool set has changed, the todo stack, the paths it may reach outside the workspace, and
+    what it has already been allowed to do in them.
     Those live here rather than on the turn because
     a turn is too short to be shown anything and too frequent to be the record of it, and they come
     back from the journal in :meth:`load` so that reopening a conversation does not mean asking for the
@@ -219,6 +221,10 @@ class Session(Component):
     #: What this conversation still owes the model: the sentences fired since the last line was written,
     #: and the order they are said in (:class:`~plyngent.kernel.notices.Notices`).
     notices: Notices
+    #: What this conversation has already been told it may do, and at which level. In memory and not a
+    #: setting: a yes is a convenience for the conversation that gave it, so a reopened conversation asks
+    #: again — the safe direction — and only a compaction that says so carries the answers over (E156).
+    approvals: Approvals
     #: The last answered request, counted twice: what this build estimated it at, and what the provider
     #: charged for it. The ratio between them is what turns a character estimate into a number a budget can
     #: act on (:meth:`plyngent.kernel.budget.calibrated`), and it is *this process's* measurement rather
@@ -232,6 +238,7 @@ class Session(Component):
         super().__init__()
         self.session_id = session_id
         self.notices = Notices()
+        self.approvals = Approvals()
         self.calibration = None
         self._turns = {}
         self._state = {}
