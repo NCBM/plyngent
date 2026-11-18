@@ -73,9 +73,9 @@ async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_as
     story = await story_with(text(LONG), text("done"), routes=(_route("roomy", window=7_000),), route="roomy")
 
     await story.type("a first question")
-    await story.finished()
+    await story.finished(1)
     await story.type("a second question")
-    await story.finished()
+    await story.finished(2)
 
     assert story.requests()[0].messages == (User(text="a first question"),), (
         "the first request carried the whole conversation, because it fitted"
@@ -116,9 +116,9 @@ async def test_a_route_that_counts_three_times_as_much_is_measured_at_what_it_ch
     )
 
     await story.type("a first question")
-    await story.finished()
+    await story.finished(1)
     await story.type("a second question")
-    await story.finished()
+    await story.finished(2)
 
     assert story.requests()[0].messages == (User(text="a first question"),), (
         "nothing had been measured yet, so the first request carried the whole conversation"
