@@ -9,6 +9,9 @@ question these tests ask is whether this build asks git the right one.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -171,3 +174,39 @@ async def test_a_sweep_finds_a_path_that_is_gone(tmp_path) -> None:
     assert await store.differing(first, [], scope=_SCOPE) == (leaf,), (
         "a removal is a change even though nothing was walked"
     )
+
+
+async def test_two_conversations_committing_at_once_are_still_one_line(tmp_path, monkeypatch) -> None:
+    """The head, the private index and the branch are one tree's: a store takes one commit at a time.
+
+    Both commits are made to reach the middle of a commit together — a barrier of two, with a short
+    timeout that *is* the answer when the other one never arrives. Two roots landing on one branch is
+    what that would do without the lock: one commit's ref update finds the branch already moved.
+    """
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "a.txt").write_text("a\n", encoding="utf-8")
+    (root / "b.txt").write_text("b\n", encoding="utf-8")
+    store = _store(root)
+
+    together = threading.Barrier(2, timeout=0.05)
+    wrote_tree = store._treed
+
+    def meeting(parent: str, changed: list[Path]) -> str:
+        with contextlib.suppress(threading.BrokenBarrierError):
+            _ = together.wait()
+        return wrote_tree(parent, changed)
+
+    monkeypatch.setattr(store, "_treed", meeting)
+
+    first, second = await asyncio.gather(
+        store.record([root / "a.txt"], says="first", scope=_SCOPE),
+        store.record([root / "b.txt"], says="second", scope=_SCOPE),
+    )
+
+    head = await store.head(scope=_SCOPE)
+    behind = await store.parent(head)
+
+    assert {head, behind} == {first, second}, "two versions, and the second continues from the first"
+    assert await store.blob(head, "a.txt") == b"a\n"
+    assert await store.blob(head, "b.txt") == b"b\n", "and the later one holds what the earlier one kept"

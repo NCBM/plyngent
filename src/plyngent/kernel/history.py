@@ -28,6 +28,11 @@ the workspace, and a change a program made somewhere the walk never goes.
 repository never takes optional locks, the locale is fixed, and the index is a file of this store's own
 — so nothing here can rewrite the workspace's own ``.git/index`` or turn a read into a program somebody
 else's configuration chose.
+
+**One commit at a time.** A store is one tree's, and two conversations may be changing two files in it at
+the same moment: what they must not do is read one head and move one branch between them. The head, the
+private index and the ref are therefore behind one lock per store (E156) — a thread lock, because the work
+is in a thread and a turn that was cancelled leaves its thread running.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import asyncio
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -147,10 +153,17 @@ class History:
 
     root: Path
     path: Path
+    _writing: threading.Lock
 
     def __init__(self, root: Path | str, path: Path | str) -> None:
         self.root = Path(root).expanduser().resolve()
         self.path = Path(path)
+        #: What two conversations in one tree may not do at the same time: read the head, write this
+        #: store's private index, and move the branch. A store is one tree's, so this is one per tree
+        #: (E156) — and a thread lock rather than an ``asyncio.Lock`` because the commit runs in a
+        #: thread: a cancelled turn's thread goes on working, and a lock released at the await would
+        #: let a second commit into a half-written index.
+        self._writing = threading.Lock()
 
     # -- what a caller asks for -----------------------------------------------------
 
@@ -236,13 +249,17 @@ class History:
         ours = [one for one in kept if one.is_relative_to(self.root)]
         if not ours:
             return ""
-        self._made()
-        parent = self._head()
-        tree = self._treed(parent, ours)
-        message = f"{says}\n\npaths: {len(ours)}\n" if says else f"paths: {len(ours)}\n"
-        commit = self._say("commit-tree", tree, *(() if not parent else ("-p", parent)), "-m", message)
-        _ = self._say("update-ref", f"refs/heads/{BRANCH}", commit, parent)
-        return commit
+        # One commit at a time per tree: the head this version continues from, the index it is built
+        # in and the branch it lands on are all one tree's, and two conversations changing two files
+        # at once would otherwise read one head and write one ref between them (E156).
+        with self._writing:
+            self._made()
+            parent = self._head()
+            tree = self._treed(parent, ours)
+            message = f"{says}\n\npaths: {len(ours)}\n" if says else f"paths: {len(ours)}\n"
+            commit = self._say("commit-tree", tree, *(() if not parent else ("-p", parent)), "-m", message)
+            _ = self._say("update-ref", f"refs/heads/{BRANCH}", commit, parent)
+            return commit
 
     def _made(self) -> None:
         """Make the store if it is not there, so a workspace nobody changed keeps no directory."""
