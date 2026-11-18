@@ -377,6 +377,7 @@ async def test_a_kept_body_is_still_there_after_a_restart(tmp_path, transport: s
     )
     try:
         await second.type("the first line of what I fetched")
+        await second.until("there it is")
 
         assert told(second.requests()[-1]) == "read d1 (lines 1-1 of 4000)\nthe log line\n", (
             "a handle names content, and the content is still there after a restart"
