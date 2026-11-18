@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.toolspec import Group
+from plyngent.kernel.words import counted
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -165,7 +166,13 @@ Carrying on:
 - If there is nothing you can do about what is left, say so plainly and stop; a turn that waits for the
   person is the right answer to a task that needs one."""
 
-
+#: What a compaction is told when its own input had to be cut to fit the route it is being sent to. The
+#: summary then stands for a conversation whose beginning nobody read, so it has to say so — a summary that
+#: describes words that were never sent is worse than a short one.
+DROPPED = """\
+{dropped} of this conversation did not fit what this route can hold, so they are not in what you were
+given: it begins partway through. Say so where it matters in the summary, and do not write about them as if
+you had read them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +236,7 @@ class PromptPlan:
         """What this program says when it starts a turn itself: the plan, and that nothing new was said."""
         return CONTINUING.format(left=left)
 
-    def summarize(self, asks: str) -> tuple[str, str]:
+    def summarize(self, asks: str, *, dropped: int = 0) -> tuple[str, str]:
         """The system message and the instruction for one compaction, in that order.
 
         A compaction's request is not a conversation's: it carries no tools, no group sections and no index
@@ -239,10 +246,14 @@ class PromptPlan:
 
         ``asks`` is what the operator wanted kept, and it is appended to the plan's own instruction rather
         than replacing it: the closing rule of a summary (what a later reader needs) is not something a
-        person should have to remember to type.
+        person should have to remember to type. ``dropped`` is how many earlier entries did not fit the
+        route the request is going to, and it opens the instruction when there are any, because the summary
+        would otherwise describe a conversation it only read the end of.
         """
         system = self.persona.strip()
         instruction = self.compact.strip()
+        if dropped:
+            instruction = f"{DROPPED.format(dropped=counted(dropped, 'entry'))}\n\n{instruction}"
         if asks.strip():
             instruction = f"{instruction}\n\nWhat the person asked to keep: {asks.strip()}"
         return system, instruction

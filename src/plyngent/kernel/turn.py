@@ -322,19 +322,34 @@ class TurnRunner:
 
         The operator's line is a **directive, not a message**: the summary stands for the stretch below it,
         so a user row reading "please summarise this" would be a thing the model is told happened.
+
+        The one request that cannot be checkpointed is this one. A compaction *is* what makes room, so
+        putting a stretch aside to make room for it would be answering the question with itself; and its
+        whole input is the conversation, so it can be too big before anything is asked. What is left is to
+        cut the input and say so — the summary then begins partway through, and knows it
+        (:meth:`_transcript`).
         """
         ctx = state.ctx
         system, instruction = ctx.host.prompt.summarize(state.text)
+        shown = list(await self._seen(ctx, await ctx.host.trail.derive(ctx.session.session_id, state.cursor)))
+        room = self._room(state)
+        shown, left = self._transcript(shown, system=system, instruction=instruction, room=room)
+        if left:
+            system, instruction = ctx.host.prompt.summarize(state.text, dropped=left)
+        asked = ctx.host.routes.resolve(ctx.session.route)
         request = Request(
             system=system,
-            messages=(
-                *await self._seen(ctx, await ctx.host.trail.derive(ctx.session.session_id, state.cursor)),
-                User(text=instruction),
-            ),
+            messages=(*shown, User(text=instruction)),
             tools=(),
-            route="" if (asked := ctx.host.routes.resolve(ctx.session.route)) is None else asked.name,
+            route="" if asked is None else asked.name,
             cache_key=ctx.session.cache_key,
         )
+        if room and estimate(request.messages, system=request.system) > room:
+            msg = (
+                f"a summary of this conversation needs {estimate(request.messages, system=request.system)} "
+                f"tokens and this route holds {room}, which is more than the instruction alone"
+            )
+            raise _TooLongError(msg)
         reply = await self.call(state, request)
         text = reply.text.strip()
         if not text:
@@ -523,6 +538,31 @@ class TurnRunner:
                 taken.append((row, message))
                 freed += estimate((message,))
         return tuple(taken)
+
+    def _transcript(
+        self,
+        messages: list[AnyMessage],
+        *,
+        system: str,
+        instruction: str,
+        room: int,
+    ) -> tuple[list[AnyMessage], int]:
+        """The newest part of a conversation that fits the room a summary is sent to, and how many were cut.
+
+        Cut from the oldest, because a summary that begins partway through is still a summary of the part
+        somebody is working on, while one that stops short is a summary of nothing anyone needs. Nothing is
+        written down here and nothing is hidden: a compaction is already the last request a stretch is ever
+        sent in, so what it leaves out is not kept from a later turn — it is simply not read aloud.
+        """
+        if not room:
+            return messages, 0
+        sizes = [estimate((message,)) for message in messages]
+        total = estimate((*messages, User(text=instruction)), system=system)
+        left = 0
+        while left < len(messages) and total > room:
+            total -= sizes[left]
+            left += 1
+        return messages[left:], left
 
     async def _kept(self, state: TurnState, messages: Sequence[AnyMessage]) -> str:
         """The stretch as one document, and the line that names it — or nothing when it cannot be kept.

@@ -51,6 +51,10 @@ TAIL = (
 #: is five thousand tokens, which is most of a seven thousand token window.
 LONG = "x" * 20_000
 
+#: An answer no summary of it could be sent whole: thirty thousand characters is seven and a half thousand
+#: tokens, which is more than the room a compaction has once its own instruction is counted.
+HUGE = "y" * 30_000
+
 
 def _route(name: str, *, window: int) -> Route:
     """One endpoint that states what it can hold. Nothing answers at it: the scripted model does."""
@@ -92,6 +96,33 @@ async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_as
         f"what was put aside is one document, and the line names it: {said[1].text!r}"
     )
     assert said[1].text.split("\n")[3] == TAIL, "and says the call that reads it back"
+
+
+async def test_a_summary_of_a_conversation_that_does_not_fit_leaves_the_beginning_out(story_with: Scripted) -> None:
+    """A compaction is the one request that cannot be checkpointed to make room for itself.
+
+    So its input is cut instead — from the oldest, since a summary of the part somebody is working on is
+    still a summary — and the instruction says so, because a summary written as if the whole conversation
+    had been read is worse than a short one.
+    """
+    story = await story_with(
+        text(HUGE), text("a summary of it"), routes=(_route("roomy", window=7_000),), route="roomy"
+    )
+
+    await story.type("a first question")
+    await story.finished()
+    await story.type("/compact")
+    await story.until("summary e")
+
+    asked = story.requests()[-1]
+    assert asked.system.startswith("You are a professional coding agent"), "a compaction keeps who is writing"
+    assert not asked.tools, "and carries no tools: nothing it says is going to be used"
+    assert [message.text for message in asked.messages[:-1]] == [], (
+        f"nothing of the conversation fitted, so nothing of it was sent: {asked.messages!r}"
+    )
+    instruction = asked.messages[-1].text
+    assert instruction.startswith("2 entries of this conversation did not fit what this route can hold"), instruction
+    assert "Write a summary of the conversation above" in instruction, "and the plan's own instruction still ends it"
 
 
 async def test_a_conversation_that_cannot_fit_at_all_ends_at_the_wall(story_with: Scripted) -> None:
