@@ -67,6 +67,10 @@ class TempWorkspaces:
         """How many directories one conversation holds — what "its scratch went away" is counted in."""
         return sum(1 for held in self._owned.values() if held == owner)
 
+    def owners(self) -> frozenset[str]:
+        """The conversations holding scratch space — who "it is out of reach now" is about."""
+        return frozenset(self._owned.values())
+
     def owner_of(self, path: Path | str) -> str | None:
         """Which conversation a directory belongs to, or ``None`` when this host did not make it."""
         return self._owned.get(_resolved(path))

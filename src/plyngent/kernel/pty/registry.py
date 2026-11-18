@@ -190,6 +190,10 @@ class PtyRegistry(Component):
         # exists, so a failed spawn cannot leak a slot and two opens cannot overshoot it.
         self._reserved: int = 0
         self._closed: bool = False
+        # What each conversation lost when a broker was replaced, waiting for a turn to say it (E151).
+        # Per owner and not per session: the sentence a model needs is "those three are gone", and the
+        # ids are dead either way.
+        self._lost: dict[str, int] = {}
 
     @override
     async def load(self) -> None:
@@ -205,15 +209,25 @@ class PtyRegistry(Component):
 
     @override
     async def provider_changed(self, requirement: RequirementSpec) -> None:
-        """The broker was replaced: this generation's exits are the only ones to listen for.
+        """The broker was replaced, so what it held is gone — and this is the moment that is true.
 
-        Nothing is torn down here. A session from a generation that is gone is found out by asking the
-        new broker nothing — its ``epoch`` says so — and that is the one place the news is turned into a
-        refusal (:meth:`_require_generation`), rather than a callback that has to run before the first
-        caller does.
+        Two things, in this order. What each conversation was holding is counted first, because that count
+        is what a turn says to a model that is about to reach for an id nobody has any more
+        (:meth:`take_lost`); the refusal is still the one that stops such a call, but it no longer costs a
+        call to discover it (E151). Then the new generation's exits are the ones to listen for.
+
+        The rows stay in the table, marked closed, so that a call still holding one of those ids is told
+        *which generation took it* rather than that this host never heard of it
+        (:meth:`_require_generation`), while everything that answers "how many are open" reads the truth
+        at once. **Nothing here reads the requirement**: a replacement lands the new generation at
+        ``LOADED`` and only then tells its dependants, so ``self.broker`` is not answerable for the length
+        of this hook — and it does not have to be, because every row here was put there while a generation
+        that is gone was the one being read.
         """
-        if requirement.name == "broker":
-            self.broker.watch(self._on_exit)
+        if requirement.name != "broker":
+            return
+        self._mark_lost()
+        self.broker.watch(self._on_exit)
 
     # -- reads that need no waiting ------------------------------------------------
 
@@ -227,6 +241,18 @@ class PtyRegistry(Component):
     def count_for(self, owner: str) -> int:
         """How many open sessions ``owner`` holds; ``0`` for the unowned ones."""
         return sum(1 for session in self.sessions.values() if not session.closed and session.owner == owner)
+
+    def owners(self) -> frozenset[str]:
+        """The conversations holding an open terminal — who "it had one and it is gone" is about."""
+        return frozenset(session.owner for session in self.sessions.values() if not session.closed and session.owner)
+
+    def take_lost(self, owner: str) -> int:
+        """How many terminals ``owner`` lost to a replaced broker, said once and then forgotten.
+
+        Taken rather than read, because what it becomes is a row: a count that stayed in the table would be
+        written again at the next round, and once is what happened (E151).
+        """
+        return self._lost.pop(owner, 0)
 
     def commands(self) -> tuple[tuple[str, ...], ...]:
         """The argv of every open session, oldest id first."""
@@ -414,7 +440,7 @@ class PtyRegistry(Component):
                 message="already closing",
             )
         if session.epoch != self.broker.epoch:
-            self._invalidate_all()
+            self._forget_lost()
             return PtyCloseResult(
                 session_id=session_id,
                 closed=True,
@@ -536,19 +562,49 @@ class PtyRegistry(Component):
         A broker that died and was replaced starts counting again, so an old ``epoch`` is not a session
         that might still be there — it is a session nobody can reach. The table is emptied here so that
         the first call after the crash says *why* and the ones after it are ordinary unknowns: one
-        ``PtyUnavailable``, not one per session.
+        ``PtyUnavailable``, not one per session. What each conversation lost is counted on the way out, so
+        a turn can say it before a model spends a call finding out (:meth:`take_lost`, E151).
         """
         if session.epoch == self.broker.epoch:
             return
-        self._invalidate_all()
+        self._forget_lost()
         msg = "the PTY broker was replaced; every session it held is gone"
         raise PtyUnavailable(msg)
 
-    def _invalidate_all(self) -> None:
+    def _mark_lost(self) -> None:
+        """Write down what a replaced broker took, and let each row answer once more.
+
+        Marked rather than deleted, because there are two readers and they want different things. A turn
+        wants a count at the moment it is true, so it can say it before the model reaches for an id
+        (:meth:`take_lost`). A call still holding one of those ids wants the sentence that says *which*
+        generation took it, which only a row that is still there can answer
+        (:meth:`_require_generation`). Everything that counts *open* sessions reads ``closed``, so the
+        truth about "how many are there" is immediate even though the rows have not been dropped.
+
+        Nothing is counted twice: :meth:`_forget_lost` only counts rows this never reached, which is the
+        look of a registry nobody told — a hand-built one, not this program's.
+        """
         for session in self.sessions.values():
+            if session.closed:
+                continue
+            if session.owner:
+                self._lost[session.owner] = self._lost.get(session.owner, 0) + 1
             session.closed = True
             session.alive = False
-        self.sessions.clear()
+
+    def _forget_lost(self) -> None:
+        """Drop every row a generation the broker no longer has left behind, counting any it did not.
+
+        The epoch is the test and not ``closed``: a session opened on the generation that is here now has
+        to survive this, or losing the old generation would take the new one's terminals with it.
+        """
+        current = self.broker.epoch
+        for session_id, session in list(self.sessions.items()):
+            if session.epoch == current:
+                continue
+            if not session.closed and session.owner:
+                self._lost[session.owner] = self._lost.get(session.owner, 0) + 1
+            del self.sessions[session_id]
 
     def _mirror(self, session: PtySession) -> None:
         """Take the broker's word for whether this session is alive; decide nothing of our own."""

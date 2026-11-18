@@ -50,7 +50,12 @@ LIMIT = "limit"
 #: shape of the history a model is about to read, while the plan is about what to do next with it.
 ELIDED = "elided"
 
-DECLARED: tuple[str, ...] = (ELIDED, PLAN, LIMIT)
+#: The terminal broker's writer: the terminals this conversation had are gone, so the ids it holds are
+#: dead. Before the plan, because it is about what the model can still do at all rather than about what
+#: it should do next (E151).
+TERMINALS = "terminals"
+
+DECLARED: tuple[str, ...] = (ELIDED, TERMINALS, PLAN, LIMIT)
 
 
 def marked(text: str) -> str:
@@ -100,6 +105,58 @@ def elision_summary(hidden: int, *, by: str) -> str:
     """The one line a person reads about the same act, on the screen and in a listing's preview."""
     entries = counted(hidden, "earlier entry")
     return f"the person hid {entries}" if by != BY_BUDGET else f"{entries} put aside to fit the window"
+
+
+def lost_terminals(gone: int) -> str:
+    """What a model is told when the terminals it had were taken away by a broker being replaced (E151).
+
+    Said at the next boundary rather than found out by a call, and said as the one fact that changes what
+    a model does next: every id it was handed is dead. The refusal is still there for a model that tries
+    one anyway — what this ends is the *call* it would have spent discovering it.
+    """
+    sessions = counted(gone, "terminal session")
+    return (
+        f"The broker that held your terminals was replaced, so the {sessions} you had open are gone. "
+        "Every session id you were given for one is dead: open a new terminal instead of reading or "
+        "writing an old one."
+    )
+
+
+def lost_terminals_summary(gone: int) -> str:
+    """The one line a person reads about the same act."""
+    return f"{counted(gone, 'terminal session')} lost when the terminal broker was replaced"
+
+
+def stopping(terminals: int, scratch: int) -> tuple[str, str]:
+    """What a conversation is told at the moment this process is about to lose what it was holding (E151).
+
+    Two paragraphs, and each is there only when it is true: a conversation that never opened a terminal is
+    not told about terminals, because a sentence a model cannot act on is noise in the one place it reads
+    most carefully. The first is certain — a child on a terminal dies with the process that holds it. The
+    second is said as the pair of facts it is: a scratch directory is out of this conversation's reach the
+    moment the kernel stops serving it, and whether its bytes are still on disk depends on who removes
+    them, so the sentence promises nothing it cannot keep and then says where to ask for another.
+
+    The answer is the marked body and the line a person reads in a listing: the row goes into the log, and
+    no event is emitted, because whoever is reading the screen is on their way out.
+    """
+    said: list[str] = []
+    summary: list[str] = []
+    if terminals:
+        sessions = counted(terminals, "terminal session")
+        said.append(
+            f"This program is stopping, and the {sessions} you have open end with it. Their ids are dead, "
+            "and a process that starts again gives you new ones."
+        )
+        summary.append(f"{counted(terminals, 'terminal session')} gone with the process")
+    if scratch:
+        directories = counted(scratch, "temporary workspace")
+        said.append(
+            f"The {directories} you were given are out of reach from now on, and they may have been removed "
+            "from the disk as well. Ask for another one if you need scratch space again."
+        )
+        summary.append(f"{counted(scratch, 'temporary workspace')} out of reach")
+    return "\n\n".join(said), "; ".join(summary)
 
 
 @dataclass(frozen=True, slots=True)

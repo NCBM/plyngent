@@ -260,6 +260,7 @@ class Installed:
             await stream.flushed()
         if self._listening is not None:
             await self._listening.stop()
+        await _told_what_it_loses(self._kernel)
         _ = await self.assembly.stop(*self.assembly.keys())
 
     async def _dropped(self) -> None:
@@ -509,6 +510,7 @@ class Daemon:
                 await stream.flushed()
         self._held.clear()
         await self.listening.stop()
+        await _told_what_it_loses(self._kernel)
         _ = await self._kernel.assembly.stop(*self._kernel.assembly.keys())
 
 
@@ -821,6 +823,21 @@ def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelMan
     link = _opened(near, wanted, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded)
     serving, task = _served(kernel.assembly, kernel.host, link, kernel.specs)
     return _Held(serving, link, task, (near,))
+
+
+async def _told_what_it_loses(kernel: _Kernel) -> None:
+    """Give the host the one chance to say what this process takes with it (E151).
+
+    Before the assembly goes down rather than after, and this is the whole of the timing: the sentence is a
+    row, so it needs a journal that is still open, and what it counts — the children on terminals and the
+    scratch directories — is still there to be counted only until the host lets go of it.
+    """
+    try:
+        found = kernel.assembly.instance(Declaration(Host, instance=kernel.host).key)
+    except ServiceNotUpError:
+        return
+    if isinstance(found, Host):
+        await found.stopping()
 
 
 async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:

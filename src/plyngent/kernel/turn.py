@@ -37,7 +37,15 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media, refuses
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Part, Picture, Reply, Request, Result, User
-from plyngent.kernel.notices import ELIDED, LIMIT, elided, elision_summary
+from plyngent.kernel.notices import (
+    ELIDED,
+    LIMIT,
+    TERMINALS,
+    elided,
+    elision_summary,
+    lost_terminals,
+    lost_terminals_summary,
+)
 from plyngent.kernel.render import render, render_part
 from plyngent.kernel.toolresult import OUTCOMES, Document, ToolResult
 from plyngent.kernel.trail import (
@@ -232,6 +240,7 @@ class TurnRunner:
                     state = await self._append(state, User(text=text))
                 while True:
                     await self._walled(state)
+                    self._terminals_gone(state)
                     state = await self._told(state)
                     state, request = await self.assemble(state)
                     reply = await self.call(state, request)
@@ -347,10 +356,28 @@ class TurnRunner:
                 )
                 raise _WalledError(msg)
 
+    def _terminals_gone(self, state: TurnState) -> None:
+        """Say the terminals a replaced broker took, if this conversation lost any (E151).
+
+        Taken at the top of a round, before anything is owed to the model, because it belongs with the
+        other things said at a boundary: what a model needs to know before it chooses its next call. It is
+        not a call that failed — the refusal for an old id still stands — it is the news that arrives
+        before the model would have spent a call on finding out.
+
+        Nothing is written here: this fires a sentence, and :meth:`_told` is the one place a fired sentence
+        becomes a row.
+        """
+        gone = state.ctx.host.pty.take_lost(state.ctx.session.session_id)
+        if gone:
+            state.ctx.session.notices.say(TERMINALS, lost_terminals(gone), summary=lost_terminals_summary(gone))
+
     async def _told(self, state: TurnState) -> TurnState:
         """Say the lines this session owes the model, at a boundary where nothing is being asked.
 
         Two boundaries and one rule. The top of every round, before the request is assembled, so that the
+        model reads on *this* turn's next request what this turn just changed — a plan updated by a call
+        is what the next round is for. And the settle, before the end row, so ``turn-ended`` stays the
+        last line of a turn while the projection still ends with the reminder.
         model reads on *this* turn's next request what this turn just changed — a plan updated by a call
         is what the next round is for. And the settle, before the end row, so ``turn-ended`` stays the
         last line of a turn while the projection still ends with the reminder.

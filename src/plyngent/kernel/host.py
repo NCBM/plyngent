@@ -26,11 +26,13 @@ from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import ModelChannel  # noqa: TC001
 from plyngent.kernel.net.policy import NetPolicy
 from plyngent.kernel.net.web import Engines
+from plyngent.kernel.notices import marked, stopping
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.running import DEFAULT_RUNNING, Running
 from plyngent.kernel.skills import Skills  # noqa: TC001
+from plyngent.kernel.trail import Notice
 from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import Workspace, WorkspaceConfig
 
@@ -148,3 +150,36 @@ class Host(Component):
     async def unload(self) -> None:
         """Give back what the workspace owns: its scratch directories, and nothing else yet."""
         self.workspace.close()
+
+    async def stopping(self) -> None:
+        """Tell every conversation what it is about to lose, while its log is still open (E151).
+
+        The two things this process holds on a conversation's behalf and cannot hand over are a child on a
+        terminal and a scratch directory, and both die with the process. This is said **now** rather than at
+        the next start, because now is when it is true: "this process is going down" is a fact here, while
+        "the last one died" is only provable by a timestamp this tree does not keep, and by a start-up that
+        reads every journal to guess.
+
+        Only the conversations that really lose something are told — the answer to "who" is the two tables
+        that hold what is lost, so a conversation that never opened a terminal is not told that its
+        terminals are gone. Each row is written into the chain where the conversation ended, and nothing is
+        emitted: whoever is reading the screen is on their way out, and the row is for the model that comes
+        back.
+
+        A process that is killed skips this and says nothing, which is the same thing an absent
+        ``turn-ended`` already means. The gap is accepted: one call spends itself finding out what this
+        sentence would have said.
+        """
+        owners = self.pty.owners() | self.workspace.temps.owners()
+        for owner in sorted(owners):
+            terminals = self.pty.count_for(owner)
+            scratch = self.workspace.temps.count_for(owner)
+            if not terminals and not scratch:
+                continue
+            body, summary = stopping(terminals, scratch)
+            head = await self.trail.head(owner)
+            _ = await self.trail.append(
+                owner,
+                Notice(text=marked(body), summary=summary),
+                begin_after=None if head is None else head.id,
+            )
