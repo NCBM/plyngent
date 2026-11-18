@@ -1,10 +1,10 @@
 """The seam through which the kernel asks somebody outside it a question.
 
 The kernel does not read stdin, does not print, and does not import the CLI: asking a human is a
-*question* that leaves through ``Host.human`` and comes back as an answer. What is fixed here is the
-shape of that round trip, not how it travels — the values themselves are the contract's
-(:mod:`plyngent.wire.ask`), and how they reach a person is the link's business
-(:mod:`plyngent.kernel.link`).
+*question* that leaves as a value and comes back as an answer, and a turn asks over the connection that
+started it (``TurnCtx.asker``). What is fixed here is the shape of that round trip, not how it travels —
+the values themselves are the contract's (:mod:`plyngent.wire.ask`), and how they reach a person is the
+link's business (:mod:`plyngent.kernel.link`).
 
 Four rules the shape is built around:
 
@@ -243,22 +243,27 @@ class NoSink(Human):
 
 
 class HumanChannel(Component, Human):
-    """Where a question leaves the kernel, as a component so that attach and detach are one move.
+    """The host's way out to whoever is attached, as a component so that attach and detach are one move.
 
-    The host holds *this* object, never the client that answers: attaching is
+    Two things travel through here and only one of them has changed: **events** are this channel's, and
+    **a question a turn asks is not** — a turn carries the connection that started it
+    (``TurnCtx.asker``), so a frontend is asked by its own work rather than by whoever attached last
+    (E156). What is left here is a question with no turn behind it, which is what a test stimulus and a
+    future kernel-level asker would use.
+
+    The host holds *this* object, never the client: attaching is
     ``assembly.replace(key, Declaration(HumanChannel, args=(client,)))`` and detaching is the same call
     with nobody. Nothing has to be cleared afterwards, and a reader of ``Host.human`` never sees a
-    half-attached state — the key answers the old generation until the new one is loaded.
+    half-attached state — the key answers the old generation until the new one is loaded. That is also
+    where "one owner of the stream" comes from, without an election of ours: the framework refuses a
+    second ``replace`` of a key another call is still moving (``KeyInTransitError`` naming what it is
+    doing), so a second client is told the truth rather than quietly waiting its turn.
 
-    That is also where "one approval owner" comes from, without an election of ours: the framework
-    refuses a second ``replace`` of a key another call is still moving (``KeyInTransitError`` naming
-    what it is doing), so a second client is told the truth rather than quietly waiting its turn.
-
-    Nobody attached is not the same as no channel. Questions still get an answer, and the answer is
-    "no" (:class:`NoSink`), so a tool reports that it was blocked instead of hanging — the same answer
-    a headless run gives. A question already out when its client went away is refused by the transport
-    that carried it (:meth:`plyngent.kernel.link.Link.close`), and the turn it belongs to runs
-    on: a client disappearing is a refusal, not a verdict (R2.1 D14).
+    Nobody attached is not the same as no channel. A question gets an answer, and the answer is "no"
+    (:class:`NoSink`), so a tool reports that it was blocked instead of hanging — the same answer a
+    headless run gives. A question already out when its client went away is refused by the transport
+    that carried it (:meth:`plyngent.kernel.link.Link.close`), and the turn it belongs to runs on: a
+    client disappearing is a refusal, not a verdict (R2.1 D14).
     """
 
     #: The client that answers, or ``None`` when nobody is attached.

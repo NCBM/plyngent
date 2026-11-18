@@ -42,6 +42,7 @@ from plyngent.wire.scope import CancelReason, CancelScope
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
+    from plyngent.kernel.events import Human
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 #: The key a session's tool disclosure is written under. One key in the journal's state vocabulary, and
@@ -95,6 +96,11 @@ class TurnCtx:
     turn_id: int
     round_id: int
     cancel: CancelToken
+    #: Where this turn's questions go: the connection that started it, so a frontend is asked by the
+    #: turns it began and by no other. Carried rather than read from the host because a host may be
+    #: serving several connections at once, and "whoever is attached" is not an answer to "who is
+    #: waiting for this" (E156).
+    asker: Human
     kind: TurnKind = TurnKind.CHAT
     begin_after: str | None = None
     since: float = 0.0
@@ -143,7 +149,7 @@ class TurnCtx:
         row, and every row is a row about something a person, a policy or a silence said.
         """
         site = self.site(*(part for part in (call, at) if part))
-        answer = await self.host.human.put(question, site=site)
+        answer = await self.asker.put(question, site=site)
         _ = await self.host.trail.append(
             self.session.session_id,
             Consent(
@@ -173,6 +179,7 @@ class TurnCtx:
             turn_id=self.turn_id,
             round_id=self.round_id + 1,
             cancel=self.cancel,
+            asker=self.asker,
             kind=self.kind,
             begin_after=self.begin_after,
             since=self.since,
@@ -495,12 +502,19 @@ class Session(Component):
 
     # -- turns ---------------------------------------------------------------------
 
-    async def begin_turn(self, *, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT) -> TurnCtx:
+    async def begin_turn(
+        self, *, asker: Human, begin_after: str | None = None, kind: TurnKind = TurnKind.CHAT
+    ) -> TurnCtx:
         """Address a new turn and record it as live.
 
         Reading ``self.host`` here is the one place the session touches its host for a turn: a
         requirement answers at whatever generation is serving, so the turn works through the host that
         was up when it started rather than through a field that may be gone by the time it settles.
+
+        ``asker`` is who this turn's questions go to, and it has no default on purpose: the answer is
+        the connection the turn came from, and a caller that cannot name it has not thought about who is
+        waiting. A question asked under a turn therefore comes back to the frontend that started that
+        turn, whatever else is attached to the host (E156).
 
         ``begin_after`` is the entry the turn continues, and the only rule is that such an entry must
         exist — the turn is otherwise free to grow from anywhere, which is what makes branching a
@@ -519,6 +533,7 @@ class Session(Component):
             turn_id=await host.trail.next_turn(self.session_id),
             round_id=0,
             cancel=CancelToken(),
+            asker=asker,
             kind=kind,
             begin_after=begin_after,
             since=time.monotonic(),

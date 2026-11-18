@@ -25,7 +25,7 @@ from plyngent.wire.command import Open
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import PROTOCOL_VERSION, KernelManifest
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, text
+from tests.stories.model import ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,6 +110,34 @@ async def test_a_second_client_sees_the_sessions_the_first_one_opened(daemon) ->
 
         assert first.screen() == ("sessions: main",)
         assert second.screen() == ("sessions: main",), "the session the first connection opened is this kernel's"
+    finally:
+        await first.close()
+        await second.close()
+        first_client.close()
+        second_client.close()
+
+
+async def test_a_question_goes_to_the_connection_whose_turn_asked_it(daemon, tmp_path: Path) -> None:
+    """Two frontends, one kernel: the one whose turn asked is the one that is asked (E156).
+
+    The second connection is the one that attached last, so it is the one the host would tell — which is
+    exactly why the first one has to be the one that types: a question that went to "whoever attached"
+    would arrive at the frontend that asked for nothing.
+    """
+    endpoint = await daemon(
+        calling("execute", {"steps": [{"argv": ["sh", "-c", "echo one"]}], "intention": "say one"}), text("one")
+    )
+    _ = (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+
+    first_client, first = await _connected(endpoint)
+    second_client, second = await _connected(endpoint)
+    try:
+        await first.type("say one")
+        await first.answer("y")
+        await first.settle()
+
+        assert [question.prompt for question in first.questions()], "the frontend whose turn asked was asked"
+        assert second.questions() == (), "and the connection that asked for nothing was not asked anything"
     finally:
         await first.close()
         await second.close()

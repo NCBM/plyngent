@@ -16,10 +16,11 @@ Two rules shape it:
   starts a turn — the dispatcher decides, and the client learns the outcome from the event lane. There
   is no reply to correlate (R2.1 D5), so a command whose meaning has not landed yet is *accepted and
   silent* rather than refused with an invented event.
-* **The human belongs to the connection.** Attaching is a ``replace`` of ``Host.human`` with a
+* **The human belongs to the connection.** A question is asked by a turn, and it goes back to the
+  connection that started that turn (``TurnCtx.asker``), so what a frontend answers is what its own
+  work asked (E156). ``Host.human`` keeps the *events*: attaching is a ``replace`` of it with a
   :class:`~plyngent.kernel.link.LinkHuman` over this link, and the end of the command lane is what
-  detaches it — a client that is gone cannot answer, so the host goes back to "nobody to ask", which
-  answers "no" rather than hanging.
+  detaches it — a client that is gone cannot render, so the host goes back to "nobody to tell".
 
 What the commands do not yet have: ``Resume`` answers with what it is missing, because reattaching a
 session to another journal needs a *second* store and this build keeps one per workspace — so a
@@ -140,9 +141,10 @@ class Serving:
     assembly: Assembly
     host: str
     link: KernelSide
+    _asker: LinkHuman
     _human: Declaration
     _offers: Declaration
-    _answers: bool
+    _watching: bool
     _client_id: str | None
     _detached: bool
     _stopped: bool
@@ -157,9 +159,13 @@ class Serving:
         self.assembly = assembly
         self.host = host
         self.link = link
+        #: Who a turn this connection starts asks: this connection, always. It is not a component and
+        #: does not move, because the answer to "where does this turn's question go" may not depend on
+        #: who else is attached (E156).
+        self._asker = LinkHuman(link)
         self._human = Declaration(HumanChannel, instance=host)
         self._offers = Declaration(Offers, instance=host)
-        self._answers = False
+        self._watching = False
         self._client_id = None
         self._detached = False
         self._stopped = False
@@ -869,7 +875,7 @@ class Serving:
             self.link.emit(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
             return
         try:
-            turned = await found.begin_turn(begin_after=begin_after, kind=kind)
+            turned = await found.begin_turn(asker=self._asker, begin_after=begin_after, kind=kind)
         except ValueError:
             self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return
@@ -915,31 +921,31 @@ class Serving:
         if end.reason or not end.acted or not session.todos.reminder() or session.turns():
             return None
         try:
-            return await session.begin_turn(begin_after=end.ends_at, kind=TurnKind.GOAL)
+            return await session.begin_turn(asker=turned.asker, begin_after=end.ends_at, kind=TurnKind.GOAL)
         except ValueError:
             return None
 
     # -- who answers questions -----------------------------------------------------
 
     async def _attach(self) -> None:
-        """Make this connection the one that answers, or leave the host as it was.
+        """Make this connection the one events are told to, or leave the host as it was.
 
-        A second connection while the first is still attaching is refused by the framework
-        (``KeyInTransitError``) and that is the right answer for *it*: one approval owner, no election
-        (D19). This connection then simply gets no questions, which is what "nobody to ask" already
-        means — and it does not put the human back when it leaves either, because the channel it would
+        What attaching is for is now one thing: where *events* go. Questions no longer travel this way
+        — a turn asks its own connection (:attr:`_asker`) — so a second connection while the first is
+        still attaching is refused by the framework (``KeyInTransitError``) and loses nothing but the
+        stream. It does not put the channel back when it leaves either, because the generation it would
         be writing is somebody else's.
         """
         try:
             _ = await self.assembly.replace(
-                self._human.key, Declaration(HumanChannel, instance=self.host, args=(LinkHuman(self.link),))
+                self._human.key, Declaration(HumanChannel, instance=self.host, args=(self._asker,))
             )
         except KeyInTransitError:
             return
-        self._answers = True
+        self._watching = True
 
     async def _detach(self) -> None:
-        """Put the host back to "nobody to ask" and "nothing offered", because this client is gone.
+        """Put the host back to "nobody to tell" and "nothing offered", because this client is gone.
 
         Both are one step and both are undone here, for the same reason: what the connection was the
         owner of ends with it. The session in the history is told its tool set moved, which is what
@@ -948,7 +954,7 @@ class Serving:
         if self._detached:
             return
         self._detached = True
-        if self._answers:
+        if self._watching:
             try:
                 _ = await self.assembly.replace(self._human.key, Declaration(HumanChannel, instance=self.host))
             except KeyInTransitError:

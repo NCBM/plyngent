@@ -41,9 +41,11 @@ class Host(Component):
     """One workspace's share of the process."""
 
     pty: PtyRegistry = require()
-    # Where a question goes. A component rather than a field somebody sets, so that attaching a client
-    # and detaching it are the same move (`replace`) and two hosts cannot answer for each other's
-    # humans. Nobody attached is a channel that answers "no", not a missing one.
+    # How an event reaches a person, and where a question with no turn behind it goes. A component
+    # rather than a field somebody sets, so that attaching a client and detaching it are the same move
+    # (`replace`) and two hosts cannot tell each other's clients. Nobody attached is a channel that
+    # answers "no" and drops events, not a missing one. A turn's own questions do not travel this way:
+    # they go back to the connection that started it (`TurnCtx.asker`, E156).
     human: HumanChannel = require()
     # The tools the connection serving this host offers, and the way to call them. A component for the
     # same reason the human channel is one: attaching a client's tools and detaching them are one
