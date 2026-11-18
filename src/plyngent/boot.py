@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.skills import Skills
     from plyngent.kernel.toolspec import ToolSpec
+    from plyngent.kernel.workspace import WorkspaceConfig
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
@@ -288,6 +289,8 @@ async def install(
     journal: Path | str | None = None,
     limits: Limits | None = None,
     running: int | None = None,
+    sandbox: WorkspaceConfig | None = None,
+    trash: bool = True,
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
@@ -384,6 +387,8 @@ async def install(
         journal=journal,
         limits=limits,
         running=running,
+        sandbox=sandbox,
+        trash=trash,
         versions=versions,
         deadline=deadline,
         grades=grades,
@@ -513,6 +518,8 @@ async def serve(
     journal: Path | str | None = None,
     limits: Limits | None = None,
     running: int | None = None,
+    sandbox: WorkspaceConfig | None = None,
+    trash: bool = True,
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
@@ -539,6 +546,8 @@ async def serve(
         journal=journal,
         limits=limits,
         running=running,
+        sandbox=sandbox,
+        trash=trash,
         versions=versions,
         deadline=deadline,
         grades=grades,
@@ -596,6 +605,8 @@ async def _assembled(
     journal: Path | str | None,
     limits: Limits | None,
     running: int | None,
+    sandbox: WorkspaceConfig | None,
+    trash: bool,
     versions: bool,
     deadline: float | None,
     grades: Grades | None,
@@ -643,6 +654,8 @@ async def _assembled(
                     "prompt": plan,
                     "history": versions_kept,
                     "running": DEFAULT_RUNNING if running is None else running,
+                    "workspace_config": sandbox,
+                    "trash_enabled": trash,
                 },
             ),
         ]

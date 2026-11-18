@@ -38,6 +38,7 @@ from tomlkit.exceptions import ParseError
 from plyngent.boot import engines_for
 from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
+from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes, RouteWeb
@@ -55,6 +56,7 @@ from plyngent.kernel.pty.registry import (
 from plyngent.kernel.resources import Root
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
+from plyngent.kernel.workspace import WorkspaceConfig
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -78,6 +80,31 @@ class LimitsFile(Struct, forbid_unknown_fields=True, kw_only=True):
     max_sessions: int = DEFAULT_MAX_SESSIONS
     max_per_session: int = DEFAULT_MAX_PER_SESSION
     session_output_budget: int = DEFAULT_SESSION_OUTPUT_BUDGET
+
+
+class SandboxFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[sandbox]``: what this program will not touch, and what it will not run unasked (E160).
+
+    ``path_denylist`` is matched against a resolved path as a substring (``/secrets/``), and nothing
+    lifts it — not a grant, not a person saying yes, because it is the line drawn before anybody is
+    asked. ``command_denylist`` names programs a command policy has to ask about, and it is **added to**
+    the ones this build ships with rather than replacing them: a file that could take ``sudo`` off that
+    list would be a way for a typo to run as root, and the safe direction for a list like this is to get
+    longer.
+    """
+
+    path_denylist: tuple[str, ...] = ()
+    command_denylist: tuple[str, ...] = ()
+
+
+class TrashFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[trash]``: whether a delete goes where a person can take it back (E160).
+
+    ``enabled`` is the default and the whole table: a delete that cannot be undone is a decision a
+    person makes with a flag of the run (``permanent``), not one the file makes for every delete.
+    """
+
+    enabled: bool = True
 
 
 class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -177,6 +204,8 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     skills: SkillsFile | None = None
     limits: LimitsFile | None = None
     turn: TurnFile | None = None
+    sandbox: SandboxFile | None = None
+    trash: TrashFile | None = None
     journal: JournalFile | None = None
     web: WebFile | None = None
 
@@ -202,6 +231,8 @@ class Settings:
     discover_skills: bool = True
     limits: Limits = field(default_factory=Limits)
     running: int = DEFAULT_RUNNING
+    sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
+    trash: bool = True
     journal: Path | None = None
     #: The document this value was read from, kept as the parser built it — comments, order and spacing
     #: included — so a later write-back can edit it instead of reflowing somebody's file (§0.11, E84).
@@ -282,6 +313,7 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
     routes = _routes(parsed.route, environment)
     skills = parsed.skills or SkillsFile()
     limits = parsed.limits or LimitsFile()
+    sandbox = parsed.sandbox or SandboxFile()
     return Settings(
         routes=Routes(routes, default=parsed.default_route),
         web=_web(parsed.web, routes),
@@ -295,6 +327,11 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
             session_output_budget=limits.session_output_budget,
         ),
         running=(parsed.turn or TurnFile()).running,
+        sandbox=WorkspaceConfig(
+            path_denylist=sandbox.path_denylist,
+            command_denylist=DEFAULT_COMMAND_DENYLIST | frozenset(sandbox.command_denylist),
+        ),
+        trash=(parsed.trash or TrashFile()).enabled,
         journal=_resolved(parsed.journal.path, path) if parsed.journal is not None and parsed.journal.path else None,
         document=document,
     )
@@ -469,4 +506,6 @@ def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
         "journal": settings.journal,
         "limits": settings.limits,
         "running": settings.running,
+        "sandbox": settings.sandbox,
+        "trash": settings.trash,
     }

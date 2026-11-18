@@ -21,6 +21,7 @@ from platformdirs import user_data_path
 
 from plyngent import config
 from plyngent.__main__ import main
+from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm.route import Posted, RouteWeb
 from plyngent.kernel.model import Request, User
 from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
@@ -428,3 +429,23 @@ def test_how_many_turns_run_at_once_is_one_number(tmp_path: Path) -> None:
 
     with pytest.raises(config.ConfigError, match="running"):
         _ = config.load(_written(tmp_path, "[turn]\nrunning = 0\n", "zero.toml"))
+
+
+def test_the_sandbox_is_two_lists_and_its_commands_only_ever_get_longer(tmp_path: Path) -> None:
+    """`[sandbox]` is the first real caller of ``WorkspaceConfig``, and `[trash]` of the host's flag (E160)."""
+    plain = config.load(_written(tmp_path, "", "none.toml"))
+
+    assert plain.sandbox.path_denylist == (), "nothing is denied until a person writes something down"
+    assert plain.sandbox.command_denylist == DEFAULT_COMMAND_DENYLIST
+    assert plain.trash is True, "a delete goes where it can be taken back"
+
+    chosen = config.load(
+        _written(tmp_path, '[sandbox]\npath_denylist = ["/secrets/"]\ncommand_denylist = ["curl"]\n', "mine.toml")
+    )
+
+    assert chosen.sandbox.path_denylist == ("/secrets/",)
+    assert "curl" in chosen.sandbox.command_denylist
+    assert chosen.sandbox.command_denylist > DEFAULT_COMMAND_DENYLIST, (
+        "a file adds to the built-in list and never shortens it: taking sudo off would be a way to run as root"
+    )
+    assert config.load(_written(tmp_path, "[trash]\nenabled = false\n", "no-trash.toml")).trash is False

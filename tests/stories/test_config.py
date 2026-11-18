@@ -234,3 +234,38 @@ async def test_a_program_whose_only_engine_searches_has_no_web_fetch(
     assert "web_fetch failed: no tool is named 'web_fetch'" in story.screen(), (
         "an engine that cannot read a page does not leave a tool behind that fails when called"
     )
+
+
+async def test_a_path_the_file_denies_is_refused_and_never_asked_about(tmp_path: Path, transport: str) -> None:
+    """`[sandbox].path_denylist` is a line drawn before anybody is asked, so no question and no grant (E160)."""
+    settings = _settings(tmp_path, '[sandbox]\npath_denylist = ["/secrets/"]\n')
+
+    story = await Story.start(
+        tmp_path / "workspace",
+        transport=transport,
+        model=ScriptedModel([calling("write_file", {"path": "secrets/key.txt", "content": "x"}), text("no")]),
+        config=settings,
+    )
+    try:
+        await story.require("fs")
+        await story.type("write the key")
+        await story.finished()
+
+        assert any("path denied by policy" in line for line in story.screen()), story.screen()
+        assert story.questions() == (), "a denial is not offered as something to ask a person to lift"
+        assert not (story.workspace / "secrets" / "key.txt").exists()
+    finally:
+        await story.close()
+
+
+async def test_a_file_may_take_the_trash_away(tmp_path: Path, transport: str) -> None:
+    """`[trash].enabled` is the host's flag, and the file is where it is decided (E160)."""
+    settings = _settings(tmp_path, "[trash]\nenabled = false\n")
+
+    story = await Story.start(
+        tmp_path / "workspace", transport=transport, model=ScriptedModel([text("ok")]), config=settings
+    )
+    try:
+        assert story.host.trash_enabled is False, "a delete that cannot be taken back is what the file asked for"
+    finally:
+        await story.close()

@@ -31,7 +31,7 @@ from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.running import DEFAULT_RUNNING, Running
 from plyngent.kernel.skills import Skills  # noqa: TC001
-from plyngent.kernel.workspace import Workspace
+from plyngent.kernel.workspace import Workspace, WorkspaceConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -119,9 +119,10 @@ class Host(Component):
         prompt: PromptPlan | None = None,
         history: History | None = None,
         running: int = DEFAULT_RUNNING,
+        workspace_config: WorkspaceConfig | None = None,
     ) -> None:
         super().__init__()
-        self.workspace = Workspace(root)
+        self.workspace = Workspace(root, workspace_config)
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
         self.running = Running(running)
