@@ -138,6 +138,7 @@ async def story_with(tmp_path, transport):
         policy: Policy | None = None,
         markdown: bool = False,
         mark: Path | None = None,
+        once: str | None = None,
     ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
@@ -166,6 +167,7 @@ async def story_with(tmp_path, transport):
             policy=policy,
             markdown=markdown,
             mark=mark,
+            once=once,
         )
         started.append(story)
         return story

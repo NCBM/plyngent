@@ -75,8 +75,13 @@ if TYPE_CHECKING:
 #: What a normal goodbye returns.
 LEFT = 0
 
+#: The one code for "this run did not work". Two ways of earning it — a connection that was already gone
+#: while a command was still being sent, and a turn that ended in a failure — because a script reading the
+#: number needs one answer and not two (E159).
+FAILED = 1
+
 #: What a goodbye through a connection that is already gone returns.
-GONE = 1
+GONE = FAILED
 
 
 class Mark(Struct, frozen=True, kw_only=True):
@@ -129,6 +134,8 @@ class App:
     _goodbye: asyncio.Event
     _stirred: asyncio.Event
     _stage: Stage
+    _failed: bool
+    once: str | None
 
     def __init__(
         self,
@@ -146,6 +153,7 @@ class App:
         markdown: bool = False,
         diff: bool = True,
         mark: Path | None = None,
+        once: str | None = None,
     ) -> None:
         self.client = client
         self.session = session
@@ -182,6 +190,13 @@ class App:
         # client waiting out a turn only needs to know it should ask again, and the watermark it compares
         # is what makes a line that arrived while it was asking impossible to miss (§5 A).
         self._stirred = asyncio.Event()
+        # Whether any turn of this run ended in a failure, which is the second way a run earns the one
+        # error code: a script driving this program has to be able to tell "it answered" from "it broke"
+        # without reading the screen (E159).
+        self._failed = False
+        # The one message a run was asked to send instead of reading lines (``-p``), or ``None`` for the
+        # ordinary run: the same loop either way, and a different way of deciding when to say goodbye.
+        self.once = once
         # What the kernel is saying right now, and where this conversation stands while it says it: only
         # a client knows what a person has already read, so only a client can say what a message looks
         # like when it arrives in pieces (E94), whether it has a screen to grow one on (E100), and how
@@ -243,7 +258,7 @@ class App:
             asyncio.create_task(self._invocations()),
         ]
         try:
-            code = await self._lines()
+            code = await self._lines() if self.once is None else await self._once(self.once)
         finally:
             for task in background:
                 _ = task.cancel()
@@ -252,7 +267,7 @@ class App:
             self.client.close()
             self._remember()
         await self._closing()
-        return code
+        return code or (FAILED if self._failed else LEFT)
 
     # -- how far this client had read -----------------------------------------------
 
@@ -324,6 +339,10 @@ class App:
                 await self._drawn(event)
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
                     self._cursor = event.ends_at
+                if isinstance(event, TurnFinished) and event.failure:
+                    # A turn that broke is an error for the whole run, whatever the loop does afterwards:
+                    # the number this program exits with is the one thing a script can act on (E159).
+                    self._failed = True
                 if isinstance(event, Compacted) and event.session == self.session:
                     # A summary is a place to continue from, so this client's place moves to it: what is
                     # written after a compaction goes past it rather than beside it. A compaction of
@@ -451,6 +470,18 @@ class App:
                 case Preempted():
                     # A question took the cursor; it has already asked, and the editor holds the buffer.
                     continue
+
+    async def _once(self, said: str) -> int:
+        """Send one message, wait for its turn, and be done — what ``-p`` is (E159).
+
+        The same two steps a typed line takes (:meth:`_said`'s message, then the goodbye a closed pipe
+        waits through), so this is not a second driver: a script and a person arrive at the same place,
+        and the code they leave with is the same judgement about the same run.
+        """
+        if not self.client.submit(self._message(self.session, said)):
+            return GONE
+        await self._drained()
+        return LEFT
 
     async def _drained(self) -> None:
         """Read what is still on its way, because the end of the input is not a hang-up.

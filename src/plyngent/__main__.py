@@ -97,6 +97,14 @@ INTERRUPTED = 130
 @click.option("--yolo", "yolo", is_flag=True, help="answer the light and ordinary questions with a yes")
 @click.option("--away", "away", is_flag=True, help="answer each question as its own silence would have")
 @click.option(
+    "-p",
+    "--print",
+    "once",
+    metavar="TEXT",
+    default=None,
+    help="send one message, wait for its turn, and exit",
+)
+@click.option(
     "--away-danger",
     "away_danger",
     is_flag=True,
@@ -114,11 +122,17 @@ def main(
     yolo: bool,
     away: bool,
     away_danger: bool,
+    once: str | None,
 ) -> None:
     """Talk to a kernel over one connection."""
     if serve_at is not None and connect_at is not None:
         msg = "--serve and --connect are two different programs: one listens, the other talks"
-        raise click.ClickException(msg)
+        raise click.UsageError(msg)
+    if serve_at is not None and once is not None:
+        # A daemon has no line to send and nobody to read one: asking for both is a usage error rather
+        # than a run that silently does one of them (E159).
+        msg = "-p sends one message, and --serve has no conversation to send it in"
+        raise click.UsageError(msg)
     # Read before anything is started, and before a terminal is taken: a file this program will not run
     # with is a sentence and an exit code, not half a kernel (§0.11, E72).
     try:
@@ -142,6 +156,7 @@ def main(
                 policy=policy,
                 serve_at=serve_at,
                 connect_at=connect_at,
+                once=once,
             )
         )
     except KeyboardInterrupt:
@@ -159,6 +174,7 @@ async def _serve(
     policy: Policy,
     serve_at: Path | str | None,
     connect_at: Path | str | None,
+    once: str | None,
 ) -> int:
     """Be one of this program's three shapes, and take down whatever it started.
 
@@ -180,13 +196,20 @@ async def _serve(
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
+            once=once,
         )
     # What this kernel is was decided by the file, and it is handed over as one value: which routes exist,
     # which of them answers, where skills are looked for, and where the conversation is kept (§0.11, E69).
     installed = await config.install(workspace, settings)
     try:
         return await _talk(
-            installed.client, session=session, workspace=workspace, no_colour=no_colour, no_diff=no_diff, policy=policy
+            installed.client,
+            session=session,
+            workspace=workspace,
+            no_colour=no_colour,
+            no_diff=no_diff,
+            policy=policy,
+            once=once,
         )
     finally:
         await installed.close()
@@ -201,6 +224,7 @@ async def _connected(
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
+    once: str | None,
 ) -> int:
     """Talk to a kernel somebody else is serving, over the one address they named (``--connect``)."""
     try:
@@ -210,7 +234,13 @@ async def _connected(
     try:
         _claim(claimed, said=client.manifest.workspace)
         return await _talk(
-            client, session=session, workspace=workspace, no_colour=no_colour, no_diff=no_diff, policy=policy
+            client,
+            session=session,
+            workspace=workspace,
+            no_colour=no_colour,
+            no_diff=no_diff,
+            policy=policy,
+            once=once,
         )
     finally:
         client.close()
@@ -236,9 +266,21 @@ def _resolved(asked: Path) -> Path:
 
 
 async def _talk(
-    client: KernelLink, *, session: str, workspace: Path, no_colour: bool, no_diff: bool, policy: Policy
+    client: KernelLink,
+    *,
+    session: str,
+    workspace: Path,
+    no_colour: bool,
+    no_diff: bool,
+    policy: Policy,
+    once: str | None = None,
 ) -> int:
-    """Be this program in front of one connection: the loop, the editor, and the screen (§0.13)."""
+    """Be this program in front of one connection: the loop, the editor, and the screen (§0.13).
+
+    ``once`` is the one message a script asked for, and the loop it goes through is the one a person's
+    lines go through: ``-p`` differs in when the run says goodbye, not in how a message becomes a turn
+    (E159).
+    """
     catalog = build(client.manifest, session=session)
     app = App(
         client,
@@ -253,6 +295,7 @@ async def _talk(
         markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         diff=not no_diff,
         mark=mark_path(session),
+        once=once,
     )
     return await app.run()
 

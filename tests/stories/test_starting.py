@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent.kernel.failure import Failure
+from tests.stories.model import Failing, text
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from tests.stories.driver import Story
+
+    type Scripted = Callable[..., Awaitable[Story]]
 
 
 async def test_starting_says_nothing_and_costs_nothing(story: Story) -> None:
@@ -52,3 +59,22 @@ async def test_the_kernel_leaving_ends_the_program_and_says_why(story: Story) ->
 
     assert story.screen() == ("the kernel is leaving: going down",)
     assert await story.stop() == 0
+
+
+async def test_one_message_is_a_whole_run(story_with: Scripted) -> None:
+    """``-p`` is the same loop with a different goodbye: one message, one turn, and the code (E159)."""
+    story = await story_with(text("an answer"), once="say something")
+
+    assert story.questions() == (), "a message is not a question, and nothing had to be agreed to"
+    assert await story.stop() == 0
+    assert story.screen() == ("turn 1 started (chat)", "an answer", "turn 1 finished")
+
+
+async def test_a_run_whose_turn_failed_leaves_with_one(story_with: Scripted) -> None:
+    """The turn's failure is the run's error: a pipe has to be able to tell it from an answer (E159)."""
+    story = await story_with(Failing(Failure.TIMEOUT, "nobody answered"))
+
+    await story.type("a thought")
+    await story.until("turn 1 failed")
+
+    assert await story.stop() == 1

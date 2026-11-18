@@ -174,6 +174,7 @@ class Story:
         policy: Policy | None = None,
         markdown: bool = False,
         mark: Path | None = None,
+        once: str | None = None,
         leaving: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.client = client
@@ -201,6 +202,7 @@ class Story:
             policy=policy,
             markdown=markdown,
             mark=mark,
+            once=once,
         )
         self._running = asyncio.create_task(self.app.run())
 
@@ -227,6 +229,7 @@ class Story:
         policy: Policy | None = None,
         markdown: bool = False,
         mark: Path | None = None,
+        once: str | None = None,
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
@@ -278,6 +281,9 @@ class Story:
         ``mark`` is where this client remembers how far it had read (§5 B), and ``None`` is a client that
         remembers nothing: a story about a reconnect names a file in its own directory, the way a program
         names the one in the person's.
+
+        ``once`` is the one message a run sends instead of reading lines (``-p``), and ``None`` is the
+        ordinary run: a story about a script's shape says what it would say here (E159).
         """
         root.mkdir(parents=True, exist_ok=True)
         settled: dict[str, bool] = {
@@ -324,6 +330,7 @@ class Story:
             policy=policy,
             markdown=markdown,
             mark=mark,
+            once=once,
         )
         await story.settle()
         return story
