@@ -64,6 +64,7 @@ every refusal. `session` names the conversation, and an empty one means the call
 | `open` | start a conversation, or copy another one's text into a new one |
 | `close` | stop serving a conversation; its entries stay on disk |
 | `submit` | say something in a conversation; the kernel answers with a turn |
+| `retry` | ask the model again from the end of the chain, without repeating a call |
 | `cancel` | stop one piece of work, or everything a conversation is doing |
 | `set-route` | point a conversation at another model route, or back at the default |
 | `goal` | read or move the switch that lets the kernel continue a plan on its own |
@@ -76,10 +77,15 @@ every refusal. `session` names the conversation, and an empty one means the call
 | `rollback` | put a path back to the version an earlier entry recorded |
 | `ungrant` | take back one path a conversation was allowed to reach |
 
-`submit.kind` is a `TurnKind` — `chat`, `compact`, `aside`, `goal` — and two of the four are not a
-client's to send: `goal` is started by the kernel when an unfinished plan says the work is not done
-(`no-goal`), and `aside` is declared and not implemented (`no-aside`). Both are refused by name, which is
-a refusal a client can be written against.
+`submit.kind` is a `TurnKind` — `chat`, `compact`, `aside`, `goal`, `retry` — and three of the five are not
+a client's to send: `goal` is started by the kernel when an unfinished plan says the work is not done
+(`no-goal`), `aside` is declared and not implemented (`no-aside`), and `retry` is asked for with the command
+of that name (`no-retry`). Each is refused by name, which is a refusal a client can be written against.
+
+`retry` asks one more request against the chain as it stands: the tool calls already on it stay where they
+are, with their results, and none of them runs again. `begin_after` names the entry to continue, and an
+empty one is the end of the chain — a conversation with nothing in it has nothing to ask again
+(`nothing-to-retry`).
 
 `open.seed_from` is `(session, entry)` — the last entry of the chain to copy — and only the projected text
 travels: no pointer, no grants, no todo, no route, no name. `open.inherit` is an `Inherit`, `none` (the

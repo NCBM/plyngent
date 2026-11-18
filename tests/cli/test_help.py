@@ -40,6 +40,14 @@ EXPECTED: dict[str, str] = {
     "Options:\n"
     "  --session TEXT  the conversation to act on  [default: main]",
     "submit": "Usage: submit [OPTIONS]\n\n  Write the message in your editor, then send it.",
+    "retry": "Usage: retry [OPTIONS]\n"
+    "\n"
+    "  Ask the model again from the end of the chain, without repeating anything\n"
+    "  already done.\n"
+    "\n"
+    "Options:\n"
+    "  --begin-after TEXT\n"
+    "  --session TEXT      the conversation to act on  [default: main]",
     "cancel": "Usage: cancel [OPTIONS]\n"
     "\n"
     "  Stop one piece of work, or everything this conversation is doing.\n"

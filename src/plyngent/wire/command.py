@@ -75,6 +75,18 @@ class Submit(Command, tag="submit", frozen=True, kw_only=True):
     text: str = ""
 
 
+class Retry(Command, tag="retry", frozen=True, kw_only=True):
+    """Ask the model again from the end of the chain, without repeating anything already done.
+
+    The tool calls that were submitted stay where they are, and their results stay on the chain, so what
+    is asked is one more request against the same history — "try that again" and not "run it again"
+    (E158). ``begin_after`` names the entry to continue, and an empty one is the kernel's own answer:
+    the chain as it stands.
+    """
+
+    begin_after: str | None = None
+
+
 class Cancel(Command, tag="cancel", frozen=True, kw_only=True):
     """Stop one piece of work, or everything this conversation is doing.
 
@@ -239,6 +251,7 @@ type AnyCommand = (
     Open
     | Close
     | Submit
+    | Retry
     | Cancel
     | SetRoute
     | Goal

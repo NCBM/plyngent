@@ -65,6 +65,7 @@ from plyngent.wire.command import (
     Open,
     Prune,
     Resume,
+    Retry,
     Rollback,
     SetRoute,
     Submit,
@@ -126,6 +127,15 @@ if TYPE_CHECKING:
     from plyngent.wire.command import AnyCommand, OfferedTool
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyQuery, AnyReply
+
+
+#: The turn kinds this kernel starts and a client may not: each is named by its own command, and a
+#: ``Submit`` asking for the kind is refused with the reason that belongs to it.
+_KERNELS_OWN: dict[TurnKind, Refusal] = {
+    TurnKind.ASIDE: Refusal.NO_ASIDE,
+    TurnKind.GOAL: Refusal.NO_GOAL,
+    TurnKind.RETRY: Refusal.NO_RETRY,
+}
 
 
 class Serving:
@@ -351,8 +361,8 @@ class Serving:
                 self.link.emit(SessionsListed(sessions=await self._served()))
             case Cancel(session=session, scope=scope, reason=reason, detail=detail):
                 await self._cancel(session, scope, reason, detail)
-            case Submit(session=session, text=text, kind=kind, begin_after=begin_after):
-                await self._submit(session, text, kind, begin_after)
+            case Submit() | Retry():
+                await self._turning(command)
             case Offer(tools=tools):
                 await self._offer(tools)
             case Compact() | Prune():
@@ -861,6 +871,37 @@ class Serving:
 
     # -- turns ---------------------------------------------------------------------
 
+    async def _turning(self, command: Submit | Retry) -> None:
+        """The two commands that start a turn: a message with text, and a retry with none.
+
+        Both go through :meth:`_submit`, so "one turn at a time in a session" and the kernel's own
+        ceiling answer a retry exactly as they answer a message (E158).
+        """
+        match command:
+            case Submit(session=session, text=text, kind=kind, begin_after=begin_after):
+                await self._submit(session, text, kind, begin_after)
+            case Retry(session=session, begin_after=begin_after):
+                await self._retry(session, begin_after)
+
+    async def _retry(self, session: str, begin_after: str | None) -> None:
+        """Ask the model again from the chain's end, and not from a place the chain does not have.
+
+        A retry that names no place continues where the conversation stands, which is what "again" means;
+        a conversation with nothing in it has nothing to ask again, and is told so rather than sending a
+        request with no history in it (E158).
+        """
+        found = self._session(session)
+        if found is None:
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
+            return
+        if begin_after is None:
+            head = await found.host.trail.head(session)
+            if head is None:
+                self.link.emit(TurnRefused(session=session, reason=Refusal.NOTHING_TO_RETRY, holder=0))
+                return
+            begin_after = head.id
+        await self._start(found, session, "", TurnKind.RETRY, begin_after)
+
     async def _submit(self, session: str, text: str, kind: TurnKind, begin_after: str | None) -> None:
         """Start a turn in the background, or say why no turn started.
 
@@ -884,18 +925,23 @@ class Serving:
         if found is None:
             self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
             return
+        if kind in _KERNELS_OWN:
+            # Three kinds are this kernel's to start and never a client's to name: an aside is declared
+            # and not run, a goal turn is the plan saying the work is not done, and a retry is a person
+            # saying "ask again" through the command of that name (E146/E158).
+            self.link.emit(TurnRefused(session=session, reason=_KERNELS_OWN[kind], holder=0))
+            return
+        await self._start(found, session, text, kind, begin_after)
+
+    async def _start(self, found: Session, session: str, text: str, kind: TurnKind, begin_after: str | None) -> None:
+        """What every turn takes, whoever asked it: a model to ask, the session's one slot, a place in the
+        kernel's budget — and then a task of its own.
+
+        It is separate from :meth:`_submit` because a retry is this kernel's own kind: what a client may
+        not name, the kernel may start, and the checks afterwards are the same ones either way (E158).
+        """
         if not found.host.model.installed:
             self.link.emit(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
-            return
-        if kind is TurnKind.ASIDE:
-            # Declared in the contract and not implemented here: running it as a chat would write the
-            # history an aside exists to leave alone, so it is refused by name instead.
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_ASIDE, holder=0))
-            return
-        if kind is TurnKind.GOAL:
-            # The one kind nobody may ask for: a goal turn is this kernel saying "the plan is not
-            # finished", so a client that sends one is asking for a turn on its own authority (E146).
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_GOAL, holder=0))
             return
         live = found.turns()
         if live:

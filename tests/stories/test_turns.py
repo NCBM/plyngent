@@ -14,11 +14,12 @@ import signal
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.catalog import RESIDENT
+from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Result, User
 from plyngent.wire.ask import Confirmation
 from plyngent.wire.command import Open, Submit
 from plyngent.wire.event import TurnKind
-from tests.stories.model import Held, calling, text
+from tests.stories.model import Failing, Held, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -224,6 +225,32 @@ async def test_a_denylisted_program_is_put_to_the_person_before_it_runs(story_wi
     (_, second) = story.requests()
     refusal = second.messages[-1]
     assert isinstance(refusal, Result) and refusal.tool == "execute"
+
+
+async def test_a_retry_asks_again_and_repeats_no_call(story_with: Scripted) -> None:
+    """``/retry`` is one more request against the chain, not a rerun of what the chain already holds (E158)."""
+    story = await story_with(
+        calling("write_file", {"path": "notes.txt", "content": "one"}),
+        Failing(Failure.TIMEOUT, "nobody answered"),
+        text("asked again"),
+    )
+    await story.require("fs")
+
+    await story.type("write it")
+    await story.answer("y")
+    await story.until("turn 1 failed")
+
+    await story.type("/retry")
+    await story.until("asked again")
+
+    assert "turn 2 started (retry)" in story.screen(), "the turn kind is said, and it is nobody's chat"
+    asked = story.requests()[-1]
+    assert [type(message) for message in asked.messages] == [User, Assistant, Result], (
+        "the retry adds no line of its own: it asks with the chain the failed turn left"
+    )
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "one", (
+        "and the call already made is not made again"
+    )
 
 
 async def test_a_turn_past_what_the_kernel_can_run_is_refused_and_not_queued(story_with: Scripted) -> None:

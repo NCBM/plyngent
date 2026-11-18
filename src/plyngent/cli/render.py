@@ -943,6 +943,8 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.NOT_AN_OBJECT: "the arguments of a client's tool are a JSON object, and this schema is not one",
     Refusal.NO_GOAL: "a turn is started by a person or by an unfinished plan, and not by a client asking for one",
     Refusal.TOO_MANY_TURNS: "this kernel is already running {limit} turns, which is as many as it runs at once",
+    Refusal.NO_RETRY: "a retry is asked for by its own command, and not by naming the kind of turn",
+    Refusal.NOTHING_TO_RETRY: "there is nothing to ask again: this conversation has no messages yet",
 }
 
 

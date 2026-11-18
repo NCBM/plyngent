@@ -29,17 +29,18 @@ class TurnKind(StrEnum):
     """What a turn is for, which is also what it is allowed to touch.
 
     ``CHAT`` continues a conversation. ``ASIDE`` reads without writing model history. ``COMPACT``
-    writes one summary entry and nothing else. ``GOAL`` is the one kind a person cannot ask for: the
-    kernel starts it itself when an unfinished plan says the work is not done, so it writes no line
-    nobody said and carries the instruction in the prompt instead (§10.4, E146). Nothing here grants
-    exclusivity: with a forest and explicit ``begin_after``, two turns that grow from the same point
-    simply become two branches.
+    writes one summary entry and nothing else. ``GOAL`` and ``RETRY`` are the two kinds a person cannot
+    ask for: the kernel starts them itself — a plan that is not finished, and a person saying "ask
+    again" — so neither writes a line nobody said, and each carries whatever it has to say in the prompt
+    instead (§10.4, E146/E158). Nothing here grants exclusivity: with a forest and explicit
+    ``begin_after``, two turns that grow from the same point simply become two branches.
     """
 
     CHAT = "chat"
     ASIDE = "aside"
     COMPACT = "compact"
     GOAL = "goal"
+    RETRY = "retry"
 
 
 class GoalMode(StrEnum):
@@ -112,6 +113,12 @@ class Refusal(StrEnum):
     #: The kernel is already running as many turns as it may, across every conversation. Not ``busy``:
     #: that one names a turn of this very session, and this one is a budget for the process (E156).
     TOO_MANY_TURNS = "too-many-turns"
+    #: A retry is started by the command of that name and not by asking for the kind, the same rule
+    #: ``goal`` and ``aside`` follow: the kernel is what decides to ask the model again (E158).
+    NO_RETRY = "no-retry"
+    #: "Ask again" with nothing to ask about: the conversation has no messages yet, so there is no end of
+    #: the chain to continue from (E158).
+    NOTHING_TO_RETRY = "nothing-to-retry"
 
 
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):

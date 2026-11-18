@@ -72,6 +72,7 @@ from plyngent.wire.command import OfferedTool as OfferedTool
 from plyngent.wire.command import Open as Open
 from plyngent.wire.command import Prune as Prune
 from plyngent.wire.command import Resume as Resume
+from plyngent.wire.command import Retry as Retry
 from plyngent.wire.command import Rollback as Rollback
 from plyngent.wire.command import SetRoute as SetRoute
 from plyngent.wire.command import Submit as Submit

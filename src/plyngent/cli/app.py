@@ -55,7 +55,7 @@ from plyngent.cli.policy import Policy, Tally
 from plyngent.cli.render import Stage, held, notice, unfinished
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import unanswered
-from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Submit
+from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Retry, Submit
 from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
 from plyngent.wire.query import AnyQuery, Forest, LiveTurn, Trajectory, Unanswered
@@ -666,13 +666,13 @@ class App:
         """Put a command in the conversation this client is looking at, in the shape the kernel runs.
 
         Only a message carries a place — a command about sessions or about cancelling says nothing about
-        which branch is on screen — so this is about ``Submit`` and nothing else.
+        which branch is on screen — so this is about ``Submit`` and ``Retry`` and nothing else.
 
         A ``Compact`` with no text is the one command that becomes another: a summary nobody typed has to
         be asked for, which is a turn (``kind=COMPACT``) rather than a row written where commands are.
         The text, when there is one, is what the person wants kept.
         """
-        if isinstance(command, Submit):
+        if isinstance(command, Submit | Retry):
             return replace(command, begin_after=self._cursor)
         if isinstance(command, Compact) and not command.text:
             return Submit(session=command.session, kind=TurnKind.COMPACT, begin_after=self._cursor)

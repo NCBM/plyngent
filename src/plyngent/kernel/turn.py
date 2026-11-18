@@ -194,7 +194,9 @@ class TurnRunner:
         announced, the turn forgotten.
 
         A ``GOAL`` turn writes no line of its own: nothing new was said, so what it reads comes from the
-        prompt (:meth:`assemble`) and its history is the one the turn before it left (E146).
+        prompt (:meth:`assemble`) and its history is the one the turn before it left (E146). A ``RETRY``
+        turn is the same shape for the other reason: nobody said anything new, they asked the same
+        question again, so it adds no message and asks the model against the chain as it stands (E158).
         """
         ctx = self._ctx
         session = ctx.session.session_id
@@ -207,7 +209,7 @@ class TurnRunner:
             if ctx.kind is TurnKind.COMPACT:
                 state = await self._summarized(state)
             else:
-                if ctx.kind is not TurnKind.GOAL:
+                if ctx.kind not in (TurnKind.GOAL, TurnKind.RETRY):
                     state = await self._append(state, User(text=text))
                 while True:
                     state = await self._told(state)
