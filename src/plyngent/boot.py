@@ -46,6 +46,7 @@ from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
+from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
 from plyngent.wire.frame import Wire
@@ -287,8 +288,10 @@ async def install(
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
-    limits: Limits | None = None,
+    pty: Limits | None = None,
     running: int | None = None,
+    rounds: int | None = None,
+    soft: bool = False,
     sandbox: WorkspaceConfig | None = None,
     trash: bool = True,
     deadline: float | None = None,
@@ -343,7 +346,7 @@ async def install(
     whichever journal answers
     (:func:`~plyngent.kernel.documents.documents_path`), so no second thing has to be named here.
 
-    ``limits`` is how much of this host its terminals may take, and it is one parameter because it is one
+    ``pty`` is how much of this host its terminals may take, and it is one parameter because it is one
     value: three numbers that only ever travel together, decided here for the same reason the skills
     directories are. ``None`` is the numbers this tree ships with, so a program with no configuration file
     is the program it always was; a story that wants one terminal's worth of room says so here instead of
@@ -353,6 +356,9 @@ async def install(
     budget for the process rather than for one conversation, so it is said here rather than per session,
     and a turn beyond it is refused instead of queued (E156).
 
+    ``rounds`` and ``soft`` are how far one turn may go: how many times it may ask the model before the
+    wall, and whether the wall asks the person first. ``None`` is this tree's own number, which is no wall
+    at all, so a program nobody configured is one whose turns end when the model is done (E150).
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
     ``local`` is one connection over a socket this kernel accepted, so ``endpoint`` is where it listens:
@@ -385,8 +391,10 @@ async def install(
         skills=skills,
         prompt=prompt,
         journal=journal,
-        limits=limits,
+        pty=pty,
         running=running,
+        rounds=rounds,
+        soft=soft,
         sandbox=sandbox,
         trash=trash,
         versions=versions,
@@ -516,8 +524,10 @@ async def serve(
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
-    limits: Limits | None = None,
+    pty: Limits | None = None,
     running: int | None = None,
+    rounds: int | None = None,
+    soft: bool = False,
     sandbox: WorkspaceConfig | None = None,
     trash: bool = True,
     deadline: float | None = None,
@@ -544,8 +554,10 @@ async def serve(
         skills=skills,
         prompt=prompt,
         journal=journal,
-        limits=limits,
+        pty=pty,
         running=running,
+        rounds=rounds,
+        soft=soft,
         sandbox=sandbox,
         trash=trash,
         versions=versions,
@@ -603,8 +615,10 @@ async def _assembled(
     skills: Skills | None,
     prompt: PromptPlan | None,
     journal: Path | str | None,
-    limits: Limits | None,
+    pty: Limits | None,
     running: int | None,
+    rounds: int | None,
+    soft: bool,
     sandbox: WorkspaceConfig | None,
     trash: bool,
     versions: bool,
@@ -637,7 +651,7 @@ async def _assembled(
     _ = registry.declare_all(
         [
             Declaration(PtyBroker),
-            Declaration(PtyRegistry, instance=host, kwargs=(Limits() if limits is None else limits).declared()),
+            Declaration(PtyRegistry, instance=host, kwargs=(Limits() if pty is None else pty).declared()),
             Declaration(HumanChannel, instance=host),
             Declaration(Offers, instance=host),
             Declaration(ModelChannel, instance=host, args=(asked,)),
@@ -654,6 +668,8 @@ async def _assembled(
                     "prompt": plan,
                     "history": versions_kept,
                     "running": DEFAULT_RUNNING if running is None else running,
+                    "rounds": DEFAULT_ROUNDS if rounds is None else rounds,
+                    "soft": soft,
                     "workspace_config": sandbox,
                     "trash_enabled": trash,
                 },

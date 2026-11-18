@@ -8,7 +8,7 @@ one line each answer leaves on the screen.
 from __future__ import annotations
 
 from plyngent.cli.policy import AWAY, YOLO, Answered, Policy, Tally
-from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Secret, Selection, Severity
+from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Picked, Secret, Selection, Severity
 
 
 def test_a_policy_answers_yes_or_no_questions_and_nothing_else() -> None:
@@ -68,6 +68,36 @@ def test_an_answer_carries_the_policy_that_gave_it() -> None:
     reply = answered.reply(question)
     assert reply == Agreed(id=9, accepted=True, by=By.POLICY, policy=YOLO), (
         "a yes from a program is not a yes from a person, and the record says which"
+    )
+
+
+def test_a_choice_that_names_its_own_default_is_answered_with_it() -> None:
+    """E150: the question says what its silence picks, so a policy repeats it rather than choosing.
+
+    This is the one narrowing of "an option nobody offered is not one a policy may pick": the option is
+    in front of the person already — it is what an empty line gives — so answering it is not a policy
+    deciding on their behalf. Both switches answer it, and ``--yolo`` first, for the reason it is first
+    everywhere else.
+    """
+    question = Selection(prompt="keep going?", options=("again", "stop"), default="again")
+
+    answered = Policy(away=True).answers(question)
+    assert answered == Answered(accepted=True, policy=AWAY, picked="again")
+    assert answered is not None and answered.reply(question) == Picked(id=0, value="again", by=By.POLICY, policy=AWAY)
+
+    assert Policy(yolo=True).answers(question) == Answered(accepted=True, policy=YOLO, picked="again")
+    assert Policy(yolo=True, away=True).answers(question) == Answered(accepted=True, policy=YOLO, picked="again"), (
+        "the first one with an answer gives it, which is the rule a confirmation already follows"
+    )
+
+
+def test_a_choice_with_nothing_in_front_of_the_person_stays_theirs() -> None:
+    """No default, or a default that is not one of the options: nobody is offered anything, so nobody speaks."""
+    everything = Policy(yolo=True, away=True, away_danger=True)
+
+    assert everything.answers(Selection(prompt="?", options=("a", "b"))) is None
+    assert everything.answers(Selection(prompt="?", options=("a", "b"), default="c")) is None, (
+        "a suggested line that is not an option is not an offer either"
     )
 
 

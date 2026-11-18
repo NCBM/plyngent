@@ -151,7 +151,7 @@ async def test_a_host_whose_file_says_one_terminal_says_the_number_it_hit(
     being counted here is the host's, and the point of starting the kernel from a file is that the number in
     the sentence is the number in the file rather than one this tree happened to ship with.
     """
-    settings = _settings(tmp_path, "[limits]\nmax_sessions = 1\n")
+    settings = _settings(tmp_path, "[pty]\nmax_sessions = 1\n")
 
     story = await story_with(
         calling("open_pty", {"command": ["cat"], "intention": "the one there is room for"}),

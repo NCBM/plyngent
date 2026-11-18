@@ -13,10 +13,12 @@ import re
 import signal
 from typing import TYPE_CHECKING
 
+from plyngent.cli.policy import Policy
 from plyngent.kernel.catalog import RESIDENT
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Result, User
-from plyngent.wire.ask import Confirmation
+from plyngent.kernel.trail import Consent
+from plyngent.wire.ask import Confirmation, Selection
 from plyngent.wire.command import Open, Submit
 from plyngent.wire.event import TurnKind
 from tests.stories.model import Failing, Held, calling, text
@@ -274,3 +276,120 @@ async def test_a_turn_past_what_the_kernel_can_run_is_refused_and_not_queued(sto
     await story.until("the second answer")
 
     assert any("the second answer" in line for line in story.screen()), "and with a place free the same turn runs"
+
+
+# -- the round wall -------------------------------------------------------------------------------
+
+
+async def test_a_turn_stops_at_the_round_wall_and_says_both_numbers(story_with: Scripted) -> None:
+    """`[turn] rounds` is a wall, and the sentence names how far the turn got and what the number was.
+
+    Hard is the default, because an ordinary program that wrote a number down meant it: a model that keeps
+    asking for one more tool is exactly the shape that would otherwise go round for ever, and nothing
+    inside the loop could stop it (E150).
+    """
+    story = await story_with(
+        calling("read", {"path": "notes.txt"}),
+        calling("read", {"path": "notes.txt"}),
+        rounds=2,
+    )
+
+    await story.type("keep looking")
+    await story.until("turn 1 failed")
+
+    failed = [line for line in story.screen() if line.startswith("turn 1 failed")]
+    assert failed and "limit" in failed[0], f"the turn says where it stopped: {story.screen()!r}"
+    assert "ran 2 rounds" in failed[0] and "2 rounds this program runs" in failed[0], (
+        f"and both numbers are in that one sentence: {failed[0]!r}"
+    )
+    assert len(story.requests()) == 2, "nothing was asked past the number"
+
+
+async def test_a_soft_wall_asks_and_an_answered_window_keeps_the_turn_going(story_with: Scripted) -> None:
+    """`[turn] soft` turns the wall into a question, and the person's answer is the new window (E150).
+
+    The rhythm is a window at a time rather than every round: asked at two, allowed four, and the third
+    round ended the work by itself so nothing was asked again.
+    """
+    story = await story_with(
+        calling("read", {"path": "notes.txt"}),
+        calling("read", {"path": "notes.txt"}),
+        text("that is all"),
+        rounds=2,
+        soft=True,
+    )
+
+    await story.type("keep looking")
+    await story.answer("another 2 rounds")
+    await story.finished()
+
+    (question,) = story.questions()
+    assert isinstance(question, Selection), "three answers, so it is a choice rather than a yes or a no"
+    assert question.options == ("another 2 rounds", "no more limit for this turn", "stop here")
+    assert question.default == "another 2 rounds", "and an empty line opens the window it would have anyway"
+    assert len(story.requests()) == 3, "the turn went past the wall and finished on its own"
+
+    rows = [row.payload for row in await story.host.trail.entries(story.session)]
+    (consent,) = [row for row in rows if isinstance(row, Consent)]
+    assert (consent.tool, consent.call, consent.kind, consent.by) == ("", "rounds", "selection", "human"), (
+        "the record says the kernel asked this one itself, under the call the wall runs in"
+    )
+
+
+async def test_a_soft_wall_is_answered_by_the_policy_when_nobody_is_there(story_with: Scripted) -> None:
+    """`--away` reaches the choice through its default, so an unattended run keeps the ceiling it was given.
+
+    Nobody in front of the machine answered nothing: the option already in front of them was answered, and
+    the screen says which policy did it — which is the whole difference between this and a wall.
+    """
+    story = await story_with(
+        calling("read", {"path": "notes.txt"}),
+        calling("read", {"path": "notes.txt"}),
+        text("that is all"),
+        rounds=2,
+        soft=True,
+        policy=Policy(away=True),
+    )
+
+    await story.type("keep looking")
+    await story.finished()
+
+    assert story.questions() == (), "the question never reached a person, because it had an answer in front of it"
+    assert "away: allowed" in story.notices(), f"and the screen says which policy answered: {story.notices()!r}"
+    assert len(story.requests()) == 3, "the window opened, and the turn finished inside it"
+
+
+async def test_a_soft_wall_that_is_told_to_stop_ends_the_turn_there(story_with: Scripted) -> None:
+    """The third answer is a stop, and it is not the same sentence as having nobody answer at all."""
+    story = await story_with(
+        calling("read", {"path": "notes.txt"}),
+        calling("read", {"path": "notes.txt"}),
+        rounds=2,
+        soft=True,
+    )
+
+    await story.type("keep looking")
+    await story.answer("stop here")
+    await story.until("turn 1 failed")
+
+    failed = [line for line in story.screen() if line.startswith("turn 1 failed")]
+    assert failed and "stopped after 2 rounds" in failed[0], f"a person's stop, said as one: {failed[0]!r}"
+    assert len(story.requests()) == 2, "and nothing was asked after it"
+
+
+async def test_a_turn_with_no_rounds_in_the_file_is_never_counted(story_with: Scripted) -> None:
+    """Zero is nobody having said a number, so a program nobody configured runs as long as the model does.
+
+    Four rounds on one line and a fifth that ends the turn: the same shape as the wall story, with the
+    wall taken away — which is what makes every story above a story about a number somebody wrote.
+    """
+    story = await story_with(
+        *(calling("read", {"path": "notes.txt"}) for _ in range(4)),
+        text("there it is"),
+    )
+
+    await story.type("keep looking")
+    await story.finished()
+
+    assert story.questions() == (), "and with no number there is nothing to ask about"
+    assert len(story.requests()) == 5, "every round the model asked for happened"

@@ -33,6 +33,7 @@ from plyngent.kernel.pty.registry import (
 )
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
+from plyngent.kernel.turn import DEFAULT_ROUNDS
 from tests.loopback import answered
 
 if TYPE_CHECKING:
@@ -75,7 +76,7 @@ def test_a_program_nobody_configured_is_the_one_this_tree_ships(tmp_path: Path, 
     assert settings.persona is None and settings.directives is None, "nothing said is not something empty"
     assert settings.skill_paths == () and settings.discover_skills
     assert settings.journal is None
-    assert settings.limits == Limits(), "the budgets this tree shipped with"
+    assert settings.pty == Limits(), "the budgets this tree shipped with"
 
 
 def test_the_default_place_is_the_one_the_journals_live_in() -> None:
@@ -379,7 +380,7 @@ def test_the_file_is_kept_as_it_was_written(tmp_path: Path) -> None:
     parser: a future ``config set`` edits the document somebody wrote, and a reader that kept only the values
     could only ever write the file back as a machine would have laid it out.
     """
-    path = _written(tmp_path, "# why it is four\n[limits]\nmax_sessions = 4\n")
+    path = _written(tmp_path, "# why it is four\n[pty]\nmax_sessions = 4\n")
 
     settings = config.load(path)
 
@@ -400,9 +401,9 @@ def test_the_two_prompt_sections_are_absent_only_until_the_file_says_something()
     assert quiet.persona == "" and quiet.tool_directives == "", "an empty section is a decision, not a default"
 
 
-def test_the_limits_are_the_three_a_terminal_spends(tmp_path: Path) -> None:
-    """The one table whose numbers a person may change, and the numbers arrive whole (§0.11, E85)."""
-    defaults = config.load(_written(tmp_path, "[limits]\n", "empty.toml")).limits
+def test_the_pty_table_is_the_three_a_terminal_spends(tmp_path: Path) -> None:
+    """The one table whose numbers are how much of the host its terminals take (§0.11, E85/E150)."""
+    defaults = config.load(_written(tmp_path, "[pty]\n", "empty.toml")).pty
 
     assert defaults == Limits(
         max_sessions=DEFAULT_MAX_SESSIONS,
@@ -413,10 +414,10 @@ def test_the_limits_are_the_three_a_terminal_spends(tmp_path: Path) -> None:
     chosen = config.load(
         _written(
             tmp_path,
-            "[limits]\nmax_sessions = 1\nmax_per_session = 1\nsession_output_budget = 4096\n",
+            "[pty]\nmax_sessions = 1\nmax_per_session = 1\nsession_output_budget = 4096\n",
             "one.toml",
         )
-    ).limits
+    ).pty
 
     assert chosen == Limits(max_sessions=1, max_per_session=1, session_output_budget=4096)
 
@@ -429,6 +430,25 @@ def test_how_many_turns_run_at_once_is_one_number(tmp_path: Path) -> None:
 
     with pytest.raises(config.ConfigError, match="running"):
         _ = config.load(_written(tmp_path, "[turn]\nrunning = 0\n", "zero.toml"))
+
+
+def test_how_far_one_turn_may_go_is_two_numbers_and_absent_is_no_wall(tmp_path: Path) -> None:
+    """`[turn] rounds` is per turn, `soft` is what its wall does, and absent is this tree's own answer (E150).
+
+    Zero rounds is the reading ``Caps.context_window`` gets for the same kind of absence: nobody named a
+    number, so nothing here counts rounds at all — which is what makes every unconfigured program the one
+    it always was.
+    """
+    plain = config.load(_written(tmp_path, "", "none.toml"))
+
+    assert plain.rounds == DEFAULT_ROUNDS == 0, "a program nobody configured stops when the model is done"
+    assert plain.soft is False, "and a wall it does not have cannot be one that asks"
+
+    chosen = config.load(_written(tmp_path, "[turn]\nrounds = 3\nsoft = true\n", "three.toml"))
+
+    assert (chosen.rounds, chosen.soft) == (3, True)
+    with pytest.raises(config.ConfigError, match="rounds"):
+        _ = config.load(_written(tmp_path, "[turn]\nrounds = -1\n", "negative.toml"))
 
 
 def test_the_sandbox_is_two_lists_and_its_commands_only_ever_get_longer(tmp_path: Path) -> None:

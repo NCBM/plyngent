@@ -222,8 +222,10 @@ class Story:
         prompt: PromptPlan | None = None,
         journal: Path | str | None = None,
         tools: ClientTools = TERMINAL,
-        limits: Limits | None = None,
+        pty: Limits | None = None,
         running: int | None = None,
+        rounds: int | None = None,
+        soft: bool = False,
         deadline: float | None = None,
         grades: Grades | None = None,
         policy: Policy | None = None,
@@ -257,7 +259,7 @@ class Story:
         ways a person can be asked. A story about a client's *own* tool passes a bigger value, because
         implementing one is what makes it a tool somebody can call — a story cannot pretend that part.
 
-        ``limits`` is how much of the host its terminals may take, handed through to ``boot.install``:
+        ``pty`` is how much of the host its terminals may take, handed through to ``boot.install``:
         ``None`` is the numbers this tree ships with, and a story about running out of room says the
         smaller one here rather than building a registry of its own.
 
@@ -293,8 +295,10 @@ class Story:
             "skills": skills is not None,
             "prompt": prompt is not None,
             "journal": journal is not None,
-            "limits": limits is not None,
+            "pty": pty is not None,
             "running": running is not None,
+            "rounds": rounds is not None,
+            "soft": soft,
             "deadline": deadline is not None,
             "grades": grades is not None,
         }
@@ -315,8 +319,10 @@ class Story:
                 skills=skills,
                 prompt=prompt,
                 journal=journal,
-                limits=limits,
+                pty=pty,
                 running=running,
+                rounds=rounds,
+                soft=soft,
                 deadline=deadline,
                 grades=grades,
             )

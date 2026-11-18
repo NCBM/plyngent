@@ -53,6 +53,7 @@ from plyngent.kernel.trail import (
 )
 from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.kernel.words import counted
+from plyngent.wire.ask import Selection, Severity, as_picked
 from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
@@ -85,9 +86,20 @@ FAILED = "the turn failed"
 #: person's prune without decoding who asked (:data:`plyngent.kernel.trail.BY_BUDGET` says that).
 OUTGREW = "the conversation outgrew what this route can hold"
 
+#: How many times a turn may ask the model before it stops, unless `[turn] rounds` says otherwise.
+#: Zero is "this program never said", the reading ``Caps.context_window`` gets: a turn ends when the
+#: model has nothing more to ask for, and nothing here counts them (E150).
+DEFAULT_ROUNDS = 0
 
-class _TooLongError(Exception):
-    """The conversation does not fit the room this route gives it, and nothing more can be put aside.
+#: The two of the three answers to the round wall's question that are not another window: a person
+#: saying "this turn, no more counting" and a person saying "not any more". The words are the question's
+#: own options, so the screen and the answer cannot disagree about them.
+NO_MORE_ROUNDS = "no more limit for this turn"
+STOP_ROUNDS = "stop here"
+
+
+class _WalledError(Exception):
+    """The turn cannot go on: the conversation does not fit the room, or it has run as far as it may.
 
     Not a ``ModelFailed``: no request was made, so there is no attempt to write down — the turn ended
     before it asked anything. It becomes a ``LIMIT`` turn-end and one sentence (:meth:`TurnRunner.run`).
@@ -175,6 +187,11 @@ class TurnRunner:
     _catalog: ToolCatalog
     _executor: ToolExecutor
     _calls: int
+    #: How many rounds this turn has run, and how many it may before the wall — ``None`` for a turn with
+    #: no wall at all. Both are this runner's alone: a window is a fact about one turn, so it is not a
+    #: setting, not a row, and a goal turn started afterwards begins with a fresh one (E150).
+    _ran: int
+    _allowed: int | None
     #: Whether this round's thinking has already been said in pieces, so dispatch does not say it twice.
     _thought_said: bool
 
@@ -183,6 +200,8 @@ class TurnRunner:
         self._catalog = catalog
         self._executor = executor
         self._calls = 0
+        self._ran = 0
+        self._allowed = ctx.host.rounds or None
         self._thought_said = False
 
     async def run(self, text: str) -> TurnEnd:
@@ -212,6 +231,7 @@ class TurnRunner:
                 if ctx.kind not in (TurnKind.GOAL, TurnKind.RETRY):
                     state = await self._append(state, User(text=text))
                 while True:
+                    await self._walled(state)
                     state = await self._told(state)
                     state, request = await self.assemble(state)
                     reply = await self.call(state, request)
@@ -221,11 +241,11 @@ class TurnRunner:
                     state = replace(state, ctx=state.ctx.next_round())
         except Cancelled as stopped:
             reason = str(stopped.reason)
-        except _TooLongError as crowded:
+        except _WalledError as walled:
             # Nothing was asked, so this is not an attempt: the turn ends having said why it could not
-            # start, and the wall it hit is the one a person clears with `/compact` (E149).
+            # go on — the room it does not fit, or the rounds it has run (E149/E150).
             failure = Failure.LIMIT
-            reason = str(crowded)
+            reason = str(walled)
         except ModelFailed as unmet:
             # A model that could not be asked is a *result*, not a bug: the turn ends having done what
             # it could, and says which kind of trouble it met so a person can act on it (and a program
@@ -255,6 +275,77 @@ class TurnRunner:
             )
             ctx.end()
         return TurnEnd(ends_at=ended, acted=self._calls > 0, reason=reason)
+
+    # -- the round wall -------------------------------------------------------------
+    async def _walled(self, state: TurnState) -> None:
+        """Count one round, and at the wall either open another window or end the turn there.
+
+        A turn that keeps asking is a turn nothing inside it stops: the model asks for a tool, the tool
+        answers, so the loop goes round again, and the only thing that could say "not this many times" is
+        a number somebody chose. `[turn] rounds` is that number and ``0`` is nobody having chosen one, so
+        an unconfigured program is the program it always was.
+
+        The wall has two shapes. Hard, it ends the turn — ``LIMIT``, the same member a conversation that
+        cannot be fitted uses, because it is the same kind of fact. Soft, it asks the person first, and
+        what came back is the new window: another ``rounds``, no limit for this turn at all, or stop. The
+        window is this runner's, so nothing about it is written down: it is a fact about one turn, and a
+        goal turn started afterwards is a new turn with a new one (E150).
+        """
+        limit = state.ctx.host.rounds
+        allowed = self._allowed
+        if limit and allowed is not None and self._ran >= allowed:
+            if not state.ctx.host.soft:
+                msg = (
+                    f"this turn ran {counted(self._ran, 'round')}, which is the "
+                    f"{counted(limit, 'round')} this program runs before it stops"
+                )
+                raise _WalledError(msg)
+            self._allowed = await self._asked_for_more(state, allowed, limit)
+        self._ran += 1
+
+    async def _asked_for_more(self, state: TurnState, allowed: int, limit: int) -> int | None:
+        """Ask whether this turn may keep going, and answer the window that came back — or end the turn.
+
+        Three answers, and the third one is why this is a choice rather than a yes-or-no question: a
+        person watching a turn that is getting somewhere says "no more counting" and means it, while a
+        person who wants to look at what it did says stop. The question is asked at the lightest level
+        with its own default in front of the person, so a client left to answer by itself repeats the
+        option an empty line would have given — which is what keeps an unattended run inside the ceiling
+        it was given rather than turning the wall into a checkpoint (E150).
+
+        Nobody answering is the wall: an answer with no option in it is not "again", and a question put
+        to a client that is not there is never permission to go on.
+        """
+        again = f"another {counted(limit, 'round')}"
+        answer = as_picked(
+            await state.ctx.ask(
+                Selection(
+                    prompt=(
+                        f"this turn has run {counted(self._ran, 'round')}, which is the "
+                        f"{counted(limit, 'round')} this program asks about — keep going?"
+                    ),
+                    options=(again, NO_MORE_ROUNDS, STOP_ROUNDS),
+                    default=again,
+                    severity=Severity.ROUTINE,
+                ),
+                tool="",
+                call="rounds",
+            )
+        )
+        match answer.value:
+            case _ if answer.value == again:
+                return allowed + limit
+            case _ if answer.value == NO_MORE_ROUNDS:
+                return None
+            case _ if answer.value == STOP_ROUNDS:
+                msg = f"this turn was stopped after {counted(self._ran, 'round')}, which is where it asked"
+                raise _WalledError(msg)
+            case _:
+                msg = (
+                    f"this turn ran {counted(self._ran, 'round')}, and nobody said to go past the "
+                    f"{counted(limit, 'round')} this program asks about"
+                )
+                raise _WalledError(msg)
 
     async def _told(self, state: TurnState) -> TurnState:
         """Say the lines this session owes the model, at a boundary where nothing is being asked.
@@ -351,7 +442,7 @@ class TurnRunner:
                 f"a summary of this conversation needs {self._measure(state, request.messages, system=request.system)} "
                 f"tokens and this route holds {room}, which is more than the instruction alone"
             )
-            raise _TooLongError(msg)
+            raise _WalledError(msg)
         reply = await self.call(state, request)
         text = reply.text.strip()
         if not text:
@@ -460,7 +551,7 @@ class TurnRunner:
                 f"this conversation needs {size} tokens and this route holds {room}, and nothing in it is "
                 "old enough to put aside"
             )
-            raise _TooLongError(msg)
+            raise _WalledError(msg)
         targets = tuple(row.id for row, _message in taken)
         kept = await self._kept(state, [message for _row, message in taken])
         ctx = state.ctx
@@ -490,7 +581,7 @@ class TurnRunner:
                 f"this conversation still needs {left} tokens and this route holds {room}, even after "
                 f"putting {len(targets)} entries aside"
             )
-            raise _TooLongError(msg)
+            raise _WalledError(msg)
         return state, messages
 
     def _measure(

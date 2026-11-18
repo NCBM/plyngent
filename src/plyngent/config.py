@@ -56,6 +56,7 @@ from plyngent.kernel.pty.registry import (
 from plyngent.kernel.resources import Root
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
+from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import WorkspaceConfig
 
 if TYPE_CHECKING:
@@ -74,8 +75,14 @@ class ConfigError(Exception):
     """A configuration file this program will not start with, worded as what is wrong with it."""
 
 
-class LimitsFile(Struct, forbid_unknown_fields=True, kw_only=True):
-    """``[limits]``: how much of the host its terminals may take, and nothing else (§0.11, E85)."""
+class PtyFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[pty]``: how much of the host its terminals may take, and nothing else (§0.11, E85).
+
+    Named for the thing the three numbers are about rather than for the idea of a ceiling: everything
+    here is a quota on a terminal — how many a host opens, how many one conversation holds, and how many
+    bytes of one are handed over at a time — and the value they turn into is the one a
+    :class:`~plyngent.kernel.pty.registry.PtyRegistry` is given (E150).
+    """
 
     max_sessions: int = DEFAULT_MAX_SESSIONS
     max_per_session: int = DEFAULT_MAX_PER_SESSION
@@ -108,14 +115,22 @@ class TrashFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
 
 class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
-    """``[turn]``: how many turns this program runs at once (E156).
+    """``[turn]``: how many turns this program runs at once, and how far one of them may go.
 
-    ``running`` is the whole of it today, and it is a number for the *process* rather than for one
-    conversation: four frontends on one kernel is what it is sized for. A fifth turn is refused rather
-    than queued, because a queue would make "what is running now" a lie.
+    ``running`` is a number for the *process* rather than for one conversation: four frontends on one
+    kernel is what it is sized for. A fifth turn is refused rather than queued, because a queue would
+    make "what is running now" a lie (E156).
+
+    ``rounds`` is the other axis: how many times a turn may ask the model before it reaches a wall, and
+    ``0`` is "this program never said", the same reading ``Caps.context_window`` gets. ``soft`` says what
+    the wall does — ``false`` ends the turn there, and ``true`` asks the person first, once per window,
+    so that a program left alone keeps the ceiling it was given instead of quietly running past it
+    (E150).
     """
 
     running: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_RUNNING
+    rounds: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_ROUNDS
+    soft: bool = False
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -202,7 +217,7 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     route: list[RouteFile] = msgspec.field(default_factory=list)
     agent: AgentFile | None = None
     skills: SkillsFile | None = None
-    limits: LimitsFile | None = None
+    pty: PtyFile | None = None
     turn: TurnFile | None = None
     sandbox: SandboxFile | None = None
     trash: TrashFile | None = None
@@ -229,8 +244,10 @@ class Settings:
     directives: str | None = None
     skill_paths: tuple[Path, ...] = ()
     discover_skills: bool = True
-    limits: Limits = field(default_factory=Limits)
+    pty: Limits = field(default_factory=Limits)
     running: int = DEFAULT_RUNNING
+    rounds: int = DEFAULT_ROUNDS
+    soft: bool = False
     sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     trash: bool = True
     journal: Path | None = None
@@ -312,7 +329,8 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
     """One decoded file as the values a kernel is started with, refusing what cannot be one."""
     routes = _routes(parsed.route, environment)
     skills = parsed.skills or SkillsFile()
-    limits = parsed.limits or LimitsFile()
+    pty = parsed.pty or PtyFile()
+    turn = parsed.turn or TurnFile()
     sandbox = parsed.sandbox or SandboxFile()
     return Settings(
         routes=Routes(routes, default=parsed.default_route),
@@ -321,12 +339,14 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
         directives=None if parsed.agent is None else parsed.agent.tool_directives,
         skill_paths=tuple(_resolved(one, path) for one in skills.paths),
         discover_skills=skills.discover,
-        limits=Limits(
-            max_sessions=limits.max_sessions,
-            max_per_session=limits.max_per_session,
-            session_output_budget=limits.session_output_budget,
+        pty=Limits(
+            max_sessions=pty.max_sessions,
+            max_per_session=pty.max_per_session,
+            session_output_budget=pty.session_output_budget,
         ),
-        running=(parsed.turn or TurnFile()).running,
+        running=turn.running,
+        rounds=turn.rounds,
+        soft=turn.soft,
         sandbox=WorkspaceConfig(
             path_denylist=sandbox.path_denylist,
             command_denylist=DEFAULT_COMMAND_DENYLIST | frozenset(sandbox.command_denylist),
@@ -504,8 +524,10 @@ def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
         "skills": skills,
         "prompt": plan,
         "journal": settings.journal,
-        "limits": settings.limits,
+        "pty": settings.pty,
         "running": settings.running,
+        "rounds": settings.rounds,
+        "soft": settings.soft,
         "sandbox": settings.sandbox,
         "trash": settings.trash,
     }

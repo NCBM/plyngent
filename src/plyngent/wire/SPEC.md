@@ -170,6 +170,10 @@ Four questions, three answers, and a question's kind says which answer it admits
   heavier ones never do — and it travels with the question so a client can say what silence will mean.
 - **`timeout`** is how long the question gets, already resolved by the connection: the level's grade and
   the caller's own number, whichever is shorter, with `null` meaning the connection's clock.
+- **`default`** is the answer already in front of the person: the word an empty line gives. Empty means a
+  blank line is not an answer, and a client may send that option *by itself* only when the question is a
+  `selection` whose `default` is one of its `options` — that is not a policy deciding on somebody's
+  behalf, because it is the answer an empty line gives.
 - **`by`** on every answer names who spoke: `human`, `policy`, `timeout`, or `nobody`. It has no default,
   because "no" from a person is final, "no" from a deadline is worth another try, and "nobody" is never a
   yes.

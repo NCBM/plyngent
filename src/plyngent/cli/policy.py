@@ -5,6 +5,9 @@ interrupted, and that is a fact about *this* frontend rather than about the kern
 ``cli/`` knows either word, and a kernel that did would be a kernel with a mode. What a policy may
 answer is deliberately narrow — a yes-or-no question, at a level it was told about, and never a
 password — because everything else a question can ask is a person's words rather than a permission.
+The one exception is a choice that already says what its own silence picks: answering it with that
+option is answering it the way an empty line would, and a question with no default stays the person's
+(E150).
 
 Two names for two promises:
 
@@ -24,8 +27,12 @@ ones it answered.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from plyngent.wire.ask import SILENCE, Agreed, AnyAsk, By, Confirmation, Severity
+from plyngent.wire.ask import SILENCE, Agreed, AnyAsk, By, Confirmation, Picked, Selection, Severity
+
+if TYPE_CHECKING:
+    from plyngent.wire.ask import AnyAnswer
 
 #: What each flag is called in the record: the answer carries one of these, so "which policy said yes
 #: to a ``danger`` question?" is a question to the record rather than an inference.
@@ -40,13 +47,21 @@ AWAY_DANGER = "away-danger"
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Answered:
-    """One answer a policy gave: whether it agreed, and which policy it was."""
+    """One answer a policy gave: whether it agreed, which policy it was, and the option it picked.
+
+    ``picked`` is filled only where the question was a choice and it named its own default — the one
+    shape of a choice a policy may answer (E150). A yes-or-no question leaves it empty, and the answer
+    is then the bool it always was.
+    """
 
     accepted: bool
     policy: str
+    picked: str = ""
 
-    def reply(self, question: AnyAsk) -> Agreed:
-        """The answer to send, in the shape the connection matches against its question."""
+    def reply(self, question: AnyAsk) -> AnyAnswer:
+        """The answer to send, in the shape of the question it answers."""
+        if isinstance(question, Selection):
+            return Picked(id=question.id, value=self.picked or None, by=By.POLICY, policy=self.policy)
         return Agreed(id=question.id, accepted=self.accepted, by=By.POLICY, policy=self.policy)
 
 
@@ -61,12 +76,20 @@ class Policy:
     def answers(self, ask: AnyAsk) -> Answered | None:
         """What this client answers, or ``None`` when the person in front of the machine decides.
 
-        Only a yes-or-no question is answerable, and a secret never is: what neither name knows is
-        words, and both were promises about permission. A selection is the same — an option nobody
-        picked is not an option a policy may pick.
+        A yes-or-no question is answered by level, and a secret never: what neither name knows is words,
+        and both were promises about permission. A choice is answered only where the question already
+        says what its own silence would pick — the option in front of the person is the same one an
+        empty line gives, so answering it is not a policy choosing on somebody's behalf, which is why a
+        choice with no default stays the person's (E150).
         """
+        if isinstance(ask, Selection):
+            return self._chosen(ask)
         if not isinstance(ask, Confirmation):
             return None
+        return self._confirmed(ask)
+
+    def _confirmed(self, ask: Confirmation) -> Answered | None:
+        """A yes or a no, answered by the level the question says it is at — or not answered at all."""
         if self.yolo and ask.severity is not Severity.DANGER:
             return Answered(accepted=True, policy=YOLO)
         if not self.away:
@@ -78,6 +101,16 @@ class Policy:
             # means, and an away policy is not a second opinion about that.
             return Answered(accepted=SILENCE[ask.severity], policy=AWAY)
         return Answered(accepted=True, policy=AWAY)
+
+    def _chosen(self, ask: Selection) -> Answered | None:
+        """The default of a choice, answered by whichever switch is on — or nobody's answer at all."""
+        if ask.default is None or ask.default not in ask.options:
+            return None
+        if self.yolo:
+            return Answered(accepted=True, policy=YOLO, picked=ask.default)
+        if self.away:
+            return Answered(accepted=True, policy=AWAY, picked=ask.default)
+        return None
 
     @property
     def speaking(self) -> bool:

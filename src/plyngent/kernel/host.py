@@ -31,6 +31,7 @@ from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.running import DEFAULT_RUNNING, Running
 from plyngent.kernel.skills import Skills  # noqa: TC001
+from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import Workspace, WorkspaceConfig
 
 if TYPE_CHECKING:
@@ -90,6 +91,11 @@ class Host(Component):
     # connection's because the number is a budget for the process: `[turn] running` is what this machine
     # will do at once, whichever client asked (E156).
     running: Running
+    # How many times one turn may ask the model before it reaches a wall, and whether the wall asks the
+    # person first. `0` is "this program never said", so a turn ends when the model is done rather than
+    # at a count; the wall itself is counted per turn, which is why only the policy lives here (E150).
+    rounds: int
+    soft: bool
     # The skills this host can read, or ``None`` when it was started without any. A plain field: a skill
     # has no lifecycle, so there is nothing to open or close and nothing that a component would answer.
     # ``None`` is a value rather than a missing field — a kernel with no skills directory has no skill
@@ -119,6 +125,8 @@ class Host(Component):
         prompt: PromptPlan | None = None,
         history: History | None = None,
         running: int = DEFAULT_RUNNING,
+        rounds: int = DEFAULT_ROUNDS,
+        soft: bool = False,
         workspace_config: WorkspaceConfig | None = None,
     ) -> None:
         super().__init__()
@@ -126,6 +134,8 @@ class Host(Component):
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
         self.running = Running(running)
+        self.rounds = rounds
+        self.soft = soft
         self.net = NetPolicy()
         self.locks = Locks()
         self.skills = skills

@@ -109,7 +109,7 @@ async def test_a_terminal_that_has_said_too_much_is_still_readable(story_with: S
         _by_session("read_pty", max_bytes=64, timeout=5.0),
         _by_session("close_pty"),
         text("it talks too much"),
-        limits=Limits(session_output_budget=1024),
+        pty=Limits(session_output_budget=1024),
     )
 
     await story.require("process")
@@ -338,7 +338,7 @@ async def test_a_host_with_room_for_one_terminal_says_which_number_it_hit(story_
         calling("open_pty", {"command": ["cat"], "intention": "the one there is room for"}),
         calling("open_pty", {"command": ["cat"], "intention": "and one too many"}),
         text("one is what there is room for"),
-        limits=Limits(max_sessions=1),
+        pty=Limits(max_sessions=1),
     )
 
     await story.require("process")
