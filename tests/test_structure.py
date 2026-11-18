@@ -320,6 +320,20 @@ def test_every_command_says_what_it_is_for() -> None:
     assert all(spec.summary for spec in wire.command_specs()), "a command with no summary is one /help cannot offer"
 
 
+def test_every_read_is_a_row_a_frontend_can_offer() -> None:
+    """The greeting carries the reads beside the commands, because a window with buttons has no line.
+
+    What a frontend cannot work out for itself is which questions this kernel answers and what each one
+    takes; what it must not be told is a number to put on one, because that number is the connection's
+    and a client that chose it could answer somebody else's question (E155).
+    """
+    specs = wire.query_specs()
+
+    assert {spec.name for spec in specs} == {"grants", "trajectory", "skills", "turns"}, "the four reads"
+    assert all(spec.summary for spec in specs), "a read with no summary is one a frontend cannot offer"
+    assert all('"id"' not in spec.args for spec in specs), "the reply's number is the link's, not a client's"
+
+
 def test_every_command_is_either_spellable_or_withheld() -> None:
     catalog = _catalog()
     tags = {spec.name for spec in wire.command_specs()}

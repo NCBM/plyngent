@@ -75,6 +75,9 @@ async def test_what_a_kernel_is_says_which_directory_it_works_in(daemon, tmp_pat
             "which tree this kernel edits, said before anything is sent"
         )
         assert [spec.name for spec in client.manifest.commands], "and the commands it will accept"
+        assert [spec.name for spec in client.manifest.queries] == ["grants", "trajectory", "skills", "turns"], (
+            "and the reads it will answer, so a frontend with buttons needs no second table"
+        )
     finally:
         client.close()
         await client.finished()

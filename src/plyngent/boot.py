@@ -48,7 +48,7 @@ from plyngent.kernel.tools.skills import skill_specs
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
 from plyngent.wire.frame import Wire
-from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION, KernelManifest, command_specs
+from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION, KernelManifest, command_specs, query_specs
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -652,6 +652,7 @@ async def _assembled(
     specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
     manifest = KernelManifest(
         commands=command_specs(),
+        queries=query_specs(),
         caps=(CLIENT_OFFER,),
         epoch=secrets.token_hex(8),
         workspace=str(_workspace_of(root)),

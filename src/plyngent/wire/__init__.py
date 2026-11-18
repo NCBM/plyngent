@@ -119,7 +119,9 @@ from plyngent.wire.manifest import CLIENT_OFFER as CLIENT_OFFER
 from plyngent.wire.manifest import PROTOCOL_VERSION as PROTOCOL_VERSION
 from plyngent.wire.manifest import CommandSpec as CommandSpec
 from plyngent.wire.manifest import KernelManifest as KernelManifest
+from plyngent.wire.manifest import QuerySpec as QuerySpec
 from plyngent.wire.manifest import command_specs as command_specs
+from plyngent.wire.manifest import query_specs as query_specs
 from plyngent.wire.query import AnyQuery as AnyQuery
 from plyngent.wire.query import AnyReply as AnyReply
 from plyngent.wire.query import Forest as Forest
