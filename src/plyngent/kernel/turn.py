@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as replaced
 
-from plyngent.kernel.budget import estimate
+from plyngent.kernel.budget import calibrated, estimate
 from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.documents import picture_media, refuses
 from plyngent.kernel.failure import Failure
@@ -333,7 +333,7 @@ class TurnRunner:
         system, instruction = ctx.host.prompt.summarize(state.text)
         shown = list(await self._seen(ctx, await ctx.host.trail.derive(ctx.session.session_id, state.cursor)))
         room = self._room(state)
-        shown, left = self._transcript(shown, system=system, instruction=instruction, room=room)
+        shown, left = self._transcript(state, shown, system=system, instruction=instruction, room=room)
         if left:
             system, instruction = ctx.host.prompt.summarize(state.text, dropped=left)
         asked = ctx.host.routes.resolve(ctx.session.route)
@@ -344,9 +344,9 @@ class TurnRunner:
             route="" if asked is None else asked.name,
             cache_key=ctx.session.cache_key,
         )
-        if room and estimate(request.messages, system=request.system) > room:
+        if room and self._measure(state, request.messages, system=request.system) > room:
             msg = (
-                f"a summary of this conversation needs {estimate(request.messages, system=request.system)} "
+                f"a summary of this conversation needs {self._measure(state, request.messages, system=request.system)} "
                 f"tokens and this route holds {room}, which is more than the instruction alone"
             )
             raise _TooLongError(msg)
@@ -449,7 +449,7 @@ class TurnRunner:
         """
         room = self._room(state)
         messages = await self._shown(state)
-        size = estimate(messages, system=system, tools=tools)
+        size = self._measure(state, messages, system=system, tools=tools)
         if not room or size <= room:
             return state, messages
         taken = await self._put_aside(state, room=room, size=size)
@@ -482,7 +482,7 @@ class TurnRunner:
         _ = await ctx.session.note_history()
         state = await self._told(replace(state, cursor=entry.id))
         messages = await self._shown(state)
-        left = estimate(messages, system=system, tools=tools)
+        left = self._measure(state, messages, system=system, tools=tools)
         if left > room:
             msg = (
                 f"this conversation still needs {left} tokens and this route holds {room}, even after "
@@ -491,9 +491,26 @@ class TurnRunner:
             raise _TooLongError(msg)
         return state, messages
 
+    def _measure(
+        self,
+        state: TurnState,
+        messages: Sequence[AnyMessage],
+        *,
+        system: str = "",
+        tools: Sequence[ToolDecl] = (),
+    ) -> int:
+        """How many tokens this request will be counted as, corrected by what the last one actually was.
+
+        The character estimate is a rule of thumb; the provider's own count of the payload it was just
+        handed is the correction, and :func:`~plyngent.kernel.budget.calibrated` applies it. A session that
+        has asked nothing yet — or whose route just moved — has no correction and is measured as it is:
+        wrong by one request, rather than wrong until somebody says so.
+        """
+        measured = estimate(messages, system=system, tools=tools)
+        return calibrated(measured, state.ctx.session.calibration)
+
     def _room(self, state: TurnState) -> int:
         """How many tokens one request may be, or ``0`` when this route never said what it can hold.
-
         The room the answer will need is taken off the top: ``max_output`` is what a request is given for
         what it is about to say, and a budget that forgot it would fill the window exactly and then be cut
         off mid-sentence. A route whose window cannot even hold its own answer is a route whose numbers do
@@ -536,11 +553,12 @@ class TurnRunner:
                 break
             for row, message in round_:
                 taken.append((row, message))
-                freed += estimate((message,))
+                freed += self._measure(state, (message,))
         return tuple(taken)
 
     def _transcript(
         self,
+        state: TurnState,
         messages: list[AnyMessage],
         *,
         system: str,
@@ -556,8 +574,8 @@ class TurnRunner:
         """
         if not room:
             return messages, 0
-        sizes = [estimate((message,)) for message in messages]
-        total = estimate((*messages, User(text=instruction)), system=system)
+        sizes = [self._measure(state, (message,)) for message in messages]
+        total = self._measure(state, (*messages, User(text=instruction)), system=system)
         left = 0
         while left < len(messages) and total > room:
             total -= sizes[left]
@@ -704,6 +722,7 @@ class TurnRunner:
         """
         ctx = state.ctx
         usage = reply.usage
+        sent = estimate(request.messages, system=request.system, tools=request.tools)
         _ = await ctx.host.trail.append(
             ctx.session.session_id,
             UsageRow(
@@ -713,10 +732,15 @@ class TurnRunner:
                 prompt=usage.prompt,
                 completion=usage.completion,
                 cached=usage.cached,
-                estimate=estimate(request.messages, system=request.system, tools=request.tools),
+                estimate=sent,
             ),
             turn=ctx.turn_id,
         )
+        # The same payload, counted twice: what this build said and what the provider charged. The ratio is
+        # what the next decision is scaled by, so the session keeps it — and only while there is a charge
+        # to compare against, since a route that reports nothing is not a route that charged nothing.
+        if usage.prompt:
+            ctx.session.calibration = (sent, usage.prompt)
         self._emit(
             Usage(
                 session=ctx.session.session_id,

@@ -2,15 +2,15 @@
 
 No story can say this. A request's size is a number nothing on the screen or in the journal prints, and
 the one thing it exists for — deciding that a conversation no longer fits — a story sees only through what
-that decision did. So what is asserted here is the estimate itself: which parts of a request count, and
-the two places where it is deliberately not a measurement (characters instead of tokens, a picture as a
-floor). That the estimate is *paired* with what a provider charged is a row's claim; its consequence — a
-checkpoint written when the conversation stops fitting — is what a story can see, and it is told there.
+the decision did. So what is asserted here is the estimate itself: which parts of a request count, the two
+places where it is deliberately not a measurement (characters instead of tokens, a picture as a floor), and
+the correction that turns it into one. That the correction is *applied* is a story's, told where a turn
+decides.
 """
 
 from __future__ import annotations
 
-from plyngent.kernel.budget import CHARS_PER_TOKEN, PICTURE_TOKENS, estimate, text_chars
+from plyngent.kernel.budget import CHARS_PER_TOKEN, PICTURE_TOKENS, calibrated, estimate, text_chars
 from plyngent.kernel.model import Assistant, Call, Picture, Result, Thought, ToolDecl, User
 
 
@@ -51,3 +51,18 @@ def test_a_picture_is_a_floor_and_so_is_never_free() -> None:
         "one picture is counted as what this build says a picture costs — a floor, because what it really "
         "costs is the far end's encoder's answer and nothing here can know it"
     )
+
+
+def test_a_correction_is_the_ratio_between_two_counts_of_one_payload() -> None:
+    """The estimate is the numerator and the provider's own count is the denominator: same text, twice."""
+    assert calibrated(1_000, (1_000, 2_500)) == 2_500, "a provider that counts more than twice as much"
+    assert calibrated(1_000, (1_000, 500)) == 500, "and one that counts less"
+    assert calibrated(3, (10, 16)) == 5, "and a correction that does not land on a whole token rounds"
+
+
+def test_a_correction_nobody_made_leaves_the_estimate_alone() -> None:
+    """No pair, or a pair with a zero in it, is not a ratio — the estimate stands as it is."""
+    assert calibrated(1_000, None) == 1_000, "a session that has asked nothing is one request away from knowing"
+    assert calibrated(1_000, (0, 900)) == 1_000, "and zero estimated is not a measurement of anything"
+    assert calibrated(1_000, (900, 0)) == 1_000
+    assert calibrated(0, (900, 2_000)) == 0, "nothing measured stays nothing"

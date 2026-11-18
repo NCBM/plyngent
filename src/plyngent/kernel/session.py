@@ -212,6 +212,11 @@ class Session(Component):
     #: What this conversation still owes the model: the sentences fired since the last line was written,
     #: and the order they are said in (:class:`~plyngent.kernel.notices.Notices`).
     notices: Notices
+    #: The last answered request, counted twice: what this build estimated it at, and what the provider
+    #: charged for it. The ratio between them is what turns a character estimate into a number a budget can
+    #: act on (:meth:`plyngent.kernel.budget.calibrated`), and it is *this process's* measurement rather
+    #: than a setting — a reopened conversation re-learns it in one request. ``None`` until it has asked.
+    calibration: tuple[int, int] | None
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
     _lock: asyncio.Lock
@@ -220,6 +225,7 @@ class Session(Component):
         super().__init__()
         self.session_id = session_id
         self.notices = Notices()
+        self.calibration = None
         self._turns = {}
         self._state = {}
         self._lock = asyncio.Lock()
@@ -363,6 +369,9 @@ class Session(Component):
         No change writes nothing, and that is not an optimisation: a setting that did not move must not
         make the history say something happened. An empty name is a choice too — it says "ask whatever
         this host asks by default", which is different from the name it happens to resolve to.
+
+        A route that moved is a model that counts differently, so what was measured about the old one is
+        dropped: a correction learned on one tokenizer applied to another is worse than none.
         """
 
         def mutate(before: str | None) -> tuple[str | None, tuple[str, int]]:
@@ -371,7 +380,9 @@ class Session(Component):
                 return None, (current, epoch)
             return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
 
-        return await self.change(ROUTE, mutate)
+        answer = await self.change(ROUTE, mutate)
+        self.calibration = None
+        return answer
 
     # -- whether unfinished work keeps the conversation going -----------------------
 

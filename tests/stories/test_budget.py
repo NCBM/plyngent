@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.route import Route
-from plyngent.kernel.model import Note, User
+from plyngent.kernel.model import Note, Reply, User
+from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import NOTICE_MARKER
 from tests.stories.model import text
 
@@ -96,6 +97,37 @@ async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_as
         f"what was put aside is one document, and the line names it: {said[1].text!r}"
     )
     assert said[1].text.split("\n")[3] == TAIL, "and says the call that reads it back"
+
+
+async def test_a_route_that_counts_three_times_as_much_is_measured_at_what_it_charged(story_with: Scripted) -> None:
+    """The characters were only ever a guess, and the provider's own count of the same payload is the fix.
+
+    Every number here is chosen so the two runs differ: this build reads the first request as ~5.8k tokens,
+    the route says it charged 17.4k for exactly that, and from then on it is counted at three times what
+    the text looks like. The window is wide enough for the conversation as this build reads it *and* narrow
+    enough that the corrected reading does not fit — so a checkpoint on the second turn is the correction
+    being in force, and no checkpoint is it having been written down and never used.
+    """
+    story = await story_with(
+        Reply(text=LONG, usage=Cost(prompt=17_400)),
+        text("done"),
+        routes=(_route("roomy", window=20_000),),
+        route="roomy",
+    )
+
+    await story.type("a first question")
+    await story.finished()
+    await story.type("a second question")
+    await story.finished()
+
+    assert story.requests()[0].messages == (User(text="a first question"),), (
+        "nothing had been measured yet, so the first request carried the whole conversation"
+    )
+    said = story.requests()[-1].messages
+    assert said[0] == User(text="a second question"), (
+        f"and the second one did not fit what this route actually counts: {said!r}"
+    )
+    assert isinstance(said[1], Note), "which is a checkpoint, and the model is told about it"
 
 
 async def test_a_summary_of_a_conversation_that_does_not_fit_leaves_the_beginning_out(story_with: Scripted) -> None:

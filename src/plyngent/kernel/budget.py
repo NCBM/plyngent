@@ -84,3 +84,23 @@ def estimate(
         chars += text_chars(message)
         images += pictures(message)
     return (chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN + images * PICTURE_TOKENS
+
+
+def calibrated(measured: int, pair: tuple[int, int] | None) -> int:
+    """*measured* corrected by what the provider actually charged for the request that came before.
+
+    ``pair`` is ``(estimate, prompt_tokens)`` of one answered request — the same payload counted twice —
+    and the ratio between them is this build's error for this text, this tool block and this endpoint.
+    Applying it to the next estimate is what turns a rule of thumb into a measurement that survives: a
+    provider that counts a token per two characters instead of four would otherwise be overrun by half.
+
+    ``None`` is "nothing has been measured yet", and it answers *measured* unchanged: a session that has
+    asked nothing is one request away from knowing, not permanently wrong. A pair that says nothing —
+    zero charged, zero estimated — is the same answer, because a ratio with a zero in it is not a ratio.
+    """
+    if pair is None:
+        return measured
+    sent, charged = pair
+    if sent <= 0 or charged <= 0:
+        return measured
+    return max(1, round(measured * charged / sent)) if measured else 0
