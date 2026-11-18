@@ -221,6 +221,7 @@ class Story:
         journal: Path | str | None = None,
         tools: ClientTools = TERMINAL,
         limits: Limits | None = None,
+        running: int | None = None,
         deadline: float | None = None,
         grades: Grades | None = None,
         policy: Policy | None = None,
@@ -287,6 +288,7 @@ class Story:
             "prompt": prompt is not None,
             "journal": journal is not None,
             "limits": limits is not None,
+            "running": running is not None,
             "deadline": deadline is not None,
             "grades": grades is not None,
         }
@@ -308,6 +310,7 @@ class Story:
                 prompt=prompt,
                 journal=journal,
                 limits=limits,
+                running=running,
                 deadline=deadline,
                 grades=grades,
             )

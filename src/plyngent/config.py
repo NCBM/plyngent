@@ -53,6 +53,7 @@ from plyngent.kernel.pty.registry import (
     Limits,
 )
 from plyngent.kernel.resources import Root
+from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
 
 if TYPE_CHECKING:
@@ -77,6 +78,17 @@ class LimitsFile(Struct, forbid_unknown_fields=True, kw_only=True):
     max_sessions: int = DEFAULT_MAX_SESSIONS
     max_per_session: int = DEFAULT_MAX_PER_SESSION
     session_output_budget: int = DEFAULT_SESSION_OUTPUT_BUDGET
+
+
+class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[turn]``: how many turns this program runs at once (E156).
+
+    ``running`` is the whole of it today, and it is a number for the *process* rather than for one
+    conversation: four frontends on one kernel is what it is sized for. A fifth turn is refused rather
+    than queued, because a queue would make "what is running now" a lie.
+    """
+
+    running: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_RUNNING
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -164,6 +176,7 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     agent: AgentFile | None = None
     skills: SkillsFile | None = None
     limits: LimitsFile | None = None
+    turn: TurnFile | None = None
     journal: JournalFile | None = None
     web: WebFile | None = None
 
@@ -188,6 +201,7 @@ class Settings:
     skill_paths: tuple[Path, ...] = ()
     discover_skills: bool = True
     limits: Limits = field(default_factory=Limits)
+    running: int = DEFAULT_RUNNING
     journal: Path | None = None
     #: The document this value was read from, kept as the parser built it — comments, order and spacing
     #: included — so a later write-back can edit it instead of reflowing somebody's file (§0.11, E84).
@@ -280,6 +294,7 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
             max_per_session=limits.max_per_session,
             session_output_budget=limits.session_output_budget,
         ),
+        running=(parsed.turn or TurnFile()).running,
         journal=_resolved(parsed.journal.path, path) if parsed.journal is not None and parsed.journal.path else None,
         document=document,
     )
@@ -453,4 +468,5 @@ def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
         "prompt": plan,
         "journal": settings.journal,
         "limits": settings.limits,
+        "running": settings.running,
     }

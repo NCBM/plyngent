@@ -527,6 +527,10 @@ class Session(Component):
         exist — the turn is otherwise free to grow from anywhere, which is what makes branching a
         frontend's decision rather than a command. The id itself is the journal's to allocate, because
         a stored log has to resume the count where the last process left it (D17).
+
+        A turn also takes one of the places the host has for running turns, and raises
+        :class:`~plyngent.kernel.running.TooManyTurns` when there is none: the ceiling is a budget for
+        the process, so it is counted here rather than by whoever asked (E156).
         """
         host = self.host
         if begin_after is not None and (await host.trail.entry(self.session_id, begin_after)) is None:
@@ -534,6 +538,9 @@ class Session(Component):
                 f"no entry {begin_after!r} in session {self.session_id}: a turn can only continue an entry that exists"
             )
             raise ValueError(msg)
+        # The last thing checked and the first thing taken: this turn's place among the ones the host is
+        # running, which it is refused without rather than queued behind (E156).
+        host.running.start()
         turn = TurnCtx(
             session=self,
             host=host,
@@ -549,8 +556,9 @@ class Session(Component):
         return turn
 
     def end_turn(self, turn: TurnCtx) -> None:
-        """Forget a turn; a scope that names it afterwards fires nothing."""
-        _ = self._turns.pop(turn.turn_id, None)
+        """Forget a turn, and give back the place it took; a scope that names it afterwards fires nothing."""
+        if self._turns.pop(turn.turn_id, None) is not None:
+            turn.host.running.stop()
 
     def turns(self) -> tuple[TurnCtx, ...]:
         """The turns still live, oldest first.

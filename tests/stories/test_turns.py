@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.catalog import RESIDENT
 from plyngent.kernel.model import Assistant, Result, User
 from plyngent.wire.ask import Confirmation
-from plyngent.wire.command import Submit
+from plyngent.wire.command import Open, Submit
 from plyngent.wire.event import TurnKind
 from tests.stories.model import Held, calling, text
 
@@ -224,3 +224,26 @@ async def test_a_denylisted_program_is_put_to_the_person_before_it_runs(story_wi
     (_, second) = story.requests()
     refusal = second.messages[-1]
     assert isinstance(refusal, Result) and refusal.tool == "execute"
+
+
+async def test_a_turn_past_what_the_kernel_can_run_is_refused_and_not_queued(story_with: Scripted) -> None:
+    """`[turn] running` is the process's budget, and being over it is an answer now rather than later (E156)."""
+    held = Held(text("the first answer"))
+    story = await story_with(held, text("the second answer"), running=1)
+
+    await story.type("one")
+    assert story.client.submit(Open(session="other")), "the connection was already gone"
+    await story.settle()
+    assert story.client.submit(Submit(session="other", text="two")), "and so was the turn it asked for"
+    await story.until("turn refused")
+
+    assert "already running 1 turns" in "\n".join(story.screen()), (
+        "the second conversation is told the ceiling rather than left waiting behind it"
+    )
+
+    held.ready.set()
+    await story.finished(1)
+    assert story.client.submit(Submit(session="other", text="two, once there is room"))
+    await story.until("the second answer")
+
+    assert any("the second answer" in line for line in story.screen()), "and with a place free the same turn runs"

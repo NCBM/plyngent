@@ -49,6 +49,7 @@ from plyngent.kernel.host import Host
 from plyngent.kernel.link import LinkHuman
 from plyngent.kernel.notices import ELIDED, elided, elision_summary
 from plyngent.kernel.paths import display, normalize
+from plyngent.kernel.running import TooManyTurns
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import BY_PERSON, TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
 from plyngent.kernel.turn import TurnEnd, TurnRunner
@@ -874,6 +875,10 @@ class Serving:
         *model* writes is a turn (``kind=COMPACT``): it is a request, it costs what a request costs, and
         it takes this slot like any other. ``holder`` names the turn in the way, so a client can say
         "waiting on turn 7" rather than invent a message.
+
+        A turn is also refused when the kernel is already running as many as it may, which is a different
+        answer from ``busy``: that one is about *this* conversation, and the ceiling is about the process.
+        Nothing is queued for either — a turn that cannot start is said so at once (E156).
         """
         found = self._session(session)
         if found is None:
@@ -896,14 +901,28 @@ class Serving:
         if live:
             self.link.emit(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
             return
-        try:
-            turned = await found.begin_turn(asker=self._asker, begin_after=begin_after, kind=kind)
-        except ValueError:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
+        turned = await self._begun(found, session, kind, begin_after)
+        if turned is None:
             return
         task = asyncio.create_task(self._turn(turned, text))
         self._turns.add(task)
         task.add_done_callback(self._turns.discard)
+
+    async def _begun(self, found: Session, session: str, kind: TurnKind, begin_after: str | None) -> TurnCtx | None:
+        """Start the turn, or say why there is none: an entry that is not there, or a kernel at its ceiling.
+
+        The two refusals are different facts and are said as such: ``no-such-entry`` is about the argument
+        a client sent, and ``too-many-turns`` is about this kernel's budget — a client that switches on
+        the reason can retry one and must not retry the other (E156).
+        """
+        try:
+            return await found.begin_turn(asker=self._asker, begin_after=begin_after, kind=kind)
+        except ValueError:
+            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
+            return None
+        except TooManyTurns as refused:
+            self.link.emit(TurnRefused(session=session, reason=Refusal.TOO_MANY_TURNS, limit=refused.limit))
+            return None
 
     async def _turn(self, turned: TurnCtx, text: str) -> None:
         """Run one turn to its end, and then whatever the goal switch says about the next one.
@@ -944,7 +963,9 @@ class Serving:
             return None
         try:
             return await session.begin_turn(asker=turned.asker, begin_after=end.ends_at, kind=TurnKind.GOAL)
-        except ValueError:
+        except ValueError, TooManyTurns:
+            # A plan that cannot continue is not a failure: an entry that is gone and a kernel already at
+            # its ceiling both mean this turn is the last one for now (E156).
             return None
 
     # -- who answers questions -----------------------------------------------------

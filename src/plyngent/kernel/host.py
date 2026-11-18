@@ -29,6 +29,7 @@ from plyngent.kernel.net.web import Engines
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.policy import PtyPolicy
 from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
+from plyngent.kernel.running import DEFAULT_RUNNING, Running
 from plyngent.kernel.skills import Skills  # noqa: TC001
 from plyngent.kernel.workspace import Workspace
 
@@ -85,6 +86,10 @@ class Host(Component):
     # One lock per path, across every session on this host: two turns in two conversations that touch one
     # file take turns. It is the host's because a session comes and goes while a file is still a file.
     locks: Locks
+    # How many turns this host is running, and how many it may. The count is the host's rather than a
+    # connection's because the number is a budget for the process: `[turn] running` is what this machine
+    # will do at once, whichever client asked (E156).
+    running: Running
     # The skills this host can read, or ``None`` when it was started without any. A plain field: a skill
     # has no lifecycle, so there is nothing to open or close and nothing that a component would answer.
     # ``None`` is a value rather than a missing field — a kernel with no skills directory has no skill
@@ -113,11 +118,13 @@ class Host(Component):
         engines: Engines | None = None,
         prompt: PromptPlan | None = None,
         history: History | None = None,
+        running: int = DEFAULT_RUNNING,
     ) -> None:
         super().__init__()
         self.workspace = Workspace(root)
         self.trash_enabled = trash_enabled
         self.pty_policy = PtyPolicy()
+        self.running = Running(running)
         self.net = NetPolicy()
         self.locks = Locks()
         self.skills = skills

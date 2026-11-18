@@ -109,6 +109,9 @@ class Refusal(StrEnum):
     #: A turn nobody asked for: ``goal`` is the one kind only this kernel may start, so a client that
     #: sends one is refused rather than served (§10.4, E146).
     NO_GOAL = "no-goal"
+    #: The kernel is already running as many turns as it may, across every conversation. Not ``busy``:
+    #: that one names a turn of this very session, and this one is a budget for the process (E156).
+    TOO_MANY_TURNS = "too-many-turns"
 
 
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
@@ -213,12 +216,15 @@ class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
     ``holder`` names the turn whose state conflicted, so the frontend can say "waiting on turn 7"
     instead of inventing a message. The kernel does not queue: retrying is the caller's business.
     ``entry`` is the entry the turn was asked to continue, when that is what was wrong with it.
+    ``limit`` is how many turns may run at once, and it is filled in only by the refusal that is about
+    the kernel's own budget — zero everywhere else, because "no limit was involved" is not a limit.
     """
 
     session: str = ""
     reason: Refusal = Refusal.NO_SESSION
     holder: int = 0
     entry: str = ""
+    limit: int = 0
 
 
 class ListedSession(Struct, frozen=True, kw_only=True):

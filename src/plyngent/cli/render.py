@@ -645,9 +645,9 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
         case TurnFinished(session=session, turn=turn, reason=reason, failure=failure):
             said = f"turn {turn} failed ({failure}): {reason}" if failure else _finished(turn, reason)
             return ((session, Shown(said, "refusal" if failure else "notice")),)
-        case TurnRefused(session=session, reason=reason, holder=holder, entry=entry):
+        case TurnRefused(session=session, reason=reason, holder=holder, entry=entry, limit=limit):
             holder_note = f" (turn {holder} is in the way)" if holder else ""
-            said = _why(reason).format(entry=entry, session=session)
+            said = _why(reason).format(entry=entry, session=session, limit=limit)
             return ((session, Shown(f"turn refused: {said}{holder_note}", "refusal")),)
         case OfferRefused(name=name, reason=reason):
             said = f"offer refused: {name} — {_why(reason)}" if name else f"offer refused: {_why(reason)}"
@@ -942,6 +942,7 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.NO_SHAPE: "this kernel has no shape for that name yet, so there is nothing to offer",
     Refusal.NOT_AN_OBJECT: "the arguments of a client's tool are a JSON object, and this schema is not one",
     Refusal.NO_GOAL: "a turn is started by a person or by an unfinished plan, and not by a client asking for one",
+    Refusal.TOO_MANY_TURNS: "this kernel is already running {limit} turns, which is as many as it runs at once",
 }
 
 

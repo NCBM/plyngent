@@ -30,6 +30,7 @@ from plyngent.kernel.pty.registry import (
     DEFAULT_SESSION_OUTPUT_BUDGET,
     Limits,
 )
+from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
 from tests.loopback import answered
 
@@ -417,3 +418,13 @@ def test_the_limits_are_the_three_a_terminal_spends(tmp_path: Path) -> None:
     ).limits
 
     assert chosen == Limits(max_sessions=1, max_per_session=1, session_output_budget=4096)
+
+
+def test_how_many_turns_run_at_once_is_one_number(tmp_path: Path) -> None:
+    """`[turn] running` is the process's budget, and a number a kernel could not run one with is refused."""
+    assert config.load(_written(tmp_path, "", "none.toml")).running == DEFAULT_RUNNING
+    assert DEFAULT_RUNNING == 4
+    assert config.load(_written(tmp_path, "[turn]\nrunning = 2\n", "two.toml")).running == 2
+
+    with pytest.raises(config.ConfigError, match="running"):
+        _ = config.load(_written(tmp_path, "[turn]\nrunning = 0\n", "zero.toml"))

@@ -42,6 +42,7 @@ from plyngent.kernel.net.web import Engine, Engines, Web
 from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
+from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
@@ -286,6 +287,7 @@ async def install(
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
     limits: Limits | None = None,
+    running: int | None = None,
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
@@ -344,6 +346,10 @@ async def install(
     is the program it always was; a story that wants one terminal's worth of room says so here instead of
     reaching into a registry it did not build (§0.11, E85).
 
+    ``running`` is how many turns this kernel runs at once, and ``None`` is this tree's own number. It is a
+    budget for the process rather than for one conversation, so it is said here rather than per session,
+    and a turn beyond it is refused instead of queued (E156).
+
     ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here instead of half-working somewhere further in.
     ``local`` is one connection over a socket this kernel accepted, so ``endpoint`` is where it listens:
@@ -377,6 +383,7 @@ async def install(
         prompt=prompt,
         journal=journal,
         limits=limits,
+        running=running,
         versions=versions,
         deadline=deadline,
         grades=grades,
@@ -505,6 +512,7 @@ async def serve(
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
     limits: Limits | None = None,
+    running: int | None = None,
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
@@ -530,6 +538,7 @@ async def serve(
         prompt=prompt,
         journal=journal,
         limits=limits,
+        running=running,
         versions=versions,
         deadline=deadline,
         grades=grades,
@@ -586,6 +595,7 @@ async def _assembled(
     prompt: PromptPlan | None,
     journal: Path | str | None,
     limits: Limits | None,
+    running: int | None,
     versions: bool,
     deadline: float | None,
     grades: Grades | None,
@@ -632,6 +642,7 @@ async def _assembled(
                     "engines": web_engines,
                     "prompt": plan,
                     "history": versions_kept,
+                    "running": DEFAULT_RUNNING if running is None else running,
                 },
             ),
         ]
