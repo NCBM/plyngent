@@ -328,10 +328,41 @@ def test_every_read_is_a_row_a_frontend_can_offer() -> None:
     and a client that chose it could answer somebody else's question (E155).
     """
     specs = wire.query_specs()
-
     assert {spec.name for spec in specs} == {"grants", "trajectory", "skills", "turns"}, "the four reads"
     assert all(spec.summary for spec in specs), "a read with no summary is one a frontend cannot offer"
     assert all('"id"' not in spec.args for spec in specs), "the reply's number is the link's, not a client's"
+
+
+#: The contract as a stranger reads it: in the package, because `docs/` is not in git.
+SPEC = pathlib.Path(wire.__file__).parent / "SPEC.md"
+
+
+def test_the_spec_names_exactly_the_words_this_build_answers() -> None:
+    """The document a frontend is written from is kept true by a test rather than by care.
+
+    A table one word away from the union is worse than no table at all: the client is written, and the
+    word it sends is refused forever. So the two word lists are the derived ones, exactly (E155).
+    """
+    text = SPEC.read_text(encoding="utf-8")
+
+    assert set(_spec_words(text, "Commands")) == {spec.name for spec in wire.command_specs()}, "the commands"
+    assert set(_spec_words(text, "Reads")) == {spec.name for spec in wire.query_specs()}, "and the reads"
+
+
+def _spec_words(text: str, heading: str) -> tuple[str, ...]:
+    """The first cell of every table row under one ``## heading``, with the backticks off."""
+    lines = text.splitlines()
+    start = lines.index(f"## {heading}")
+    words: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("## "):
+            break
+        if not line.startswith("|"):
+            continue
+        first = line.split("|")[1].strip().strip("`")
+        if first and first != "word" and not set(first) <= {"-"}:
+            words.append(first)
+    return tuple(words)
 
 
 def test_every_command_is_either_spellable_or_withheld() -> None:
