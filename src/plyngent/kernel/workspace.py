@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from plyngent.kernel.access import Access, AccessMode
+from plyngent.kernel.access import AccessMode, covers
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST, DEFAULT_CONFIRM_TIMEOUT_SECONDS, CommandPolicy
 from plyngent.kernel.ignore import Rules
 from plyngent.kernel.paths import normalize
@@ -118,8 +118,6 @@ class WorkspaceConfig:
     path_denylist: tuple[str, ...] = ()
     command_denylist: frozenset[str] = DEFAULT_COMMAND_DENYLIST
     confirm_timeout: float = DEFAULT_CONFIRM_TIMEOUT_SECONDS
-    # ``[agent].allow_paths`` as written: (path, mode) pairs a human allowed ahead of time.
-    allow_paths: tuple[tuple[str, str], ...] = ()
     # What a listing under this root keeps back: names, and the ignore sources it reads.
     listing: Rules = field(default_factory=Rules)
 
@@ -134,7 +132,6 @@ class Workspace:
     root: Path
     config: WorkspaceConfig
     commands: CommandPolicy
-    access: Access
     temps: TempWorkspaces
     listing: Rules
 
@@ -142,7 +139,6 @@ class Workspace:
         self.root = Path(root).expanduser().resolve()
         self.config = config if config is not None else WorkspaceConfig()
         self.commands = CommandPolicy(self.config.command_denylist)
-        self.access = Access()
         self.temps = TempWorkspaces()
         self.listing = self.config.listing
         self._apply(self.config)
@@ -165,7 +161,6 @@ class Workspace:
         """Push a config value into the parts that are judged by it."""
         self.commands.use_denylist(config.command_denylist)
         self.listing = config.listing
-        _ = self.access.install_config(dict(config.allow_paths))
 
     # -- paths ---------------------------------------------------------------------
 
@@ -180,16 +175,17 @@ class Workspace:
         """Resolve *path* to an absolute path this workspace allows, or refuse it.
 
         Relative paths resolve against :attr:`root`; an absolute path is taken as it is. ``need`` is what
-        the caller is about to do with the result, and ``grants`` are the extra ``path → mode`` tables of
-        whoever is asking — the session's, typically — passed in rather than reached for. ``scratch`` is
-        the caller's own conversation, and it is the only one whose temporary workspace this call may
-        reach: a directory somebody else asked for is not a root, it is somebody else's (E152).
+        the caller is about to do with the result, and ``grants`` is the table of whoever is asking — the
+        conversation's, passed in rather than reached for, because a process holds none of its own
+        (E153). ``scratch`` is the caller's own conversation, and it is the only one whose temporary
+        workspace this call may reach: a directory somebody else asked for is not a root, it is somebody
+        else's (E152).
         """
         resolved = normalize(path, base=self.root)
         if (
             not self.under_roots(resolved)
             and not self.under_scratch(resolved, scratch)
-            and not self.access.covers(resolved, need, extra=grants)
+            and not covers(grants, resolved, need)
         ):
             raise OutsideWorkspace(
                 Path(path),

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 import msgspec
 
-from plyngent.kernel.access import MAX_GRANTS, AccessMode
+from plyngent.kernel.access import MAX_GRANTS, AccessMode, covers
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.listing import Entry, EnumerateArgs, Filter, Listing, walk
 from plyngent.kernel.paths import display, normalize
@@ -314,7 +314,7 @@ async def request_directory_access(env: Env, args: AccessArgs) -> ToolResult:
     if (
         workspace.under_roots(target)
         or workspace.under_scratch(target, env.scratch)
-        or workspace.access.covers(target, need, extra=env.grants)
+        or covers(env.grants, target, need)
     ):
         return ToolResult.ok(f"already accessible: {shown}")
     if len(env.grants) >= MAX_GRANTS:

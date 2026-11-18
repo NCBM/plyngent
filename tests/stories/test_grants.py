@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent.wire.command import Open
 from plyngent.wire.query import Grants, GrantTable, Reached
 
 from .driver import SESSION
@@ -77,6 +78,24 @@ async def test_taking_back_what_was_never_allowed_says_so(story_with: Scripted, 
     await story.type(f"/ungrant --path {tmp_path / 'nowhere'}")
 
     await story.until("was not allowed")
+
+
+async def test_a_second_conversation_beside_it_is_allowed_nothing(story_with: Scripted, tmp_path: Path) -> None:
+    """The unit of permission is a conversation: one "yes" answers for it and for no other."""
+    story = await _allowed_once(story_with, tmp_path)
+    other = await story.another_client()
+    assert other.submit(Open(session="second")), "the connection was already gone, so the open went nowhere"
+    await story.settle()
+
+    theirs = await other.query(Grants(session="second"))
+    mine = await other.query(Grants(session=SESSION))
+
+    assert isinstance(theirs, GrantTable)
+    assert theirs.reached == (), "a conversation opened beside it starts with nothing"
+    assert isinstance(mine, GrantTable)
+    assert mine.reached == (Reached(path=str(tmp_path / "elsewhere"), mode="read"),), (
+        "and the conversation that asked keeps its row"
+    )
 
 
 async def test_a_person_can_ask_what_this_conversation_may_reach(story_with: Scripted, tmp_path: Path) -> None:
