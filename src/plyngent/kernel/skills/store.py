@@ -32,7 +32,7 @@ class Skills(Resources[Skill]):
         super().__init__("skills", roots, conflict=Conflict.FIRST, scan=scan, named=_named)
 
     @classmethod
-    def standard(cls, workspace: Path | str) -> Skills:
+    def standard(cls, workspace: Path | str | None = None) -> Skills:
         """The plan a program starts with: ours first, then the two directories another harness reads.
 
         Ours is first for two reasons that agree: it is where a new skill is written, and it is what the
@@ -40,14 +40,19 @@ class Skills(Resources[Skill]):
         the one a checkout ships — so a project's copy of a name loses to the user's. That is the one place
         this tree turns the usual specificity around, and on purpose: a skill is a piece of somebody's
         environment rather than a property of the checkout they happen to be standing in.
+
+        ``workspace`` is the tree whose ``.claude`` directory is the third root, and ``None`` is a program
+        that was started without one — a daemon serving trees a client names (E157). A store is one per
+        process either way, so a kernel that names no tree has no project to read and says so by leaving
+        that root out rather than guessing a directory.
         """
-        return cls(
-            (
-                Root(path=user_config_path("plyngent") / SKILL_DIR, origin="plyngent", scope="user"),
-                Root(path=Path.home() / ".claude" / SKILL_DIR, origin="claude", scope="user"),
-                Root(path=Path(workspace) / ".claude" / SKILL_DIR, origin="claude", scope="project"),
-            )
-        )
+        roots = [
+            Root(path=user_config_path("plyngent") / SKILL_DIR, origin="plyngent", scope="user"),
+            Root(path=Path.home() / ".claude" / SKILL_DIR, origin="claude", scope="user"),
+        ]
+        if workspace is not None:
+            roots.append(Root(path=Path(workspace) / ".claude" / SKILL_DIR, origin="claude", scope="project"))
+        return cls(tuple(roots))
 
     def write_root(self) -> Root | None:
         """Where a new skill goes: our own directory when it is one of the roots, else the first.

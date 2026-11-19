@@ -85,21 +85,19 @@ KERNEL_TRANSPORTS = ("inproc", "local") if local.AVAILABLE else ("inproc",)
 BROKER_WATCH_SECONDS = 0.5
 
 
-def endpoint_for(root: Path | str) -> Path:
-    """Where this workspace's own kernel listens, when nobody names an address.
+def endpoint_for() -> Path:
+    """Where this person's kernel listens, when nobody names an address.
 
-    The name a workspace already carries is the one its journal's directory has — a slug from the tree,
-    a digest of the resolved path — put in the directory this machine keeps its sockets in. One
-    workspace is therefore one name wherever a person looks for it, and two workspaces that share a
-    directory name are still two addresses. ``--serve`` and ``--connect`` both take this as their
-    default, which is what makes "serve this tree" and "attach to the tree somebody is serving" two
-    commands with no path in either (§5 B).
+    A kernel is *one* address and not one per tree: a daemon serves several trees over the one socket,
+    and every client reaches all of them through it (E154/E157). So the name is this person's own, in the
+    directory this machine keeps its sockets in — ``--serve`` and ``--connect`` both take it as their
+    default, which is what makes "be the kernel" and "attach to it" two commands with no path in either
+    (§5 B).
 
     A pure answer, like :func:`~plyngent.kernel.journal.journal_path`'s: it creates nothing, so asking
     where a kernel *would* listen leaves the file system as it found it.
     """
-    resolved = Path(root).expanduser().resolve()
-    return user_runtime_path("plyngent") / f"{journal_path(resolved).parent.name}.sock"
+    return user_runtime_path("plyngent") / "kernel.sock"
 
 
 #: How long a client waits for a kernel to say what it is. A greeting is the first thing on the stream,
@@ -153,11 +151,12 @@ class _Defaults(NamedTuple):
 class _Kernel:
     """One process: the assembly every tree shares, and the trees it has open (E154/E157).
 
-    A tree is brought up on demand — by :func:`install` for the one it was started in, and by a command
-    that names another — so what a connection is greeted with is a *snapshot* of this table rather than
-    the set of trees that may ever exist. Every part that belongs to one tree (its journal, its document
-    store, its version store, its terminals, its event count) is declared under that tree's qualifier, and
-    everything else here is declared once.
+    A tree is brought up on demand — by :func:`install` for the one it was started in, by :func:`serve`
+    for the one a daemon was pointed at, and by a command that names another — so what a connection is
+    greeted with is a *snapshot* of this table rather than the set of trees that may ever exist, and a
+    daemon nobody pointed at a tree starts with an empty one. Every part that belongs to one tree (its
+    journal, its document store, its version store, its terminals, its event count) is declared under that
+    tree's qualifier, and everything else here is declared once.
     """
 
     assembly: Assembly
@@ -199,8 +198,17 @@ class _Kernel:
 
     @property
     def tree(self) -> _Tree:
-        """The tree a connection that names none is served by: the one this program was started in."""
-        return next(iter(self.trees.values()))
+        """The first tree this process opened — the one a kernel started for one connection was built on.
+
+        A daemon names no tree and may have opened none, so this is a question only a kernel that was
+        started *over* a tree can answer; asking it of a daemon is a mistake in the asking, and it says so
+        rather than handing back nothing.
+        """
+        first = next(iter(self.trees.values()), None)
+        if first is None:
+            msg = "this kernel has opened no tree, so there is no first one to speak of"
+            raise LookupError(msg)
+        return first
 
     @property
     def host(self) -> str:
@@ -764,7 +772,7 @@ class Daemon:
 
 
 async def serve(
-    root: Path | str,
+    root: Path | str | None = None,
     *,
     endpoint: Path | str,
     host: str = DEFAULT_HOST,
@@ -785,12 +793,16 @@ async def serve(
     grades: Grades | None = None,
     versions: bool = True,
 ) -> Daemon:
-    """Bring up one workspace and serve every client that reaches one address.
+    """Serve every client that reaches one address, over the trees it is given.
 
     Every parameter means what it means in :func:`install`, because it is the same host: this function
-    adds an address and takes away the client the program was started for. ``endpoint`` is required
-    rather than defaulted, because a daemon nobody can name is a daemon nobody can reach — the only
-    caller that never has to find one is :func:`install`, which is its own client.
+    adds an address and takes away the client the program was started for. ``root`` is the one thing that
+    is not the same, and ``None`` is the daemon of E157: a kernel that names no tree opens none, and every
+    tree it serves is one a client named. A daemon pointed at a tree starts with that one open, which is
+    what a story about several trees wants in one line.
+
+    ``endpoint`` is required rather than defaulted, because a daemon nobody can name is a daemon nobody
+    can reach — the only caller that never has to find one is :func:`install`, which is its own client.
     """
     if not local.AVAILABLE:
         msg = "this platform has no local address to serve on"
@@ -820,7 +832,7 @@ async def serve(
     return daemon
 
 
-async def connect(endpoint: Path | str) -> KernelLink:
+async def connect(endpoint: Path | str, *, declare: bool = True) -> KernelLink:
     """The far end of a kernel somebody else is serving: one connection, and what it said it is.
 
     The manifest arrives before the connection is handed over, so there is one thing less to forget: a
@@ -830,6 +842,12 @@ async def connect(endpoint: Path | str) -> KernelLink:
     manifest is compared before the value is handed over. The other half of the same exchange is this
     client's own: :func:`_begun` says which version *it* speaks, because a kernel is entitled to the
     same opinion about who may connect to it.
+
+    ``declare`` is that half, and it is a parameter because a frontend may have to *ask* which tree it
+    means: the greeting is the only list of them, so a program that puts the question to a person reads
+    it first and declares afterwards (E154). Declaring ``Bind()`` and rebinding later would leave the
+    connection in the audience of whatever that first declaration joined, and one connection watching
+    two trees when it is drawing one is not a thing any frontend wants.
     """
     named = Path(endpoint)
     try:
@@ -846,7 +864,7 @@ async def connect(endpoint: Path | str) -> KernelLink:
         raise NoKernelError(msg) from None
     link = Link(channel, manifest=manifest)
     try:
-        return _begun(link)
+        return _begun(link, declare=declare)
     except NoKernelError:
         # A kernel this program cannot read is a connection with no future: it is closed here rather
         # than left open behind a sentence that is about to end the run.
@@ -856,7 +874,7 @@ async def connect(endpoint: Path | str) -> KernelLink:
 
 
 async def _assembled(
-    root: Path | str,
+    root: Path | str | None,
     *,
     host: str,
     model: Model | None,
@@ -876,11 +894,12 @@ async def _assembled(
     deadline: float | None,
     grades: Grades | None,
 ) -> _Kernel:
-    """Bring one workspace up: the declarations, the host, and the three things a connection needs of it.
+    """Bring a kernel up: the declarations, and the tree it was pointed at when it was pointed at one.
 
     It is one function because two programs are built out of it — a kernel with one connection
     (:func:`install`) and a kernel with an address (:func:`serve`) — and "what a host is" must not be
-    two answers. What it does not decide is how anybody reaches it.
+    two answers. What it does not decide is how anybody reaches it, nor which other trees it may come to
+    serve: ``root`` is the tree to open now, and ``None`` is a kernel that starts with none open.
     """
     registry = ComponentRegistry()
     up: dict[ComponentKey, Component] = {}
@@ -924,11 +943,12 @@ async def _assembled(
         patience=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         graded=Grades() if grades is None else grades,
     )
-    _ = await kernel.open(root)
+    if root is not None:
+        _ = await kernel.open(root)
     return kernel
 
 
-def _begun(link: Link) -> KernelLink:
+def _begun(link: Link, *, declare: bool = True) -> KernelLink:
     """The client's half of the handshake: the kernel's version compared, this client's version said.
 
     Two numbers, and the point of both is that neither end adapts to the other: this program can read a
@@ -936,6 +956,10 @@ def _begun(link: Link) -> KernelLink:
     the same opinion about this client. So a greeting that names another version is a sentence here,
     before a single command is sent — a command is exactly the thing that would be misread — and a
     greeting this program can read is answered with what this client is.
+
+    ``declare`` says whether this client can speak for itself now. A frontend that names its tree from
+    what the greeting listed cannot: it says so once it has chosen, and the version it speaks is still
+    the version it compared.
 
     Nothing is waited for on the way out: what the kernel makes of the declaration arrives the way every
     other departure does, as the connection ending.
@@ -946,7 +970,8 @@ def _begun(link: Link) -> KernelLink:
             f"and this program speaks {PROTOCOL_VERSION}"
         )
         raise NoKernelError(msg)
-    _ = link.bind(Bind())
+    if declare:
+        _ = link.bind(Bind())
     return link
 
 

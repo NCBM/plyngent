@@ -63,7 +63,7 @@ INTERRUPTED = 130
     "workspace",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
-    help="the directory to work in; the current one by default",
+    help="the directory to work in; the current one by default, and the tree a --connect run means",
 )
 @click.option(
     "--config",
@@ -82,7 +82,7 @@ INTERRUPTED = 130
     flag_value="",
     metavar="[ADDRESS]",
     default=None,
-    help="serve a kernel at this address, or at this workspace's own address when no path is given",
+    help="serve a kernel at this address, or at this user's own address when no path is given",
 )
 @click.option(
     "--connect",
@@ -92,7 +92,7 @@ INTERRUPTED = 130
     flag_value="",
     metavar="[ADDRESS]",
     default=None,
-    help="talk to the kernel serving at this address, or at this workspace's own address",
+    help="talk to the kernel serving at this address, or at this user's own address",
 )
 @click.option("--yolo", "yolo", is_flag=True, help="answer the light and ordinary questions with a yes")
 @click.option("--away", "away", is_flag=True, help="answer each question as its own silence would have")
@@ -132,6 +132,11 @@ def main(
         # A daemon has no line to send and nobody to read one: asking for both is a usage error rather
         # than a run that silently does one of them (E159).
         msg = "-p sends one message, and --serve has no conversation to send it in"
+        raise click.UsageError(msg)
+    if serve_at is not None and workspace is not None:
+        # A daemon opens no tree: the ones it serves are the ones a client names, so "work in this
+        # directory" is not something it can be told at this end of the connection (E154, E157).
+        msg = "--serve opens no tree: the trees it serves are the ones a client names with --workspace"
         raise click.UsageError(msg)
     # Read before anything is started, and before a terminal is taken: a file this program will not run
     # with is a sentence and an exit code, not half a kernel (§0.11, E72).
@@ -180,19 +185,24 @@ async def _serve(
 
     A run is a kernel with this terminal in front of it, a kernel at an address with nobody in front of
     it, or this terminal in front of a kernel that is already somewhere else — and the three differ in
-    nothing but where the connection comes from (§5 B, E124).
+    nothing but where the connection comes from (§5 B, E124). Only two of them have a tree before they
+    start, and the daemon is not one: it opens no tree and serves the ones its clients name (E157).
+
+    ``-p`` and the three shapes are read before this, so what is left here is the one decision the three
+    do not share: where this run's workspace is, which is the directory it was started in unless it was
+    told (§5 B, E154).
     """
     workspace = Path.cwd() if root is None else root
     if connect_at is None:
         _say_engines(settings)
     if serve_at is not None:
-        return await _serving(workspace=workspace, settings=settings, endpoint=_address(serve_at, workspace=workspace))
+        return await _serving(settings=settings, endpoint=_address(serve_at))
     if connect_at is not None:
         return await _connected(
             session=session,
             workspace=workspace,
             claimed=root,
-            at=_address(connect_at, workspace=workspace),
+            at=_address(connect_at),
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
@@ -303,14 +313,15 @@ async def _talk(
     return await app.run()
 
 
-def _address(asked: Path | str, *, workspace: Path) -> Path:
-    """The address a run named, or this workspace's own when it named none.
+def _address(asked: Path | str) -> Path:
+    """The address a run named, or this person's own when it named none.
 
     ``--serve`` and ``--connect`` take an optional path, and the empty string is click's way of saying
     "the flag was given and no value was": one command per shape, and no run that has to spell out a
-    name it does not care about (§5 B).
+    name it does not care about (§5 B). The default is one address and not one per tree, because a
+    kernel is one address however many trees it serves (E154).
     """
-    return boot.endpoint_for(workspace) if not asked else Path(asked)
+    return boot.endpoint_for() if not asked else Path(asked)
 
 
 def _say_engines(settings: config.Settings) -> None:
@@ -329,18 +340,19 @@ def _say_engines(settings: config.Settings) -> None:
     _ = sys.stderr.flush()
 
 
-async def _serving(*, workspace: Path, settings: config.Settings, endpoint: Path) -> int:
+async def _serving(*, settings: config.Settings, endpoint: Path) -> int:
     """Be the kernel at one address, until this program is interrupted (``--serve``).
 
     Nothing is drawn and nothing is read: a daemon has no terminal in front of it, and the only thing it
     still says is where it is listening — on the error stream, because that is where a program's own
-    remarks go (§5 A, E130).
+    remarks go (§5 A, E130). It is listening for clients that will each name the trees they mean, so the
+    one thing it cannot say is which tree it is working in (E157).
     """
     try:
-        daemon = await config.serve(workspace, settings, endpoint=endpoint)
+        daemon = await config.serve(settings, endpoint=endpoint)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    _ = sys.stderr.write(f"serving {workspace} at {endpoint}, for as long as this program runs\n")
+    _ = sys.stderr.write(f"serving at {endpoint}, for as long as this program runs\n")
     _ = sys.stderr.flush()
     try:
         _ = await asyncio.wait(

@@ -257,14 +257,15 @@ class Settings:
     #: same when they say the same thing, and a document is how they came to say it.
     document: TOMLDocument | None = field(default=None, compare=False, repr=False)
 
-    def skills(self, workspace: Path | str) -> Skills:
+    def skills(self, workspace: Path | str | None = None) -> Skills:
         """The roots a new skill is written into and read from, in the order they are looked in.
 
-        Configured roots come first and the standard three follow, because a directory somebody wrote down
+        Configured roots come first and the standard ones follow, because a directory somebody wrote down
         is a directory they meant to take precedence over one another program installed. ``paths`` empty and
         ``discover`` on is exactly :meth:`Skills.standard` — byte for byte the list this tree had before
         there was a file to say otherwise — and ``discover = false`` is a host that reads only what it was
-        told to.
+        told to. ``workspace`` is the tree whose own skills directory is the last root, and ``None`` is a
+        program started without one, which is a daemon that a client tells about trees (E157).
         """
         roots = [Root(path=path, origin="plyngent", scope="user") for path in self.skill_paths]
         if self.discover_skills:
@@ -492,23 +493,27 @@ async def install(
     a frontend reaches it is the frontend's business — but it is here so that a story about a file still
     runs over every transport the kernel can open.
     """
-    return await install_kernel(root, transport=transport, model=model, **_from_the_file(root, settings))
+    return await install_kernel(root, transport=transport, model=model, **_from_the_file(root=root, settings=settings))
 
 
-async def serve(root: Path | str, settings: Settings, *, endpoint: Path | str, model: Model | None = None) -> Daemon:
-    """Bring a kernel up configured by *settings* and serve it at one address (``--serve``).
+async def serve(settings: Settings, *, endpoint: Path | str, model: Model | None = None) -> Daemon:
+    """Serve a kernel configured by *settings* at one address (``--serve``).
 
     The same translation as :func:`install` and the same host, with an address instead of a client: a
     daemon has nobody in front of it, so the only thing this program still decides is where it listens.
+    It is handed no tree either — the trees it serves are the ones a client names (E157) — and the one
+    place that shows is the project's skills directory, which a program with no tree cannot have: the
+    roots are the file's own plus the person's, and nothing is guessed in its place.
     """
-    return await serve_kernel(root, endpoint=endpoint, model=model, **_from_the_file(root, settings))
+    return await serve_kernel(endpoint=endpoint, model=model, **_from_the_file(root=None, settings=settings))
 
 
-def _from_the_file(root: Path | str, settings: Settings) -> dict[str, Any]:
+def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, Any]:
     """Everything a settings value says, as the keywords a kernel is brought up with.
 
     It is one function so that the two ways a program starts — one frontend, or an address — cannot
     disagree about what the file means; the list of names is the list of what the file may say (§0.11).
+    ``root`` is the tree the program was pointed at, and ``None`` is the daemon that was pointed at none.
     """
     skills = settings.skills(root)
     engines = engines_for(settings.routes.routes, settings.web)
