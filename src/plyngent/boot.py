@@ -28,6 +28,7 @@ from plyngent.kernel import local
 from plyngent.kernel.catalog import BUILTIN
 from plyngent.kernel.channel import Channel, InProcChannel
 from plyngent.kernel.client import Offers
+from plyngent.kernel.connection import Connection, TreeRef
 from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.history import History, available, history_path
@@ -43,12 +44,12 @@ from plyngent.kernel.prompt import PromptPlan
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.running import DEFAULT_RUNNING
-from plyngent.kernel.serving import Serving
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
+from plyngent.wire.event import Refusal
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import (
     CLIENT_OFFER,
@@ -167,6 +168,12 @@ class _Kernel:
     patience: float | None
     graded: Grades
     trees: dict[Path, _Tree]
+    #: One count per tree, keyed as the greeting spells a tree's path, and kept by reference: a
+    #: connection made before a tree existed reads it once that tree is open (E154).
+    ledgers: dict[str, Ledger]
+    #: The count for what a *connection* says rather than a tree — a goodbye, a listing. It is the
+    #: process's own, because those events are about the connection and not about any one tree.
+    events: Ledger
 
     def __init__(
         self,
@@ -187,6 +194,8 @@ class _Kernel:
         self.patience = patience
         self.graded = graded
         self.trees = {}
+        self.ledgers = {}
+        self.events = Ledger()
 
     @property
     def tree(self) -> _Tree:
@@ -269,17 +278,79 @@ class _Kernel:
             raise RuntimeError(msg)
         tree = _Tree(qualifier, path, Ledger())
         self.trees[path] = tree
+        self.ledgers[str(path)] = tree.ledger
         return tree
+
+    async def find(self, where: str) -> TreeRef | Refusal:
+        """The tree at ``where``, opening it when this process may, or the reason it will not.
+
+        Three structural refusals and one about the path: this is the whole of "who may be opened"
+        (E157), and none of them is about permission. A path that is not a directory can never be worked
+        in; a tree that overlaps one already open would keep its own locks and its own versions over the
+        same files, and the two would change each other's work without knowing it; and a process holds a
+        number of trees at once, because every one of them carries a journal, a version store and its
+        share of the terminals.
+
+        A tree that fails to come up is not a structural refusal — the machine said no — and it is
+        answered with ``NO_HOST``: the tree stays out of the table, and everything else carries on. What
+        this does *not* do is keep a list of what may be opened: reaching this socket is the permission
+        (E153, E157).
+
+        An empty name means the tree a client that declared none can only mean — the one this kernel
+        serves, when it serves exactly one. It never opens anything: a kernel with no tree yet, and one
+        with several and no default, both answer that the name is not enough to go on.
+        """
+        if not where:
+            return self._sole()
+        path = _workspace_of(where)
+        known = self.trees.get(path)
+        if known is not None:
+            return TreeRef(str(known.path), known.qualifier)
+        refused = self._may_hold(path)
+        if refused is not None:
+            return refused
+        try:
+            opened = await self.open(path)
+        except RuntimeError:
+            return Refusal.NO_HOST
+        return TreeRef(str(opened.path), opened.qualifier)
+
+    def _may_hold(self, path: Path) -> Refusal | None:
+        """Whether one more tree may be opened here, or which structural rule says no (E157).
+
+        The three are checked in the order they can be answered: a path that is not a directory is a fact
+        about the path, an overlap is a fact about the trees already open, and the ceiling is a fact about
+        the process — a refusal that named the third for a path that is not a directory would be true and
+        useless.
+        """
+        if not path.is_dir():
+            return Refusal.NOT_A_WORKSPACE
+        if any(path in other.parents or other in path.parents for other in self.trees):
+            return Refusal.NESTED_WORKSPACE
+        if len(self.trees) >= MAX_TREES:
+            return Refusal.TOO_MANY_WORKSPACES
+        return None
+
+    def _sole(self) -> TreeRef | Refusal:
+        """The one tree this kernel serves, for a client that named none — or the honest refusal.
+
+        Not "the first one": a kernel with several trees and a client that has not said which it means has
+        no answer to give, and picking one would be this program guessing on the client's behalf (E154).
+        """
+        if len(self.trees) != 1:
+            return Refusal.NO_WORKSPACE
+        (tree,) = self.trees.values()
+        return TreeRef(str(tree.path), tree.qualifier)
 
 
 class _Held(NamedTuple):
-    """One connection a kernel is serving: its command loop, the socket under it, and the far side.
+    """One connection a kernel is serving: its loop over one or more trees, and the far side of it.
 
     ``client`` is filled only where the far end is this program's own — a connection the composition
     root opened for itself — because closing a stream somebody else holds is their business, not ours.
     """
 
-    serving: Serving
+    connection: Connection
     link: Link
     task: asyncio.Task[None]
     streams: tuple[local.SocketChannel, ...] = ()
@@ -299,7 +370,7 @@ class Installed:
     """
 
     _kernel: _Kernel
-    serving: Serving
+    connection: Connection
     _link: Link
     _client: KernelLink
     _task: asyncio.Task[None]
@@ -311,7 +382,7 @@ class Installed:
     def __init__(
         self,
         kernel: _Kernel,
-        serving: Serving,
+        connection: Connection,
         link: Link,
         task: asyncio.Task[None],
         *,
@@ -321,7 +392,7 @@ class Installed:
         streams: tuple[local.SocketChannel, ...] = (),
     ) -> None:
         self._kernel = kernel
-        self.serving = serving
+        self.connection = connection
         self._link = link
         self._client = link if client is None else client
         self._task = task
@@ -347,8 +418,13 @@ class Installed:
 
     @property
     def ledger(self) -> Ledger:
-        """The one counter every connection's event numbers come from."""
+        """The counter the first tree's events come from."""
         return self._kernel.ledger
+
+    @property
+    def ledgers(self) -> dict[str, Ledger]:
+        """One counter per tree this kernel has open, keyed as the greeting spells a tree's path."""
+        return self._kernel.ledgers
 
     @property
     def client(self) -> KernelLink:
@@ -364,27 +440,36 @@ class Installed:
         this kernel is listening on; over ``inproc`` it is a channel, and there is nothing else it could
         be — which is the same statement as "the two transports are one implementation".
 
-        The connection is served like the first one: the same host, the same tools, its own command
-        loop and its own offer to attach. What it does not get is the one thing this kernel has one of —
-        it answers no questions while the client installed here is attached (D19).
+        The connection is served like the first one: the same trees, the same tools, its own loop and its
+        own offer to attach. What it does not get is the one thing this kernel has one of — it answers no
+        questions while the client installed here is attached (D19); what it *does* get is the events,
+        because a second frontend on one tree is a second view and not a competitor for the stream (E154).
         """
         manifest = replace(self._kernel.manifest, caps=caps)
         if self._listening is None:
             link = _opened(
                 InProcChannel(),
                 manifest,
-                ledger=self._kernel.ledger,
+                ledger=self._kernel.events,
+                ledgers=self._kernel.ledgers,
                 timeout=self._kernel.patience,
                 grades=self._kernel.graded,
             )
-            serving, task = _served(self._kernel.assembly, self._kernel.host, link, self._kernel.specs)
-            self._others.append(_Held(serving, link, task))
+            connection, task = _connected(self._kernel, link)
+            self._others.append(_Held(connection, link, task))
             return _begun(link)
         far = await local.connect(self._listening.endpoint)
         near = await self._listening.accept()
         held = _accepted(self._kernel, near, manifest=manifest)
-        client = _begun(Link(far, manifest=await _greeting(far), ledger=self._kernel.ledger))
-        self._others.append(_Held(held.serving, held.link, held.task, (near, far), client))
+        client = _begun(
+            Link(
+                far,
+                manifest=await _greeting(far),
+                ledger=self._kernel.events,
+                ledgers=self._kernel.ledgers,
+            )
+        )
+        self._others.append(_Held(held.connection, held.link, held.task, (near, far), client))
         return client
 
     async def settle(self) -> None:
@@ -396,10 +481,10 @@ class Installed:
         await self._task
 
     async def close(self) -> None:
-        """Leave in the order things depend on: stop watching, stop serving, then take the host down.
+        """Leave in the order things depend on: stop watching, stop serving, then take the hosts down.
 
-        The loop is awaited rather than merely told to stop, because its last act is to put the human
-        back — and a ``replace`` on an assembly that is already going down has nowhere to land.
+        The loop is awaited rather than merely told to stop, because its last act is to leave every
+        tree's audience — and leaving an assembly that is already going down has nowhere to land.
 
         Both ends of a socket are closed and waited for, which is what makes the last thing this kernel
         says reach the client that is leaving: a stream ends after what was queued has been written.
@@ -410,7 +495,7 @@ class Installed:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._watch
             self._watch = None
-        await self.serving.stop("the kernel is leaving")
+        self.connection.stop("the kernel is leaving")
         await self._task
         self._client.close()
         for stream in self._streams:
@@ -423,7 +508,7 @@ class Installed:
     async def _dropped(self) -> None:
         """Close every connection this kernel opened or accepted for somebody else, and wait for its loop."""
         for held in self._others:
-            await held.serving.stop("the kernel is leaving")
+            held.connection.stop("the kernel is leaving")
             if held.client is not None:
                 held.client.close()
         _ = await asyncio.gather(*(held.task for held in self._others), return_exceptions=True)
@@ -569,19 +654,26 @@ async def install(
         channel = await local.connect(named)
         near = await listening.accept()
         held = _accepted(kernel, near)
-        link, serving, task = held.link, held.serving, held.task
-        client: KernelLink = _begun(Link(channel, manifest=await _greeting(channel), ledger=kernel.ledger))
+        link, connection, task = held.link, held.connection, held.task
+        client: KernelLink = _begun(
+            Link(channel, manifest=await _greeting(channel), ledger=kernel.events, ledgers=kernel.ledgers)
+        )
         streams = (near, channel)
     else:
         link = _opened(
-            InProcChannel(), kernel.manifest, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded
+            InProcChannel(),
+            kernel.manifest,
+            ledger=kernel.events,
+            ledgers=kernel.ledgers,
+            timeout=kernel.patience,
+            grades=kernel.graded,
         )
         client = _begun(link)
-        serving, task = _served(kernel.assembly, host, link, kernel.specs)
+        connection, task = _connected(kernel, link)
     watch = asyncio.create_task(_replace_the_broker(kernel.assembly, Declaration(PtyBroker).key))
     return Installed(
         kernel,
-        serving,
+        connection,
         link,
         task,
         client=client,
@@ -660,7 +752,7 @@ class Daemon:
                     await task
         self._accepting = self._watch = None
         for held in self._held:
-            await held.serving.stop(reason)
+            held.connection.stop(reason)
         _ = await asyncio.gather(*(held.task for held in self._held), return_exceptions=True)
         for held in self._held:
             for stream in held.streams:
@@ -911,6 +1003,7 @@ def _opened(
     manifest: KernelManifest,
     *,
     ledger: Ledger,
+    ledgers: dict[str, Ledger],
     timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
     grades: Grades | None = None,
 ) -> Link:
@@ -918,19 +1011,18 @@ def _opened(
 
     Starting it here rather than by whichever caller remembered to is what makes "an answer is settled
     where the answer lane is read" true of every connection this program opens, however it got one. The
-    ledger is the host's, so the numbers a client reads do not restart when its connection does.
+    counts are the trees' and the map is the kernel's own object, so a client reads numbers that neither
+    restart when its connection does nor stop at the tree that happened to be open first (E154).
     """
-    link = Link(channel, manifest=manifest, ledger=ledger, timeout=timeout, grades=grades)
+    link = Link(channel, manifest=manifest, ledger=ledger, ledgers=ledgers, timeout=timeout, grades=grades)
     link.start()
     return link
 
 
-def _served(
-    assembly: Assembly, host: str, link: Link, specs: tuple[ToolSpec, ...]
-) -> tuple[Serving, asyncio.Task[None]]:
-    """The command loop for one connection: the server that reads it, and the task that runs it."""
-    serving = Serving(assembly, host=host, link=link, specs=specs)
-    return serving, asyncio.create_task(serving.run())
+def _connected(kernel: _Kernel, link: Link) -> tuple[Connection, asyncio.Task[None]]:
+    """The loop for one connection: the server that routes it among trees, and the task that runs it."""
+    connection = Connection(link=link, assembly=kernel.assembly, foundry=kernel, specs=kernel.specs)
+    return connection, asyncio.create_task(connection.run())
 
 
 def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelManifest | None = None) -> _Held:
@@ -946,24 +1038,36 @@ def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelMan
     """
     wanted = kernel.manifest if manifest is None else manifest
     _greeted(wanted, near)
-    link = _opened(near, wanted, ledger=kernel.ledger, timeout=kernel.patience, grades=kernel.graded)
-    serving, task = _served(kernel.assembly, kernel.host, link, kernel.specs)
-    return _Held(serving, link, task, (near,))
+    link = _opened(
+        near,
+        wanted,
+        ledger=kernel.events,
+        ledgers=kernel.ledgers,
+        timeout=kernel.patience,
+        grades=kernel.graded,
+    )
+    connection, task = _connected(kernel, link)
+    return _Held(connection, link, task, (near,))
 
 
 async def _told_what_it_loses(kernel: _Kernel) -> None:
-    """Give the host the one chance to say what this process takes with it (E151).
+    """Give every host the one chance to say what this process takes with it (E151).
 
     Before the assembly goes down rather than after, and this is the whole of the timing: the sentence is a
     row, so it needs a journal that is still open, and what it counts — the children on terminals and the
     scratch directories — is still there to be counted only until the host lets go of it.
+
+    Every tree, because every tree has its own journal and its own terminals: a process that is leaving
+    leaves each of them behind, and a tree opened by a client's command is no less lost than the one the
+    program was started in.
     """
-    try:
-        found = kernel.assembly.instance(Declaration(Host, instance=kernel.host).key)
-    except ServiceNotUpError:
-        return
-    if isinstance(found, Host):
-        await found.stopping()
+    for tree in kernel.trees.values():
+        try:
+            found = kernel.assembly.instance(Declaration(Host, instance=tree.qualifier).key)
+        except ServiceNotUpError:
+            continue
+        if isinstance(found, Host):
+            await found.stopping()
 
 
 async def _replace_the_broker(assembly: Assembly, key: ComponentKey) -> None:

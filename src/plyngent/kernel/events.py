@@ -243,40 +243,50 @@ class NoSink(Human):
 
 
 class HumanChannel(Component, Human):
-    """The host's way out to whoever is attached, as a component so that attach and detach are one move.
+    """A host's way out to everyone watching it, and the one place a frontend joins that audience.
 
-    Two things travel through here and only one of them has changed: **events** are this channel's, and
-    **a question a turn asks is not** — a turn carries the connection that started it
-    (``TurnCtx.asker``), so a frontend is asked by its own work rather than by whoever attached last
-    (E156). What is left here is a question with no turn behind it, which is what a test stimulus and a
-    future kernel-level asker would use.
+    Two things travel through here and they are no longer one thing:
 
-    The host holds *this* object, never the client: attaching is
-    ``assembly.replace(key, Declaration(HumanChannel, args=(client,)))`` and detaching is the same call
-    with nobody. Nothing has to be cleared afterwards, and a reader of ``Host.human`` never sees a
-    half-attached state — the key answers the old generation until the new one is loaded. That is also
-    where "one owner of the stream" comes from, without an election of ours: the framework refuses a
-    second ``replace`` of a key another call is still moving (``KeyInTransitError`` naming what it is
-    doing), so a second client is told the truth rather than quietly waiting its turn.
+    * **events fan out.** Everything this host says goes to every connection watching it, because a
+      second frontend on one tree is a second view of one conversation and not a competitor for it
+      (E154). Watching is :meth:`join` and :meth:`leave`, which is a set rather than an
+      ``assembly.replace`` — a connection joins while another is already there, and a replace that had
+      to read the current value and put it back would be a race the framework answers by refusing the
+      second client (:class:`~composat.errors.KeyInTransitError`, which is what this used to be).
+    * **a question with no turn behind it goes to one watcher.** A turn's own questions never come
+      through here: a turn carries the connection that started it (``TurnCtx.asker``, E156), so a
+      frontend is asked by its own work rather than by whoever attached last. What is left is the lane a
+      stimulus uses, and one answer is owed to it, so it is asked of the first watcher in the order the
+      watchers joined.
 
-    Nobody attached is not the same as no channel. A question gets an answer, and the answer is "no"
+    Nobody watching is not the same as no channel. A question gets an answer, and the answer is "no"
     (:class:`NoSink`), so a tool reports that it was blocked instead of hanging — the same answer a
     headless run gives. A question already out when its client went away is refused by the transport
     that carried it (:meth:`plyngent.kernel.link.Link.close`), and the turn it belongs to runs on: a
     client disappearing is a refusal, not a verdict (R2.1 D14).
     """
 
-    #: The client that answers, or ``None`` when nobody is attached.
-    attached: Human | None
+    #: Everybody watching this host, in the order they joined: a dict because one connection joins once
+    #: and the order is what makes "the first watcher answers" a stable answer rather than a lottery.
+    watchers: dict[Human, None]
 
-    def __init__(self, attached: Human | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.attached = attached
+        self.watchers = {}
+
+    def join(self, watcher: Human) -> None:
+        """Add one connection to the audience: what it hears from here on is this host's events."""
+        self.watchers[watcher] = None
+
+    def leave(self, watcher: Human) -> None:
+        """Take one connection out; one that never joined leaves nothing behind."""
+        _ = self.watchers.pop(watcher, None)
 
     @override
     def emit(self, event: AnyEvent) -> None:
-        """Hand an event to the attached client, or drop it when there is none."""
-        self._human().emit(event)
+        """Hand an event to every watcher, or drop it when there is none."""
+        for watcher in tuple(self.watchers):
+            watcher.emit(event)
 
     @override
     async def confirm(
@@ -333,5 +343,7 @@ class HumanChannel(Component, Human):
         return await self._human().secret(prompt=prompt, site=site, timeout=timeout)
 
     def _human(self) -> Human:
-        """Who answers: the attached client, or the answer that is always no."""
-        return self.attached if self.attached is not None else NoSink()
+        """Who answers a question with no turn behind it: the first watcher, or the answer that is always no."""
+        for watcher in self.watchers:
+            return watcher
+        return NoSink()

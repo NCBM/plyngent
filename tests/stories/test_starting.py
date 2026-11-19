@@ -54,7 +54,7 @@ async def test_ctrl_d_leaves_with_zero(story: Story) -> None:
 
 
 async def test_the_kernel_leaving_ends_the_program_and_says_why(story: Story) -> None:
-    await story.serving.stop("going down")
+    story.connection.stop("going down")
     await story.settle()
 
     assert story.screen() == ("the kernel is leaving: going down",)

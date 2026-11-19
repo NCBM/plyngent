@@ -124,7 +124,7 @@ async def test_a_replaced_terminal_broker_is_said_before_a_model_calls_an_old_id
     await story.type("open a shell")
     await story.settle()
 
-    _ = await story.serving.assembly.replace(Declaration(PtyBroker).key, Declaration(PtyBroker))
+    _ = await story.connection.assembly.replace(Declaration(PtyBroker).key, Declaration(PtyBroker))
     held.ready.set()
     await story.finished()
 

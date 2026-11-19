@@ -50,13 +50,13 @@ if TYPE_CHECKING:
 
     from plyngent.cli.policy import Policy
     from plyngent.config import Settings
+    from plyngent.kernel.connection import Connection
     from plyngent.kernel.events import Human
     from plyngent.kernel.lm.route import Route
     from plyngent.kernel.model import Model, Request
     from plyngent.kernel.net.web import Engines
     from plyngent.kernel.prompt import PromptPlan
     from plyngent.kernel.pty.registry import Limits
-    from plyngent.kernel.serving import Serving
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import AnyAnswer, AnyAsk, Grades
     from plyngent.wire.command import OfferedTool
@@ -460,14 +460,14 @@ class Story:
         return self.host.workspace.root
 
     @property
-    def serving(self) -> Serving:
+    def connection(self) -> Connection:
         """The kernel's half of its one connection: what a story about the kernel's own words reaches.
 
         A story that says "the kernel is leaving" is staging something no command does, so it says it on
         the object that owns it — and only a kernel in this process has one.
         """
         assert isinstance(self.kernel, Installed), "only a kernel in this process has one connection to stop"
-        return self.kernel.serving
+        return self.kernel.connection
 
     @property
     def human(self) -> Human:

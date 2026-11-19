@@ -3,12 +3,15 @@
 # itself proved the union is covered. The redundancy *is* the assertion.
 # pyright: reportUnnecessaryComparison=false
 
-"""The kernel's half of one connection: what a client asked for, done, and what happened said back.
+"""The kernel's half of one tree, as one connection sees it: what was asked there, done, and said back.
 
-A connection is a client's intent and the kernel's answer, one command at a time. This is the answer
-side, and it is the only place that holds the two things a frontend must not: the assembly, and the
-right to admit a session into it. Everything it needs to *say* goes out through the kernel face of
-the link, so no part of this file knows there is a terminal on the other end.
+A connection with one tree is one of these and no routing; a connection with several has one per tree,
+all sharing its link, and which one a command reaches is
+:class:`~plyngent.kernel.connection.Connection`'s decision (E154). This is the answer side, and it is
+the only place that holds the two things a frontend must not: the assembly, and the right to admit a
+session into it. Everything it needs to *say* goes out through the kernel face of the link with this
+tree's path stamped on it, so no part of this file knows there is a terminal on the other end — and a
+frontend reading two trees can tell their events apart.
 
 Two rules shape it:
 
@@ -16,14 +19,14 @@ Two rules shape it:
   starts a turn — the dispatcher decides, and the client learns the outcome from the event lane. There
   is no reply to correlate (R2.1 D5), so a command whose meaning has not landed yet is *accepted and
   silent* rather than refused with an invented event.
-* **The human belongs to the connection.** A question is asked by a turn, and it goes back to the
-  connection that started that turn (``TurnCtx.asker``), so what a frontend answers is what its own
-  work asked (E156). ``Host.human`` keeps the *events*: attaching is a ``replace`` of it with a
-  :class:`~plyngent.kernel.link.LinkHuman` over this link, and the end of the command lane is what
-  detaches it — a client that is gone cannot render, so the host goes back to "nobody to tell".
+* **The human belongs to the connection, and the audience to the tree.** A question is asked by a turn,
+  and it goes back to the connection that started that turn (``TurnCtx.asker``), so what a frontend
+  answers is what its own work asked (E156). What a tree *says* goes to everyone watching it:
+  :meth:`~Serving.begin` joins the audience and :meth:`~Serving.end` leaves it, so a second frontend on
+  one tree is a second view rather than a competitor for the stream (E154).
 
 What the commands do not yet have: ``Resume`` answers with what it is missing, because reattaching a
-session to another journal needs a *second* store and this build keeps one per workspace — so a
+session to another journal needs a *second* store and this build keeps one journal per tree — so a
 conversation is resumed by opening it, and ``Open(seed_from=)`` is the other thing that reads one
 conversation into another. Nothing is accepted in silence any more: each command is answered, even where
 the answer is a refusal. ``Compact``, ``Prune`` and ``Export`` are not turns — the first two write one
@@ -37,7 +40,7 @@ import asyncio
 from typing import TYPE_CHECKING, assert_never
 
 from composat import Declaration
-from composat.errors import KeyInTransitError
+from msgspec.structs import replace
 
 from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
 from plyngent.kernel.client import ClientOffers, Offers, specs_from
@@ -81,7 +84,6 @@ from plyngent.wire.event import (
     GoalRefused,
     GoalSet,
     GrantRevoked,
-    KernelLeaving,
     ListedSession,
     OfferRefused,
     Pruned,
@@ -98,7 +100,7 @@ from plyngent.wire.event import (
     TurnKind,
     TurnRefused,
 )
-from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION
+from plyngent.wire.manifest import CLIENT_OFFER
 from plyngent.wire.query import (
     Forest,
     Grants,
@@ -125,6 +127,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.kernel.trail import Trail
     from plyngent.wire.command import AnyCommand, OfferedTool
+    from plyngent.wire.event import AnyEvent
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyQuery, AnyReply
 
@@ -139,10 +142,14 @@ _KERNELS_OWN: dict[TurnKind, Refusal] = {
 
 
 class Serving:
-    """One kernel, one connection, one command loop.
+    """One tree, as one connection sees it: what this client asked for there, and what happened said back.
 
-    ``host`` is the host's qualifier in the assembly, and also the prefix a session is admitted under
-    (``ws/s1``), because that is what makes a session's requirements answer one level up.
+    A connection with several trees has one of these per tree (``E154``), and they share its link: the
+    routing between them is :class:`~plyngent.kernel.connection.Connection`'s, and what a *tree* means by
+    a command is here. That is why ``workspace`` exists as well as ``host``: ``host`` is the qualifier
+    this tree's components are declared under (``ws``, and ``ws2`` for the second one), while
+    ``workspace`` is how the wire names the tree — its path, the same spelling the greeting uses and the
+    one stamped onto every event that leaves here.
 
     It is handed the tool set as a tuple of declarations rather than a catalog, because it is the one
     place that adds to it: a client offering its tools appends to this table and rebuilds the catalog
@@ -152,6 +159,7 @@ class Serving:
 
     assembly: Assembly
     host: str
+    workspace: str
     link: KernelSide
     _asker: LinkHuman
     _human: Declaration
@@ -159,28 +167,33 @@ class Serving:
     _watching: bool
     _client_id: str | None
     _detached: bool
-    _stopped: bool
     _specs: tuple[ToolSpec, ...]
     _catalog: ToolCatalog
     _executor: ToolExecutor
     _turns: set[asyncio.Task[None]]
 
     def __init__(
-        self, assembly: Assembly, *, host: str, link: KernelSide, specs: tuple[ToolSpec, ...] = BUILTIN
+        self,
+        assembly: Assembly,
+        *,
+        host: str,
+        workspace: str,
+        link: KernelSide,
+        specs: tuple[ToolSpec, ...] = BUILTIN,
     ) -> None:
         self.assembly = assembly
         self.host = host
+        self.workspace = workspace
         self.link = link
-        #: Who a turn this connection starts asks: this connection, always. It is not a component and
-        #: does not move, because the answer to "where does this turn's question go" may not depend on
-        #: who else is attached (E156).
-        self._asker = LinkHuman(link)
+        #: Who a turn this tree starts asks: this connection, always. It is not a component and does not
+        #: move, because the answer to "where does this turn's question go" may not depend on who else is
+        #: attached (E156) — and it is stamped with this tree, so what it says is countable there.
+        self._asker = LinkHuman(link, workspace=workspace)
         self._human = Declaration(HumanChannel, instance=host)
         self._offers = Declaration(Offers, instance=host)
         self._watching = False
         self._client_id = None
         self._detached = False
-        self._stopped = False
         # What this kernel serves whether or not a client is attached: its own tools, plus whatever was
         # installed for them (§0.9, E26). One table for every session it serves — which of them a
         # session may reach is its own answer (:meth:`ToolCatalog.view`), so what is shared is the
@@ -190,52 +203,91 @@ class Serving:
         self._executor = ToolExecutor(self._catalog)
         self._turns = set()
 
-    # -- the loop ------------------------------------------------------------------
+    # -- the audience --------------------------------------------------------------
 
-    async def run(self) -> None:
-        """Be this connection's kernel until the client stops asking, then let the host go.
+    def begin(self) -> None:
+        """Join this tree's audience, so that what happens here reaches this connection.
 
-        The first thing it does is read what the client declared itself to be, because a connection this
-        kernel cannot read is not one it may serve: a client that speaks another version of the contract
-        has not sent a command these shapes describe, and a client that says nothing has agreed to
-        nothing. Both are answered the same way — the connection ends before a session exists — and
-        neither is answered *in words*, because a refusal would have to be written in the contract, and
-        this is the one case where the two ends have not agreed about it. The kernel's own version is in
-        the greeting, so which of the two is out of date is the client's to say.
-
-        The loop ends for one of two reasons and both mean the same thing here: the client closed the
-        connection, or :meth:`stop` did. Either way the questions in flight have already been refused
-        by the link, and the only thing left to undo is who answers them.
-
-        Reads are on their own task, because they are on their own lane and because a read must not wait
-        behind a turn: a client asking what it may reach is answered while a model is still thinking,
-        and neither question is the other's business.
+        Joining is a set and not a ``replace``: a second frontend on the same tree is a second view of one
+        conversation and both are told what happens (``E154``). Questions are *not* part of this — a turn
+        asks the connection that started it (:attr:`_asker`), so a second watcher never takes a question
+        away from the frontend whose own work asked it (E156).
         """
-        declared = await self.link.declared()
-        if declared is None or declared.protocol_version != PROTOCOL_VERSION:
-            self.link.close()
+        channel = self._channel()
+        if channel is None:
             return
-        await self._attach()
-        reading = asyncio.create_task(self._reading())
-        try:
-            async for command in self.link.commands():
-                await self._handle(command)
-        finally:
-            _ = reading.cancel()
-            _ = await asyncio.gather(reading, return_exceptions=True)
-            await self._detach()
+        channel.join(self._asker)
+        self._watching = True
 
-    async def _reading(self) -> None:
-        """Answer every query this client asks, until its lane ends."""
-        async for query in self.link.queries():
-            _ = self.link.replied(await self._answered(query))
+    async def end(self) -> None:
+        """Leave the audience, and put back what this connection was the owner of.
 
-    async def _answered(self, query: AnyQuery) -> AnyReply:
+        What the connection held ends with it, and both halves are undone here for the same reason: it
+        is gone, so nobody is there to hear the events or to run the tools it offered. The session in the
+        history is told its tool set moved, which is what makes the next connection's first request miss
+        the prefix exactly once (§10.8, E46).
+        """
+        if self._detached:
+            return
+        self._detached = True
+        if self._watching:
+            channel = self._channel()
+            if channel is not None:
+                channel.leave(self._asker)
+            self._watching = False
+        if self._client_id is None:
+            return
+        current = self._offers_now()
+        if current.attached is None or current.attached.id != self._client_id:
+            return
+        _ = await self.assembly.replace(
+            self._offers.key, Declaration(Offers, instance=self.host, kwargs={"issued": current.issued})
+        )
+        await self._notice()
+
+    def _channel(self) -> HumanChannel | None:
+        """This tree's audience, or ``None`` when the assembly has the host down."""
+        found = self.assembly.instance(self._human.key)
+        return found if isinstance(found, HumanChannel) else None
+
+    def _say(self, event: AnyEvent) -> None:
+        """Say one event about this tree, named as the greeting names a tree: its path."""
+        self.link.emit(event if not self.workspace else replace(event, workspace=self.workspace))
+
+    # -- what a command means ------------------------------------------------------
+
+    async def handle(self, command: AnyCommand) -> None:
+        """Do what one command asks of this tree, or say why it cannot be done yet."""
+        match command:
+            case Open() | Close():
+                await self._serving(command)
+            case ListSessions():
+                self._say(SessionsListed(sessions=await self._served()))
+            case Cancel(session=session, scope=scope, reason=reason, detail=detail):
+                await self._cancel(session, scope, reason, detail)
+            case Submit() | Retry():
+                await self._turning(command)
+            case Offer(tools=tools):
+                await self._offer(tools)
+            case Compact() | Prune():
+                await self._bookkeeping(command)
+            case Export(session=session, begin_after=begin_after):
+                await self._export(session, begin_after)
+            case SetRoute() | Ungrant() | Goal():
+                await self._setting(command)
+            case Resume() | Rollback():
+                await self._past(command)
+            case _ as never:
+                # Every command a client may send has an answer here, even where the answer is "there is
+                # nowhere to resume from": a new command must be a decision at this match, not silence.
+                assert_never(never)
+
+    async def answered(self, query: AnyQuery) -> AnyReply:
         """What one read is told.
 
         A read is never refused with an event: its answer is the same kind as the question. The one case
-        with nothing to say — a session this kernel does not serve — answers with the empty value, which
-        is the truth about a conversation that holds no grants.
+        with nothing to say — a session this tree is not serving — answers with the empty value, which is
+        the truth about a conversation that holds no grants.
         """
         match query:
             case Grants(session=session):
@@ -256,6 +308,23 @@ class Serving:
                 return self._skills(query.id)
             case Turns(session=session):
                 return self._live(query.id, session)
+
+    @staticmethod
+    def nothing(query: AnyQuery) -> AnyReply:
+        """The empty answer of a read's own kind: what a tree nothing has opened is told.
+
+        Not a refusal, because a read has no lane to refuse on — and not a lie either: a tree this kernel
+        does not serve holds no conversations, no grants and no turns.
+        """
+        match query:
+            case Grants():
+                return GrantTable(id=query.id)
+            case Trajectory():
+                return Forest(id=query.id)
+            case Skills():
+                return SkillTable(id=query.id)
+            case Turns():
+                return LiveTurns(id=query.id)
 
     async def _trajectory(self, session: str) -> tuple[Entry, ...]:
         """One conversation's rows, as the forest a person walks: what each one is, and what it continues.
@@ -338,45 +407,7 @@ class Serving:
             absent=tuple(MissingRoot(path=str(root.path), label=root.label) for root in store.absent()),
         )
 
-    async def stop(self, reason: str = "") -> None:
-        """Leave: say so, then close the lane the loop is reading.
-
-        ``KernelLeaving`` first, because D20 makes "the kernel is going down" an event and not an
-        exception to catch: a client that sees its event lane end knows why it ended.
-        """
-        if self._stopped:
-            return
-        self._stopped = True
-        self.link.emit(KernelLeaving(reason=reason))
-        self.link.close()
-
-    # -- what a command means ------------------------------------------------------
-
-    async def _handle(self, command: AnyCommand) -> None:
-        """Do what one command asks, or say why it cannot be done yet."""
-        match command:
-            case Open() | Close():
-                await self._serving(command)
-            case ListSessions():
-                self.link.emit(SessionsListed(sessions=await self._served()))
-            case Cancel(session=session, scope=scope, reason=reason, detail=detail):
-                await self._cancel(session, scope, reason, detail)
-            case Submit() | Retry():
-                await self._turning(command)
-            case Offer(tools=tools):
-                await self._offer(tools)
-            case Compact() | Prune():
-                await self._bookkeeping(command)
-            case Export(session=session, begin_after=begin_after):
-                await self._export(session, begin_after)
-            case SetRoute() | Ungrant() | Goal():
-                await self._setting(command)
-            case Resume() | Rollback():
-                await self._past(command)
-            case _ as never:
-                # Every command a client may send has an answer here, even where the answer is "there is
-                # nowhere to resume from": a new command must be a decision at this match, not silence.
-                assert_never(never)
+    # -- what a command says about this tree ---------------------------------------
 
     async def _serving(self, command: Open | Close) -> None:
         """The two commands that say which conversations this kernel serves: admit one, or evict one."""
@@ -405,10 +436,10 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(GoalRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(GoalRefused(session=session, reason=Refusal.NO_SESSION))
             return
         now = await found.set_goal(mode) if mode is not None else found.mode
-        self.link.emit(GoalSet(session=session, mode=now))
+        self._say(GoalSet(session=session, mode=now))
 
     async def _ungrant(self, session: str, path: str) -> None:
         """Take back one path this conversation was allowed, and say which of the two happened.
@@ -419,13 +450,11 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(GrantRevoked(session=session, path=path, revoked=False))
+            self._say(GrantRevoked(session=session, path=path, revoked=False))
             return
         target = normalize(path, base=found.host.workspace.root)
         taken = await found.revoke(target)
-        self.link.emit(
-            GrantRevoked(session=session, path=display(target, root=found.host.workspace.root), revoked=taken)
-        )
+        self._say(GrantRevoked(session=session, path=display(target, root=found.host.workspace.root), revoked=taken))
 
     async def _cancel(self, session: str, scope: str | None, reason: CancelReason, detail: str) -> None:
         """Stop what one session is doing, as narrowly as the scope says.
@@ -451,9 +480,9 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(ResumeRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(ResumeRefused(session=session, reason=Refusal.NO_SESSION))
             return
-        self.link.emit(
+        self._say(
             ResumeRefused(
                 session=session,
                 reason=Refusal.UNKNOWN_STORE if store else Refusal.NO_SECOND_STORE,
@@ -483,19 +512,19 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(RollbackRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(RollbackRefused(session=session, reason=Refusal.NO_SESSION))
             return
         store = found.host.history
         if store is None:
-            self.link.emit(RollbackRefused(session=session, reason=Refusal.NO_VERSIONS))
+            self._say(RollbackRefused(session=session, reason=Refusal.NO_VERSIONS))
             return
         if found.turns():
-            self.link.emit(RollbackRefused(session=session, reason=Refusal.TURN_RUNNING))
+            self._say(RollbackRefused(session=session, reason=Refusal.TURN_RUNNING))
             return
         try:
             undone = await store.undo(version=version, paths=paths, force=force)
         except (Unreadable, Unwilling) as exc:
-            self.link.emit(
+            self._say(
                 RollbackRefused(
                     session=session,
                     reason=exc.reason,
@@ -505,9 +534,7 @@ class Serving:
                 )
             )
             return
-        self.link.emit(
-            RolledBack(session=session, revision=undone.revision, target=undone.target, restored=undone.restored)
-        )
+        self._say(RolledBack(session=session, revision=undone.revision, target=undone.target, restored=undone.restored))
 
     async def _bookkeeping(self, command: Compact | Prune) -> None:
         """The two commands that write one row where the conversation ends, and nothing else.
@@ -578,29 +605,29 @@ class Serving:
         would either duplicate what is there or interleave with a turn that is using it.
         """
         if self._session(session) is not None:
-            self.link.emit(SeedRefused(session=session, reason=Refusal.ALREADY_OPEN))
+            self._say(SeedRefused(session=session, reason=Refusal.ALREADY_OPEN))
             return False
         host = self._host()
         if host is None:
-            self.link.emit(SeedRefused(session=session, reason=Refusal.NO_HOST))
+            self._say(SeedRefused(session=session, reason=Refusal.NO_HOST))
             return False
         trail = host.trail
         if await trail.entry(source, entry) is None:
-            self.link.emit(SeedRefused(session=session, reason=Refusal.NO_SUCH_SOURCE, source=source, entry=entry))
+            self._say(SeedRefused(session=session, reason=Refusal.NO_SUCH_SOURCE, source=source, entry=entry))
             return False
         try:
             carried = await trail.derive(source, entry)
         except ValueError:
-            self.link.emit(SeedRefused(session=session, reason=Refusal.CHAIN_BROKEN, source=source, entry=entry))
+            self._say(SeedRefused(session=session, reason=Refusal.CHAIN_BROKEN, source=source, entry=entry))
             return False
         if not carried:
-            self.link.emit(SeedRefused(session=session, reason=Refusal.NOTHING_TO_CARRY))
+            self._say(SeedRefused(session=session, reason=Refusal.NOTHING_TO_CARRY))
             return False
         parent: str | None = None
         for message in carried:
             parent = (await trail.append(session, message, begin_after=parent)).id
         assert parent is not None
-        self.link.emit(Seeded(session=session, source=source, from_entry=entry, entry=parent, count=len(carried)))
+        self._say(Seeded(session=session, source=source, from_entry=entry, entry=parent, count=len(carried)))
         return True
 
     def _say_route(self, session: str) -> None:
@@ -609,7 +636,7 @@ class Serving:
         if found is None:
             return
         asked = found.host.routes.resolve(found.route)
-        self.link.emit(
+        self._say(
             Routed(
                 session=session,
                 route="" if asked is None else asked.name,
@@ -650,13 +677,13 @@ class Serving:
         attached is the one case that leaves the table alone: there is no change to count.
         """
         if CLIENT_OFFER not in self.link.manifest.caps:
-            self.link.emit(OfferRefused(reason=Refusal.NO_CAPABILITY))
+            self._say(OfferRefused(reason=Refusal.NO_CAPABILITY))
             return
         before = self._offers_now()
         client = before.attached.id if before.attached is not None else f"c{before.issued + 1}"
         attached, refused = specs_from(client, tools, taken={spec.name for spec in self._specs})
         for name, reason in refused:
-            self.link.emit(OfferRefused(name=name, reason=reason))
+            self._say(OfferRefused(name=name, reason=reason))
         if not attached and (tools or before.attached is None):
             # Nothing was taken: either every tool offered was refused — and a refusal is not a
             # withdrawal — or the client offered nothing and there was nothing to withdraw.
@@ -721,15 +748,15 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(RouteRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(RouteRefused(session=session, reason=Refusal.NO_SESSION))
             return
         known = found.host.routes
         if route and known.named(route) is None:
-            self.link.emit(RouteRefused(session=session, reason=Refusal.NO_ROUTE, route=route))
+            self._say(RouteRefused(session=session, reason=Refusal.NO_ROUTE, route=route))
             return
         name, epoch = await found.set_route(route)
         asked = known.resolve(name)
-        self.link.emit(
+        self._say(
             Routed(
                 session=session,
                 route="" if asked is None else asked.name,
@@ -762,25 +789,25 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(CompactRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(CompactRefused(session=session, reason=Refusal.NO_SESSION))
             return
         if not text:
-            self.link.emit(CompactRefused(session=session, reason=Refusal.NOTHING_TO_KEEP))
+            self._say(CompactRefused(session=session, reason=Refusal.NOTHING_TO_KEEP))
             return
         if replaces is not None:
             missing = [named for named in replaces if await found.host.trail.entry(session, named) is None]
             if missing:
-                self.link.emit(CompactRefused(session=session, reason=Refusal.NOT_A_SPAN, entry=missing[0]))
+                self._say(CompactRefused(session=session, reason=Refusal.NOT_A_SPAN, entry=missing[0]))
                 return
         try:
             entry = await found.host.trail.append(
                 session, Summary(text=text, replaces=replaces), begin_after=begin_after
             )
         except ValueError:
-            self.link.emit(CompactRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
+            self._say(CompactRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return
         _ = await found.note_history()
-        self.link.emit(Compacted(session=session, entry=entry.id, chars=len(text)))
+        self._say(Compacted(session=session, entry=entry.id, chars=len(text)))
 
     async def _export(self, session: str, begin_after: str | None) -> None:
         """Write this conversation out as a document, or say why nothing was written.
@@ -795,7 +822,7 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(ExportRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(ExportRefused(session=session, reason=Refusal.NO_SESSION))
             return
         trail = found.host.trail
         end = begin_after
@@ -805,21 +832,21 @@ class Serving:
         try:
             messages = await trail.derive(session, end)
         except ValueError:
-            self.link.emit(ExportRefused(session=session, reason=Refusal.CHAIN_BROKEN, entry=end or ""))
+            self._say(ExportRefused(session=session, reason=Refusal.CHAIN_BROKEN, entry=end or ""))
             return
         if not messages:
-            self.link.emit(ExportRefused(session=session, reason=Refusal.NOTHING_TO_EXPORT))
+            self._say(ExportRefused(session=session, reason=Refusal.NOTHING_TO_EXPORT))
             return
         transcript_text = transcript(messages)
         if len(transcript_text) > MAX_TEXT_CHARS:
-            self.link.emit(
+            self._say(
                 ExportRefused(session=session, reason=Refusal.TOO_BIG, chars=len(transcript_text), limit=MAX_TEXT_CHARS)
             )
             return
         kept = await found.host.documents.put(
             session, transcript_text, summary=f"conversation exported ({len(messages)} messages)"
         )
-        self.link.emit(DocumentStored(session=session, document=kept.id, chars=kept.chars))
+        self._say(DocumentStored(session=session, document=kept.id, chars=kept.chars))
 
     async def _prune(self, session: str, targets: tuple[str, ...], reason: str) -> None:
         """Write one entry saying these entries are no longer shown, or say why nothing was written.
@@ -840,15 +867,15 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(PruneRefused(session=session, reason=Refusal.NO_SESSION))
+            self._say(PruneRefused(session=session, reason=Refusal.NO_SESSION))
             return
         if not targets:
-            self.link.emit(PruneRefused(session=session, reason=Refusal.NOTHING_TO_PRUNE))
+            self._say(PruneRefused(session=session, reason=Refusal.NOTHING_TO_PRUNE))
             return
         trail = found.host.trail
         for target in targets:
             if await trail.entry(session, target) is None:
-                self.link.emit(PruneRefused(session=session, reason=Refusal.NO_SUCH_TARGET, entry=target))
+                self._say(PruneRefused(session=session, reason=Refusal.NO_SUCH_TARGET, entry=target))
                 return
         head = await trail.head(session)
         entry = await trail.append(
@@ -867,7 +894,7 @@ class Serving:
         # a prune is one of the things that makes a prefix miss, and a miss nobody counted is a miss
         # nobody can account for (§10.5, E149).
         _ = await found.note_history()
-        self.link.emit(Pruned(session=session, entry=entry.id, targets=targets, reason=reason))
+        self._say(Pruned(session=session, entry=entry.id, targets=targets, reason=reason))
 
     # -- turns ---------------------------------------------------------------------
 
@@ -892,12 +919,12 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
+            self._say(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
             return
         if begin_after is None:
             head = await found.host.trail.head(session)
             if head is None:
-                self.link.emit(TurnRefused(session=session, reason=Refusal.NOTHING_TO_RETRY, holder=0))
+                self._say(TurnRefused(session=session, reason=Refusal.NOTHING_TO_RETRY, holder=0))
                 return
             begin_after = head.id
         await self._start(found, session, "", TurnKind.RETRY, begin_after)
@@ -923,13 +950,13 @@ class Serving:
         """
         found = self._session(session)
         if found is None:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
+            self._say(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
             return
         if kind in _KERNELS_OWN:
             # Three kinds are this kernel's to start and never a client's to name: an aside is declared
             # and not run, a goal turn is the plan saying the work is not done, and a retry is a person
             # saying "ask again" through the command of that name (E146/E158).
-            self.link.emit(TurnRefused(session=session, reason=_KERNELS_OWN[kind], holder=0))
+            self._say(TurnRefused(session=session, reason=_KERNELS_OWN[kind], holder=0))
             return
         await self._start(found, session, text, kind, begin_after)
 
@@ -941,11 +968,11 @@ class Serving:
         not name, the kernel may start, and the checks afterwards are the same ones either way (E158).
         """
         if not found.host.model.installed:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
+            self._say(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
             return
         live = found.turns()
         if live:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
+            self._say(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))
             return
         turned = await self._begun(found, session, kind, begin_after)
         if turned is None:
@@ -964,10 +991,10 @@ class Serving:
         try:
             return await found.begin_turn(asker=self._asker, begin_after=begin_after, kind=kind)
         except ValueError:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
+            self._say(TurnRefused(session=session, reason=Refusal.NO_SUCH_ENTRY, entry=begin_after or ""))
             return None
         except TooManyTurns as refused:
-            self.link.emit(TurnRefused(session=session, reason=Refusal.TOO_MANY_TURNS, limit=refused.limit))
+            self._say(TurnRefused(session=session, reason=Refusal.TOO_MANY_TURNS, limit=refused.limit))
             return None
 
     async def _turn(self, turned: TurnCtx, text: str) -> None:
@@ -1014,51 +1041,6 @@ class Serving:
             # its ceiling both mean this turn is the last one for now (E156).
             return None
 
-    # -- who answers questions -----------------------------------------------------
-
-    async def _attach(self) -> None:
-        """Make this connection the one events are told to, or leave the host as it was.
-
-        What attaching is for is now one thing: where *events* go. Questions no longer travel this way
-        — a turn asks its own connection (:attr:`_asker`) — so a second connection while the first is
-        still attaching is refused by the framework (``KeyInTransitError``) and loses nothing but the
-        stream. It does not put the channel back when it leaves either, because the generation it would
-        be writing is somebody else's.
-        """
-        try:
-            _ = await self.assembly.replace(
-                self._human.key, Declaration(HumanChannel, instance=self.host, args=(self._asker,))
-            )
-        except KeyInTransitError:
-            return
-        self._watching = True
-
-    async def _detach(self) -> None:
-        """Put the host back to "nobody to tell" and "nothing offered", because this client is gone.
-
-        Both are one step and both are undone here, for the same reason: what the connection was the
-        owner of ends with it. The session in the history is told its tool set moved, which is what
-        makes the next connection's first request miss the prefix exactly once (§10.8, E46).
-        """
-        if self._detached:
-            return
-        self._detached = True
-        if self._watching:
-            try:
-                _ = await self.assembly.replace(self._human.key, Declaration(HumanChannel, instance=self.host))
-            except KeyInTransitError:
-                # Somebody else is mid-attach; their generation is not ours to withdraw.
-                return
-        if self._client_id is None:
-            return
-        current = self._offers_now()
-        if current.attached is None or current.attached.id != self._client_id:
-            return
-        _ = await self.assembly.replace(
-            self._offers.key, Declaration(Offers, instance=self.host, kwargs={"issued": current.issued})
-        )
-        await self._notice()
-
     # -- the addresses -------------------------------------------------------------
 
     def _declaration(self, session: str) -> Declaration:
@@ -1085,14 +1067,20 @@ class Serving:
         return found if isinstance(found, Session) else None
 
     def _sessions(self) -> tuple[Session, ...]:
-        """Every session this kernel serves, in the order they were admitted.
+        """Every session this *tree* serves, in the order they were admitted.
 
-        The same walk a listing does, and the same identity: a session is what was admitted under one,
-        so what this kernel serves is the keys carrying that identity and nothing else.
+        The same walk a listing does, narrowed to this host: sessions are declared as ``ws/name``, so the
+        qualifier is what tells one tree's conversation from another's. A bare identity match would find
+        every tree's, and an offer made to one tree would tell the others their tool set moved.
         """
         identity = Declaration(Session).identity
         declared = self.assembly.keys()
-        found = [self.assembly.instance(key) for key in declared if key.identity == identity]
+        prefix = f"{self.host}/"
+        found = [
+            self.assembly.instance(key)
+            for key in declared
+            if key.identity == identity and key.instance.startswith(prefix)
+        ]
         return tuple(session for session in found if isinstance(session, Session))
 
     async def _served(self) -> tuple[ListedSession, ...]:
