@@ -110,16 +110,166 @@ class NoKernelError(OSError):
     """Nobody is answering at that address, or whoever does is not this program."""
 
 
-class _Kernel(NamedTuple):
-    """One host, up: the assembly, the tools it serves, what it says it is, and how long it waits."""
+#: The most trees one process will open. Every tree carries a journal, a version store and its share of
+#: terminals, so a number has to exist; it is a constant until §3 asks for a setting (E157).
+MAX_TREES = 8
+
+
+class _Tree(NamedTuple):
+    """One open workspace: the qualifier its sessions live under, where it is, and its own event count."""
+
+    qualifier: str
+    path: Path
+    ledger: Ledger
+
+
+class _Share(NamedTuple):
+    """What every tree of one process shares, because it is a fact about the program and not about a tree."""
+
+    table: Routes
+    engines: Engines
+    plan: PromptPlan
+    specs: tuple[ToolSpec, ...]
+    epoch: str
+    asked: Model | None
+    skills: Skills | None
+
+
+class _Defaults(NamedTuple):
+    """How a tree is built when the program said it once for the process rather than per tree."""
+
+    qualifier: str
+    journal: Path | str | None
+    pty: Limits | None
+    running: int | None
+    rounds: int | None
+    soft: bool
+    sandbox: WorkspaceConfig | None
+    trash: bool
+    versions: bool
+
+
+class _Kernel:
+    """One process: the assembly every tree shares, and the trees it has open (E154/E157).
+
+    A tree is brought up on demand — by :func:`install` for the one it was started in, and by a command
+    that names another — so what a connection is greeted with is a *snapshot* of this table rather than
+    the set of trees that may ever exist. Every part that belongs to one tree (its journal, its document
+    store, its version store, its terminals, its event count) is declared under that tree's qualifier, and
+    everything else here is declared once.
+    """
 
     assembly: Assembly
-    host: str
-    specs: tuple[ToolSpec, ...]
-    manifest: KernelManifest
-    ledger: Ledger
+    registry: ComponentRegistry
+    up: dict[ComponentKey, Component]
+    share: _Share
+    defaults: _Defaults
     patience: float | None
     graded: Grades
+    trees: dict[Path, _Tree]
+
+    def __init__(
+        self,
+        assembly: Assembly,
+        registry: ComponentRegistry,
+        up: dict[ComponentKey, Component],
+        share: _Share,
+        defaults: _Defaults,
+        *,
+        patience: float | None,
+        graded: Grades,
+    ) -> None:
+        self.assembly = assembly
+        self.registry = registry
+        self.up = up
+        self.share = share
+        self.defaults = defaults
+        self.patience = patience
+        self.graded = graded
+        self.trees = {}
+
+    @property
+    def tree(self) -> _Tree:
+        """The tree a connection that names none is served by: the one this program was started in."""
+        return next(iter(self.trees.values()))
+
+    @property
+    def host(self) -> str:
+        """The qualifier every session of the first tree is addressed under."""
+        return self.tree.qualifier
+
+    @property
+    def ledger(self) -> Ledger:
+        """The count the first tree's events come from."""
+        return self.tree.ledger
+
+    @property
+    def specs(self) -> tuple[ToolSpec, ...]:
+        """The tools every tree of this process serves."""
+        return self.share.specs
+
+    @property
+    def manifest(self) -> KernelManifest:
+        """What this kernel is, as the trees it has open at the moment it is asked."""
+        return KernelManifest(
+            commands=command_specs(),
+            queries=query_specs(),
+            caps=(CLIENT_OFFER,),
+            epoch=self.share.epoch,
+            workspaces=tuple(WorkspaceRow(path=str(tree.path), label=tree.path.name) for tree in self.trees.values()),
+        )
+
+    async def open(self, root: Path | str) -> _Tree:
+        """Bring one tree up, or answer the one already open at that path (E157).
+
+        Idempotent, and the idempotence is the point: a command that names a tree somebody else already
+        opened says nothing new. The first tree takes the journal the program named, if it named one; a tree
+        opened later keeps its own beside its own data, because one file cannot be two trees' history.
+        """
+        path = _workspace_of(root)
+        known = self.trees.get(path)
+        if known is not None:
+            return known
+        qualifier = self.defaults.qualifier if not self.trees else f"{self.defaults.qualifier}{len(self.trees) + 1}"
+        kept = _journal_file(path, self.defaults.journal if not self.trees else None)
+        # One store per tree, beside the journal it belongs with — and none at all where nothing can keep
+        # one, which is a fact about the machine rather than about the call that asks for it.
+        versions_kept = History(path, history_path(kept)) if self.defaults.versions and available() else None
+        limits = Limits() if self.defaults.pty is None else self.defaults.pty
+        _ = self.registry.declare_all(
+            [
+                Declaration(PtyRegistry, instance=qualifier, kwargs=limits.declared()),
+                Declaration(HumanChannel, instance=qualifier),
+                Declaration(Offers, instance=qualifier),
+                Declaration(ModelChannel, instance=qualifier, args=(self.share.asked,)),
+                Declaration(Journal, instance=qualifier, args=(SqliteTrail(kept),)),
+                Declaration(Documents, instance=qualifier, args=(documents_path(kept),)),
+                Declaration(
+                    Host,
+                    instance=qualifier,
+                    args=(path,),
+                    kwargs={
+                        "skills": self.share.skills,
+                        "routes": self.share.table,
+                        "engines": self.share.engines,
+                        "prompt": self.share.plan,
+                        "history": versions_kept,
+                        "running": DEFAULT_RUNNING if self.defaults.running is None else self.defaults.running,
+                        "rounds": DEFAULT_ROUNDS if self.defaults.rounds is None else self.defaults.rounds,
+                        "soft": self.defaults.soft,
+                        "workspace_config": self.defaults.sandbox,
+                        "trash_enabled": self.defaults.trash,
+                    },
+                ),
+            ]
+        )
+        started = await self.assembly.start(Declaration(Host, instance=qualifier).key)
+        if not started.ok:
+            msg = f"the host at {path!r} did not come up: {started.failed}"
+            raise RuntimeError(msg)
+        tree = _Tree(qualifier, path, Ledger())
+        self.trees[path] = tree
+        return tree
 
 
 class _Held(NamedTuple):
@@ -642,7 +792,6 @@ async def _assembled(
     """
     registry = ComponentRegistry()
     up: dict[ComponentKey, Component] = {}
-    kept = _journal_file(root, journal)
     table = Routes(routes or (), default=route)
     asked = model if model is not None else (Posted(table) if table.default else None)
     # Which web engines this program has is decided before the prompt is, because the prompt names them:
@@ -654,68 +803,37 @@ async def _assembled(
     # — a model that wants the workspace's own ``AGENTS.md`` reads it with the `read` call.
     answers = tuple(one.name for one in web_engines.asking())
     plan = PromptPlan.of(skills, engines=answers) if prompt is None else prompt
-    # One store per workspace, beside the journal it belongs with — and none at all where nothing can
-    # keep one, which is a fact about the machine rather than about the call that asks for it.
-    versions_kept = History(root, history_path(kept)) if versions and available() else None
-    _ = registry.declare_all(
-        [
-            Declaration(PtyBroker),
-            Declaration(PtyRegistry, instance=host, kwargs=(Limits() if pty is None else pty).declared()),
-            Declaration(HumanChannel, instance=host),
-            Declaration(Offers, instance=host),
-            Declaration(ModelChannel, instance=host, args=(asked,)),
-            Declaration(Journal, instance=host, args=(SqliteTrail(kept),)),
-            Declaration(Documents, instance=host, args=(documents_path(kept),)),
-            Declaration(
-                Host,
-                instance=host,
-                args=(root,),
-                kwargs={
-                    "skills": skills,
-                    "routes": table,
-                    "engines": web_engines,
-                    "prompt": plan,
-                    "history": versions_kept,
-                    "running": DEFAULT_RUNNING if running is None else running,
-                    "rounds": DEFAULT_ROUNDS if rounds is None else rounds,
-                    "soft": soft,
-                    "workspace_config": sandbox,
-                    "trash_enabled": trash,
-                },
-            ),
-        ]
-    )
-    # One broker for the whole process: it is the root-qualified component, and it is the only thing
-    # here that a host reaches for across the qualifier axis (§9.4).
+    # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
+    # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What a
+    # *client* offers is not here: that arrives over the connection and is added to this set (§10.8). A
+    # tool table is a fact about the program, so one answer serves every tree it serves.
+    specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
+    # One broker for the whole process: it is the root-qualified component, and it is the only thing here
+    # that a host reaches for across the qualifier axis (§9.4). A tree shares it rather than owning one.
+    _ = registry.declare_all([Declaration(PtyBroker)])
     rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     assembly = Assembly(registry, up=up, rule=rule)
-
-    started = await assembly.start(Declaration(Host, instance=host).key)
-    if not started.ok:
-        msg = f"the host at {root!r} did not come up: {started.failed}"
-        raise RuntimeError(msg)
-
-    # Which tools exist is this line's answer, and the only one: a backend that was not installed is a
-    # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
-    # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
-    specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
-    where = _workspace_of(root)
-    manifest = KernelManifest(
-        commands=command_specs(),
-        queries=query_specs(),
-        caps=(CLIENT_OFFER,),
-        epoch=secrets.token_hex(8),
-        workspaces=(WorkspaceRow(path=str(where), label=where.name),),
-    )
-    return _Kernel(
+    kernel = _Kernel(
         assembly,
-        host,
-        specs,
-        manifest,
-        Ledger(),
-        DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
-        Grades() if grades is None else grades,
+        registry,
+        up,
+        _Share(table, web_engines, plan, specs, secrets.token_hex(8), asked, skills),
+        _Defaults(
+            qualifier=host,
+            journal=journal,
+            pty=pty,
+            running=running,
+            rounds=rounds,
+            soft=soft,
+            sandbox=sandbox,
+            trash=trash,
+            versions=versions,
+        ),
+        patience=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
+        graded=Grades() if grades is None else grades,
     )
+    _ = await kernel.open(root)
+    return kernel
 
 
 def _begun(link: Link) -> KernelLink:
