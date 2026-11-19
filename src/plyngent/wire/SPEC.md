@@ -57,11 +57,15 @@ short label to show for it), `commands` and `queries` (one row each: a tag, a on
 JSON Schema of the arguments), `caps` (advertised capabilities), `ack_interval` and `dead_after` (the two
 numbers liveness is measured with).
 
-`workspaces` is a **snapshot**, not an allowlist: it is what this kernel had open when it greeted, and the
-first row is the tree a connection is bound to when it names none. A client must not read it as the set of
-trees it may reach — where a kernel's set can grow, it grows — and must not assume the table it read is
-complete for another connection: it is what this kernel offers, read once. A tree that is opened after the
-greeting is not in it; a client learns of one by having asked for it.
+`workspaces` is a **snapshot**, not an allowlist: it is what this kernel had open when it greeted. A client
+must not read it as the set of trees it may reach — where a kernel's set can grow, it grows — and must not
+assume the table it read is complete for another connection: it is what this kernel offers, read once. A
+tree that is opened after the greeting is not in it; a client learns of one by having asked for it with
+`open`.
+
+No row is privileged: which tree *this* connection means is what its `bind` says, and a client that has to
+ask a person which tree to work in reads the greeting first and declares afterwards — which is why the
+declaration is a lane of its own and not a field of the greeting.
 
 ## Commands
 
@@ -160,8 +164,8 @@ do not fan out — a question a turn asks goes back to the connection that start
   `rollback-refused`, `grant-revoked`, `goal-set`, `goal-refused`, `routed`, `route-refused`, `changed`,
   `noticed`, `offer-refused`.
 - **The connection itself**: `kernel-leaving` (the stream ends after it), `workspace-refused` (a command
-  named a tree this kernel does not serve, or one it will not open: `session`, `workspace` as the command
-  spelled it, and `reason`), `batch`.
+  named a tree this kernel does not serve, or one it will not open: `session`, `workspace` as the tree the
+  command *meant* — its own name, or this connection's default when it named none — and `reason`), `batch`.
 
 A refusal carries one word from a closed set; the sentence a person reads is the frontend's to write.
 

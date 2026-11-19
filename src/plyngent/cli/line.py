@@ -216,15 +216,29 @@ def history_path(session: str) -> Path:
     return user_data_path("plyngent") / HISTORY / f"{_slug(session)}-{_digest(session)}.txt"
 
 
-def mark_path(session: str) -> Path:
+def mark_path(session: str, *, address: str, workspace: str) -> Path:
     """Where one session's reading mark is kept between runs: how far this client had read.
 
     The same directory rules as :func:`history_path`, and for the same reason: it is a frontend's own
     memory of a conversation, and it does not belong in the tree it was talking about. What it holds is a
     number the *kernel* gave out, so it is only meaningful beside the run that gave it — the greeting
     says which run that was, and a mark from another one is dropped rather than guessed at (§5 B).
+
+    A mark is about an ``(address, tree, session)`` and not about a session: two kernels may each serve a
+    conversation called ``main``, and one kernel may serve several trees that do (E154). Only the digest
+    carries all three — the slug is the session's own, so whoever looks in the directory can still tell
+    which conversation a file belongs to.
     """
-    return user_data_path("plyngent") / MARKS / f"{_slug(session)}-{_digest(session)}.json"
+    return user_data_path("plyngent") / MARKS / f"{_slug(session)}-{_digest(_about(address, workspace, session))}.json"
+
+
+def _about(address: str, workspace: str, session: str) -> str:
+    """One name for what a mark is about: where the kernel is, which tree, which conversation.
+
+    Joined with a byte no path and no address can hold, so that no two of these three can be rearranged
+    into the same string — they are different kinds of name and only their order tells them apart.
+    """
+    return f"{address}\x00{workspace}\x00{session}"
 
 
 def _slug(name: str) -> str:

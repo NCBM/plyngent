@@ -88,14 +88,14 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
     #: run is holding a number from another count, so it compares this first and claims nothing when it
     #: differs (§5 B).
     epoch: str = ""
-    #: The trees this kernel serves, as it resolved them, each with the name to show for it. A client that
-    #: was told which workspace to work in compares rather than assumes: two programs in different
-    #: directories are two kernels, and finding that out here is a sentence instead of a session that edits
-    #: the wrong tree (§5 B, E123).
+    #: The trees this kernel serves, as it resolved them, each with the name to show for it. A frontend
+    #: reads it to learn what it may mean — and, when it has to ask a person, to have something to ask
+    #: about: the alternative is guessing a directory, which is a session that edits a tree nobody was
+    #: looking at (§5 B, E154).
     #:
-    #: It is a *snapshot* and not an allowlist: a kernel that can open more trees says so here and a
-    #: client that needs the current set asks again (E154/E157). The first row is the tree a connection is
-    #: bound to when it names none.
+    #: It is a *snapshot* and not an allowlist: a tree that is not here is one this kernel has not been
+    #: asked for yet, and ``Open`` is what asks (E157). It is also not a declaration of what this
+    #: connection means — that is :class:`~plyngent.wire.bind.Bind`'s, said after this is read.
     workspaces: tuple[WorkspaceRow, ...] = ()
     commands: tuple[CommandSpec, ...] = ()
     #: The reads, beside the commands: a person asking "which paths may this reach" is one question

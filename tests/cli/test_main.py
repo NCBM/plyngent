@@ -15,10 +15,11 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from plyngent.__main__ import _address, _claim, _editor, _markdown, main
+from plyngent.__main__ import _address, _editor, _markdown, _tree_of, main
 from plyngent.boot import endpoint_for
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
+from plyngent.wire.manifest import WorkspaceRow
 
 
 class _Terminal:
@@ -80,26 +81,58 @@ def test_the_plain_lane_reads_markdown_as_the_text_it_is(monkeypatch: pytest.Mon
     assert _markdown(reading=_Terminal(), written=_Terminal()) is False
 
 
-def test_the_workspace_next_to_connect_is_a_claim_and_not_a_wish(tmp_path: Path) -> None:
-    """E123: a kernel that works somewhere else is refused before this program sends anything."""
+def test_a_tree_a_run_names_is_the_one_it_means(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--workspace .`` is a choice: it resolves the way every path in this program does (E154)."""
+    monkeypatch.chdir(tmp_path)
+
+    assert _tree_of(Path(), said=(), at=Path("somewhere.sock")) == str(tmp_path.resolve()), (
+        "a directory named — a bare `.` — is a tree meant, whether or not this kernel has opened it"
+    )
+
+
+def test_a_run_standing_in_a_served_tree_means_that_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Already being in a tree a kernel serves is saying which tree you mean — no question, no guess."""
+    served = tmp_path / "served"
+    inside = served / "inside"
+    inside.mkdir(parents=True)
+    monkeypatch.chdir(inside)
+
+    assert _tree_of(None, said=(WorkspaceRow(path=str(served)),), at=Path("somewhere.sock")) == str(served)
+
+
+def test_a_run_with_nobody_to_ask_refuses_rather_than_waits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pipe has no keyboard: a run that must choose says which trees there were (E154)."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", io.StringIO())
 
-    assert _claim(tmp_path, said=(str(tmp_path),)) is None, "the directory the kernel names is the one asked for"
-    with pytest.raises(click.ClickException):
-        _claim(tmp_path, said=(str(elsewhere),))
+    with pytest.raises(click.ClickException) as raised:
+        _tree_of(None, said=(WorkspaceRow(path=str(elsewhere)),), at=Path("somewhere.sock"))
+
+    assert str(elsewhere) in str(raised.value), "the answer names what this run could have meant"
+    assert "--workspace" in str(raised.value), "and what it would have taken to say it"
 
 
-def test_a_claim_is_about_any_of_the_trees_a_kernel_names(tmp_path: Path) -> None:
-    """A greeting lists the trees a kernel has open, so a directory it names is one it is working in."""
+def test_a_run_with_a_terminal_is_asked_which_tree_it_means(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Somebody at the keyboard is asked, and what they pick is what the connection means."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", _Terminal())
+    offered: list[list[str]] = []
 
-    assert _claim(elsewhere, said=(str(tmp_path), str(elsewhere))) is None
+    def answer(*_args: object, **kwargs: object) -> str:
+        chosen = kwargs["type"]
+        offered.append(list(chosen.choices))  # type: ignore[attr-defined]
+        return str(elsewhere)
 
+    monkeypatch.setattr("plyngent.__main__.click.prompt", answer)
 
-def test_connect_without_a_workspace_claims_nothing(tmp_path: Path) -> None:
-    assert _claim(None, said=(str(tmp_path),)) is None, "a run that named no directory reads what it finds"
+    assert _tree_of(None, said=(WorkspaceRow(path=str(elsewhere)),), at=Path("somewhere.sock")) == str(elsewhere)
+    assert offered == [[str(tmp_path.resolve()), str(elsewhere), "nothing"]], (
+        "this directory, the trees the kernel named, or nothing at all"
+    )
 
 
 def test_an_address_a_run_named_is_the_one_it_serves_on() -> None:

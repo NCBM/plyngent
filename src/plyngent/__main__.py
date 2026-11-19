@@ -34,6 +34,7 @@ from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
 from plyngent.cli.policy import Policy
 from plyngent.cli.render import workspace_label
+from plyngent.wire.bind import Bind
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from plyngent.cli.grammar import Catalog
     from plyngent.cli.line import LineEditor
     from plyngent.wire.link import KernelLink
+    from plyngent.wire.manifest import WorkspaceRow
 
 #: The session a run starts in: one frontend, one conversation, unless it is told otherwise.
 DEFAULT_SESSION = "main"
@@ -54,6 +56,10 @@ NO_COLOUR = "NO_COLOR"
 #: What a program returns when an interrupting signal had nowhere to go: the shell's own answer for one
 #: (128 + SIGINT). A frontend whose loop can be told does not come here — it stops a turn instead.
 INTERRUPTED = 130
+
+#: What a question about trees offers when the answer is "none of them": the run then stops rather than
+#: connecting to something it has no tree to say about (E154).
+_NOTHING = "nothing"
 
 
 @click.command()
@@ -192,7 +198,6 @@ async def _serve(
     do not share: where this run's workspace is, which is the directory it was started in unless it was
     told (§5 B, E154).
     """
-    workspace = Path.cwd() if root is None else root
     if connect_at is None:
         _say_engines(settings)
     if serve_at is not None:
@@ -200,14 +205,16 @@ async def _serve(
     if connect_at is not None:
         return await _connected(
             session=session,
-            workspace=workspace,
-            claimed=root,
+            asked=root,
             at=_address(connect_at),
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
             once=once,
         )
+    # The single run is the one shape whose tree is decided before there is a connection: "I am working
+    # here" is what it is, so the directory this process was started in is the answer unless it was told.
+    workspace = Path.cwd() if root is None else root
     # What this kernel is was decided by the file, and it is handed over as one value: which routes exist,
     # which of them answers, where skills are looked for, and where the conversation is kept (§0.11, E69).
     installed = await config.install(workspace, settings)
@@ -228,25 +235,32 @@ async def _serve(
 async def _connected(
     *,
     session: str,
-    workspace: Path,
-    claimed: Path | None,
+    asked: Path | None,
     at: Path,
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
     once: str | None,
 ) -> int:
-    """Talk to a kernel somebody else is serving, over the one address they named (``--connect``)."""
+    """Talk to a kernel somebody else is serving, over the one address they named (``--connect``).
+
+    Which tree this connection means is asked *after* the greeting, because the greeting is the only
+    list of the trees that kernel has open (E154). The declaration is therefore this function's, and the
+    version is still compared before it: a connection that turns out to be another program is a sentence
+    rather than a tree nobody could have meant.
+    """
     try:
-        client = await boot.connect(at)
+        client = await boot.connect(at, declare=False)
     except boot.NoKernelError as exc:
         raise click.ClickException(str(exc)) from exc
     try:
-        _claim(claimed, said=tuple(one.path for one in client.manifest.workspaces))
+        tree = _tree_of(asked, said=client.manifest.workspaces, at=at)
+        _ = client.bind(Bind(workspace=tree))
         return await _talk(
             client,
             session=session,
-            workspace=workspace,
+            workspace=Path(tree),
+            address=str(at),
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
@@ -257,20 +271,59 @@ async def _connected(
         await client.finished()
 
 
-def _claim(asked: Path | None, *, said: tuple[str, ...]) -> None:
-    """``--workspace`` next to ``--connect`` is a claim about which kernel this is, so it is checked.
+def _tree_of(asked: Path | None, *, said: tuple[WorkspaceRow, ...], at: Path) -> str:
+    """Which tree this connection means when a command names none, or a sentence saying there is none.
 
-    A person types a directory because they think they know what they are talking to; a kernel that works
-    somewhere else is that sentence being wrong, and answering it now is what keeps it from being a session
-    that edits a tree nobody was looking at (§5 B, E123). The greeting may name several trees — it is a
-    snapshot of what the kernel has open — so the claim is "one of these", and a kernel that has opened
-    none is one this program cannot be talking to about a tree.
+    Three answers, in the order they can be *known*. A directory was named, so that is the answer — and
+    it is a choice rather than a claim: a tree the kernel has not opened is opened by the ``Open`` this
+    run sends first, which is why ``--workspace .`` and no ``--workspace`` are not the same thing (E154).
+    Otherwise, if this run is standing in one of the trees the kernel serves, it is that one — not a
+    guess, because a person already in a tree a kernel is working in has said which tree they mean.
+    Otherwise somebody is asked, and a run with nobody at the keyboard refuses instead (E157).
     """
-    if asked is None or any(Path(one) == _resolved(asked) for one in said):
-        return
-    listed = ", ".join(said) if said else "no workspace at all"
-    msg = f"the kernel at that address works in {listed}, not {asked}"
-    raise click.ClickException(msg)
+    if asked is not None:
+        return str(_resolved(asked))
+    standing = _standing(Path.cwd(), said)
+    if standing is not None:
+        return standing
+    return _picked(said, at=at)
+
+
+def _standing(here: Path, said: tuple[WorkspaceRow, ...]) -> str | None:
+    """The tree this run is standing in, when it is standing in one of the kernel's — the nearest one."""
+    nearest: tuple[int, str] | None = None
+    found = here.resolve()
+    for one in said:
+        tree = Path(one.path)
+        if found != tree and tree not in found.parents:
+            continue
+        if nearest is None or len(tree.parts) > nearest[0]:
+            nearest = (len(tree.parts), one.path)
+    return None if nearest is None else nearest[1]
+
+
+def _picked(said: tuple[WorkspaceRow, ...], *, at: Path) -> str:
+    """Ask which tree this run means, or refuse with the list when there is nobody to ask.
+
+    A pipe has no keyboard, and a program that waits for an answer nobody is typing is worse than one
+    that says which trees it could have meant: a script that reaches a kernel with several trees must
+    name the one it wants, and find out that it has to (E154).
+    """
+    here = str(_resolved(Path.cwd()))
+    if _plain(sys.stdin):
+        listed = ", ".join(one.path for one in said) if said else "no tree at all"
+        msg = f"{at} serves {listed}, and this run named no tree: say --workspace to pick one"
+        raise click.ClickException(msg)
+    chosen = click.prompt(
+        f"which tree does this run mean at {at}",
+        type=click.Choice([here, *(one.path for one in said), _NOTHING]),
+        default=_NOTHING,
+        show_default=True,
+    )
+    if chosen == _NOTHING:
+        msg = "no tree was chosen, and this run has nothing to work in"
+        raise click.ClickException(msg)
+    return chosen
 
 
 def _resolved(asked: Path) -> Path:
@@ -283,6 +336,7 @@ async def _talk(
     *,
     session: str,
     workspace: Path,
+    address: str = "",
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
@@ -293,6 +347,10 @@ async def _talk(
     ``once`` is the one message a script asked for, and the loop it goes through is the one a person's
     lines go through: ``-p`` differs in when the run says goodbye, not in how a message becomes a turn
     (E159).
+
+    ``address`` and ``workspace`` are what the reading mark is filed under, and they are the caller's
+    because only the caller knows them: a run that reached a kernel at an address files its mark by that
+    address and the tree it chose, and a run that *is* the kernel has neither (E154, §5 B).
     """
     catalog = build(client.manifest, session=session)
     app = App(
@@ -307,7 +365,7 @@ async def _talk(
         colour=_colour(asked=no_colour, stream=sys.stdout),
         markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         diff=not no_diff,
-        mark=mark_path(session),
+        mark=mark_path(session, address=address, workspace=str(workspace)),
         once=once,
     )
     return await app.run()

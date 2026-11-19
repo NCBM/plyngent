@@ -26,7 +26,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.plain_text import PlainTextOutput
 
 from plyngent.cli import line
-from plyngent.cli.line import PromptEditor, Typed, history_path
+from plyngent.cli.line import PromptEditor, Typed, history_path, mark_path
 from plyngent.wire.ask import By, FreeText, Secret, Written
 
 if TYPE_CHECKING:
@@ -142,3 +142,25 @@ def test_no_session_name_can_name_a_path_outside_that_directory(
 
         assert escaped.parent == history_path("main").parent, f"{name!r} is a name, not a path"
         assert escaped.name.endswith(".txt") and "/" not in escaped.name
+
+
+def test_one_session_name_is_two_marks_in_two_trees_and_on_two_kernels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E154: a mark says how far a client read *there*, so the tree and the address are part of its name.
+
+    Two trees of one kernel may both hold a conversation called ``main``, and two kernels may both serve
+    a tree of the same name: one file would then claim a number from a count it does not belong to, and
+    the kernel would answer with somebody else's stretch of the conversation.
+    """
+    monkeypatch.setattr(line, "user_data_path", lambda _name: tmp_path / "data" / "plyngent")
+
+    here = mark_path("main", address="one.sock", workspace="/a/tree")
+    there = mark_path("main", address="one.sock", workspace="/other/tree")
+    another = mark_path("main", address="two.sock", workspace="/a/tree")
+
+    assert here != there, "one session in two trees is two conversations"
+    assert here != another, "and one tree reached at two addresses is two counts"
+    assert here == mark_path("main", address="one.sock", workspace="/a/tree"), "the same three are one file"
+    assert here.name.startswith("main-"), "and the conversation is still readable in the name"
+    assert here.parent == tmp_path / "data" / "plyngent" / "marks"

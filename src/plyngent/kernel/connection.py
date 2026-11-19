@@ -181,10 +181,16 @@ class Connection:
     # -- which tree ----------------------------------------------------------------
 
     async def _handle(self, command: AnyCommand) -> None:
-        """Give one command to the tree it names, or say which tree it could not reach."""
+        """Give one command to the tree it names, or say which tree it could not reach.
+
+        The refusal names the tree the command *meant* rather than the one it spelled: a connection that
+        declared its tree sends values with no tree in them, and a sentence about the tree that was
+        refused is the one a person can act on (E154).
+        """
         found = await self._tree(command.workspace, opening=isinstance(command, Open))
         if isinstance(found, Refusal):
-            self.link.emit(WorkspaceRefused(session=command.session, workspace=command.workspace, reason=found))
+            meant = _named(command.workspace) or self._bound
+            self.link.emit(WorkspaceRefused(session=command.session, workspace=meant, reason=found))
             return
         await found.handle(command)
 

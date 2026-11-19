@@ -274,20 +274,23 @@ async def test_the_address_is_the_person_s_own_and_not_a_tree_s(daemon, tmp_path
 async def test_a_daemon_starts_with_no_tree_and_a_client_names_one(daemon, tmp_path: Path) -> None:
     """A kernel that was pointed at no tree opens none: what it serves is what a client names (E157).
 
-    The greeting is the snapshot a client asks about, so it is where "no tree yet" is visible — and the
     one command that opens a tree is ``Open``, which is what makes a daemon's first tree a client's
     choice rather than a directory this process happened to be started in (E154).
+
+    The declaration is sent *after* the greeting, which is what a frontend that had to ask a person does:
+    ``Open`` then names no tree of its own and means the one it declared (E154).
     """
     where = tmp_path / "named"
     where.mkdir()
     endpoint = await daemon(model=False, trees=False)
 
-    client = await connect(endpoint)
+    client = await connect(endpoint, declare=False)
     try:
         assert client.manifest.workspaces == (), "a daemon names no tree before a client does"
 
-        client.submit(Open(session="s1", workspace=str(where)))
-        client.submit(ListSessions(workspace=str(where)))
+        _ = client.bind(Bind(workspace=str(where)))
+        client.submit(Open(session="s1"))
+        client.submit(ListSessions())
         listed = await _listed(client)
 
         assert listed[0].workspace == str(where), "the tree the client named is the one that answered"
