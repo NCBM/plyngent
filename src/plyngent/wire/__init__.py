@@ -114,6 +114,7 @@ from plyngent.wire.event import TurnKind as TurnKind
 from plyngent.wire.event import TurnRefused as TurnRefused
 from plyngent.wire.event import TurnStarted as TurnStarted
 from plyngent.wire.event import Usage as Usage
+from plyngent.wire.event import WorkspaceRefused as WorkspaceRefused
 from plyngent.wire.flow import Ack as Ack
 from plyngent.wire.flow import Mark as Mark
 from plyngent.wire.link import KernelLink as KernelLink

@@ -20,15 +20,17 @@ from plyngent.kernel.link import Link
 from plyngent.wire.ask import Agreed, By, FreeText, Invocation, Returned, Written
 from plyngent.wire.event import TurnStarted
 from plyngent.wire.flow import Ack, Mark
-from plyngent.wire.manifest import KernelManifest, WorkspaceRow
+from plyngent.wire.manifest import KernelManifest
 
 if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 
-def _link(ledger: Ledger | None = None, *, manifest: KernelManifest | None = None) -> Link:
+def _link(
+    ledger: Ledger | None = None, *, manifest: KernelManifest | None = None, ledgers: dict[str, Ledger] | None = None
+) -> Link:
     """One connection to nothing in particular: a channel, and the link the kernel's half would hold."""
-    link = Link(InProcChannel(), manifest=manifest, ledger=ledger, timeout=0.5)
+    link = Link(InProcChannel(), manifest=manifest, ledger=ledger, ledgers=ledgers, timeout=0.5)
     link.start()
     return link
 
@@ -174,13 +176,13 @@ async def test_an_ack_moves_the_watermark_the_lane_that_judges_silence_reads() -
 async def test_a_mark_names_the_tree_whose_count_it_carries() -> None:
     """A count is a tree's, so a claim about this one is answered and a claim about another is not.
 
-    The number alone would be enough for a kernel serving one tree; the tree is there because a
-    connection may be looking at more than one, and replaying a count this kernel is not the author of
-    would be replaying somebody else's words (E154).
+    What a connection may number is the table of counts it holds, not the greeting it was sent: a tree
+    opened after the greeting is one this connection can read, and a name no count answers is one whose
+    replay would be somebody else's words (E154).
     """
     for workspace, replayed in (("/w", True), ("/elsewhere", False)):
-        ledger = Ledger()
-        link = _link(ledger, manifest=KernelManifest(workspaces=(WorkspaceRow(path="/w", label="w"),)))
+        counted = Ledger()
+        link = _link(ledgers={"/w": counted})
         try:
             link.emit(TurnStarted())
             _ = await anext(link.events())
@@ -194,3 +196,26 @@ async def test_a_mark_names_the_tree_whose_count_it_carries() -> None:
                     _ = await asyncio.wait_for(anext(link.events()), 0.05)
         finally:
             link.close()
+
+
+async def test_an_event_with_no_tree_gets_a_number_and_a_mark_for_no_tree_gets_the_count_back() -> None:
+    """A connection that declared no tree keeps a count of its own, and an empty mark means the only one.
+
+    Two shapes of the same rule: a kernel serving one tree answers "the tree I mean" with that tree, while
+    a connection made on its own — a test's, a client's half — has no table at all and numbers what it
+    says here. What must not happen is silence: a value with no number is one the client cannot ack.
+    """
+    link = _link()
+    try:
+        link.emit(TurnStarted())
+        first = await anext(link.events())
+
+        assert first.seq == 1, "an event about no tree is still numbered"
+
+        link.ack(Ack(marks=(Mark(seq=0),), resume=True))
+
+        again = await asyncio.wait_for(anext(link.events()), 1.0)
+
+        assert again.seq == 1, "and the claim about no tree is answered from that same count"
+    finally:
+        link.close()

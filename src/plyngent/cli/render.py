@@ -69,6 +69,7 @@ from plyngent.wire.event import (
     TurnRefused,
     TurnStarted,
     Usage,
+    WorkspaceRefused,
 )
 from plyngent.wire.query import (
     AnyReply,
@@ -136,6 +137,7 @@ type _Turned = TurnStarted | TurnFinished | TurnRefused | OfferRefused
 type _Reported = (
     KernelLeaving
     | SessionsListed
+    | WorkspaceRefused
     | Compacted
     | Pruned
     | DocumentStored
@@ -176,6 +178,7 @@ type _Declined = (
     | RollbackRefused
     | SeedRefused
     | GoalRefused
+    | WorkspaceRefused
 )
 
 #: What one request to a model cost, and whether the answer it brought stopped short.
@@ -774,6 +777,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | RollbackRefused()
             | SeedRefused()
             | GoalRefused()
+            | WorkspaceRefused()
         ):
             return _declined(event)
         case _ as never:
@@ -897,6 +901,9 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one wo
                 path=path, version=version[:8], detail=f": {detail}" if detail else "", session=session
             )
             return ((session, Shown(f"rollback refused: {said}", "refusal")),)
+        case WorkspaceRefused(session=session, workspace=workspace, reason=reason):
+            said = _why(reason).format(workspace=workspace, session=session)
+            return ((session, Shown(f"workspace refused: {said}", "refusal")),)
         case _ as never:
             assert_never(never)
 
@@ -945,6 +952,13 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.TOO_MANY_TURNS: "this kernel is already running {limit} turns, which is as many as it runs at once",
     Refusal.NO_RETRY: "a retry is asked for by its own command, and not by naming the kind of turn",
     Refusal.NOTHING_TO_RETRY: "there is nothing to ask again: this conversation has no messages yet",
+    Refusal.NO_WORKSPACE: "no tree is open here by that name: open one with /open",
+    Refusal.NOT_A_WORKSPACE: "{workspace} is not a directory, so there is nothing there to work in",
+    Refusal.NESTED_WORKSPACE: (
+        "{workspace} overlaps a tree that is already open: two trees over one set of files would change "
+        "each other's work"
+    ),
+    Refusal.TOO_MANY_WORKSPACES: "this kernel already has as many trees open as it opens at once",
 }
 
 

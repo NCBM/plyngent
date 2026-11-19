@@ -43,6 +43,8 @@ forever: a new lane is a new number, never a renumbering.
    An empty `workspace` is *no default*: a client that names a tree on every command may say that, and a
    kernel serving one tree answers such a connection with that one. A name this kernel does not serve is
    answered by the command that named it, never by refusing the connection.
+   A later `bind` on the same connection moves the default tree and carries no receipt; the version it
+   names is ignored, because the first frame is where that question was settled.
 3. **A mismatch ends the connection.** No error value crosses the wire, because an error would have to be
    written in the contract and this is the one case where the two ends have not agreed about what the
    contract is. The kernel that is sent a version it does not speak serves none of that connection; the
@@ -58,12 +60,31 @@ numbers liveness is measured with).
 `workspaces` is a **snapshot**, not an allowlist: it is what this kernel had open when it greeted, and the
 first row is the tree a connection is bound to when it names none. A client must not read it as the set of
 trees it may reach — where a kernel's set can grow, it grows — and must not assume the table it read is
-complete for another connection: it is what this kernel offers, read once.
+complete for another connection: it is what this kernel offers, read once. A tree that is opened after the
+greeting is not in it; a client learns of one by having asked for it.
 
 ## Commands
 
 A command changes the world and has **no reply**: what came of it arrives on the event lane, including
-every refusal. `session` names the conversation, and an empty one means the caller's default.
+every refusal. `session` names the conversation, `workspace` names the tree, and an empty value of either
+means the caller's default — the tree this connection declared, and (in a kernel serving one tree) that
+one.
+
+A tree that is not open is opened by `open` and by nothing else. Every other command naming a tree this
+kernel does not serve is refused whole (`no-workspace`) rather than obeyed: a command that opened a tree
+behind the client's back would start writing a conversation somewhere nobody asked for.
+
+`open` refuses three structures and one path, and none of them is about permission — reaching this socket
+*is* the permission:
+
+- `not-a-workspace`: the path is not a directory, so there is nothing there to work in;
+- `nested-workspace`: it is inside, or around, a tree already open. Two trees over one set of files would
+  each keep their own locks and their own versions, and change the same files without knowing it;
+- `too-many-workspaces`: this process already has as many trees open as it opens at once;
+- `no-host`: the tree was going to be opened and the machine said no. That one tree stays out of the
+  table and everything else carries on.
+
+`open` is idempotent: naming a tree that is already open says nothing and changes nothing.
 
 | word | what it asks for |
 |---|---|
@@ -111,15 +132,24 @@ else is inherited, and `approvals` has to be said explicitly.
 A read is a question and one answer, and it is on its own lane because the event lane is allowed to fold
 what it carries: a folded answer is a frontend waiting forever. `id` is the connection's number: a client
 leaves it at `0` and the link stamps it. A read is never answered by an event, and its answer is the same
-kind as the question — never an envelope with a status in it.
+kind as the question — never an envelope with a status in it. A read names the tree it is about with
+`workspace`, and a tree this kernel does not serve answers with the empty value of its own kind: a read has
+no lane to refuse on, and a tree nothing opened holds no conversations, no grants and no turns.
 
 `turns` is a snapshot and not a wait. A client that wants to know when a conversation went idle asks
 again after the next event; the kernel does not notify.
 
 ## Events
 
-`seq` is the kernel's number for one tree: it is assigned at emission, never reused, and is a *transport*
-number (how far a client has rendered). It is not a history selector — that is `begin_after`.
+`seq` is the kernel's number for **one tree**: it is assigned at emission, never reused, and is a
+*transport* number (how far a client has rendered). It is not a history selector — that is `begin_after`.
+Every event carries the `workspace` it happened in, filled by the kernel, so a client reading one
+connection that serves several trees can put each event under the one it belongs to. The count stays per
+tree, which is why an acknowledgement carries one mark per tree (see *Resuming*).
+
+Events **fan out**: everything a tree says goes to every connection watching that tree, so a second
+frontend on one tree is a second view of one conversation and not a competitor for the stream. Questions
+do not fan out — a question a turn asks goes back to the connection that started that turn.
 
 - **A turn**: `turn-started`, `turn-finished` (`reason` says why it ended, `ends_at` is the entry a client
   may continue from), `turn-refused`, `answer-cut`, `usage`.
@@ -129,7 +159,9 @@ number (how far a client has rendered). It is not a history selector — that is
   `prune-refused`, `export-refused`, `document-stored`, `seeded`, `seed-refused`, `rolled-back`,
   `rollback-refused`, `grant-revoked`, `goal-set`, `goal-refused`, `routed`, `route-refused`, `changed`,
   `noticed`, `offer-refused`.
-- **The connection itself**: `kernel-leaving` (the stream ends after it), `batch`.
+- **The connection itself**: `kernel-leaving` (the stream ends after it), `workspace-refused` (a command
+  named a tree this kernel does not serve, or one it will not open: `session`, `workspace` as the command
+  spelled it, and `reason`), `batch`.
 
 A refusal carries one word from a closed set; the sentence a person reads is the frontend's to write.
 

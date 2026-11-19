@@ -119,6 +119,17 @@ class Refusal(StrEnum):
     #: "Ask again" with nothing to ask about: the conversation has no messages yet, so there is no end of
     #: the chain to continue from (E158).
     NOTHING_TO_RETRY = "nothing-to-retry"
+    #: A command or a read named a tree this kernel does not serve, and nothing it can do will change
+    #: that: opening a tree is ``Open``'s job, and one command naming another tree says so instead of
+    #: opening it behind the client's back (E154/E157).
+    NO_WORKSPACE = "no-workspace"
+    #: The path a client named is not a directory, so there is nothing there to work in.
+    NOT_A_WORKSPACE = "not-a-workspace"
+    #: The tree named is inside, or around, one already open. Two trees that overlap would each keep
+    #: their own locks and their own versions and change the same files without knowing it (E154).
+    NESTED_WORKSPACE = "nested-workspace"
+    #: This process already has as many trees open as it will open at once.
+    TOO_MANY_WORKSPACES = "too-many-workspaces"
 
 
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
@@ -126,9 +137,15 @@ class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
 
     ``seq`` is assigned at emission and never reused. It is a *transport* number: it says how far the
     client has got, not what the history is. (The history selector is ``begin_after``.)
+
+    ``workspace`` is filled by the kernel with the tree whose event this is, spelled as the greeting
+    spells a tree's path — so a client reading one connection that serves several trees can put each
+    event under the one it belongs to. Empty is "the connection's default tree", which is what a kernel
+    serving one tree always means (E154).
     """
 
     seq: int = 0
+    workspace: str = ""
 
 
 class TurnStarted(Event, tag="turn-started", frozen=True, kw_only=True):
@@ -252,6 +269,23 @@ class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
     ``ListSessions``, not a receipt."""
 
     sessions: tuple[ListedSession, ...] = ()
+
+
+class WorkspaceRefused(Event, tag="workspace-refused", frozen=True, kw_only=True):
+    """A command named a tree this kernel does not serve, and says which tree and why.
+
+    Four answers rather than one because they are four facts and a client acts differently on each: a
+    name nothing here serves is answered by opening it first, a path that is not a directory will never
+    be a tree, a tree nested inside one that is open has to wait for that one to go away, and a kernel at
+    its ceiling is one only a restart makes room in (E154/E157).
+
+    ``workspace`` is what the command named, spelled as it arrived, because the sentence a person reads
+    is about what they typed; ``session`` is the conversation the command was about, when it named one.
+    """
+
+    session: str = ""
+    workspace: str = ""
+    reason: Refusal = Refusal.NO_WORKSPACE
 
 
 class Compacted(Event, tag="compacted", frozen=True, kw_only=True):
@@ -674,6 +708,7 @@ type AnyEvent = (
     | TurnRefused
     | Noticed
     | SessionsListed
+    | WorkspaceRefused
     | Compacted
     | CompactRefused
     | Pruned

@@ -72,13 +72,13 @@ from plyngent.wire.manifest import KernelManifest
 from plyngent.wire.query import AnyQuery, AnyReply, Forest, LiveTurn, LiveTurns, Trajectory, Turns, Unanswered
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Mapping
 
     from plyngent.kernel.channel import Channel
     from plyngent.wire.bind import Bind
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent, Entry
-    from plyngent.wire.flow import Ack, Mark
+    from plyngent.wire.flow import Ack
     from plyngent.wire.link import KernelSide
 
 #: How many messages may sit on the outgoing lane before it is folded, and how many items one folded
@@ -178,19 +178,26 @@ class LinkHuman(Human):
     job, and it lives in the kernel because the CLI is not allowed to import ``Human`` at all: a client
     answers what arrives on the question lane, and never sees the ABC.
 
-    Being a :class:`Human` is also what makes attaching a client a plain ``replace`` of
-    ``Host.human``: the host never holds a link, only something that can be asked.
+    ``workspace`` is the tree this watcher speaks for, and it is stamped onto everything that leaves
+    through :meth:`emit`: an event starts at a host, and only the connection serving that host knows
+    which tree's count it belongs in. Being a :class:`Human` is also what makes a connection joining a
+    host's audience a plain :meth:`~plyngent.kernel.events.HumanChannel.join`, the host never holding a
+    link — only something that can be asked.
     """
 
     _link: KernelSide
+    _workspace: str
 
-    def __init__(self, link: KernelSide) -> None:
+    def __init__(self, link: KernelSide, *, workspace: str = "") -> None:
         super().__init__()
         self._link = link
+        self._workspace = workspace
 
     @override
     def emit(self, event: AnyEvent) -> None:
-        """Pass a notification to the client; the connection decides whether anybody is still there."""
+        """Pass an event to the client, saying which tree it happened in; the connection does the rest."""
+        if self._workspace:
+            event = replace(event, workspace=self._workspace)
         self._link.emit(event)
 
     @override
@@ -289,6 +296,13 @@ class Link:
     socket (:mod:`plyngent.kernel.channel`). Nothing here asks which one it was given — which is the
     whole of "``inproc`` and ``local`` are one implementation, and the difference is a codec".
 
+    ``ledgers`` is one count per tree this kernel serves, keyed as the greeting spells a tree's path, and
+    ``ledger`` is the count for what a *connection* says rather than a tree (a goodbye, a listing). One
+    connection may be reading several trees at once, so "how far have I read" is one number per tree;
+    ``bound`` is the tree a value means when it names none, which is what a client declared on its first
+    frame. A mark about a tree that is not here is not answered: replaying a stranger's count would be
+    replaying somebody else's words (E154).
+
     ``close`` is a shutdown, not a failure: the lanes end, what is queued can still be drained, and
     questions still in flight are refused. Being *presumed gone* (:attr:`dead`) is the failure case
     and does the same thing — it only differs in that the kernel gets told it was silence, not a
@@ -300,8 +314,11 @@ class Link:
     """
 
     manifest: KernelManifest
+    #: The tree a value with no workspace means: what the client declared, and settable while it lives.
+    bound: str
     _channel: Channel
     _ledger: Ledger
+    _ledgers: Mapping[str, Ledger]
     _events: EventLane
     _waiting: dict[int, _Waiting]
     _running: dict[int, asyncio.Future[Returned]]
@@ -321,6 +338,7 @@ class Link:
         *,
         manifest: KernelManifest | None = None,
         ledger: Ledger | None = None,
+        ledgers: Mapping[str, Ledger] | None = None,
         backlog: int = DEFAULT_BACKLOG,
         batch_items: int = DEFAULT_BATCH_ITEMS,
         timeout: float | None = DEFAULT_ASK_TIMEOUT_SECONDS,
@@ -328,10 +346,14 @@ class Link:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.manifest = manifest if manifest is not None else KernelManifest()
+        self.bound = ""
         self._channel = channel
         # A connection made on its own numbers its own events: it is what a story or a test needs, and it
         # is the same rule a host's ledger follows, one degree smaller.
         self._ledger = Ledger() if ledger is None else ledger
+        # The mapping is kept by reference rather than copied: a tree opened while this connection is
+        # being served becomes a tree it can read, which is what makes the greeting a snapshot (E157).
+        self._ledgers = {} if ledgers is None else ledgers
         self._events = EventLane(
             channel,
             capacity=backlog,
@@ -414,22 +436,35 @@ class Link:
             return
         self._claimed = True
         for mark in ack.marks:
-            if not self._numbers(mark):
+            counted = self._claim(mark.workspace)
+            if counted is None:
                 continue
-            for event in self._ledger.since(mark.seq):
+            for event in counted.since(mark.seq):
                 self._events.emit(event)
 
-    def _numbers(self, mark: Mark) -> bool:
-        """Whether one mark is about a tree this connection numbers.
+    def _claim(self, workspace: str) -> Ledger | None:
+        """The count one mark is about, or ``None`` when it names a tree this connection does not serve.
 
-        A mark that names no tree means the connection's default one, and a kernel serving a single tree
-        answers it with that: there is only one count it could be. A mark naming a tree the greeting did
-        not offer is not answered — this connection holds one ledger, and it is not that tree's.
+        A name that is empty is the tree this connection declared, and a connection that declared none is
+        answered with the only tree there is — which is what a kernel serving one tree has always meant,
+        and what a link made on its own is (it numbers its own events and keeps no table of trees). A
+        kernel with several trees and no declaration is the one case with no answer to give: a count
+        without a tree would be a guess at which log to replay.
         """
-        served = tuple(row.path for row in self.manifest.workspaces)
-        if not mark.workspace:
-            return len(served) <= 1
-        return mark.workspace in served
+        name = workspace or self.bound
+        if name:
+            return self._ledgers.get(name)
+        if len(self._ledgers) > 1:
+            return None
+        return next(iter(self._ledgers.values()), self._ledger)
+
+    def _counted(self, workspace: str) -> Ledger:
+        """Which count an event said here belongs to; the connection's own when nothing claims it.
+
+        An event that names a tree this connection does not serve still gets a number: it was emitted by
+        somebody, and a value with no number is one the client cannot ack.
+        """
+        return self._claim(workspace) or self._ledger
 
     async def _answering(self) -> None:
         """Give each arriving answer to the question waiting on it."""
@@ -492,9 +527,18 @@ class Link:
         """Say something outward without waiting for anyone to see it."""
         if self._closed:
             return
-        self._events.emit(self._ledger.next(event))
+        self._events.emit(self._counted(event.workspace).next(event))
         if self._events.silent():
             self._hang_up()
+
+    def bindings(self) -> AsyncIterator[Bind]:
+        """Read what a client says it is, once per declaration — the lane is not dropped on close.
+
+        The first of these is the one a kernel needs before it serves anything; a later one is the same
+        client saying the same thing again, and the only part of it that can change is which tree it means
+        by a name it does not fill in (E154).
+        """
+        return cast("AsyncIterator[Bind]", self._channel.read(Wire.BIND))
 
     async def declared(self) -> Bind | None:
         """Read the one value a client owes before it may be served, or ``None`` when it never came.
@@ -507,7 +551,7 @@ class Link:
         waits on after it has been read: a declaration arrives at the head of the stream or it does not
         arrive at all.
         """
-        async for declared in cast("AsyncIterator[Bind]", self._channel.read(Wire.BIND)):
+        async for declared in self.bindings():
             return declared
         return None
 

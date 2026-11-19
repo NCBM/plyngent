@@ -41,9 +41,16 @@ class Unanswered(Exception):  # noqa: N818 — a read nobody answered is a state
 
 
 class Query(Struct, frozen=True, kw_only=True, tag_field="query"):
-    """One question a client asks. The number it carries is the link's, and it comes back on the reply."""
+    """One question a client asks. The number it carries is the link's, and it comes back on the reply.
+
+    ``workspace`` names the tree the question is about, the same word a command uses and with the same
+    meaning: empty is the tree this connection declared. A read about a tree this kernel does not serve
+    answers with the empty value of its own kind — a read has no lane to refuse on, and "there is nothing
+    there" is the truth about a tree nobody opened (E154).
+    """
 
     id: int = 0
+    workspace: str = ""
 
 
 class Grants(Query, tag="grants", frozen=True, kw_only=True):

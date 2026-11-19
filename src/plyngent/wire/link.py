@@ -159,6 +159,11 @@ class KernelSide(Protocol):
 
     manifest: KernelManifest
 
+    #: The tree a value that names none means — what the client declared on its first frame, and what a
+    #: later declaration may move. Empty is "no default tree", which a kernel may serve and a client is
+    #: entitled to leave unset (E154).
+    bound: str
+
     async def declared(self) -> Bind | None:
         """Read the one value a client owes before it may be served, or ``None`` if it never came.
 
@@ -171,6 +176,15 @@ class KernelSide(Protocol):
 
     def emit(self, event: AnyEvent) -> None:
         """Say something outward without waiting for anyone to see it."""
+
+    def bindings(self) -> AsyncIterator[Bind]:
+        """Read what the client declares itself to be, once per declaration.
+
+        The first is the value a kernel reads before it serves anything; a later one is the same client
+        saying it again, and the only part that can move is which tree it means by a name it leaves
+        empty. A client that says nothing is one no kernel serves.
+        """
+        ...
 
     async def ask(self, ask: AnyAsk) -> AnyAnswer:
         """Ask somebody outside, and wait for that one answer — or for the deadline.

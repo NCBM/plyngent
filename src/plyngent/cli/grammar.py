@@ -447,6 +447,11 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
     Every command carries ``session`` — the contract gives each one a target — so it is an option here
     too, defaulting to the session in focus rather than to the empty string the wire allows.
 
+    ``workspace`` is on the wire's base class as well and is *not* an option: which tree a command means
+    is the connection's own declaration, made once when it connects, and a per-command override is a thing
+    a frontend with more than one tree does deliberately rather than by typing a flag fifteen times
+    (E154).
+
     ``sole`` is whether this command's whole argument is the one field besides ``session``: a word with a
     single value takes it bare (``/goal on``), because an option for it would be a name a person has to
     type to say a word they already know (E146).
@@ -455,7 +460,7 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
     name = _text(document.get("$ref")).rpartition("/")[2]
     defs = _object(document.get("$defs"))
     properties = _object(_object(defs.get(name)).get("properties"))
-    fields = {field: schema for field, schema in properties.items() if field not in {"cmd", "session"}}
+    fields = {field: schema for field, schema in properties.items() if field not in {"cmd", "session", "workspace"}}
     options: list[click.Parameter] = []
     pairs: list[str] = []
     for field_name, schema in fields.items():

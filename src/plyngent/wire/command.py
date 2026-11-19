@@ -25,9 +25,17 @@ from plyngent.wire.scope import CancelReason
 
 
 class Command(Struct, frozen=True, kw_only=True, tag_field="cmd"):
-    """What a client sends, and the one field nearly all of them share."""
+    """What a client sends, and the two fields nearly all of them share.
+
+    ``workspace`` names the tree the command is about, empty meaning the one this connection declared as
+    its own. A kernel serves more than one tree, so a command that names a session has to say *which*
+    tree's session that is — the ids are per tree, and so are the locks, the journal and the version
+    store behind them (E154). One field on the base class rather than one per command: opening is the
+    only thing that makes a tree exist, and every other command reads the same word the same way.
+    """
 
     session: str = ""
+    workspace: str = ""
 
 
 class Inherit(StrEnum):
