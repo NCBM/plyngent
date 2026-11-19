@@ -30,7 +30,14 @@ from plyngent.wire.bind import Bind
 from plyngent.wire.command import Cancel, ListSessions, Offer, Open, Submit
 from plyngent.wire.event import AssistantText, SessionsListed, TurnFinished, TurnStarted
 from plyngent.wire.frame import Framer, Wire, encode
-from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION, KernelManifest, command_specs, query_specs
+from plyngent.wire.manifest import (
+    CLIENT_OFFER,
+    PROTOCOL_VERSION,
+    KernelManifest,
+    WorkspaceRow,
+    command_specs,
+    query_specs,
+)
 from plyngent.wire.query import LiveTurns, Turns
 from tests.stories.driver import Story
 
@@ -164,7 +171,7 @@ class StandIn:
     def manifest(self) -> KernelManifest:
         """What this kernel says it is: this build's own tables, said over a stand-in's connection."""
         return KernelManifest(
-            workspace=str(self.workspace),
+            workspaces=(WorkspaceRow(path=str(self.workspace), label=self.workspace.name),),
             commands=command_specs(),
             queries=query_specs(),
             caps=(CLIENT_OFFER,),

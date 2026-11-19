@@ -78,7 +78,7 @@ if TYPE_CHECKING:
     from plyngent.wire.bind import Bind
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent, Entry
-    from plyngent.wire.flow import Ack
+    from plyngent.wire.flow import Ack, Mark
     from plyngent.wire.link import KernelSide
 
 #: How many messages may sit on the outgoing lane before it is folded, and how many items one folded
@@ -141,9 +141,15 @@ class EventLane:
             self._channel.fold(Wire.EVENT, self.batch_items)
 
     def ack(self, ack: Ack) -> None:
-        """Take the client's watermark. A late ack never moves it backwards, so a reordered one is harmless."""
-        self._acked = max(self._acked, ack.seq)
+        """Take the client's marks: a late ack never moves anything backwards, so a reordered one is harmless.
+
+        What this lane keeps of them is one number — the furthest count claimed — because all it does with
+        a watermark is judge silence, and silence is the connection's and not a tree's. Replaying from a
+        mark is the ledger's business, one tree at a time (:meth:`Link._answer`).
+        """
         self._last_ack = self._clock()
+        if ack.marks:
+            self._acked = max(self._acked, *(mark.seq for mark in ack.marks))
 
     def silent(self) -> bool:
         """Whether the client is behind *and* has said nothing for longer than the budget allows.
@@ -397,18 +403,33 @@ class Link:
             self._events.ack(ack)
 
     def _answer(self, ack: Ack) -> None:
-        """Hand over what a client missed, for the one claim it makes about a connection that is gone.
+        """Hand over what a client missed, for every tree its one claim names.
 
-        A claim is a number to read *from*, and it is answered once: every later ack on this connection is
-        what it has rendered here, and answering those would send it what it is already holding. A claim
-        this kernel is not the author of — a number beyond anything it said — answers nothing, because
-        replaying a stranger's count would be replaying somebody else's words.
+        A claim is a mark to read *from*, and it is answered once: every later ack on this connection is
+        what it has rendered here, and answering those would send it what it is already holding. A mark
+        about a tree this connection does not number answers nothing, because replaying a stranger's count
+        would be replaying somebody else's words.
         """
         if not ack.resume or self._claimed:
             return
         self._claimed = True
-        for event in self._ledger.since(ack.seq):
-            self._events.emit(event)
+        for mark in ack.marks:
+            if not self._numbers(mark):
+                continue
+            for event in self._ledger.since(mark.seq):
+                self._events.emit(event)
+
+    def _numbers(self, mark: Mark) -> bool:
+        """Whether one mark is about a tree this connection numbers.
+
+        A mark that names no tree means the connection's default one, and a kernel serving a single tree
+        answers it with that: there is only one count it could be. A mark naming a tree the greeting did
+        not offer is not answered — this connection holds one ledger, and it is not that tree's.
+        """
+        served = tuple(row.path for row in self.manifest.workspaces)
+        if not mark.workspace:
+            return len(served) <= 1
+        return mark.workspace in served
 
     async def _answering(self) -> None:
         """Give each arriving answer to the question waiting on it."""
@@ -605,7 +626,7 @@ class Link:
         return self._channel.send(Wire.BIND, bind)
 
     def ack(self, ack: Ack) -> None:
-        """Say how far this client has rendered: the resume point and the heartbeat, in one number.
+        """Say how far this client has rendered: the resume point and the heartbeat, one mark per tree.
 
         Handed over rather than applied: the watermark is the kernel's own count, and it moves when the
         lane that judges silence reads it (:meth:`_acknowledging`).
@@ -689,7 +710,7 @@ class Link:
 
     @property
     def acked(self) -> int:
-        """The watermark this client last claimed."""
+        """How far this client last said it had rendered: the furthest of the marks it gave."""
         return self._events.acked
 
     async def finished(self) -> None:

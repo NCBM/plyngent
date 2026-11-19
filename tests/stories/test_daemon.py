@@ -23,7 +23,7 @@ from plyngent.kernel.local import temporary_endpoint
 from plyngent.wire.bind import Bind
 from plyngent.wire.command import Open
 from plyngent.wire.frame import Wire
-from plyngent.wire.manifest import PROTOCOL_VERSION, KernelManifest
+from plyngent.wire.manifest import PROTOCOL_VERSION, KernelManifest, WorkspaceRow
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text
 
@@ -71,9 +71,10 @@ async def test_what_a_kernel_is_says_which_directory_it_works_in(daemon, tmp_pat
     client = await connect(endpoint)
     try:
         assert client.manifest.kernel == "plyngent"
-        assert client.manifest.workspace == str((tmp_path / "workspace").resolve()), (
-            "which tree this kernel edits, said before anything is sent"
+        assert [one.path for one in client.manifest.workspaces] == [str((tmp_path / "workspace").resolve())], (
+            "which trees this kernel edits, said before anything is sent"
         )
+        assert client.manifest.workspaces[0].label == "workspace", "and a short name to show for it"
         assert [spec.name for spec in client.manifest.commands], "and the commands it will accept"
         assert [spec.name for spec in client.manifest.queries] == ["grants", "trajectory", "skills", "turns"], (
             "and the reads it will answer, so a frontend with buttons needs no second table"
@@ -212,7 +213,10 @@ async def test_a_kernel_that_speaks_another_version_is_a_sentence(tmp_path: Path
 async def _greeted_as_stranger(listening: local.Listening) -> None:
     """Answer one connection the way a kernel of a later contract would: a greeting, and nothing else."""
     near = await listening.accept()
-    _ = near.send(Wire.HELLO, KernelManifest(protocol_version=PROTOCOL_VERSION + 1, workspace="/w"))
+    _ = near.send(
+        Wire.HELLO,
+        KernelManifest(protocol_version=PROTOCOL_VERSION + 1, workspaces=(WorkspaceRow(path="/w"),)),
+    )
     near.close()
     await near.flushed()
 

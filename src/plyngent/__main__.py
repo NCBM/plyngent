@@ -232,7 +232,7 @@ async def _connected(
     except boot.NoKernelError as exc:
         raise click.ClickException(str(exc)) from exc
     try:
-        _claim(claimed, said=client.manifest.workspace)
+        _claim(claimed, said=tuple(one.path for one in client.manifest.workspaces))
         return await _talk(
             client,
             session=session,
@@ -247,16 +247,19 @@ async def _connected(
         await client.finished()
 
 
-def _claim(asked: Path | None, *, said: str) -> None:
+def _claim(asked: Path | None, *, said: tuple[str, ...]) -> None:
     """``--workspace`` next to ``--connect`` is a claim about which kernel this is, so it is checked.
 
     A person types a directory because they think they know what they are talking to; a kernel that works
     somewhere else is that sentence being wrong, and answering it now is what keeps it from being a session
-    that edits a tree nobody was looking at (§5 B, E123).
+    that edits a tree nobody was looking at (§5 B, E123). The greeting may name several trees — it is a
+    snapshot of what the kernel has open — so the claim is "one of these", and a kernel that has opened
+    none is one this program cannot be talking to about a tree.
     """
-    if asked is None or Path(said) == _resolved(asked):
+    if asked is None or any(Path(one) == _resolved(asked) for one in said):
         return
-    msg = f"the kernel at that address works in {said}, not {asked}"
+    listed = ", ".join(said) if said else "no workspace at all"
+    msg = f"the kernel at that address works in {listed}, not {asked}"
     raise click.ClickException(msg)
 
 

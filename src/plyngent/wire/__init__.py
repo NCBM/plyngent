@@ -115,6 +115,7 @@ from plyngent.wire.event import TurnRefused as TurnRefused
 from plyngent.wire.event import TurnStarted as TurnStarted
 from plyngent.wire.event import Usage as Usage
 from plyngent.wire.flow import Ack as Ack
+from plyngent.wire.flow import Mark as Mark
 from plyngent.wire.link import KernelLink as KernelLink
 from plyngent.wire.link import KernelSide as KernelSide
 from plyngent.wire.manifest import CLIENT_OFFER as CLIENT_OFFER
@@ -122,6 +123,7 @@ from plyngent.wire.manifest import PROTOCOL_VERSION as PROTOCOL_VERSION
 from plyngent.wire.manifest import CommandSpec as CommandSpec
 from plyngent.wire.manifest import KernelManifest as KernelManifest
 from plyngent.wire.manifest import QuerySpec as QuerySpec
+from plyngent.wire.manifest import WorkspaceRow as WorkspaceRow
 from plyngent.wire.manifest import command_specs as command_specs
 from plyngent.wire.manifest import query_specs as query_specs
 from plyngent.wire.query import AnyQuery as AnyQuery

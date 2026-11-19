@@ -84,13 +84,21 @@ def test_the_workspace_next_to_connect_is_a_claim_and_not_a_wish(tmp_path: Path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
-    assert _claim(tmp_path, said=str(tmp_path)) is None, "the directory the kernel names is the one asked for"
+    assert _claim(tmp_path, said=(str(tmp_path),)) is None, "the directory the kernel names is the one asked for"
     with pytest.raises(click.ClickException):
-        _claim(tmp_path, said=str(elsewhere))
+        _claim(tmp_path, said=(str(elsewhere),))
+
+
+def test_a_claim_is_about_any_of_the_trees_a_kernel_names(tmp_path: Path) -> None:
+    """A greeting lists the trees a kernel has open, so a directory it names is one it is working in."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    assert _claim(elsewhere, said=(str(tmp_path), str(elsewhere))) is None
 
 
 def test_connect_without_a_workspace_claims_nothing(tmp_path: Path) -> None:
-    assert _claim(None, said=str(tmp_path)) is None, "a run that named no directory reads what it finds"
+    assert _claim(None, said=(str(tmp_path),)) is None, "a run that named no directory reads what it finds"
 
 
 def test_an_address_a_run_named_is_the_one_it_serves_on(tmp_path: Path) -> None:

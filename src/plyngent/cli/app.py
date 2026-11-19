@@ -58,6 +58,7 @@ from plyngent.wire.ask import unanswered
 from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Retry, Submit
 from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
+from plyngent.wire.flow import Mark as TreeMark
 from plyngent.wire.query import AnyQuery, Forest, LiveTurn, Trajectory, Unanswered
 from plyngent.wire.scope import CancelReason
 
@@ -274,7 +275,7 @@ class App:
     def _resuming(self) -> bool:
         """Say how far the last run of this client got, so the kernel can answer with what was missed.
 
-        It goes before anything else, and it is one number: the kernel answers it once, from the window it
+        It goes before anything else, and it is one mark: the kernel answers it once, from the window it
         keeps, and everything that arrives after it is this connection's own. A mark is dropped rather
         than sent when the greeting names a different run of the kernel — two counts are not one, and a
         number from another one would be a replay of somebody else's words (§5 B).
@@ -285,8 +286,16 @@ class App:
         if found is None or found.epoch != self.client.manifest.epoch:
             return True
         self._seen = found.seq
-        self.client.ack(Ack(seq=found.seq, resume=True))
+        self.client.ack(Ack(marks=(self._mark(found.seq),), resume=True))
         return True
+
+    def _mark(self, seq: int) -> TreeMark:
+        """One number as an ack carries it: how far this conversation has been read.
+
+        The tree is left empty, which is the connection's default one — this program is bound to one tree
+        (E154), and a greeting would have to name several for a mark to need a tree of its own.
+        """
+        return TreeMark(session=self.session, seq=seq)
 
     def _remember(self) -> None:
         """Write down how far this run got, so the next one can ask for what it missed.
@@ -353,7 +362,7 @@ class App:
                     # continues past it, so a client that stayed on the entry before it would be handed
                     # the stretch the person just asked to stop seeing.
                     self._cursor = event.entry
-            self.client.ack(Ack(seq=event.seq))
+            self.client.ack(Ack(marks=(self._mark(event.seq),)))
         self._leaving.set()
 
     def _swallowed(self, event: AnyEvent) -> bool:

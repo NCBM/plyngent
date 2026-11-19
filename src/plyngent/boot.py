@@ -50,7 +50,14 @@ from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
 from plyngent.wire.frame import Wire
-from plyngent.wire.manifest import CLIENT_OFFER, PROTOCOL_VERSION, KernelManifest, command_specs, query_specs
+from plyngent.wire.manifest import (
+    CLIENT_OFFER,
+    PROTOCOL_VERSION,
+    KernelManifest,
+    WorkspaceRow,
+    command_specs,
+    query_specs,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -692,12 +699,13 @@ async def _assembled(
     # tool that is not in the table, so a call naming it is answered as a name nothing has (§10.4). What
     # a *client* offers is not here: that arrives over the connection and is added to this set (§10.8).
     specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
+    where = _workspace_of(root)
     manifest = KernelManifest(
         commands=command_specs(),
         queries=query_specs(),
         caps=(CLIENT_OFFER,),
         epoch=secrets.token_hex(8),
-        workspace=str(_workspace_of(root)),
+        workspaces=(WorkspaceRow(path=str(where), label=where.name),),
     )
     return _Kernel(
         assembly,

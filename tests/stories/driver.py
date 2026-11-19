@@ -456,7 +456,7 @@ class Story:
         check rather than an assumption (E123).
         """
         if self.kernel is None:
-            return Path(self.client.manifest.workspace)
+            return Path(self.client.manifest.workspaces[0].path)
         return self.host.workspace.root
 
     @property

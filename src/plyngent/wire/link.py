@@ -51,7 +51,7 @@ class KernelLink(Protocol):
     manifest: KernelManifest
 
     def bind(self, bind: Bind) -> bool:
-        """Say which version of the contract this client speaks, before anything else is sent.
+        """Say which version of the contract this client speaks and which tree it means, first of all.
 
         One value, once: a kernel is entitled to refuse a connection it cannot read, so a client whose
         version a kernel does not speak must be able to say so without having sent a command. ``False``
@@ -68,7 +68,7 @@ class KernelLink(Protocol):
         ...
 
     def ack(self, ack: Ack) -> None:
-        """Say how far this client has rendered: the resume point and the heartbeat, in one number."""
+        """Say how far this client has rendered: the resume point and the heartbeat, one mark per tree."""
 
     def answer(self, answer: AnyAnswer) -> bool:
         """Deliver an answer; ``False`` when nobody was waiting for that id, or the kind is wrong.

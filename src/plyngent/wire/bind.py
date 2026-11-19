@@ -1,4 +1,4 @@
-"""The first thing a client says: which version of the contract it speaks.
+"""The first thing a client says: which version of the contract it speaks, and which tree it means.
 
 A greeting tells a client what the kernel is; this is the other half of the same exchange, and the number
 in it is there for the same reason the greeting's is: the shape of every value after it depends on the
@@ -7,8 +7,9 @@ it has to be able to say so *before* it says anything else — which is why this
 not a command. A command is one word of a union the kernel defines, and a client whose version a kernel
 does not speak has to be able to say so without having sent one.
 
-It says nothing else. Which tree a connection works in, and which conversation it starts in, are
-commands: they are choices a client makes after it has been told what this kernel can do.
+The tree it names is the other half of the same sentence, and it is a *default* rather than a declaration:
+a connection may name none, and every command is free to name its own. Which conversation it starts in is
+still a command — that is a choice a client makes after it has been told what this kernel can do.
 """
 
 from __future__ import annotations
@@ -28,3 +29,10 @@ class Bind(Struct, frozen=True, kw_only=True):
     """
 
     protocol_version: int = PROTOCOL_VERSION
+    #: The tree this connection means when a command or a read names none, spelled the way the greeting
+    #: spelled it; empty is *no default* — a client that names a tree on every command may say that, and a
+    #: kernel that serves one tree answers such a connection with that one (E154).
+    #:
+    #: It is a choice and not a claim: a kernel is where a tree is resolved, so a name this kernel does not
+    #: serve is answered by the command that named it rather than by refusing the connection.
+    workspace: str = ""

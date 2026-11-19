@@ -19,15 +19,16 @@ from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.wire.ask import Agreed, By, FreeText, Invocation, Returned, Written
 from plyngent.wire.event import TurnStarted
-from plyngent.wire.flow import Ack
+from plyngent.wire.flow import Ack, Mark
+from plyngent.wire.manifest import KernelManifest, WorkspaceRow
 
 if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 
-def _link(ledger: Ledger | None = None) -> Link:
+def _link(ledger: Ledger | None = None, *, manifest: KernelManifest | None = None) -> Link:
     """One connection to nothing in particular: a channel, and the link the kernel's half would hold."""
-    link = Link(InProcChannel(), ledger=ledger, timeout=0.5)
+    link = Link(InProcChannel(), manifest=manifest, ledger=ledger, timeout=0.5)
     link.start()
     return link
 
@@ -140,8 +141,8 @@ async def test_a_claim_is_answered_once_and_never_again() -> None:
         link.emit(TurnStarted())
         _ = [await anext(link.events()) for _ in range(2)]
 
-        link.ack(Ack(seq=1, resume=True))
-        link.ack(Ack(seq=40, resume=True))
+        link.ack(Ack(marks=(Mark(seq=1),), resume=True))
+        link.ack(Ack(marks=(Mark(seq=40),), resume=True))
 
         assert (await asyncio.wait_for(anext(link.events()), 1.0)).seq == 2, "the first claim was answered"
         with pytest.raises(TimeoutError):
@@ -151,7 +152,6 @@ async def test_a_claim_is_answered_once_and_never_again() -> None:
 
 
 async def _settled(link: Link, *, want: int) -> bool:
-    """Whether the connection read the ack it was sent, waiting a bounded number of turns for it."""
     """Whether the connection read the ack it was sent, waiting a bounded number of turns for it."""
     for _ in range(200):
         if link.acked == want:
@@ -164,8 +164,33 @@ async def test_an_ack_moves_the_watermark_the_lane_that_judges_silence_reads() -
     """The watermark is the kernel's own count: it moves when the lane is read, not when it is sent."""
     link = _link()
     try:
-        link.ack(Ack(seq=7))
+        link.ack(Ack(marks=(Mark(seq=7),)))
 
         assert await _settled(link, want=7), "an ack is handed over, and the reading side is what applies it"
     finally:
         link.close()
+
+
+async def test_a_mark_names_the_tree_whose_count_it_carries() -> None:
+    """A count is a tree's, so a claim about this one is answered and a claim about another is not.
+
+    The number alone would be enough for a kernel serving one tree; the tree is there because a
+    connection may be looking at more than one, and replaying a count this kernel is not the author of
+    would be replaying somebody else's words (E154).
+    """
+    for workspace, replayed in (("/w", True), ("/elsewhere", False)):
+        ledger = Ledger()
+        link = _link(ledger, manifest=KernelManifest(workspaces=(WorkspaceRow(path="/w", label="w"),)))
+        try:
+            link.emit(TurnStarted())
+            _ = await anext(link.events())
+
+            link.ack(Ack(marks=(Mark(workspace=workspace, seq=0),), resume=True))
+
+            if replayed:
+                assert (await asyncio.wait_for(anext(link.events()), 1.0)).seq == 1, "this tree's own count"
+            else:
+                with pytest.raises(TimeoutError):
+                    _ = await asyncio.wait_for(anext(link.events()), 0.05)
+        finally:
+            link.close()

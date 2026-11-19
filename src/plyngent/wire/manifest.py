@@ -66,6 +66,19 @@ class QuerySpec(Struct, frozen=True, kw_only=True):
     args: str = ""
 
 
+class WorkspaceRow(Struct, frozen=True, kw_only=True):
+    """One tree this kernel serves: where it is, and the short name a frontend may show for it.
+
+    A row rather than a bare path because a greeting may name more than one tree (E154), and because a
+    frontend that has to pick one needs a word short enough to print beside an address. ``label`` is that
+    word and nothing else: it is not an address, nothing resolves it, and a client that needs the tree
+    names ``path``.
+    """
+
+    path: str = ""
+    label: str = ""
+
+
 class KernelManifest(Struct, frozen=True, kw_only=True):
     """The kernel's description of itself."""
 
@@ -75,10 +88,15 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
     #: run is holding a number from another count, so it compares this first and claims nothing when it
     #: differs (§5 B).
     epoch: str = ""
-    #: The directory this kernel works in, as it resolved it. A client that was told which workspace to
-    #: work in compares rather than assumes: two programs in different directories are two kernels, and
-    #: finding that out here is a sentence instead of a session that edits the wrong tree (§5 B, E123).
-    workspace: str = ""
+    #: The trees this kernel serves, as it resolved them, each with the name to show for it. A client that
+    #: was told which workspace to work in compares rather than assumes: two programs in different
+    #: directories are two kernels, and finding that out here is a sentence instead of a session that edits
+    #: the wrong tree (§5 B, E123).
+    #:
+    #: It is a *snapshot* and not an allowlist: a kernel that can open more trees says so here and a
+    #: client that needs the current set asks again (E154/E157). The first row is the tree a connection is
+    #: bound to when it names none.
+    workspaces: tuple[WorkspaceRow, ...] = ()
     commands: tuple[CommandSpec, ...] = ()
     #: The reads, beside the commands: a person asking "which paths may this reach" is one question
     #: whether it is asked with a slash word or a button (E155).

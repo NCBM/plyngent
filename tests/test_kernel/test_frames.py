@@ -17,16 +17,16 @@ from plyngent.wire.ask import By, FreeText, Invocation, Returned, Written
 from plyngent.wire.bind import Bind
 from plyngent.wire.command import Submit
 from plyngent.wire.event import TurnStarted
-from plyngent.wire.flow import Ack
+from plyngent.wire.flow import Ack, Mark
 from plyngent.wire.frame import FrameError, Framer, Wire, encode
-from plyngent.wire.manifest import KernelManifest
+from plyngent.wire.manifest import KernelManifest, WorkspaceRow
 
 #: One value per lane: the union each lane carries, as the smallest value it can be.
 SAMPLES: tuple[tuple[Wire, object], ...] = (
-    (Wire.HELLO, KernelManifest(workspace="/w")),
-    (Wire.BIND, Bind()),
+    (Wire.HELLO, KernelManifest(workspaces=(WorkspaceRow(path="/w", label="w"),))),
+    (Wire.BIND, Bind(workspace="/w")),
     (Wire.COMMAND, Submit(session="main", text="hello")),
-    (Wire.ACK, Ack(seq=3)),
+    (Wire.ACK, Ack(marks=(Mark(session="main", seq=3),), resume=True)),
     (Wire.ANSWER, Written(id=1, text="yes", by=By.HUMAN)),
     (Wire.RETURNED, Returned(id=2, ok=True)),
     (Wire.EVENT, TurnStarted()),

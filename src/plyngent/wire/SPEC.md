@@ -39,7 +39,10 @@ forever: a new lane is a new number, never a renumbering.
 
 1. **The kernel greets.** The first frame it writes is `hello`, whose body is the manifest.
 2. **The client binds.** The first frame *it* writes is `bind`, whose body says which version of this
-   contract it speaks.
+   contract it speaks, and — when it has one — the tree this connection means when a command names none.
+   An empty `workspace` is *no default*: a client that names a tree on every command may say that, and a
+   kernel serving one tree answers such a connection with that one. A name this kernel does not serve is
+   answered by the command that named it, never by refusing the connection.
 3. **A mismatch ends the connection.** No error value crosses the wire, because an error would have to be
    written in the contract and this is the one case where the two ends have not agreed about what the
    contract is. The kernel that is sent a version it does not speak serves none of that connection; the
@@ -47,12 +50,15 @@ forever: a new lane is a new number, never a renumbering.
 4. **Then everything else**, in any order the two lanes allow.
 
 The manifest is what a client builds itself from, and it carries: `protocol_version`, `kernel`, `epoch`
-(which run of this kernel this is), `workspace` (the tree it edits, resolved), `commands` and `queries`
-(one row each: a tag, a one-line summary, and the JSON Schema of the arguments), `caps` (advertised
-capabilities), `ack_interval` and `dead_after` (the two numbers liveness is measured with).
+(which run of this kernel this is), `workspaces` (one row per tree it serves: the path it resolved, and a
+short label to show for it), `commands` and `queries` (one row each: a tag, a one-line summary, and the
+JSON Schema of the arguments), `caps` (advertised capabilities), `ack_interval` and `dead_after` (the two
+numbers liveness is measured with).
 
-A client must not treat `workspace` as an allowlist — it is where *this* kernel works — and must not
-assume the table it read is complete for another connection: it is what this kernel offers, read once.
+`workspaces` is a **snapshot**, not an allowlist: it is what this kernel had open when it greeted, and the
+first row is the tree a connection is bound to when it names none. A client must not read it as the set of
+trees it may reach — where a kernel's set can grow, it grows — and must not assume the table it read is
+complete for another connection: it is what this kernel offers, read once.
 
 ## Commands
 
@@ -112,8 +118,8 @@ again after the next event; the kernel does not notify.
 
 ## Events
 
-`seq` is the kernel's number: it is assigned at emission, never reused, and is a *transport* number (how
-far a client has rendered). It is not a history selector — that is `begin_after`.
+`seq` is the kernel's number for one tree: it is assigned at emission, never reused, and is a *transport*
+number (how far a client has rendered). It is not a history selector — that is `begin_after`.
 
 - **A turn**: `turn-started`, `turn-finished` (`reason` says why it ended, `ends_at` is the entry a client
   may continue from), `turn-refused`, `answer-cut`, `usage`.
@@ -200,18 +206,26 @@ keeps its own deadline instead.
 
 ## Reconnecting, and being gone
 
-`ack` carries `seq` and `resume`.
+`ack` carries `marks` and `resume`.
 
-- **`seq`** is a claim about the present: everything up to it has been rendered. It is also the heartbeat.
+- **A mark** is `(workspace, session, seq)`: how far one tree's events have been rendered. The number is
+  the tree's — each tree counts its own — so a client looking at two trees says two numbers, and one that
+  reopened a single conversation says the mark for that one. `workspace` empty means the connection's
+  default tree; `session` names the conversation the number was read in, so a frontend can resume that
+  one stream without claiming anything about the others.
+- **The marks** are a claim about the present: everything up to each of them has been rendered. They are
+  also the heartbeat.
 - **`resume: true`** is a claim about a connection that is *gone*, and is answered once per connection:
-  the kernel replays what it said since that number, from a window of the most recent 512 events. Anything
-  older is the history's business (`trajectory`), not the stream's.
-- A number beyond anything this kernel said is not answered — replaying a stranger's count would be
-  replaying somebody else's words.
+  the kernel replays what it said since each mark, from a window of the most recent 512 events per tree.
+  Anything older is the history's business (`trajectory`), not the stream's.
+- **A mark about a tree this connection does not number is not answered** — replaying a stranger's count
+  would be replaying somebody else's words. The same holds for a number beyond anything this kernel said.
 - **`epoch`** guards across runs: a number remembered from another run of a kernel is another count, so a
   client compares `epoch` first and claims nothing when it differs.
 - **Liveness**: a client that is behind the backlog *and* has said nothing for longer than `dead_after`
   is presumed gone. Its questions are refused, its connection dropped, and the work it started is not.
+  Silence is the connection's, so one ack of nothing but the clock would do — the numbers are what it has
+  rendered, not the reason it is heard.
 
 ## What this document does not say
 
