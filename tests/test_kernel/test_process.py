@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 from typing import TYPE_CHECKING
 
@@ -282,6 +283,29 @@ async def test_a_command_that_ran_out_of_time_still_says_what_it_had_said(tmp_pa
 
     (ran,) = batch.ran
     assert (ran.timed_out, ran.stdout) == (True, "hi\n")
+    assert ran.escaped is False, "nothing outlived the kill here, and the silence of the pipes says so"
+    assert batch.stopped is not None and batch.stopped.failure is Failure.TIMEOUT
+
+
+async def test_a_process_that_left_the_group_is_said_and_this_end_of_the_pipes_is_closed(tmp_path) -> None:
+    """E161: `killpg` reaches a group, and a program that called `setsid` is not in it.
+
+    Nothing portable can promise to kill that one, so two things happen instead of a lie. The answer says
+    it — `escaped=true`, which is what a reader looking at a `timed_out` command needs to know — and this
+    end of the pipes is closed, which releases the fd, ends the wait at once instead of spending the whole
+    grace on an EOF that is never coming, and gives whatever is still writing `EPIPE` the next time it
+    says anything.
+    """
+    if shutil.which("setsid") is None:  # pragma: no cover — the case is util-linux's own program
+        pytest.skip("setsid is how a process leaves the group this build kills")
+    batch = await _run(
+        [Execution(argv=["sh", "-c", 'setsid sh -c "sleep 30" & echo out; sleep 30'], timeout_secs=0.3)],
+        tmp_path,
+    )
+
+    (ran,) = batch.ran
+    assert (ran.timed_out, ran.escaped) == (True, True), "the group was killed and something outlived it"
+    assert ran.stdout == "out\n", "and what it had said before the deadline is still the answer"
     assert batch.stopped is not None and batch.stopped.failure is Failure.TIMEOUT
 
 

@@ -152,6 +152,7 @@ def _part(ran: Ran, *, workspace: Workspace) -> ProcessControl:
         cwd=display(Path(ran.cwd), root=workspace.root),
         exit_code=ran.exit_code,
         timed_out=ran.timed_out,
+        escaped=ran.escaped,
         fed=ran.fed,
         depth=ran.depth,
         via=ran.via,

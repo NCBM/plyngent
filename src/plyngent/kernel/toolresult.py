@@ -179,6 +179,10 @@ class ProcessControl(Part, tag="process", frozen=True, kw_only=True):
     depth: int = 0
     via: str = ""
     mix_stderr: bool = False
+    #: Whether the deadline ended this one and something survived the kill — a process that left the group
+    #: and still held the pipes, so this end of them was closed and anything it says from now on goes
+    #: nowhere. Nothing portable can say whether it is still running (E161).
+    escaped: bool = False
     stdout: str = ""
     stderr: str = ""
     errout: str = ""

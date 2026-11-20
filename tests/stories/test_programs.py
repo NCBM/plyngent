@@ -10,7 +10,10 @@ verdict, so a story that wants a verdict has to look at the status line.
 from __future__ import annotations
 
 import os
+import shutil
 from typing import TYPE_CHECKING
+
+import pytest
 
 from plyngent.cli.policy import Policy
 from plyngent.wire.ask import Severity
@@ -265,6 +268,38 @@ async def test_a_deadline_stops_the_command_and_says_it_did(story_with: Scripted
     )
     assert "timed_out=true" in told(ran), told(ran)
     assert any(line.startswith("execute partial: 1 of 1 commands ran") for line in story.screen()), story.screen()
+
+
+async def test_a_process_that_outlived_its_group_is_said_to_the_model(story_with: Scripted) -> None:
+    """E161: a deadline cannot reach what left the group, so the record says so and this end is closed.
+
+    The command is a shell that starts a ``setsid`` in the background and then hangs. The kill takes the
+    shell and everything still in its group; that one process is not in it and is still holding the
+    output. What a model is handed is the newest truth there is — ``escaped=true`` beside ``timed_out=true``
+    — because nothing portable can promise to stop that process, and leaving it unsaid is what makes a
+    stray program a mystery later.
+    """
+    if shutil.which("setsid") is None:  # pragma: no cover — the case is util-linux's own program
+        pytest.skip("setsid is how a process leaves the group this build kills")
+    story = await story_with(
+        calling(
+            "execute",
+            {
+                "steps": [{"argv": ["sh", "-c", "setsid sleep 5 & echo out; sleep 5"], "timeout_secs": 0.05}],
+                "intention": "leave something behind",
+            },
+        ),
+        text("it left something behind"),
+        policy=_YES,
+    )
+
+    await story.type("run something that escapes the group")
+    await story.finished()
+
+    (_, ran) = story.requests()
+    assert "timed_out=true" in told(ran).splitlines(), told(ran)
+    assert "escaped=true" in told(ran).splitlines(), told(ran)
+    assert "out" in told(ran), "and what it said before the deadline is still the answer"
 
 
 async def test_a_tree_that_could_not_run_is_an_argument_error_and_asks_nobody(story_with: Scripted) -> None:

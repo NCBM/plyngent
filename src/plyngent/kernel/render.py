@@ -110,6 +110,11 @@ def _process(part: ProcessControl) -> str:
     )
     if part.fed:
         lines.append("pipe=true")
+    if part.escaped:
+        # The group was killed and this command still had something holding its pipes, so this end of them
+        # was closed: what it says from here on goes nowhere. Whether it is still running is not something
+        # a portable program can say (E161).
+        lines.append("escaped=true")
     if part.mix_stderr:
         lines.append("mix_stderr=true")
     if part.mix_stderr:

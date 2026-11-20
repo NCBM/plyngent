@@ -32,7 +32,7 @@ import os
 import shlex
 import signal
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import msgspec
 from msgspec import Struct
@@ -41,6 +41,7 @@ from plyngent.kernel.cancel import Cancelled
 from plyngent.kernel.failure import Failure
 
 if TYPE_CHECKING:
+    from asyncio import SubprocessTransport
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from pathlib import Path
 
@@ -198,6 +199,10 @@ class Ran:
     via: str = ""
     fed: bool = False
     mix_stderr: bool = False
+    #: Whether something outlived the kill: a process that left the group and still holds the pipes.
+    #: Nothing portable can stop it, so this is what says it is there — and what a caller's result says
+    #: as ``escaped=true`` (E161).
+    escaped: bool = False
 
     @property
     def failed(self) -> bool:
@@ -453,9 +458,8 @@ class _Run:
             return None, Refused(exc.failure, exc.message)
 
         try:
-            out, err, timed_out = await self._wait(process, stdin=stdin, wait_seconds=timeout)
+            out, err, timed_out, escaped = await self._wait(process, stdin=stdin, wait_seconds=timeout)
         except Cancelled:
-            await _stop(process)
             return None, Refused(Failure.LIMIT, f"stopped while running: {shlex.join(node.argv)}")
 
         output, cut = _bounded(out.decode(errors="replace"))
@@ -466,6 +470,7 @@ class _Run:
             cwd=str(cwd),
             exit_code=None if timed_out else process.returncode,
             timed_out=timed_out,
+            escaped=escaped,
             stdout="" if merged else output,
             stderr="" if merged else errors,
             errout=output if merged else "",
@@ -484,7 +489,7 @@ class _Run:
 
     async def _wait(
         self, process: asyncio.subprocess.Process, *, stdin: bytes | None, wait_seconds: float
-    ) -> tuple[bytes, bytes, bool]:
+    ) -> tuple[bytes, bytes, bool, bool]:
         """Wait for the child, the deadline, or the turn — whichever arrives first.
 
         The pipes are read here rather than by ``communicate``, and the deadline is why: a cancelled
@@ -492,6 +497,11 @@ class _Run:
         came back as one that had said nothing. These readers are shielded from that cancellation and are
         given a moment past the kill to finish, so a timeout answers with what the command had said up to
         then — the lines are the answer to "why did it never finish" far more often than silence is.
+
+        The fourth answer is whether that moment was enough. It not being is a fact about the process, not
+        about the wait: the group was killed and something is still holding the write end, which is what a
+        program that called ``setsid`` looks like from here. Nothing portable can promise to kill that one,
+        so this says it happened and lets go of this end (E161).
         """
         output = bytearray()
         errors = bytearray()
@@ -499,14 +509,17 @@ class _Run:
         try:
             await self.scope.guard(asyncio.wait_for(asyncio.shield(reading), wait_seconds))
         except TimeoutError:
-            await _stop(process)
-            await _salvaged(reading)
-            return bytes(output), bytes(errors), True
-        except Cancelled, asyncio.CancelledError:
-            _ = reading.cancel()
+            _kill(process)
+            escaped = not await _drained(reading)
+            if escaped:
+                await _let_go(process, reading, grace=DRAIN_SECONDS)
             _ = await asyncio.gather(reading, return_exceptions=True)
+            return bytes(output), bytes(errors), True, escaped
+        except Cancelled, asyncio.CancelledError:
+            _kill(process)
+            await _let_go(process, reading, grace=0.0)
             raise
-        return bytes(output), bytes(errors), False
+        return bytes(output), bytes(errors), False, False
 
     def _stdin(self, node: Execution, permit: Permit, fed: str | None) -> bytes | Refused | None:
         """What this command reads, as bytes: the pipe's output, a string, a file, or nothing."""
@@ -636,13 +649,44 @@ async def _fed(stream: asyncio.StreamWriter | None, stdin: bytes | None) -> None
         stream.close()
 
 
-async def _salvaged(reading: asyncio.Future[None]) -> None:
-    """Give the readers a moment past the kill, then take the buffers as they stand."""
+async def _drained(reading: asyncio.Future[None]) -> bool:
+    """Whether the readers reached the end of both pipes within the grace the kill is given.
+
+    An answer of ``False`` is not "the pipes were slow": the group is dead, so a write end is being held by
+    something that is not in it — a program that called ``setsid``, or a daemon that forked twice around one
+    (E161).
+    """
     try:
         _ = await asyncio.wait_for(asyncio.shield(reading), DRAIN_SECONDS)
     except TimeoutError:
+        return False
+    return True
+
+
+async def _let_go(process: asyncio.subprocess.Process, reading: asyncio.Future[None], *, grace: float) -> None:
+    """Close this end of the pipes, so nothing keeps them open but what left the group.
+
+    The readers see the end of the stream at once — what they had is already in the caller's buffers — and
+    the fd is released instead of staying with a transport nobody will ever finish. Whatever still holds
+    the write end then meets ``EPIPE`` the next time it says something, or ``SIGPIPE`` if it did not ignore
+    one. That is the closest thing to stopping it a portable program has, and it is not a kill: a program
+    that never writes again, or that ignores the signal, keeps running. It is why the result also *says*
+    this happened rather than leaving a closed pipe as the only evidence (E161).
+
+    ``grace`` is how long the readers are given to finish now that the pipes are closed: a stream that was
+    being held has nothing left to wait for, so anything but a cancelled turn gets a moment for the bytes
+    that were already in flight.
+    """
+    # The public face of a subprocess has no "close my ends": `Process` exposes kill, terminate and wait,
+    # and the transport is where the pipes are. `close()` on it is documented API; the attribute that holds
+    # it is the private part, and this is the one place in the tree that reads it.
+    transport = cast("SubprocessTransport", getattr(process, "_transport"))  # noqa: B009 — a private name cannot be written out
+    transport.close()
+    try:
+        _ = await asyncio.wait_for(asyncio.shield(reading), grace)
+    except TimeoutError:
         _ = reading.cancel()
-        _ = await asyncio.gather(reading, return_exceptions=True)
+    _ = await asyncio.gather(reading, return_exceptions=True)
 
 
 async def _spawn(
@@ -665,25 +709,26 @@ async def _spawn(
         raise _CannotStartError(Failure.of(exc), f"failed to start command: {exc}") from exc
 
 
-async def _stop(process: asyncio.subprocess.Process) -> None:
-    """Kill the child's whole process group, then reap it.
+def _kill(process: asyncio.subprocess.Process) -> None:
+    """Kill the child's whole process group, and wait for nothing.
 
-    The group, not the child: a shell that started something in the background is still that
-    something's parent by session, and killing only the shell leaves behind exactly what the caller was
-    trying to stop. Windows has no group to signal, so there the child is what gets killed.
+    The group, not the child: a shell that started something in the background is still that something's
+    parent by session, and killing only the shell leaves behind exactly what the caller was trying to
+    stop. Windows has no group to signal, so there the child is what gets killed.
+
+    Nothing is waited for here, and that is the point: ``Process.wait()`` resolves only after every pipe
+    is disconnected, so with something holding a write end it waits for *that* — the one process this
+    cannot kill. The reaping is asyncio's own watcher, which knows nothing about pipes (E161).
     """
-    if process.returncode is None:
-        try:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-        except ProcessLookupError, PermissionError:
-            _ = process.kill()
-    try:
-        _ = await process.wait()
-    except ProcessLookupError:  # pragma: no cover — the child went away between the two calls
+    if process.returncode is not None:
         return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError, PermissionError:
+        _ = process.kill()
 
 
 def _read(path: Path) -> bytes:
