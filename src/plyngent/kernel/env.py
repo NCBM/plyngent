@@ -2,13 +2,13 @@
 
 A handler is handed this and nothing else, and that is the whole design of it. A resource a tool did not
 declare must not merely be "not to be touched" — it must not be *reachable*, so that reading it fails at
-the top of the handler, with the attribute's own name, instead of failing somewhere inside a call that
-had already started changing something. The declaration then answers "what does this tool touch" without
+the top of the handler, with the attribute's own name, and no call that has already started changing
+something fails somewhere inside it. The declaration then answers "what does this tool touch" without
 anybody reading its source (§10.1).
 
-Three things are always there, because they are the address rather than a resource: which session the
-call belongs to, which route the conversation is speaking on, and the cancellation scope a piece of
-work under it is stopped through. A question's place is not a fourth: it is built from the call's own
+Three things are always there, because they are the address: which session the call belongs to, which
+route the conversation is speaking on, and the cancellation scope a piece of work under it is stopped
+through. A question's place is not a fourth: it is built from the call's own
 address plus the segment the asker names (:meth:`Env.ask`), so no caller can put a question under
 somebody else's turn. Everything else is one property per resource, granted by the flag.
 """
@@ -70,8 +70,8 @@ class Env:
         #: The tool being run, which is what a question asked from here is recorded under: "somebody
         #: asked" is not an audit until it says who.
         self._tool = tool
-        #: What this session can reach, as the round it runs in saw it. Handed in rather than reached
-        #: for, because the answer belongs to one round's request and nothing here may ask twice.
+        #: What this session can reach, as the round it runs in saw it. Handed in, because the answer
+        #: belongs to one round's request and nothing here may ask twice.
         self._tools = tools
 
     # -- the address, which is not a resource --------------------------------------
@@ -85,7 +85,7 @@ class Env:
     def route(self) -> str:
         """Which of the host's routes this conversation is speaking on, or nothing when it never chose.
 
-        Part of the address rather than a resource: it is the channel the turn is answerable on, which is
+        Part of the address: it is the channel the turn is answerable on, which is
         what a web engine asks about when it decides whose account pays for a search. A route's *name* is
         not a credential — the key is the route's own and never leaves it.
         """
@@ -95,7 +95,7 @@ class Env:
     def reads(self) -> Reads:
         """What this turn has already shown with line numbers.
 
-        Not a resource but a record of the turn: it is here rather than reached for because the turn is
+        Not a resource but a record of the turn: it is here, because the turn is
         this call's address, and because a record on the turn cannot outlive it or be shared with
         another one.
         """
@@ -132,8 +132,8 @@ class Env:
         The one way to ask, so that a path a person allowed once resolves the same way in every tool —
         and so that no tool has to remember to pass a table it cannot reach. ``scratch`` is the same
         conversation's own temporary workspaces, which is the only scratch this call may reach: one
-        conversation cannot read another's (E152). Granted by :attr:`Res.PATHS`, because the grants are a
-        path tool's business rather than the history's.
+        conversation cannot read another's (E152). Granted by :attr:`Res.PATHS`, because the grants
+        belong to a path tool, not to the history.
         """
         self._granted(Res.PATHS, "resolve")
         return self._ctx.host.workspace.resolve(
@@ -170,7 +170,7 @@ class Env:
     def trash_enabled(self) -> bool:
         """Whether a delete goes to the system trash where a human can take it back.
 
-        A path tool's question rather than a policy of its own, so :attr:`Res.PATHS` answers it: the
+        A path tool's question, so :attr:`Res.PATHS` answers it: the
         only tools that can ask it are the ones that delete paths.
         """
         self._granted(Res.PATHS, "trash_enabled")
@@ -231,7 +231,7 @@ class Env:
     def skills(self) -> Skills:
         """The skills this host can read, and where a new one is written. Granted by :attr:`Res.SKILLS`.
 
-        A host started without a store has none, and that is a fact about the kernel rather than about
+        A host started without a store has none, and that is a fact about the kernel, not about
         this call: the tools that reach here are the ones a kernel serves only when it was given one, so
         a handler asking anyway is asking an object for something it does not have.
         """
@@ -256,13 +256,13 @@ class Env:
     async def ask(self, question: AnyAsk, *, at: str = "") -> AnyAnswer:
         """Put one question to a person outside this process: a call's only way out of it.
 
-        One verb for four questions rather than four methods, because what differs between them is a
+        One verb for four questions, because what differs between them is a
         *value* — which kind of question this is — and not a different reach. A form with one method per
         kind would be four names a tool could learn separately and four places to remember that a
         question is what the audit is about; ``execute`` is one tool with one entry for the same reason.
 
         ``at`` names the part of this call the question belongs under (``gate``, ``consent``), and it is
-        a segment rather than a whole address on purpose: the call's own address is this object's, so a
+        a segment on purpose: the call's own address is this object's, so a
         question cannot be put under a turn it was not asked from.
 
         Granted by whichever of :data:`ASKING` this tool declared. A tool that may not ask anybody
@@ -278,9 +278,9 @@ class Env:
 
         Granted by :attr:`Res.CLIENT`, which is the resource with the least certainty attached to it:
         the call happens in another process, this one records that it was declared and cannot know
-        whether it happened (§10.8). Nobody offering is :data:`~plyngent.kernel.client.NO_CLIENT`
-        rather than a missing attribute — a tool that reaches here without a client attached is a
-        call that lost its client, which is an answer, not a bug in the declaration.
+        whether it happened (§10.8). Nobody offering is :data:`~plyngent.kernel.client.NO_CLIENT`,
+        which is an answer: a tool that reaches here without a client attached is a call that lost its
+        client, and that is a fact worth saying.
         """
         self._granted(Res.CLIENT, "client")
         attached = self._ctx.host.offers.attached
@@ -293,7 +293,7 @@ class Env:
     def _refused(self, name: str, resource: Res) -> None:
         """Say which attribute is not reachable here, and which declaration would have made it so.
 
-        An ``AttributeError`` rather than an error of our own, because that is what it is: the handler
+        An ``AttributeError``, because that is what it is: the handler
         asked an object for something it does not have, and a `getattr` that would have answered ``None``
         must fail the same way.
         """

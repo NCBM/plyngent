@@ -9,7 +9,7 @@ Three rules the shape is built around:
 
 * **`status`, `summary` and the retry are made together.** The same failure reads the same way every
   time it happens, because it is rendered from one closed set (:class:`~plyngent.kernel.failure.
-  Failure`) through one table, rather than spelled out at each raise site.
+  Failure`) through one table, and nowhere spelled out at each raise site.
 * **A next step is data, not a sentence.** ``Hint`` names a tool and the arguments that fix the
   problem, and it is a part of the body so that the model reads it beside what went wrong; the
   renderer decides whether that becomes a phrase, and the kernel never writes a tool name into a
@@ -19,8 +19,8 @@ Three rules the shape is built around:
 
 A body that is too long to send is not thrown away and not cut in place: it goes to the document
 store and the result carries a handle plus the summary that stands in for it. That handle is also
-what makes programmatic tool calling cheap — a program can pull the parts it needs instead of the
-whole thing entering the conversation, and one reader serves both the tool that truncated and the
+what makes programmatic tool calling cheap — a program can pull the parts it needs, and the whole
+thing never enters the conversation, so one reader serves both the tool that truncated and the
 program that is curious.
 """
 
@@ -56,7 +56,7 @@ class Status(StrEnum):
 
 
 class DenialKind(StrEnum):
-    """Why a call that never ran was refused, as a word rather than a sentence (§0.15, E118).
+    """Why a call that never ran was refused, as one word (§0.15, E118).
 
     A refusal used to be one word plus prose, so a frontend could not tell "the person said no" from
     "the deadline passed" without parsing English. The answers a question can get give four of these,
@@ -111,8 +111,8 @@ def denial_says(kind: DenialKind, *, about: str, policy: str = "") -> str:
 
 #: What a status and a retry are, given the kind of failure — the one place either is decided.
 #:
-#: ``ARGS`` fails rather than refuses because ``refused`` means "you may not", not "you wrote it
-#: wrong". ``BUSY`` and ``TIMEOUT`` are the two the world can fix by itself; everything else asks for
+#: ``ARGS`` fails, because ``refused`` means "you may not", and "you wrote it wrong" is a different
+#: answer. ``BUSY`` and ``TIMEOUT`` are the two the world can fix by itself; everything else asks for
 #: different arguments or for nothing at all.
 OUTCOMES: dict[Failure, tuple[Status, Retry]] = {
     Failure.ARGS: (Status.FAILED, Retry.FIX_ARGS),
@@ -132,8 +132,8 @@ OUTCOMES: dict[Failure, tuple[Status, Retry]] = {
 class Part(Struct, frozen=True, kw_only=True, tag_field="part"):
     """One piece of a result's body, in the parts that are read differently.
 
-    A body is several parts rather than one string because three readers want different things out of
-    it and one string cannot be all of them: a program's output is fields somebody wants to lay out
+    A body is several parts, because three readers want different things out of it and one string cannot
+    be all of them: a program's output is fields somebody wants to lay out
     (exit code, whether it timed out, which argv), a document is a handle, and prose is prose.
     ``kernel/render.py`` turns any of them into the one text the model reads — that projection happens
     in exactly one place, so "what the model sees" can be tested on its own.
@@ -206,8 +206,8 @@ def parts(body: BodyLike | None) -> Body:
 class Hint(Part, tag="hint", frozen=True, kw_only=True):
     """A next step that would change the outcome, as data.
 
-    A hint is a part of the body rather than a field beside it, because it is meant for the model and
-    the body is what the model reads: a hint outside the body is a hint nobody can be given. So
+    A hint is a part of the body, because it is meant for the model and the body is what the model
+    reads: a hint outside the body is a hint nobody can be given. So
     ``hints`` on a result is a filter over the body, and there is no second place one could hide.
 
     ``given`` is an *argument patch*: the values this failed call should have carried instead
@@ -224,7 +224,7 @@ class Hint(Part, tag="hint", frozen=True, kw_only=True):
 
 @dataclass(frozen=True, slots=True)
 class Effects:
-    """What the call changed, recorded as it happens rather than at the end.
+    """What the call changed, recorded as it happens.
 
     ``changed`` is not "these files were written": it is "these paths are no longer what you last
     saw", which is why a delete and a move's source are in it too — a journal built from this alone
@@ -265,7 +265,7 @@ class Skips:
 
 @dataclass(frozen=True, slots=True)
 class Meta:
-    """What the call cost and how much it left out, for the log rather than for the model."""
+    """What the call cost and how much it left out, for the log and not for the model."""
 
     elapsed_ms: int = 0
     chars: int = 0
@@ -292,7 +292,7 @@ class ToolResult:
     failure: Failure | None = None
     #: Why, when the failure is :attr:`~plyngent.kernel.failure.Failure.DENIED` — and never otherwise:
     #: the two are one fact told to two readers, so a result that has one and not the other is a bug
-    #: (`__post_init__` refuses it) rather than a refusal somebody has to read the sentence to classify.
+    #: (`__post_init__` refuses it), so nobody classifies it by reading a sentence.
     denial: DenialKind | None = None
 
     def __post_init__(self) -> None:
@@ -309,7 +309,7 @@ class ToolResult:
         object.__setattr__(self, "body", parts(self.body))
         if self.meta.chars == 0 and self.body:
             # ``chars`` is the length of what the model will read, not of what the tool produced, so
-            # it is measured through the projection rather than counted per part here. The import is
+            # it is measured through the projection. The import is
             # local because the projection speaks of these parts: it is one direction or the other,
             # and this is the direction that keeps the renderer free to grow.
             from plyngent.kernel.render import render_body
@@ -332,7 +332,7 @@ class ToolResult:
 
         A handle is what a request acts on later — a body too long to send is continued from it, and a
         picture is fetched through it — and the body's parts are where those handles live, so this is the
-        one place that reads them out rather than parsing them back out of the text a model reads.
+        one place that reads them out.
         """
         return tuple(part.document_id for part in self.body if isinstance(part, Document))
 
@@ -446,8 +446,8 @@ def refusal(exc: PathRefused) -> ToolResult:
 
     The tools travel as hints, never inside the summary: the kernel does not name tools in prose, and
     a caller that composes the message can decide how loud to make the suggestion. ``Denied`` says
-    nothing about tools, because nothing lifts it — and that is the refusal that is a ``never-allowed``
-    rather than a hint, so it comes with a kind and an ``OutsideWorkspace`` does not.
+    nothing about tools, because nothing lifts it — that refusal carries a ``never-allowed`` kind, while
+    an ``OutsideWorkspace`` comes with hints.
     """
     if isinstance(exc, OutsideWorkspace):
         return ToolResult.of(Failure.BLOCKED, str(exc), hints=hints_for(exc))

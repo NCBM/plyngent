@@ -56,7 +56,7 @@ DEFAULT_MAX_NODES = 20
 MAX_DEPTH = 4
 #: How much of one command's output is kept; the rest is said to exist and dropped.
 NODE_OUTPUT_CAP = 32_000
-#: How much output the whole call may produce before it is stopped rather than truncated.
+#: How much output the whole call may produce before it is stopped.
 OUTPUT_BUDGET = 128_000
 #: How much of one pipe is taken at a time while a command runs.
 PIPE_CHUNK = 65_536
@@ -115,11 +115,11 @@ class Execution(Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
 
     ``pipe`` is either the next command in the chain or a file to write this one's output into — a
     string is a redirection, not a program. A node reached through a pipe is *fed*, and asking for
-    another input on top of that is an error rather than a silent winner.
+    another input on top of that is an error, and no input silently wins.
 
     ``env`` is an overlay on the environment this program was started with: a name given a value is set,
     and a name given ``None`` is **taken away**. Taking one away is what a caller has to be able to do to
-    be the author of its own command rather than the inheritor of this one's — an ``GIT_DIR`` inherited
+    be the author of its own command, and not the inheritor of this one's — an ``GIT_DIR`` inherited
     from the program that started this one points a command at the wrong repository, and no value a
     caller could give it says "the one you would find yourself".
     """
@@ -171,15 +171,15 @@ class Refused:
 
     ``LIMIT`` covers a cancelled call as well: a turn that was stopped is not a failure of the world,
     and it is never retried as a whole. ``hints`` is what the caller's refusal offered as the way
-    through — a grant, another directory — carried here rather than rebuilt from the message, which is
-    a sentence and was never meant to be parsed.
+    through — a grant, another directory — carried here, because the message is a sentence and was never
+    meant to be parsed.
     """
 
     failure: Failure
     message: str
     hints: tuple[Hint, ...] = ()
     #: Why, machine-readably, when the failure is a denial: this engine refuses a *command* and answers
-    #: with its own value rather than a result, so the kind travels here and becomes a
+    #: with its own value, so the kind travels here and becomes a
     #: :meth:`~plyngent.kernel.toolresult.ToolResult.denied` at the end (§0.15, E118).
     denial: DenialKind | None = None
 
@@ -244,7 +244,8 @@ type Gate = Callable[[Execution, Path], Awaitable[Permit | Refused]]
 def validate(tree: Sequence[Execution]) -> int:
     """Refuse a tree that would not run, and say how many nodes it has.
 
-    Shape rather than execution: a count, a depth, and the two ways a pipe and an input can disagree.
+    This checks the shape and spawns nothing: a count, a depth, and the two ways a pipe and an input can
+    disagree.
     It runs before anything is spawned, so a call that cannot work costs nothing and asks nobody.
     """
     nodes = 0
@@ -292,8 +293,8 @@ async def run(
     """Run ``tree``, asking ``gate`` once per node before that node is spawned.
 
     ``extra_timeout_secs`` is the call's one knob for "this needs longer": it is added to every node's
-    deadline rather than replacing it, so a caller that has not thought about it still gets a bound, and
-    a caller that has thinks about it once instead of per node.
+    deadline, so a caller that has not thought about it still gets a bound, and a caller that has thinks
+    about it once, not once per node.
     """
     return await _Run(
         cwd=cwd,
@@ -492,7 +493,7 @@ class _Run:
     ) -> tuple[bytes, bytes, bool, bool]:
         """Wait for the child, the deadline, or the turn — whichever arrives first.
 
-        The pipes are read here rather than by ``communicate``, and the deadline is why: a cancelled
+        The pipes are read here, and the deadline is why: a cancelled
         ``communicate`` takes what it had already read with it, so a command that said why it was hanging
         came back as one that had said nothing. These readers are shielded from that cancellation and are
         given a moment past the kill to finish, so a timeout answers with what the command had said up to
@@ -557,8 +558,8 @@ class _Run:
     def _environment(self, overlay: Mapping[str, str | None] | None) -> dict[str, str] | None:
         """The child's environment: this process's, the call's, then the node's — in that order.
 
-        A name given a null is removed rather than set to nothing, because those are different
-        environments to most programs: an empty ``GIT_DIR`` is a directory that does not exist, and
+        A name given a null is removed, because those are different environments to most programs: an
+        empty ``GIT_DIR`` is a directory that does not exist, and
         no ``GIT_DIR`` at all is the repository the command would find for itself. The three layers are
         applied in order and the removal happens at the end, so a node can take away a name its call set
         and a call can take away one this program was started with.
@@ -582,7 +583,7 @@ class _Run:
 
 
 def _pipefail(mode: Failfast) -> bool:
-    """Whether the whole chain decides, rather than only its last command (the shell's ``pipefail``)."""
+    """Whether the whole chain decides, and not only its last command (the shell's ``pipefail``)."""
     return mode == "pipefail"
 
 
@@ -635,7 +636,7 @@ async def _fed(stream: asyncio.StreamWriter | None, stdin: bytes | None) -> None
     """Hand the child its input and close the pipe, which is what makes a reader see its end.
 
     A child that never read what it was sent closes the pipe under the write, and that is a fact about
-    the command rather than a failure of the call.
+    the command, and the call did not fail.
     """
     if stream is None:
         return
@@ -667,11 +668,11 @@ async def _let_go(process: asyncio.subprocess.Process, reading: asyncio.Future[N
     """Close this end of the pipes, so nothing keeps them open but what left the group.
 
     The readers see the end of the stream at once — what they had is already in the caller's buffers — and
-    the fd is released instead of staying with a transport nobody will ever finish. Whatever still holds
-    the write end then meets ``EPIPE`` the next time it says something, or ``SIGPIPE`` if it did not ignore
+    the fd is released, and no transport nobody will ever finish keeps it. Whatever still holds the write
+    end then meets ``EPIPE`` the next time it says something, or ``SIGPIPE`` if it did not ignore
     one. That is the closest thing to stopping it a portable program has, and it is not a kill: a program
     that never writes again, or that ignores the signal, keeps running. It is why the result also *says*
-    this happened rather than leaving a closed pipe as the only evidence (E161).
+    this happened: a closed pipe as the only evidence is a fact nobody can read (E161).
 
     ``grace`` is how long the readers are given to finish now that the pipes are closed: a stream that was
     being held has nothing left to wait for, so anything but a cancelled turn gets a moment for the bytes

@@ -9,7 +9,7 @@ and the order is the design:
 * **approve.** The posture a tool's declarations ask for (:meth:`ToolSpec.approval`) is put to a person
   through the host's approval table: once per what the tool is remembered by, or every time when it says
   so. The table is the host's, so an approval is not asked again by the next session — and one scoped to
-  a session names its session in the key rather than living in a second table.
+  a session names its session in the key, so there is one table.
 * **run, under the call's own address.** The handler is handed an
   :class:`~plyngent.kernel.env.Env` built from the resources the tool declared, so it reaches exactly
   what its declaration says (§10.1). Every await inside it goes through the turn's cancellation token
@@ -28,14 +28,14 @@ which calls may overlap: a write conflicts with every call on that path, a read 
 the direction is the order the model wrote them in, and a call that names no path at all waits for this
 answer's file work before it starts. The graph says what *may* run at once; the host's locks
 (:mod:`plyngent.kernel.locks`) are what actually hold, so two turns of two conversations obey the same
-rule. The results are collected in the model's order rather than the order they came back in: one answer
+rule. The results are collected in the model's order: one answer
 has to produce one history, whoever finished first.
 
-Three tools ask through a policy instead of through this gate, because their question is about run state
+Three tools ask through a policy, because their question is about run state
 this layer cannot see: whether a program is on the denylist (a command policy that reads the argv),
 whether a terminal is still alive (a PTY policy that reads the session). They declare ``Posture.AUTO``
 where the baseline would otherwise ask, so that one call never becomes two questions. The day those
-policies raise a posture rather than asking, the override goes.
+policies raise a posture, the override goes.
 
 What is *not* here: a cap on the result. ``meta.chars`` already measures what the model will read, and
 truncation is "move the body to the document store and keep the handle" — which needs the store, so it
@@ -82,9 +82,9 @@ if TYPE_CHECKING:
 #: Which access a path argument is resolved with, when it is resolved for an approval's key.
 _ACCESS: dict[Role, AccessMode] = {Role.READ: AccessMode.READ, Role.WRITE: AccessMode.WRITE}
 
-#: How many calls of one answer may run at the same time. A cap rather than a promise: the graph decides
+#: How many calls of one answer may run at the same time. A cap: the graph decides
 #: what may overlap, and this decides how much of it is worth doing at once — a batch of forty reads is
-#: forty open files, which is a number to bound rather than to discover.
+#: forty open files, which is a number to bound.
 CONCURRENCY = 8
 
 #: The one tool name this layer may write into a hint: showing a group is what a refusal for a tool
@@ -107,7 +107,7 @@ SWEEP_PATHS = 5_000
 class _Swept:
     """What one sweep came to: the paths it found different, or how big the tree was when it gave up.
 
-    One value rather than two answers, because the two are the same question asked twice: a sweep either
+    One value, because the two are the same question asked twice: a sweep either
     compared the tree and knows what moved, or it looked at a tree too big to compare and knows how big.
     """
 
@@ -120,7 +120,7 @@ class _Swept:
 class Held:
     """One path a call declared, resolved, and the role the declaration gave it.
 
-    The role is kept rather than dropped: a batch orders the calls of one answer by what they do to a
+    The role is kept: a batch orders the calls of one answer by what they do to a
     path, and a lock that forgets whether a call reads or writes has nothing to order by (§10.12).
     """
 
@@ -183,7 +183,7 @@ class ToolExecutor:
         :class:`~plyngent.wire.event.ToolReturned` by.
 
         What a call may reach is the session's view, built once for the batch: the tools the round was
-        asked with. A call naming a tool it cannot see is answered rather than run, and the answer says
+        asked with. A call naming a tool it cannot see is answered with a refusal, and the answer says
         which group that tool is in — naming it here is this layer's job, because it is the only one
         that holds both the registry and the session.
         """
@@ -253,9 +253,9 @@ class ToolExecutor:
 
         The model's account of a call is its result, in the tool's own words; a second account would be a
         second thing to read and to keep in step. This is the other reader's: the difference itself, out
-        of the store rather than off the disk, so the answer cannot drift from what the call did.
+        of the store, so the answer cannot drift from what the call did.
 
-        A store that cannot answer leaves this unsaid rather than failing the call: the change happened,
+        A store that cannot answer leaves this unsaid, and the call is not failed: the change happened,
         and a viewer that is missing one difference is a viewer, not a wrong result.
         """
         store, revision = ctx.host.history, result.effects.revision
@@ -432,8 +432,8 @@ def _subjects(
     ``Remember.HOST`` one, since the scope a person meant is part of the key.
 
     A tool whose subject is one of its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.subject`)
-    names that value instead, so the person is asked about the one skill or directory the call is about
-    rather than about the tool in general.
+    names that value instead, so the person is asked about the one skill or directory the call is about,
+    and not about the tool in general.
 
     A tool that says where its own paths are (:attr:`~plyngent.kernel.toolspec.ToolSpec.holds`) is keyed
     by them like any other: the question a batch's locks answer and the question a person answers have to
@@ -461,11 +461,11 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
     A call's paths come from one of two places and are resolved the same way either way: a table of
     argument names (:attr:`~plyngent.kernel.toolspec.ToolSpec.roles`) for a tool whose paths are its own
     fields, and a walk over its arguments (:attr:`~plyngent.kernel.toolspec.ToolSpec.holds`) for one whose
-    arguments are a tree. Resolution is per path rather than all-or-nothing: a call naming two paths and
+    arguments are a tree. Resolution is per path: a call naming two paths and
     getting one refused still reads or writes the other, so what it holds is the paths it will really
     touch — under the role it declared for each, because that is what a batch orders calls by. An argument
     that is empty names no path at all: a tool with two locators leaves the other one blank, and a blank is
-    not a request for the workspace root. A refused path is reported rather than guessed at: nothing
+    not a request for the workspace root. A refused path is reported: nothing
     touches a path the workspace will not resolve, so there is no lock to take for it, but "this call named
     a path and it was refused" is a different fact from "this call named no path", and both the approval
     and the batch read the difference.
@@ -525,7 +525,7 @@ def _reachable(result: ToolResult, catalog: ToolCatalog, view: ToolView) -> Tool
     A hint names the call that would have worked, and a hint naming a tool nobody was shown is a
     suggestion the model cannot take: it would be told to use ``listdir`` by a kernel that did not offer
     it. So the hint is rewritten to the one call that does work — the group, and the tool that shows it
-    — and it is rewritten here rather than in each handler because no handler knows what the session was
+    — and it is rewritten here, because no handler knows what the session was
     shown, and forty handlers deciding it again is forty answers (§10.3).
 
     Nothing else about a hint changes: the reason survives, because the reason is what makes the hint
@@ -571,7 +571,7 @@ def _ordered(nodes: list[_Call]) -> None:
     Three rules, and the third is the one that is easy to get wrong: a call that names no path waits for
     *every* file call of the answer, not only the ones written before it. A command's own paths are
     invisible here — ``execute`` keeps them inside a tree — so the only honest thing to promise it is the
-    file state the whole answer produces, rather than a snapshot of an answer half applied.
+    file state the whole answer produces.
     """
     file_work = {index for index, node in enumerate(nodes) if node.runs and node.touches_files}
     for index, node in enumerate(nodes):
