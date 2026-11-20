@@ -3,7 +3,7 @@
 Every tool that starts a program asks the same three questions of every argv it starts, and they are asked
 in the same order: the workspace resolves where the command runs and what its redirects touch, the command
 policy judges the argv, and a person is asked about whatever the policy could not settle. So the gate is
-one piece rather than a paragraph copied into each tool: ``execute`` walks a tree of them, a tool whose
+one piece, and no tool carries its own copy of that paragraph: ``execute`` walks a tree of them, a tool whose
 whole job is one read-only program (the vcs group) hands the same engine one node, and a live terminal
 asks through :func:`agreed` too — the same question, the same table of approvals, and therefore the same
 yes remembered for the rest of the host.
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 class CommandGate:
     """One call's gate: where a node runs, what it may touch, and whether it has to be agreed to.
 
-    The approvals are kept here rather than read back out of the command policy: the policy remembers
+    The approvals are kept here, and are never read back out of the command policy: the policy remembers
     programs for the life of the host, and the effect record is about *this* call.
     """
 

@@ -51,7 +51,7 @@ class ClientFetchArgs(ToolArgs, kw_only=True):
     reach: a loopback or private address is exactly the case the person is asked about.
 
     ``method`` is one of DELETE, GET, HEAD, POST, PUT. ``headers`` are the request's own, except the ones
-    that change what a request *is* rather than what it asks for — the framing and proxy headers are
+    that change what a request *is*, whatever it asks for — the framing and proxy headers are
     refused, and ``user_agent`` is the one identity a call may state, winning over a ``User-Agent`` in
     ``headers``.
 
@@ -136,7 +136,7 @@ def _read(args: ClientFetchArgs) -> client.Request | policy.Unreadable:
 class _Questions:
     """One call's gate: whether this hop may be made, and what a person has already agreed to.
 
-    Per hop rather than per request, because a redirect is a second destination — and per *call* for the
+    Per hop, because a redirect is a second destination — and per *call* for the
     agreements, because what a person agreed to is this request and the record of it belongs to the
     result this call produces.
     """
@@ -172,7 +172,7 @@ class _Questions:
         if not answer.accepted:
             return _unagreed(leg, answer)
         if any(kind is policy.ReasonKind.PRIVATE_HOST for kind, _ in reasons) and answer.by is not By.POLICY:
-            # The one reason that is about the machine rather than about this request, so agreeing to it is
+            # The one reason that is about the machine and holds for every request to it, so agreeing to it is
             # agreeing to that host and port and it is not asked about again. Cleartext and a payload are
             # facts about *this* request: remembering one of them would agree to a request nobody described.
             # A policy's yes is not one of these either: it is what the program was started to do, so it
@@ -450,16 +450,15 @@ ALL: tuple[ToolSpec, ...] = (*SPECS, *CONDITIONAL)
 def net_specs(engines: web.Engines | None) -> tuple[ToolSpec, ...]:
     """The net tools a kernel serves **because** of what was installed, and nothing when nothing was.
 
-    The one place where "does this tool exist" is decided, and it is decided by what the composition root
-    holds rather than by what a call names: a kernel with no engine is ``BUILTIN`` alone, and a tool that
-    is not there is answered as a name nothing has rather than as a refusal. What never changes with the
-    answer is a tool's name and its schema, so a provider's cached prefix stays a function of the *set* a
-    session may reach (§10.5).
+    The one place where "does this tool exist" is decided, and what decides it is what the composition
+    root holds: a kernel with no engine is ``BUILTIN`` alone, and a tool that is not there is answered as
+    a name nothing has, never as a refusal. What never changes with the answer is a tool's name and its
+    schema, so a provider's cached prefix stays a function of the *set* a session may reach (§10.5).
 
     Each verb enables its own tool, and nothing else does: an engine that only searches gives a program
     ``web_search`` and no ``web_fetch``, and one that only reads pages gives the other. Which engines are
-    in the table at all — one route's ``share`` rather than another's — is decided where the table is
-    built, so this stays a question about abilities.
+    in the table at all is decided where the table is built, from the routes' ``share`` values, so this
+    stays a question about abilities.
     """
     if engines is None:
         return ()

@@ -63,7 +63,7 @@ class ExecuteArgs(ToolArgs, kw_only=True):
           "pipe": { ...node... }          # takes this command's stdout as its stdin
         }
 
-    A ``pipe`` may also be a file name, which redirects the output there instead of starting another
+    A ``pipe`` may also be a file name, which redirects the output there and starts no other
     command. A continuation runs where its parent ran and inherits its environment and ``failfast``;
     the call's ``cwd``, ``env`` and ``failfast`` are the outermost default. ``failfast`` reads as a
     shell does: ``simple`` (the same as ``true``) judges a chain by its last command, ``pipefail`` by
@@ -146,7 +146,7 @@ def _result(batch: Batch, *, workspace: Workspace, approvals: list[str], nodes: 
 
 
 def _part(ran: Ran, *, workspace: Workspace) -> ProcessControl:
-    """One started command, as the part a reader wants rather than a paragraph."""
+    """One started command, as a short piece a reader takes in at once."""
     return ProcessControl(
         argv=ran.argv,
         cwd=display(Path(ran.cwd), root=workspace.root),

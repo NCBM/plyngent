@@ -8,10 +8,10 @@ matches is refused for a skill exactly as it is for a file, because a person who
 not mean "unless it is in a skill".
 
 **Reading is the same reading everywhere.** ``skill_read`` is the document tools' window over text that
-happens to live in a skill, and ``skill_search`` is the document search over a tree rather than one
-file, so a window cuts in the same place and a hit is written the same way. What is different is the
-attribution: a hit says ``<skill>/<file>:<line>``, because that is the only thing a search across
-several directories has to add to a match.
+happens to live in a skill, and ``skill_search`` is the document search over a whole tree, so a window
+cuts in the same place and a hit is written the same way. What is different is the attribution: a hit
+says ``<skill>/<file>:<line>``, because that is the only thing a search across several directories has
+to add to a match.
 
 **Writing is not the same writing, and that is the point.** A skill is somebody else's directory, so the
 two writers change something no path policy here can judge: they are approved every single time, and a
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.env import Env
 
 #: How many notes a listing prints before it says how many it is not printing. A third-party root can
-#: hold a pile of skills, and the table is a table rather than a report.
+#: hold a pile of skills, and the table stays small enough to read.
 _MAX_LISTED_NOTES = 8
 
 #: How big a file a search will read. Skills bundle scripts and references, and a search is a search:
@@ -102,7 +102,7 @@ def _shadow_rows(store: Skills) -> list[str]:
 
 
 def _note_rows(skills: tuple[Skill, ...]) -> list[str]:
-    """What could not be read as it was written, said beside the skill rather than instead of it."""
+    """What could not be read as it was written, said beside the skill and leaving it in the list."""
     notes = [f"{skill.name}: {issue}" for skill in skills for issue in skill.issues]
     if not notes:
         return []
@@ -319,7 +319,7 @@ class SkillCreateArgs(ToolArgs, kw_only=True):
     ``name`` is the skill's name — lowercase letters, digits and hyphens — and it is also the directory
     name, so it is checked against the same rule the schema states. The skill is written under this
     program's own skills directory, which is the one root a new skill may be written into; a name that is
-    already visible from any root is refused rather than shadowed, and ``skill_edit`` changes the one
+    already visible from any root is refused, never shadowed, and ``skill_edit`` changes the one
     that is there.
 
     ``description`` is the one line a listing shows, ``body`` is the instruction text, and ``files`` maps
@@ -355,8 +355,8 @@ async def skill_create(env: Env, args: SkillCreateArgs) -> ToolResult:
 def _new_directory(store: Skills, base: Path, name: str) -> Path | ToolResult:
     """Where a new skill of this name goes, or the refusal that says why it is not a new one.
 
-    The name rule is asked again here rather than trusted to the schema: the schema is a promise about a
-    model's call, and a call can also arrive from a program or a replay. One rule, two readers.
+    The name rule is asked again here, because the schema's promise covers only a model's call, and a
+    call can also arrive from a program or a replay. One rule, two readers.
     """
     problem = validate_name(name)
     if problem is not None:
@@ -591,7 +591,7 @@ SKILL_CREATE = ToolSpec(
     args=SkillCreateArgs,
     run=skill_create,
     # ``OUTSIDE`` and nothing else: the directory is not the workspace's, so no path policy can judge one
-    # call — which is what makes the posture ``ALWAYS`` and the intention required, derived rather than
+    # call — which is what makes the posture ``ALWAYS`` and the intention required, derived and never
     # written down here (§10.10, E37).
     subject="name",
     uses=Res.PATHS | Res.SKILLS,

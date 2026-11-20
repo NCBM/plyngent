@@ -5,7 +5,7 @@ a window of the stack; a call that changes one layer answers **that layer**, whi
 listing takes a ``full``: there is nothing to open a window on when the call was about one group in the
 first place.
 
-``wait`` is the other half of the group, and the one call that spends time rather than state: a person
+``wait`` is the other half of the group, and the only call that spends time and touches no state: a person
 reading what was just written needs a moment, and a turn that ended cannot be picked up again.
 
 The stack belongs to the conversation and not to this process: every change is written into the
@@ -16,7 +16,7 @@ do run at once, and both would otherwise push onto the stack they read before ei
 Two numbers address a task, and the schema says so because the schema is the only place a model can
 read a rule before it calls: ``group`` is a depth (0 is the bottom, the TOP group is the highest) and
 ``number`` is the task's place inside that group. Both come from the latest listing, and both are
-refused rather than guessed when they name nothing.
+refused, never guessed at, when they name nothing.
 """
 
 from __future__ import annotations
@@ -103,9 +103,8 @@ class ClearArgs(ToolArgs, kw_only=True):
 # -- waiting for a person -------------------------------------------------------------------------
 
 
-#: The longest a ``wait`` may sleep. In the schema rather than in the handler, so a call that asks for an
-#: hour is one the model can see is wrong before it makes it, and bounded because a turn waiting longer
-#: than this is a stopped turn rather than patience.
+#: The longest a ``wait`` may sleep. In the schema, so a call that asks for an hour is one the model can
+#: see is wrong before it makes it, and bounded because past this a wait is a turn that never finishes.
 MAX_WAIT_SECONDS = 600.0
 
 
@@ -149,8 +148,8 @@ def _duration(seconds: float) -> str:
 async def _planned(env: Env, mutate: Callable[[str | None], tuple[str | None, ToolResult]]) -> ToolResult:
     """Change the plan, and leave the model a line about what is left of it.
 
-    The plan is the one setting a model has to hear about. It lives in the session rather than in the
-    conversation, so a checklist written two rounds ago is one the model goes on working from memory —
+    The plan is the one setting a model has to hear about. It lives in the session's own store, outside
+    the conversation, so a checklist written two rounds ago is one the model goes on working from memory —
     and the round after the call is exactly when it needs telling. So every change fires one reminder,
     and the turn writes it at its next boundary, which is that round (E142).
 
@@ -238,7 +237,7 @@ async def todo_clear(env: Env, _args: ClearArgs) -> ToolResult:
 def _layer(todos: Todos, depth: int, summary: str) -> ToolResult:
     """One layer of the stack, and how much of the rest of it was not drawn beside it.
 
-    The hint says "not shown" rather than "below", because a call that changed a middle layer has
+    The hint says "not shown", never "below", because a call that changed a middle layer has
     groups on both sides of the one it answered.
     """
     hidden = todos.depth() - 1
@@ -364,7 +363,7 @@ TODO_CLEAR = ToolSpec(
 
 #: The kernel's own waiting: a person's line with a deadline. ``TOOLS`` is declared beside ``HUMAN``
 #: because a wait has to know whether anybody is there at all — ``env.tools.asks`` is that answer, and a
-#: run with no terminal sleeps instead of asking a no-sink that answers at once.
+#: run with no terminal sleeps, and never asks a no-sink that answers at once.
 WAIT = ToolSpec(
     name="wait",
     group=Group.SESSION,

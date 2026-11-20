@@ -6,10 +6,10 @@ call's :class:`~plyngent.kernel.listing.Filter`. What is left in this module is 
 answer — a glob match, a tree in one of three renderings, a move's one line — and nothing about
 dotfiles, version-control metadata or ignore files.
 
-Every refusal, every "not quite" and every failure comes out of a value rather than a sentence: the
-kind of failure decides the status and the retry (:mod:`plyngent.kernel.failure`), and a call that
-could be made to work by changing one argument says so with a hint instead of telling the model about
-its own parameters. Every filesystem call is blocking, so every one of them runs off the loop: a host
+Every refusal, every "not quite" and every failure comes out of a value, with no sentence of its own: the
+kind of failure decides the status and the retry (:mod:`plyngent.kernel.failure`), and a call that could
+be made to work by changing one argument says so with a hint naming that argument, leaving the model's own
+parameters alone. Every filesystem call is blocking, so every one of them runs off the loop: a host
 that stalled its own turns on a directory read would be a host whose PTY reads stopped with it.
 """
 
@@ -65,8 +65,8 @@ class ListdirArgs(EnumerateArgs, kw_only=True):
 
     ``stat`` asks for columns per entry, in the order given: ``size`` (bytes), ``mtime`` (UTC,
     second precision), ``mode`` (the permission bits, octal) and ``symlink`` (where it points, or
-    ``-``). Empty by default, because a listing of a directory is usually about its shape rather than
-    its metadata — and ``tree`` is the tool for shape.
+    ``-``). Empty by default, because a listing of a directory is usually about its shape, and the
+    metadata is the second question — ``tree`` is the tool for shape.
     """
 
     path: str = "."
@@ -271,8 +271,8 @@ class Wanted(StrEnum):
     """What a path is needed *for*, in the words the model reads.
 
     A ``StrEnum`` and not :class:`~plyngent.kernel.access.AccessMode`: that one is an ``IntEnum``, and a
-    schema generated from it would offer the model ``1``, ``2`` and ``3``. ``exec`` is a need of its own
-    rather than a wider ``write``: the directory a command runs in is not a file that may be changed.
+    schema generated from it would offer the model ``1``, ``2`` and ``3``. ``exec`` names a need of its
+    own, distinct from a wider ``write``: the directory a command runs in is not a file that may be changed.
     """
 
     READ = "read"
@@ -293,7 +293,7 @@ class AccessArgs(ToolArgs, kw_only=True):
     """Ask to reach a path outside the workspace, for the rest of this conversation.
 
     ``path`` is the path a call was refused on, and ``mode`` is what that call needed. The grant covers
-    that path and everything under it, and it belongs to this conversation rather than to this process —
+    that path and everything under it, and it belongs to this conversation, outliving this process —
     so it still holds when the conversation is opened again, and it answers for nobody else. A path the
     workspace's denylist refuses is refused here too: nothing grants one of those.
     """
@@ -435,8 +435,8 @@ REQUEST_ACCESS = ToolSpec(
 )
 
 #: A scratch directory widens what is reachable without touching anything, so the posture is declared
-#: rather than derived: one "yes" for this host is enough, because the directory it hands out is the
-#: thing that was agreed to and the host removes it again.
+#: outright, with nothing derived: one "yes" for this host is enough, because the directory it hands out
+#: is the thing that was agreed to and the host removes it again.
 TEMPORARY = ToolSpec(
     name="new_temporary_workspace",
     group=Group.FS,

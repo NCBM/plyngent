@@ -2,9 +2,9 @@
 
 A document tool reads, searches or changes **one** operand, and that operand is named in one of two
 ways: a ``path`` (a file in the workspace) or a ``document_id`` (a handle a previous result carried
-when its body was too long to send). The two are the same question asked of two stores, so they are
-two fields of one package rather than two tools — and a call gives exactly one of them, which is the
-rule :func:`locator` enforces before any handler runs.
+when its body was too long to send). The two are the same question asked of two stores, so one tool holds
+them as two fields — and a call gives exactly one of them, which is the rule :func:`locator` enforces
+before any handler runs.
 
 A body too long for the conversation is not cut in place: the tool that produced it hands it to the
 document store and puts a handle in the result instead (:func:`kept`). That is why the reading tools
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.reads import Reads
 
 #: How wide a line number is written: ``    12|text``. The width is fixed so that a file read twice
-#: lines up, and so that the number is a column rather than the first thing in the line.
+#: lines up, and so that the number sits in a column of its own at the head of the line.
 _LINENO_WIDTH = 6
 
 #: How many unread line numbers a refusal quotes before it says how many there are in all.
@@ -154,9 +154,9 @@ def _nothing_there(name: str, target: Path, *, make_with: ToolSpec | None = None
 class Source:
     """A file as this build can read it: its text, when it was last written, and what reading cost.
 
-    ``replaced`` says some bytes were not UTF-8 and became ``\ufffd``. It is carried out to the summary
-    rather than swallowed: a model told nothing would take a replacement character for the file's own
-    content and start guessing at what it used to be.
+    ``replaced`` says some bytes were not UTF-8 and became ``\ufffd``. It is carried out to the summary,
+    never swallowed: a model told nothing would take a replacement character for the file's own content
+    and start guessing at what it used to be.
     """
 
     text: str
@@ -226,7 +226,7 @@ async def window(
 ) -> ToolResult:
     """One window over the text, numbered when the call asked for numbers.
 
-    It takes the values rather than an argument package, because this is the one reading of a text's
+    It takes the values themselves, with no argument package, because this is the one reading of a text's
     window that the kernel has: ``read`` asks it about a file or a kept document, and a tool that reads
     text which is not the workspace's — a skill's — asks it too, so that a window cuts in the same place
     and hands back the same handle wherever it was asked for.
@@ -279,8 +279,8 @@ class SearchArgs(ToolArgs, kw_only=True):
     """Find the lines of one file, or of one kept document, that match a regular expression.
 
     ``pattern`` is a **Python** ``re`` regex matched per line, with multiline on — a filename glob is
-    not a regex, so ``**/*.py`` is refused with what went wrong rather than matched against. Give
-    exactly one of ``path`` (a file in the workspace) and ``document_id`` (a handle a result carried).
+    not a regex, so ``**/*.py`` draws a refusal that says what went wrong. Give exactly one of ``path``
+    (a file in the workspace) and ``document_id`` (a handle a result carried).
 
     ``max_matches`` bounds how many hits come back, and a list that was cut says so.
     ``context_lines`` shows that many lines around each hit: a hit reads ``12: text`` and a line shown
@@ -320,7 +320,7 @@ async def search(env: Env, args: SearchArgs) -> ToolResult:
 def compile_lines(pattern: str, *, case_insensitive: bool = False) -> re.Pattern[str]:
     """A pattern as the one kind of search this kernel does: a Python ``re``, matched per line.
 
-    Compiled here rather than at each caller so that "per line" and "multiline on" are one decision —
+    Compiled here once, so that "per line" and "multiline on" are one decision —
     a search that forgot ``MULTILINE`` would answer differently about ``^`` and nobody would notice
     until a file had anchors in it.
 
@@ -338,7 +338,7 @@ async def _searched(env: Env, args: SearchArgs) -> tuple[str, str] | ToolResult:
 
 
 async def _document_text(env: Env, document_id: str) -> tuple[str, str] | ToolResult:
-    """A kept document's text, or what to answer instead of searching it."""
+    """A kept document's text, or what to answer when there is no such document."""
     found = await env.documents.get(env.session, document_id)
     if found is None:
         return _no_document(document_id)
@@ -348,7 +348,7 @@ async def _document_text(env: Env, document_id: str) -> tuple[str, str] | ToolRe
 
 
 async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
-    """One file's text, or what to answer instead of searching it."""
+    """One file's text, or the answer for a file that cannot be read."""
     try:
         target = env.resolve(name, AccessMode.READ)
     except PathRefused as exc:
@@ -382,7 +382,7 @@ async def _scan_text(name: str, target: Path, *, scope: Scope) -> str | ToolResu
 
 
 def _too_big(name: str, size: int, unit: str) -> ToolResult:
-    """A search over text this build will not hold: the number, and what to do instead of it."""
+    """A search over text this build will not hold: the number, and what to do about it."""
     return ToolResult.of(
         Failure.LIMIT,
         f"{name} is {size} {unit}, more than this build holds at once ({MAX_TEXT_CHARS}): "
@@ -393,7 +393,7 @@ def _too_big(name: str, size: int, unit: str) -> ToolResult:
 def around(lines: list[str], hits: list[int], context: int) -> list[str]:
     """The hit lines with their neighbours, hits marked and neighbours not, each line written once.
 
-    Windows that overlap are merged rather than repeated, and a group that starts after a gap is
+    Windows that overlap are merged into one, and a group that starts after a gap is
     separated by ``--``: two hits forty lines apart read as two places, not as one list.
     """
     said: list[str] = []
@@ -510,7 +510,7 @@ class EditReplaceArgs(ToolArgs, kw_only=True):
     Replacements go left to right and never overlap, and ``max_replaces`` bounds how many are made
     (default one: the first match only). Raise it to change several identical hits at once, and give a
     more specific ``old_string`` when one particular hit is meant. The answer says how many of how many
-    were replaced, so a partial replacement is visible rather than assumed.
+    were replaced, so a partial replacement shows up, and nobody has to take it on trust.
     """
 
     path: str
@@ -584,7 +584,7 @@ def _count(text: str, needle: str) -> int:
 
 
 def _excerpt(text: str, limit: int = 40) -> str:
-    """One line of a change, so the answer says what it touched rather than only how often."""
+    """One line of a change, so the answer says what it touched, along with how often."""
     one = " ".join(text.split())
     return one if len(one) <= limit else one[:limit] + "…"
 
@@ -694,7 +694,7 @@ async def _numbered_edit(env: Env, target: Path, args: EditLinenoArgs, lines: li
 def _unread(read: Reads, target: Path, args: EditLinenoArgs, count: int) -> tuple[int, ...]:
     """The lines of the range that no numbered read has shown.
 
-    An append needs the last line read rather than the (empty) range of new lines: otherwise the model
+    An append needs the last line read, since the range of new lines is empty: otherwise the model
     is appending to a file it has never seen the end of. A file with nothing in it has nothing to
     clobber, so an append into one needs no read at all.
     """
@@ -720,7 +720,7 @@ def _read_hint(name: str, start_line: int, end_line: int, count: int) -> Hint:
     """The numbered read covering the range, with a margin so the lines next to it are editable too.
 
     ``offset`` counts from zero and a line number from one, so the call is given as the arguments it
-    needs rather than as a sentence asking the model to subtract one.
+    needs, sparing the model the subtraction.
     """
     first = max(1, start_line - 3)
     last = max(first, min(count, end_line + 3))

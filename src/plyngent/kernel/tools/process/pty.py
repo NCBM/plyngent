@@ -78,7 +78,7 @@ class WritePtyArgs(ToolArgs, kw_only=True):
     """Write literal text to a PTY session's input, exactly as given.
 
     A newline is not added: write one (``\\n`` inside the JSON string) when the program expects Enter.
-    For a key rather than text — Ctrl-C, an arrow key — use ``write_pty_keys`` instead.
+    For a key press — Ctrl-C, an arrow key — use ``write_pty_keys``.
     """
 
     session_id: int
@@ -263,9 +263,9 @@ async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
 async def _consent(env: Env, session: PtySession) -> ToolResult | None:
     """Ask before changing a live session, once per session; ``None`` when nothing has to be asked.
 
-    It carries the ``confirm`` level the PTY-write row of the table derives (:func:`_grade`), and says
-    so rather than leaning on the default: a write into a running process cannot be taken back, and that
-    is the level whose silence is still a no.
+    It carries the ``confirm`` level the PTY-write row of the table derives (:func:`_grade`), and names it
+    outright: a write into a running process cannot be taken back, and that is the level whose silence is
+    still a no.
     """
     if not env.pty_policy.needs_consent(session):
         return None
@@ -306,7 +306,7 @@ async def _room(env: Env) -> ToolResult | None:
     The host's own budget first, because it is nobody's to raise and because it is the number that
     needs a sweep before it refuses (§0.11, E72). Then the conversation's, which is *soft*
     (§0.15, E115): the third terminal in one conversation is a question, and the answer is remembered
-    for that conversation rather than for the call, so the fourth does not ask again.
+    for that conversation, outliving the call, so the fourth does not ask again.
     """
     reached = await room_for_session(env.pty)
     if reached is not None:

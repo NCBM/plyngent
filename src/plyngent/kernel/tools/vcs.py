@@ -1,9 +1,9 @@
 """The repository this workspace is in, read through the same gate a command goes through.
 
 Five tools and one subject: which checkout this is, what its state and history are, and what changed. All
-five are reads, and the argv is what makes that true rather than a promise: ``--no-optional-locks`` keeps
-``status`` from refreshing ``.git/index``, ``core.fsmonitor=false`` keeps it from calling a hook that
-would, and ``diff``'s two flags keep ``diff.external`` and a ``.gitattributes`` textconv filter from
+five are reads, and the argv is what keeps that true: ``--no-optional-locks`` keeps ``status`` from
+refreshing ``.git/index``, ``core.fsmonitor=false`` keeps it from calling a hook that would, and
+``diff``'s two flags keep ``diff.external`` and a ``.gitattributes`` textconv filter from
 turning a read into a program the repository's own configuration chose. ``LC_ALL=C`` rides along in the
 child's environment for a different reason: git's sentences are what this build reads, and a locale must
 not change them.
@@ -16,15 +16,15 @@ Two decisions shape the module more than the argv does:
   :mod:`~plyngent.kernel.tools.process.execution`, and why every call here has to say what it is for.
 * **The surface does not move with the repository.** One set of names and one set of schemas, whatever the
   workspace happens to be; what differs per backend is only an answer (§0.8, E23). ``staged`` is therefore
-  a *question* — "the change the next commit would record" — rather than a git concept, and ``vcs_kind``
-  is the one place that says which thing is answering and what it can answer.
+  a *question* — "the change the next commit would record" — put in the words a model already knows, and
+  ``vcs_kind`` is the one place that says which thing is answering and what it can answer.
 
 There is no backend object and no detector registry, because one implementation is not an abstraction and
 a registry exists to be reached into. The marker file is the probe and one ``rev-parse`` is the
 confirmation: a marker that git refuses is a repository that is not there (a missing thing), not a
-protocol error. A repository that starts *above* the workspace is answered rather than refused — refusing
-it would make this tool stricter than ``execute(["git", "status"])``, which is the one thing a wrapper
-must not be (§0.8, E19).
+protocol error. A repository that starts *above* the workspace is answered anyway: refusing it would make
+this tool stricter than ``execute(["git", "status"])``, which is the one thing a wrapper must not be
+(§0.8, E19).
 """
 
 from __future__ import annotations
@@ -89,11 +89,11 @@ class StatusArgs(ToolArgs, kw_only=True):
 class DiffArgs(ToolArgs, kw_only=True):
     """Show what changed, as a unified diff.
 
-    ``staged`` asks the other question: the difference the *next* commit would record rather than the one
-    the last commit recorded. It is asked as a question and not as an option, so a repository without an
-    index answers it too — with what it does have, and a word about the difference.
+    ``staged`` asks the other question: the difference the *next* commit would record, where the plain
+    diff answers with the one the last commit recorded. It is asked as a question and not as an option, so
+    a repository without an index answers it too — with what it does have, and a word about the difference.
 
-    ``path`` is a pathspec, handed to git as it was given (after ``--``) rather than resolved here: a path
+    ``path`` is a pathspec, handed to git as it was given (after ``--``) and never resolved here: a path
     this build resolved would be held to this workspace's denylist, and a wrapper that refuses a path
     ``execute(["git", "diff", "--", path])`` allows is stricter than the program it wraps.
     """
@@ -130,8 +130,8 @@ class Repository:
 class _Asked:
     """One tool call's gate and record: the git commands it ran, and what it cost.
 
-    One object per call rather than per command, because a tool may need two answers (a detached head is a
-    second question) and the record of what ran belongs to the call rather than to one of them.
+    One object per call: a tool may need two answers (a detached head is a second question), and the
+    record of what ran belongs to the call, so one per command would split it in two.
     """
 
     env: Env
@@ -295,7 +295,7 @@ async def _confirm(asked: _Asked, found: Path) -> Repository | ToolResult:
 
 
 async def _unborn(asked: _Asked) -> bool:
-    """Whether this repository has no commit at all — the one place git's 128 is a fact rather than a fault."""
+    """Whether this repository has no commit at all — the one place git's 128 is a fact about the repository."""
     said = await asked.say(_git("rev-list", "--count", "--all"))
     return not isinstance(said, ToolResult) and said.strip() == "0"
 

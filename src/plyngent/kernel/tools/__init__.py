@@ -6,9 +6,9 @@ tool is one file, and nothing else has to be told about it.
 
 The one thing that is shared is what to say when a path escapes the workspace. Every tool that resolves
 a path means the same two answers — ask for a grant, or take a scratch directory the host will remove —
-so the names live here rather than being spelled out at each raise site, where one of them would
-eventually be forgotten. So does what each answer can be told about the call that was refused: the mode
-it needed, which only one of the two tools takes.
+so the names live here, and each raise site refers to them, where one of them would eventually be
+forgotten if every site spelled them out again. So does what each answer can be told about the call that
+was refused: the mode it needed, which only one of the two tools takes.
 """
 
 from __future__ import annotations

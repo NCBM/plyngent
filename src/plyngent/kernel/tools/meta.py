@@ -1,7 +1,7 @@
 """The one tool about the tool set itself: asking to be shown a group (§10.4).
 
 A session starts with the residents and gains a group by asking, and this is the asking. It is the
-only tool whose subject is the tools rather than the world, which is why it is the only member of
+only tool that talks about the tools themselves, which is why it is the only member of
 ``Group.META`` — and why it has to be resident: a hint that points at a group nobody has been shown
 is rewritten to a call of this tool, and a fallback nobody can reach is not a fallback.
 
@@ -32,9 +32,8 @@ class RequireArgs(ToolArgs, kw_only=True):
 
     ``group`` is the name the index line lists — ``document``, ``fs``, ``process`` — and not a tool
     name: a group is what arrives together, with the section of the playbook that says how to use it.
-    The set of names is not in the schema because it is a fact about this build's registry rather than
-    about this tool, and a schema that moved with the registry would rewrite the prompt prefix every
-    time a tool was added (§10.2).
+    The set of names is not in the schema because it is a fact about this build's registry: a schema
+    that moved with the registry would rewrite the prompt prefix every time a tool was added (§10.2).
     """
 
     group: Annotated[str, msgspec.Meta(min_length=1, max_length=64)]
