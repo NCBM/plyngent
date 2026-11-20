@@ -29,9 +29,9 @@ class _Terminal(io.StringIO):
 def test_every_role_has_a_style_and_no_style_is_invented() -> None:
     roles = set(get_args(Role.__value__))
 
-    assert set(STYLES) == roles, "the table is keyed by the whole closed set, so a sixth role is a decision"
+    assert set(STYLES) == roles, "the table is keyed by the whole closed set, so a ninth role is a decision"
     assert len(set(STYLES.values())) < len(roles), (
-        "two kinds of bookkeeping may look alike; five colours would be noise"
+        "two kinds of bookkeeping may look alike; more colours would be noise"
     )
 
 

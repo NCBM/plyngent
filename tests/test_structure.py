@@ -1090,7 +1090,7 @@ def test_the_skill_tools_are_one_group_and_none_of_them_is_resident() -> None:
 
     assert {spec.group for spec in skills.SPECS} == {Group.SKILLS}
     assert dict(catalog.groups())["skills"] == tuple(sorted(spec.name for spec in skills.SPECS))
-    assert not {spec.name for spec in skills.SPECS} & set(RESIDENT), "the residents are the same twelve"
+    assert not {spec.name for spec in skills.SPECS} & set(RESIDENT), "the residents are the same thirteen"
 
 
 def test_the_skill_reading_tools_are_reads() -> None:

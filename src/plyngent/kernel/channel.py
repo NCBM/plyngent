@@ -1,9 +1,9 @@
 """The lanes a connection is made of, and nothing about what a value means.
 
-A connection carries eight kinds of value in one direction each: what the client asks for, what it
-answers, what it says it has read, and what the kernel says, asks, and calls — plus the greeting a stream
-needs before either end can read anything, which is why it is the one lane a channel may be *told* to
-carry and the kernel decides what goes in it. This is the layer that
+A connection carries eleven kinds of value, one direction each: the six a client sends (the command it wants
+run, the read it wants answered, the answer to a question, the result of a call that was its own tool, the
+number it has read to, and the version it speaks) and the five a kernel sends (the greeting, an event, a
+question, a call for the client's own tool, and the reply to a read). This is the layer that
 holds *where they wait* — and only that. Nothing here reads a value: what a command means, and who may
 send one, is the kernel's business and the contract's.
 

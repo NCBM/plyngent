@@ -6,7 +6,7 @@ be put aside, it ends the turn at the wall instead of sending a request a provid
 stories, because both are things this program does to a conversation somebody is having (E149).
 
 Every window here is a real one, and it has to be: this program's standing prompt — a persona, the
-playbook and thirteen tool declarations — is nearly six thousand tokens. The numbers below are chosen
+playbook and the tool declarations — is nearly six thousand tokens. The numbers below are chosen
 against that, and a turn that ends at the wall says so in its own line, so the arithmetic is never a
 guess a person has to make.
 """

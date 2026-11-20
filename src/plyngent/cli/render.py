@@ -106,9 +106,10 @@ WINDOW_ROWS = 8
 #:
 #: ``assistant`` is the conversation itself, ``tool`` is what a tool did, ``notice`` is the kernel's
 #: account of its own bookkeeping, ``refusal`` is something that did not happen and why, ``usage``
-#: is what an asking cost, and ``thought`` is what the model thought before it said the answer. The six
-#: are kept apart because they are six different things to read, and a seventh must be a decision rather
-#: than a colour that happens to fall through.
+#: is what an asking cost, ``thought`` is what the model thought before it said the answer, and
+#: ``added``/``removed`` are the two sides of a diff. The eight are kept apart because they are eight
+#: different things to read, and a ninth must be a decision rather than a colour that happens to fall
+#: through.
 type Role = Literal["assistant", "tool", "notice", "refusal", "usage", "thought", "added", "removed"]
 
 

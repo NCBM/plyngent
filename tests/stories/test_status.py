@@ -85,7 +85,7 @@ async def test_the_context_row_says_a_share_when_the_route_stated_a_window(story
     count alone rather than a percentage of something this client made up.
 
     The window is a real one and not a small fiction: a route whose window cannot even hold this
-    program's standing prompt — a persona, the playbook and thirteen tool declarations — is a route whose
+    program's standing prompt — a persona, the playbook and the tool declarations — is a route whose
     every turn ends at the wall (E149).
     """
     story = await story_with(
