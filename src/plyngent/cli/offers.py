@@ -11,7 +11,7 @@ Two rules this file keeps:
 * **Nothing but asking.** This client offers no other tool: its display and its Ctrl+C are a renderer
   and a command, and putting them on this lane would be a privilege no other client has (§10.8 rule 5).
 * **Every invocation is answered.** A call the kernel is waiting on ends in a deadline if nobody
-  answers it, so a name this client does not have is answered as one it could not run rather than
+  answers it, so a name this client does not have is answered as one it could not run, and nothing is
   dropped on the floor.
 
 The call is an array of questions, and this lane cannot put a block of them up in one go: there is one
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAnswer
 
 #: The names this terminal answers, and how to run one: the answer is one line of prose, either way,
-#: and ``None`` from the editor is "nobody answered" rather than an empty answer (§10.8, E48).
+#: and ``None`` from the editor means "nobody answered", where an empty line is an answer (§10.8, E48).
 type Handler = Callable[[LineEditor, Invocation], Awaitable[Returned]]
 
 #: Ask the person at the terminal: one question, or several as one array.
@@ -60,9 +60,9 @@ ASK = "ask_user"
 class ClientTools:
     """One client's offer: the tools, and the one place each of them is run.
 
-    A value rather than two module-level tables, because it is what a program is handed: a frontend
+    One value, with no pair of module-level tables, because it is what a program is handed: a frontend
     that can implement more than the terminal does offers them the same way, and a story that needs a
-    client-provided tool passes a bigger value instead of patching this module.
+    client-provided tool passes a bigger value, leaving this module untouched.
     """
 
     offer: tuple[OfferedTool, ...]

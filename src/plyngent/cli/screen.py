@@ -16,8 +16,8 @@ never count columns to guess how far a row went (E92).
 
 There is one row it does not know about, and it is ours: a block of answer that is still being written.
 A terminal shows it as a *window* — the rows are written, the next fragment takes them back, and the
-next writes them again — so an answer grows where it stands instead of scrolling away a fragment at a
-time (E100). Taking rows back is the terminal's own business (``erase`` on the output; no escape is
+next writes them again — so an answer grows where it stands, with each fragment replacing the last one
+(E100). Taking rows back is the terminal's own business (``erase`` on the output; no escape is
 written here), and it is offered only on a stream that said it is a cursor: with no terminal under it, a
 write is a write, which is what keeps the plain lane's bytes what they always were.
 
@@ -130,14 +130,14 @@ class Screen:
     """Both streams of one terminal, and the cursor they take turns on.
 
     Two verbs, one per stream, and both are asynchronous because both may have to wait for a prompt to
-    get out of the way — and for whichever other write got there first. Writes are serialised here
-    rather than by the caller: two lines arriving from two tasks are two lines, not one line cut in
+    get out of the way — and for whichever other write got there first. Writes are serialised here, and no
+    caller has to order them: two lines arriving from two tasks are two lines, not one line cut in
     half, and with no prompt running there is nothing else that would order them.
 
     ``aside`` is a parameter for the reason the editor's streams are: a test has no terminal to hold up,
     so it hands in something that records the three steps instead (E91). ``markdown`` is the same kind of
-    question asked about the device rather than about the prompt: a stream that cannot move its cursor
-    gets lines, and nothing is ever taken back.
+    question, asked of the device: a stream that cannot move its cursor gets lines, and nothing is ever
+    taken back.
     """
 
     _events: Sink

@@ -1,8 +1,8 @@
 """What the model wrote, as the rows a screen shows: markdown, wrapped to the screen it is on.
 
 An answer is markdown whether or not anybody said so — models write it that way, and a person reading one
-expects a list to be a list and a paragraph to be wrapped to the width in front of them rather than to
-wherever the network split it. Rendering it is a decision about a *terminal*: a stream that is not one
+expects a list to be a list and a paragraph wrapped to the width in front of them, whatever width the
+network split it at. Rendering it is a decision about a *terminal*: a stream that is not one
 reads the text exactly as it was written, because a reflowed answer is a different answer and a file
 meant for another program has no width to be wrapped to (§2 R8, E100).
 

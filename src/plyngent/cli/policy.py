@@ -1,10 +1,10 @@
 """The questions this client answers by itself, and what it leaves on the screen for them (§0.15).
 
 A person who started the program with ``--yolo`` or ``--away`` has said what to do about being
-interrupted, and that is a fact about *this* frontend rather than about the kernel: nothing below
+interrupted, and that is a fact about *this* frontend, which the kernel never hears: nothing below
 ``cli/`` knows either word, and a kernel that did would be a kernel with a mode. What a policy may
 answer is deliberately narrow — a yes-or-no question, at a level it was told about, and never a
-password — because everything else a question can ask is a person's words rather than a permission.
+password — because every other question wants a person's words, and a policy cannot supply those.
 The one exception is a choice that already says what its own silence picks: answering it with that
 option is answering it the way an empty line would, and a question with no default stays the person's
 (E150).
@@ -35,13 +35,13 @@ if TYPE_CHECKING:
     from plyngent.wire.ask import AnyAnswer
 
 #: What each flag is called in the record: the answer carries one of these, so "which policy said yes
-#: to a ``danger`` question?" is a question to the record rather than an inference.
+#: to a ``danger`` question?" is answered by the record, and needs no inference.
 YOLO = "yolo"
 AWAY = "away"
 
-#: The second away switch as a *mode* rather than as an answer: a question it answers is still answered
-#: by ``away``, but a run that was started with it is a different run to be in, and the status line says
-#: which one this is.
+#: The second away switch is a *mode*, and what it answers is still ``away``: a question it answers is
+#: answered by ``away``, but a run that was started with it is a different run to be in, and the status
+#: line says which one this is.
 AWAY_DANGER = "away-danger"
 
 
@@ -143,7 +143,7 @@ class Policy:
 
 @dataclass
 class Tally:
-    """What the policies answered in this stretch, so the end of it can be one line rather than none.
+    """What the policies answered in this stretch, so the end of it is one line even when nothing answered.
 
     The lines above are what a person reads while it happens; this is what they read when it stops,
     because a run that answered forty questions a person did not see is a run whose shape is only

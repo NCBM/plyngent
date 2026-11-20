@@ -108,7 +108,7 @@ WINDOW_ROWS = 8
 #: account of its own bookkeeping, ``refusal`` is something that did not happen and why, ``usage``
 #: is what an asking cost, ``thought`` is what the model thought before it said the answer, and
 #: ``added``/``removed`` are the two sides of a diff. The eight are kept apart because they are eight
-#: different things to read, and a ninth must be a decision rather than a colour that happens to fall
+#: different things to read, and a ninth has to be a decision, never a colour that happens to fall
 #: through.
 type Role = Literal["assistant", "tool", "notice", "refusal", "usage", "thought", "added", "removed"]
 
@@ -126,15 +126,16 @@ class Shown:
     role: Role
 
 
-#: What a turn said or did: the conversation itself, rather than the kernel's account of it.
+#: What a turn said or did: the conversation itself, with the kernel's account of it kept apart below.
 type _Said = AssistantText | AssistantDelta | AssistantThought | ToolCalled | ToolReturned
 
 #: What the kernel says about a turn: when it began, how it ended, and what it reported meanwhile.
 type _Turned = TurnStarted | TurnFinished | TurnRefused | OfferRefused
 
 #: What the kernel reports about itself and the session it serves — every event that is not a turn's own
-#: content, a fact about one asking, or a turn's shape. Written out rather than inferred from ``AnyEvent``
-#: so that a new kind of news fails at the branch that has to read it, in whichever third it belongs to.
+#: content, a fact about one asking, or a turn's shape. Written out by hand, with nothing inferred from
+#: ``AnyEvent``, so that a new kind of news fails at the branch that has to read it, in whichever third it
+#: belongs to.
 type _Reported = (
     KernelLeaving
     | SessionsListed
@@ -159,8 +160,8 @@ type _Reported = (
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
-#: in full rather than as a line: a difference is several rows, and it turns up between a call and its
-#: result rather than after a turn.
+#: in full, where every other row is a line: a difference is several rows, and it turns up between a call
+#: and its result, not after a turn.
 type _Diffed = Changed
 
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, what it
@@ -203,7 +204,7 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS, diff: bool = True) ->
     What a turn *said or did* is read apart from what the kernel *reports about it* — a message, a
     tool call and its result are the conversation itself, while the rest is bookkeeping about turns
     and sessions. Both halves are matched when every claim ends, so a new kind of news fails to
-    type-check in the half it belongs to instead of being silently unread.
+    type-check in the half it belongs to, and never goes silently unread.
 
     ``diff`` is whether a change is shown as the difference itself; a frontend told not to show patches
     still says that a call left something behind, because that is a fact about the workspace rather
@@ -230,7 +231,7 @@ class Painted:
     """What one event puts on the screen, in two degrees of finality.
 
     ``lines`` are whole and will never be written again. ``window`` is the block still being said, which
-    the screen draws over itself on every frame — so it is a field of its own rather than more lines: a
+    the screen draws over itself on every frame — so it is a field of its own, kept out of ``lines``: a
     line that may be taken back is a different thing from one that may not (E100).
     """
 
@@ -429,7 +430,7 @@ def workspace_label(root: str, /, *, home: str | None = None) -> str:
 
     A path is shortened at its *front*, because the end is the part that names the project: ``…/repo``
     says which workspace this is while ``/home/somebody/Projects/…`` does not. It is computed once, when
-    the program starts, rather than per line — which is why it is a function of a path and not a look at
+    the program starts, and not per line — which is why it is a function of a path and not a look at
     the machine from inside a renderer.
     """
     place = Path(root)
@@ -446,14 +447,13 @@ class Stage:
     """Where this conversation is, and what it has cost so far — the stateful half of the screen.
 
     :func:`render` is a function of one event, and that is what lets a screen be compared without a
-    terminal; but "where am I" and "what did this turn cost" are questions about a *stretch* of events
-    rather than about one, so they live here. One per client, like :class:`Fold`, and what it hands back
+    terminal; but "where am I" and "what did this turn cost" are questions about a *stretch* of events,
+    and not about one, so they live here. One per client, like :class:`Fold`, and what it hands back
     is still lines and roles: nothing here decides a width, a colour, or a cursor.
 
-    Three things are added, and each is a row of its own rather than a rewrite of a row that already
-    exists. That is deliberate: a frontend's idea of how a call *reads* must not change what a call
-    *said*, because those words are the kernel's, and the one place they are written is
-    :func:`render`.
+    Three things are added, each as a row of its own, and no row that already exists is rewritten. That
+    is deliberate: a frontend's idea of how a call *reads* must not change what a call *said*, because
+    those words are the kernel's, and the one place they are written is :func:`render`.
 
     * a **status line** where a turn starts and ends and where a route changes — the session, the
       workspace, the route answering it, the way this run answers questions, and how full the context
@@ -664,7 +664,7 @@ def held(answer: AnyReply) -> tuple[str, ...]:
     """What one read's answer says, as the lines this client prints for it.
 
     A row per path with the permission on it, because that is what a person has to be able to check
-    against a question they once answered; and "nothing" rather than nothing when the table is empty,
+    against a question they once answered; and the word "nothing" when the table is empty,
     because an empty screen is indistinguishable from a read that never happened.
 
     A conversation reads as one line per entry: which row it is, what kind of row it is, and as much of
@@ -699,7 +699,7 @@ def unfinished(forest: Forest, live: tuple[LiveTurn, ...]) -> tuple[str, ...]:
     the kernel has and a log does not (:class:`~plyngent.wire.query.LiveTurns`), so the running ones are
     left out here and what remains is what somebody else's death left behind.
 
-    One line per turn rather than a count, because the number is only useful with the turn it names: what a
+    One line per turn, and no count, because the number is only useful with the turn it names: what a
     person does with this line is go and look at that stretch of their log.
     """
     running = {turn.turn for turn in live}
@@ -713,7 +713,7 @@ def unfinished(forest: Forest, live: tuple[LiveTurn, ...]) -> tuple[str, ...]:
 def _live(turns: tuple[LiveTurn, ...]) -> tuple[str, ...]:
     """Which turns of one conversation are still working, one line each — or the line that says none is.
 
-    A row per turn rather than a count, because more than one can be live only when one of them is a
+    A row per turn, and no count, because more than one can be live only when one of them is a
     compaction somebody asked for beside a chat, and "two" would leave a person guessing which. The entry
     a turn continues is said only when the turn has one: a root has nothing to be after.
     """
@@ -747,7 +747,7 @@ def _skill_table(
 
 
 def _reported(event: _Reported) -> tuple[_Row, ...]:
-    """What the kernel says about itself and the session it is serving, rather than about a turn.
+    """What the kernel says about itself and the session it is serving, with no turn in the subject.
 
     Three subjects, read apart because they are three different claims: what the *connection* is doing
     (the kernel leaving, the sessions there are), what the session *is now* (its summary, its route, what
@@ -801,7 +801,7 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line
     """What one of this session's settings is now: what it was compressed into, what it hides, what it
     kept, which route answers it, what was copied into it, and what the harness told the model.
 
-    A notice's line is the row's own summary rather than a sentence built here: what a reminder was about
+    A notice's line is the row's own summary, and no sentence is built here: what a reminder was about
     was decided where it was written, and this lane is not the place to work it out again.
     """
     match event:
@@ -972,7 +972,7 @@ def _asking(event: _Asked) -> tuple[_Row, ...]:
     """What one request to a model cost, and whether the answer stopped short.
 
     Two facts with nothing in common but their subject: neither belongs to the history, and both are
-    about the asking rather than about the turn that made it.
+    about the asking, with no turn in the answer.
     """
     match event:
         case Usage(session=session, turn=turn, prompt=prompt, completion=completion, cached=cached):
@@ -984,7 +984,7 @@ def _asking(event: _Asked) -> tuple[_Row, ...]:
 
 
 def _finished(turn: int, reason: str) -> str:
-    """A turn that ran, with the reason it stopped when it was stopped rather than ending by itself."""
+    """A turn that ran, with the reason it stopped when it was stopped, and nothing when it ended by itself."""
     return f"turn {turn} finished" + (f": {reason}" if reason else "")
 
 
@@ -1001,7 +1001,7 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
     """The one line that asks the human something, with whatever default is on offer.
 
     The default is shown, not applied: confirming it is a keystroke, and a question with no default
-    says so by offering a blank line rather than a prefilled answer.
+    says so by offering a blank line, with no answer prefilled.
     """
     match ask:
         case Confirmation(prompt=prompt, default=default):
@@ -1045,9 +1045,9 @@ def _weighed(ask: Confirmation) -> str:
 
 
 def notice(text: str) -> Shown:
-    """One line this client says about itself, rather than one the kernel said: help, or a bad line.
+    """One line this client says about itself, where the kernel said nothing: help, or a bad line.
 
-    It is a notice rather than a refusal because nothing was refused: the kernel never heard it, and a
+    It is a notice because nothing was refused: the kernel never heard it, and a
     refusal on this screen means a thing the kernel would not do.
     """
     return Shown(text, "notice")
@@ -1055,8 +1055,8 @@ def notice(text: str) -> Shown:
 
 #: How each kind of line is written, as a style name a terminal understands.
 #:
-#: A table rather than a branch, and keyed by the whole closed set: every role has an answer, so adding
-#: one is a decision about how it looks rather than a colour it happens to fall through to. None of
+#: A table, with no branch under it, keyed by the whole closed set: every role has an answer, so adding
+#: one is a decision about how it looks, never a colour it happens to fall through to. None of
 #: these are honour system decoration — ``refusal`` says something did not happen, ``tool`` says who
 #: did it, and the two grey ones are the kernel talking about itself.
 #:
