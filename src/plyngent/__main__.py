@@ -64,8 +64,8 @@ NO_COLOUR = "NO_COLOR"
 #: (128 + SIGINT). A frontend whose loop can be told does not come here — it stops a turn instead.
 INTERRUPTED = 130
 
-#: What a question about trees offers when the answer is "none of them": the run then stops rather than
-#: connecting to something it has no tree to say about (E154).
+#: What a question about trees offers when the answer is "none of them": the run then stops, and no
+#: connection is made to something it has no tree to say about (E154).
 _NOTHING = "nothing"
 
 
@@ -199,8 +199,8 @@ async def run(
     It is the body of the command without the command line: the same shapes, the same file read before
     anything starts, and the same policy for this run. Nothing here asks a person anything and nothing
     here exits — a run that will not start travels out as the exception it is, and `main` is what words
-    it and picks the code — so a program that brings something of its own starts this one instead of
-    copying it. That program is a launcher, and it is a few lines: what a component may do is what its
+    it and picks the code — so a program that brings something of its own starts this one, and copies
+    nothing. That program is a launcher, and it is a few lines: what a component may do is what its
     declaration was constructed with, and it is declared where every other one is (E143).
 
     ``components`` is the one argument the command line has no flag for, because it is code and not a
@@ -300,7 +300,7 @@ async def _connected(
     Which tree this connection means is asked *after* the greeting, because the greeting is the only
     list of the trees that kernel has open (E154). The declaration is therefore this function's, and the
     version is still compared before it: a connection that turns out to be another program is a sentence
-    rather than a tree nobody could have meant.
+    is a sentence, and not a tree nobody could have meant.
     """
     try:
         client = await boot.connect(at, declare=False)
@@ -328,7 +328,7 @@ def _tree_of(asked: Path | None, *, said: tuple[WorkspaceRow, ...], at: Path) ->
     """Which tree this connection means when a command names none, or a sentence saying there is none.
 
     Three answers, in the order they can be *known*. A directory was named, so that is the answer — and
-    it is a choice rather than a claim: a tree the kernel has not opened is opened by the ``Open`` this
+    it is a choice, and not a claim: a tree the kernel has not opened is opened by the ``Open`` this
     run sends first, which is why ``--workspace .`` and no ``--workspace`` are not the same thing (E154).
     Otherwise, if this run is standing in one of the trees the kernel serves, it is that one — not a
     guess, because a person already in a tree a kernel is working in has said which tree they mean.
@@ -481,7 +481,7 @@ def _interrupted() -> asyncio.Future[None]:
     A daemon differs from a frontend here, and the difference is not a preference: it has no keyboard in
     front of it, no prompt to interrupt and no line to stop, so signalling it *is* how its supervisor asks
     it to come down. What the signal becomes is one event the daemon can be shut down around, so a
-    program ends in the order things depend on instead of tearing a loop down under live connections.
+    program ends in the order things depend on, and no loop is torn down under live connections.
     """
     stopping: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
@@ -513,7 +513,7 @@ def _plain(stream: TextIO) -> bool:
 def _markdown(*, reading: TextIO, written: TextIO) -> bool:
     """Whether an answer is laid out as the markdown it is, and grown in place while it arrives.
 
-    Two facts, and both are about the streams rather than about a preference: the lane must be a terminal
+    Two facts, and both are about the streams, not about a preference: the lane must be a terminal
     on both sides — an answer wrapped for a width nobody asked for is a different answer, and the rows a
     window takes back are cursor movements, which in a file are mojibake. So the plain lane's text stays
     exactly what the model wrote, byte for byte (§2 R8, E100).
@@ -531,9 +531,9 @@ def _colour(*, asked: bool, stream: TextIO) -> bool:
 
     Three ways to say no, and they are one answer: the flag for this run, ``NO_COLOR`` for this person,
     and a stream that is not a terminal — which is not a preference but a fact, since an escape code
-    written into a file is mojibake and nothing else. ``NO_COLOR`` is the terminal's own convention
-    rather than a setting of this program's, which is why it is read here beside the stream it is about
-    and not by the file's loader (§0.11, E76).
+    written into a file is mojibake and nothing else. ``NO_COLOR`` is the terminal's own convention, and no
+    setting of this program's, which is why it is read here beside the stream it is about and not by the
+    file's loader (§0.11, E76).
     """
     if asked or not stream.isatty():
         return False

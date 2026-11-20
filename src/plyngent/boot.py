@@ -81,7 +81,7 @@ DEFAULT_HOST = "ws"
 KERNEL_TRANSPORTS = ("inproc", "local") if local.AVAILABLE else ("inproc",)
 
 #: How often the composition root looks at the one component it may have to replace. It is a poll
-#: rather than a callback because the thing being watched is a child process: nothing tells us it died.
+#: It is a poll, since the thing being watched is a child process: nothing tells us it died.
 BROKER_WATCH_SECONDS = 0.5
 
 
@@ -135,7 +135,7 @@ class _Share(NamedTuple):
 
 
 class _Defaults(NamedTuple):
-    """How a tree is built when the program said it once for the process rather than per tree."""
+    """How a tree is built when the program said it once for the process, where a tree may say it again."""
 
     qualifier: str
     journal: Path | str | None
@@ -153,7 +153,7 @@ class _Kernel:
 
     A tree is brought up on demand — by :func:`install` for the one it was started in, by :func:`serve`
     for the one a daemon was pointed at, and by a command that names another — so what a connection is
-    greeted with is a *snapshot* of this table rather than the set of trees that may ever exist, and a
+    greeted with is a *snapshot* of this table, where the set of trees that may ever exist is open-ended, and a
     daemon nobody pointed at a tree starts with an empty one. Every part that belongs to one tree (its
     journal, its document store, its version store, its terminals, its event count) is declared under that
     tree's qualifier, and everything else here is declared once.
@@ -170,7 +170,7 @@ class _Kernel:
     #: One count per tree, keyed as the greeting spells a tree's path, and kept by reference: a
     #: connection made before a tree existed reads it once that tree is open (E154).
     ledgers: dict[str, Ledger]
-    #: The count for what a *connection* says rather than a tree — a goodbye, a listing. It is the
+    #: The count for what a *connection* says, and no tree owns it — a goodbye, a listing. It is the
     #: process's own, because those events are about the connection and not about any one tree.
     events: Ledger
 
@@ -201,8 +201,8 @@ class _Kernel:
         """The first tree this process opened — the one a kernel started for one connection was built on.
 
         A daemon names no tree and may have opened none, so this is a question only a kernel that was
-        started *over* a tree can answer; asking it of a daemon is a mistake in the asking, and it says so
-        rather than handing back nothing.
+        started *over* a tree can answer; asking it of a daemon is a mistake in the asking, and the answer
+        says so.
         """
         first = next(iter(self.trees.values()), None)
         if first is None:
@@ -250,7 +250,7 @@ class _Kernel:
         qualifier = self.defaults.qualifier if not self.trees else f"{self.defaults.qualifier}{len(self.trees) + 1}"
         kept = _journal_file(path, self.defaults.journal if not self.trees else None)
         # One store per tree, beside the journal it belongs with — and none at all where nothing can keep
-        # one, which is a fact about the machine rather than about the call that asks for it.
+        # one, which is a fact about the machine, and no call decides it.
         versions_kept = History(path, history_path(kept)) if self.defaults.versions and available() else None
         limits = Limits() if self.defaults.pty is None else self.defaults.pty
         _ = self.registry.declare_all(
@@ -491,7 +491,7 @@ class Installed:
     async def close(self) -> None:
         """Leave in the order things depend on: stop watching, stop serving, then take the hosts down.
 
-        The loop is awaited rather than merely told to stop, because its last act is to leave every
+        The loop is awaited, and telling it to stop would not be enough, because its last act is to leave every
         tree's audience — and leaving an assembly that is already going down has nowhere to land.
 
         Both ends of a socket are closed and waited for, which is what makes the last thing this kernel
@@ -555,10 +555,10 @@ async def install(
     The declarations are the whole kernel: the PTY broker every host shares, a PTY registry per host,
     the channel a person answers through, the model a turn asks, the journal a conversation is kept in,
     and the host they belong to. Sessions are *not* declared here — a session arrives with ``Open``,
-    which is what makes it a command rather than a startup flag.
+    which is what makes it a command, never a startup flag.
 
-    ``model`` is installed rather than reached for: ``None`` is a kernel with nothing to ask, which
-    refuses turns instead of pretending a model answered. It is the same move as attaching a client to
+    ``model`` is installed, and nothing is reached for: ``None`` is a kernel with nothing to ask, which
+    refuses turns, and pretends no model answered. It is the same move as attaching a client to
     the human channel, and a test's scripted model is installed exactly the way a real one will be.
 
     ``routes`` and ``route`` are the other half of asking a model: the endpoints this program may use,
@@ -571,7 +571,7 @@ async def install(
     ``engines`` is the same move for the web half of the net tools: ``None`` is "whatever the routes
     install", which is one engine per implementation a route names in ``provider``, and then ``web_fetch``
     and ``web_search`` are in the table only when some engine can do that verb. A program with no engine
-    has neither tool rather than two that fail when called. That is the one thing about this program that
+    has neither tool, where two that fail when called would be worse. That is the one thing about this program that
     decides *which* tools exist, and it is decided here because it is a fact about how the program was
     started (§0.9, E26). Which engines a file asked for — the order, the defaults, the keyless ones — is
     :func:`engines_for`'s answer, which is what :mod:`plyngent.config` hands in.
@@ -579,40 +579,40 @@ async def install(
     ``skills`` is where a skill is looked for, and ``None`` is a kernel with no skill tools at all — the
     same move again, for the five of them (§0.10, E36). Which directories those are is
     :meth:`~plyngent.kernel.skills.Skills.standard`'s answer and it is given by whoever starts the
-    program, because a list of places to look is a fact about the machine rather than about the kernel.
+    program, because a list of places to look is a fact about the machine, and the kernel does not decide it.
     Passing a store built from a temporary directory is what lets a story have skills without reading
     the person's own.
 
     ``prompt`` is what every request to a model begins with, and it is a parameter for the same reason
     ``skills`` is: the catalog of skills under those directories is read from the machine this program was
-    started on, and the plan is read once there rather than per request (a prompt is the front of a
+    started on, and the plan is read once there, and not per request (a prompt is the front of a
     provider's cached prefix, and a section recomputed on every ask would move it with no counter to say
     so). ``None`` is the plan these skills make (:meth:`~plyngent.kernel.prompt.PromptPlan.of`); a program
     that says who the model is says it here.
 
-    ``journal`` says where the conversation is kept, and it is a parameter rather than something the
-    backend decides for itself. ``None`` is one file per workspace in the user's data directory
+    ``journal`` says where the conversation is kept, and it is a parameter, so no backend decides it for
+    itself. ``None`` is one file per workspace in the user's data directory
     (:func:`~plyngent.kernel.journal.journal_path`), ``":memory:"`` is a conversation nobody meant to
-    keep, and a path is that path — which is what lets a story keep its journal beside its workspace
-    instead of in the person's own data. The bodies too long to send are kept in their own file beside
+    keep, and a path is that path — which is what lets a story keep its journal beside its workspace,
+    out of the person's own data. The bodies too long to send are kept in their own file beside
     whichever journal answers
     (:func:`~plyngent.kernel.documents.documents_path`), so no second thing has to be named here.
 
     ``pty`` is how much of this host its terminals may take, and it is one parameter because it is one
     value: three numbers that only ever travel together, decided here for the same reason the skills
     directories are. ``None`` is the numbers this tree ships with, so a program with no configuration file
-    is the program it always was; a story that wants one terminal's worth of room says so here instead of
-    reaching into a registry it did not build (§0.11, E85).
+    is the program it always was; a story that wants one terminal's worth of room says so here, and never
+    reaches into a registry it did not build (§0.11, E85).
 
     ``running`` is how many turns this kernel runs at once, and ``None`` is this tree's own number. It is a
-    budget for the process rather than for one conversation, so it is said here rather than per session,
-    and a turn beyond it is refused instead of queued (E156).
+    budget for the process, and not for one conversation, so it is said here, and not per session,
+    and a turn beyond it is refused, not queued (E156).
 
     ``rounds`` and ``soft`` are how far one turn may go: how many times it may ask the model before the
     wall, and whether the wall asks the person first. ``None`` is this tree's own number, which is no wall
     at all, so a program nobody configured is one whose turns end when the model is done (E150).
-    ``transport`` is named rather than assumed: it is what a client reaches the kernel over, and a
-    name this build cannot open is refused here instead of half-working somewhere further in.
+    ``transport`` is named, and nothing is assumed: it is what a client reaches the kernel over, and a
+    name this build cannot open is refused here, and never half-works somewhere further in.
     ``local`` is one connection over a socket this kernel accepted, so ``endpoint`` is where it listens:
     a path, or ``None`` for one this process invents because nobody has to find it. An address a *person*
     names arrives from the command line and not from here (§5 B).
@@ -627,7 +627,7 @@ async def install(
     this build ships with — a bare repository beside the journal
     (:func:`~plyngent.kernel.history.history_path`) — and it is kept only where this machine has a git
     to keep it with, so a machine without one records *what* changed and not the bytes. That degradation
-    is decided here rather than discovered at the first write (§10.1, E26), the way a kernel with no
+    is decided here, before the first write (§10.1, E26), the way a kernel with no
     skills directory has no skill tools.
 
     ``components`` is the one thing here that is not a value out of a file: a launcher that brings
@@ -706,7 +706,7 @@ class Daemon:
     The difference from :class:`Installed` is that a daemon has no client of its own — nothing here waits
     for one particular frontend to leave, and no frontend holds this object. What it serves is the same
     kernel, and every connection reads and writes the same sessions, so two clients are two views of one
-    conversation rather than two conversations.
+    conversation, and no second conversation is made.
 
     The address is the only thing that says how to reach it, and it is the caller's: the command line
     named it, or this process invented one nobody has to find (§5 B).
@@ -811,7 +811,7 @@ async def serve(
     tree it serves is one a client named. A daemon pointed at a tree starts with that one open, which is
     what a story about several trees wants in one line.
 
-    ``endpoint`` is required rather than defaulted, because a daemon nobody can name is a daemon nobody
+    ``endpoint`` is required, and never defaulted, because a daemon nobody can name is a daemon nobody
     can reach — the only caller that never has to find one is :func:`install`, which is its own client.
     """
     if not local.AVAILABLE:
@@ -849,7 +849,7 @@ async def connect(endpoint: Path | str, *, declare: bool = True) -> KernelLink:
     The manifest arrives before the connection is handed over, so there is one thing less to forget: a
     frontend that holds this value already knows which commands exist (R2.1 D7). What it cannot know is
     whether the program it reached is this one, which is why an address that answers and then says
-    nothing is refused here rather than failing at the first command — and why the version in that
+    nothing is refused here, before the first command — and why the version in that
     manifest is compared before the value is handed over. The other half of the same exchange is this
     client's own: :func:`_begun` says which version *it* speaks, because a kernel is entitled to the
     same opinion about who may connect to it.
@@ -932,7 +932,7 @@ async def _assembled(
     # tool table is a fact about the program, so one answer serves every tree it serves.
     specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
     # One broker for the whole process: it is the root-qualified component, and it is the only thing here
-    # that a host reaches for across the qualifier axis (§9.4). A tree shares it rather than owning one.
+    # that a host reaches for across the qualifier axis (§9.4). A tree shares it, and no tree owns one.
     # What a launcher brought is declared beside it, and a declaration that reaches for something nothing
     # declared is the registry's refusal to make — order here is dependency order, not declaration order.
     _ = registry.declare_all([Declaration(PtyBroker), *components])
@@ -1019,7 +1019,7 @@ def engines_for(routes: Iterable[Route], web: Web | None = None) -> Engines:
 
     A route installs an implementation by writing its name in ``provider``, and the implementation turns
     those routes into its accounts — one per route, and no engine at all when no route names it. Which
-    kinds end up here is therefore a fact about the configuration rather than a decision taken in this
+    kinds end up here is therefore a fact about the configuration, and no decision in this
     file: the order is ``[web].engines`` when a program said, and the routes' own when it did not. A name
     nothing implements installs nothing here, because the file that could have written one is where the
     refusal belongs.
@@ -1048,7 +1048,7 @@ def _opened(
 ) -> Link:
     """The kernel's half of one connection: the link it reads, started, ready to be served.
 
-    Starting it here rather than by whichever caller remembered to is what makes "an answer is settled
+    Starting it here, so no caller has to remember to, is what makes "an answer is settled
     where the answer lane is read" true of every connection this program opens, however it got one. The
     counts are the trees' and the map is the kernel's own object, so a client reads numbers that neither
     restart when its connection does nor stop at the tree that happened to be open first (E154).
@@ -1092,7 +1092,7 @@ def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelMan
 async def _told_what_it_loses(kernel: _Kernel) -> None:
     """Give every host the one chance to say what this process takes with it (E151).
 
-    Before the assembly goes down rather than after, and this is the whole of the timing: the sentence is a
+    Before the assembly goes down, and not after, and this is the whole of the timing: the sentence is a
     row, so it needs a journal that is still open, and what it counts — the children on terminals and the
     scratch directories — is still there to be counted only until the host lets go of it.
 
@@ -1137,7 +1137,7 @@ def _journal_file(root: Path | str, journal: Path | str | None) -> Path | str:
 
     The choice is made here because it is a fact about how the program was started and nowhere further
     in: everything past this point holds a ``Trail`` and never asks which one it is. Both answers are the
-    same backend — a temporary journal is SQLite's in-memory database rather than a second implementation
+    same backend — a temporary journal is SQLite's in-memory database, and no second implementation
     of the protocol — and the kept bodies of a conversation live beside whichever file answers it.
     """
     if journal == MEMORY_JOURNAL:
