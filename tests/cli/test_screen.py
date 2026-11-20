@@ -10,7 +10,7 @@ The last two tests are the reason the segment exists: half a line typed when an 
 there when the event is done, and the two streams are still two streams.
 
 The four after them are E100's half of the same screen: a block of answer that is still being written is
-drawn as a window, and a window is *taken back* rather than written again — which is a thing only the
+drawn as a window, and a window is *taken back*, not written again — which is a thing only the
 terminal's own output can do, so it is asserted on the bytes a real one would have sent.
 """
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 PATIENCE = 10.0
 
 #: The prompt these tests draw, and the part of it that reaches a stream as *text*: the rest of the row
-#: is where the cursor goes, which a plain-text output writes as a newline rather than as a space.
+#: is where the cursor goes, which a plain-text output writes as a newline, not as a space.
 PROMPT = "ask "
 MARK = "ask"
 
@@ -62,7 +62,7 @@ class _Prompt:
     It watches the stream it was handed, so each record carries what the screen had *at that moment*:
     an ``erase`` with nothing in it and a ``redraw`` with the line in it is the same statement as "the
     line was written in between", and it is the statement that fails when a write goes through a prompt
-    instead of after it.
+    that has not stepped aside.
     """
 
     _where: io.StringIO

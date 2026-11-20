@@ -3,7 +3,7 @@
 Nothing here knows about a terminal: :func:`chunks` cuts the text where it can no longer change, and
 :func:`lines` lays one block out for a width it is handed. So what a test can pin is exactly what E100
 decided — a blank line is the boundary, a fence is not, an unclosed marker stays literal, and a width is
-an argument rather than something measured.
+an argument, not something measured.
 """
 
 from __future__ import annotations

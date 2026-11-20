@@ -99,7 +99,7 @@ def test_a_turn_the_journal_has_no_end_for_is_said_out_unless_it_is_still_runnin
 
 def test_every_refusal_has_a_sentence_and_every_sentence_a_refusal() -> None:
     """A kind the renderer has no words for is a refusal a person reads as a crash, and the reverse is
-    a sentence nobody can reach — so the two sets are held equal rather than kept in step by hand."""
+    a sentence nobody can reach — so the two sets are held equal."""
     assert set(_REFUSALS) == set(Refusal)
 
 

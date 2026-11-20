@@ -63,7 +63,7 @@ def test_a_loop_that_cannot_be_told_says_so() -> None:
     """The answer is a value, so the caller keeps an exit code for the case nothing was installed.
 
     A caller that is not on a loop at all is the same answer: there is nowhere to install a handler, and
-    a signal raised here is the process's own rather than a stop the loop can be asked for.
+    a signal raised here is the process's own, and no stop of the loop can be asked for.
     """
     with _a_signal_is_a_stop(lambda: None) as told:
         assert told is False

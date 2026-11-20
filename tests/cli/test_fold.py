@@ -47,7 +47,7 @@ def test_the_message_the_fragments_add_up_to_is_not_said_twice() -> None:
     _ = fold.push(_delta("said once\n"))
 
     assert fold.push(AssistantText(session="main", turn=1, text="said once\n")).lines == (), (
-        "the fragments already were the lines, so the whole message is dropped rather than printed again"
+        "the fragments already were the lines, so the whole message is dropped, not printed again"
     )
 
 

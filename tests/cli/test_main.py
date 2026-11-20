@@ -151,7 +151,7 @@ def test_a_run_that_named_no_address_serves_this_person_own(tmp_path: Path, monk
 
 
 def test_a_daemon_cannot_be_told_which_tree_to_work_in() -> None:
-    """``--serve`` opens no tree, so ``--workspace`` beside it is a usage error rather than a silent extra."""
+    """``--serve`` opens no tree, so ``--workspace`` beside it is a usage error, not a silent extra."""
     result = CliRunner().invoke(main, ["--serve", "--workspace", "."])
 
     assert result.exit_code == 2

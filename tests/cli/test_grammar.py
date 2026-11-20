@@ -59,7 +59,7 @@ def test_an_empty_argument_is_still_an_argument() -> None:
 
 
 def test_a_word_whose_argument_is_one_of_two_words_takes_it_bare() -> None:
-    """E146: ``/goal on`` is the value, and ``/goal`` alone is the question rather than the empty mode.
+    """E146: ``/goal on`` is the value, and ``/goal`` alone is the question, not the empty mode.
 
     A word whose whole argument is a closed set has no option for it: naming the option would make a person
     type a word they can already see in the help, and the value they type is the same value the wire

@@ -3,7 +3,7 @@
 Everything else about the cursor is asserted without a terminal — a pipe for keys and prompt_toolkit's
 own output for the screen — because that is what keeps its neighbours fast and portable. This one exists
 for what a pipe cannot answer: that the bytes reach a *device*, that the newline **Alt+Enter** makes
-lands as a newline rather than sending half a message, and that a message written over two rows comes
+lands as a newline, and no half message is sent, and that a message written over two rows comes
 back as one.
 
 It is one test and it is POSIX only: a pty is a POSIX device, and Windows would need a ConPTY broker to
@@ -36,7 +36,7 @@ PATIENCE = 20.0
 _ASKS_WHERE_THE_CURSOR_IS = "\x1b[6n"
 _CURSOR_IS_HERE = b"\x1b[1;1R"
 
-#: Everything a terminal is told to do rather than to show — read as instructions, it says nothing.
+#: Everything a terminal is told to do, not to show — read as instructions, it says nothing.
 _NOT_A_DISPLAY = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 #: A message of two rows, the second one drawn under the prompt the first one was typed at.

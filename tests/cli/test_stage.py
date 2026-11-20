@@ -1,7 +1,7 @@
 """The screen's own state: where a conversation is, and what a turn and a call cost.
 
 ``render`` is a function of one event and ``Fold`` is the message still being said; this is the third
-thing a screen needs, and the only one about a *stretch* rather than about an event. What is asserted
+thing a screen needs, and the only one about a *stretch*, not about an event. What is asserted
 here is the shape of the rows and the numbers in them, which a story cannot pin down: a story has no
 clock, so the duration it would read is whatever the machine happened to take.
 """

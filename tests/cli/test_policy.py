@@ -72,7 +72,7 @@ def test_an_answer_carries_the_policy_that_gave_it() -> None:
 
 
 def test_a_choice_that_names_its_own_default_is_answered_with_it() -> None:
-    """E150: the question says what its silence picks, so a policy repeats it rather than choosing.
+    """E150: the question says what its silence picks, so a policy repeats it.
 
     This is the one narrowing of "an option nobody offered is not one a policy may pick": the option is
     in front of the person already — it is what an empty line gives — so answering it is not a policy

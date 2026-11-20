@@ -2,12 +2,12 @@
 
 Two claims, and both are about what outlives the process. A line typed in one run can be called back in
 the next — which is the whole of what history is for — and it is a *file*, so the test is a second
-editor pointed at the same path rather than a second call on the same object. And an answer is not a
+editor pointed at the same path, not a second call on the same object. And an answer is not a
 line somebody said, so it is not in that file: the one kind of answer that would be a leak is a secret,
 and a history file is a file that outlives the screen (§0.13, E102).
 
 A message may also be several lines without opening an editor: ``Enter`` sends the line, **Alt+Enter**
-starts another one, and what comes back is one message rather than two — typed, drawn and remembered as
+starts another one, and what comes back is one message, not two — typed, drawn and remembered as
 one (§0.13, E103).
 
 The screen is prompt_toolkit's own plain-text output and the keys come from a pipe, which is how a
