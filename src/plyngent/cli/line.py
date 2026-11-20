@@ -6,8 +6,8 @@
 
 A terminal has one cursor, so this file has one owner of it and three verbs: read a line, ask a
 question, compose a message. They are the same resource on purpose — a question arriving while
-somebody is typing must take the cursor *now* rather than queue behind a line that may never be
-finished. Queuing would turn "the human is typing" into "the approval timed out and was refused",
+somebody is typing must take the cursor *now*, and a line that may never be finished has no claim on
+it. Queuing would turn "the human is typing" into "the approval timed out and was refused",
 which is the rule R2.1 D14 just established in the other direction.
 
 Two owners, because there are two kinds of cursor. :class:`PromptEditor` owns a terminal's; a pipe, a
@@ -28,9 +28,9 @@ caller does something different with each:
 :func:`answer_to` is the other half of a question: what a line *means* once it belongs to a
 :class:`~plyngent.wire.ask.Ask`. It answers ``None`` when the line did not answer the question — a
 blank line for a yes/no with no default, or a word that is not one of the options — and the caller
-asks again rather than inventing an answer.
+asks again, and invents nothing.
 
-Two more things belong to a terminal rather than to a pipe, and both are about what the line *remembers*.
+Two more things belong to a terminal, and a pipe has neither, and both are about what the line *remembers*.
 A terminal has arrow keys, so what was typed last run can be called back — kept in a file of its own in
 the user's data directory, one per session, since a conversation is what a person comes back to
 (:func:`history_path`). And it has more than one row, so a message may be several lines long without
@@ -84,7 +84,7 @@ class Typed:
 
 @dataclass(frozen=True, slots=True)
 class EndOfInput:
-    """Ctrl+D: the human is done talking, and the program ends instead of asking anything else."""
+    """Ctrl+D: the human is done talking, and the program ends without asking anything else."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,8 +178,8 @@ def _picked(
     A question answered once is the option the line says and nothing else. A question answered several
     times is what the line lists, one per comma, in the order they were written and each only once —
     a comma is the one syntax a line has for a list. A word that is not an option and a line that lists
-    nothing are both "this did not answer it", so the client asks again rather than dropping the part it
-    did not recognise and taking the rest.
+    nothing are both "this did not answer it", so the client asks again, and neither drops the part it
+    did not recognise nor takes the rest.
     """
     said = text.strip() or default
     if said is None:
@@ -222,7 +222,7 @@ def mark_path(session: str, *, address: str, workspace: str) -> Path:
     The same directory rules as :func:`history_path`, and for the same reason: it is a frontend's own
     memory of a conversation, and it does not belong in the tree it was talking about. What it holds is a
     number the *kernel* gave out, so it is only meaningful beside the run that gave it — the greeting
-    says which run that was, and a mark from another one is dropped rather than guessed at (§5 B).
+    says which run that was, and a mark from another one is dropped, with nothing guessed about it (§5 B).
 
     A mark is about an ``(address, tree, session)`` and not about a session: two kernels may each serve a
     conversation called ``main``, and one kernel may serve several trees that do (E154). Only the digest
@@ -255,12 +255,12 @@ class _Spoken(History):
     """What this person *said* at the line: kept for this run, and in a file when there is one.
 
     An answer is not something somebody said — it answers a question the kernel asked, and ``y`` or a
-    path coming back out of the arrow keys is noise rather than recall. The case that makes this a rule
-    instead of a preference is :class:`~plyngent.wire.ask.Secret`: a password that scrolls back is a
+    path coming back out of the arrow keys is noise, and not recall. The case that turns this into a rule
+    is :class:`~plyngent.wire.ask.Secret`: a password that scrolls back is a
     password on the screen, and a history file is a file that outlives the screen.
 
-    So whether to keep something is a switch that is off while an answer is being read, rather than a
-    filter over the text: a filter would have to *recognize* a secret, and nothing here can.
+    So whether to keep something is a switch that is off while an answer is being read, and no filter over
+    the text: a filter would have to *recognize* a secret, and nothing here can.
 
     What it holds is a *path*, not an open file: the format is prompt_toolkit's ``FileHistory``, asked
     for by the line that needs it, and nothing — not even the directory — exists until the first line
@@ -325,13 +325,13 @@ class PromptEditor:
       interrupted it cannot be confused with what the kernel said.
     * **A question goes first.** It preempts a line by cancelling the prompt *task* and keeping the
       buffer, and the line loop gets :class:`Preempted` — so nothing typed is lost, and a line read
-      that starts afterwards waits for the question to finish rather than racing it for the cursor.
+      that starts afterwards waits for the question to finish, and never races it for the cursor.
     * **A composed message comes back through the same four cells.** ``/submit`` opens the human's own
       editor; an empty or aborted draft is the same thing as an interrupted line.
     * **Only what was said is remembered.** The line loop's own lines go into this session's history
       file; a question's answer does not, and a secret never does (:class:`_Spoken`).
 
-    The two streams are found rather than handed in — a terminal is the process's own, and there is
+    The two streams are found, and never handed in — a terminal is the process's own, and there is
     exactly one — except when they are handed in, which is how a test holds a screen up to this without
     a terminal at all (the same seam the plain lane has, and the reason ``keys`` and ``output`` exist).
 
@@ -426,8 +426,8 @@ class PromptEditor:
     async def compose(self) -> Line:
         """Let the human write the message in their own editor, and come back with what they wrote.
 
-        A message that wants paragraphs wants an editor, and a one-line prompt would be a worse editor
-        rather than a simpler command. An empty draft and a failed editor are both *nothing to send*.
+        A message that wants paragraphs wants an editor, and a one-line prompt would be a worse editor,
+        never a simpler command. An empty draft and a failed editor are both *nothing to send*.
         Nothing composed here is remembered either: it was not typed at the line, and a recalled
         message should be one that can be edited where it is recalled from.
         """
@@ -508,7 +508,7 @@ class PlainEditor:
 
     The same three verbs and the same four cells, with the drawing taken out — and taking the drawing
     out is the whole of it: nothing here moves a cursor, so nothing here can be taken back, and two of
-    the four cells become unreachable rather than left unimplemented.
+    the four cells become unreachable, and none is left unimplemented.
 
     * **A question is printed, not drawn.** A file has no prompt to put it in, so the question goes to
       the notices stream and the next line answers it. A line that does not answer it gets the question
@@ -518,13 +518,13 @@ class PlainEditor:
     * **:class:`Preempted` cannot happen**: a question cannot take a cursor that does not exist, so a
       line read here is never cut short by one.
     * **:class:`Cancelled` cannot happen**, but nothing is lost by that: an interruption in this lane
-      arrives as a *signal* rather than as a key, and the loop answers a signal with the same stop the
+      arrives as a *signal*, and not as a key, and the loop answers a signal with the same stop the
       key makes (:func:`plyngent.cli.app._a_signal_is_a_stop`). A line read here is therefore never cut
       short — the read is still waiting when the turn it belonged to has stopped (§0.13, E97).
     * **Nothing is remembered**: history is what the arrow keys reach back for, and a file has no arrow
       keys. A pipe is a thing being read, not a person being helped.
 
-    The streams are handed in rather than found: a file is a value, and the terminal's own two are the
+    The streams are handed in, and nothing is found: a file is a value, and the terminal's own two are the
     process's only because there is exactly one of them.
     """
 
@@ -566,7 +566,7 @@ def _offer(question: AnyAsk, taken: str) -> tuple[str, bool]:
 
     A secret is never suggested — not even the line it preempted, which is ordinary text the human was
     typing about something else. The other three kinds offer what they asked for, and a text question
-    offers back the line it interrupted rather than losing it (R2.4 C3).
+    offers back the line it interrupted, and loses nothing (R2.4 C3).
     """
     match question:
         case Confirmation(default=default):
@@ -590,7 +590,7 @@ def _edited(editor: str, path: Path) -> str:
     """Run the human's editor on the draft and read it back — off the loop, since a person may take a while.
 
     A draft that is empty, or an editor that failed, is nothing to send; the caller turns both into one
-    answer rather than sending an empty message.
+    answer, and no empty message is sent.
     """
     try:
         finished = subprocess.run([*shlex.split(editor), str(path)], check=False)

@@ -4,13 +4,13 @@ The command table is not written here. The kernel's manifest already carries eac
 one-line help and the JSON Schema of its own arguments, so this module *derives* the parser, the help
 text and the completion candidates from that one document — three things that cannot drift apart
 because there is only one source (R2.4 C5). A command whose arguments cannot be spelled on a line is
-withheld with a reason instead of being offered half-way.
+withheld with a reason, and never offered half-way.
 
 Two halves, both terminal business:
 
 * a slash word is the command's own tag, plus a short alias table (:data:`ALIASES`) for the words a
   person reaches for first. The alias table is the adapter's: a kernel command may be named anything,
-  and ``/new`` is a terminal convenience rather than a second command (R2.4 C4);
+  and ``/new`` is a terminal convenience, with no second command behind it (R2.4 C4);
 * text without a slash is a message — ``Submit`` — because "say something" is the one thing a person
   does all day and should never have to spell.
 
@@ -24,8 +24,8 @@ human's editor, which is the one thing a single line cannot do. It takes no argu
 from the editor and the session is the one in focus.
 
 ``/travel`` is the second word this adapter owns, and the only one that sends nothing at all: where a
-frontend is looking is its own state, so standing somewhere else is a change here rather than a request
-to the kernel. Everything else on a line is either a command from the manifest or a read.
+frontend is looking is its own state, so standing somewhere else is a change here, and no request
+reaches the kernel. Everything else on a line is either a command from the manifest or a read.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 #: reason; ``tests/test_structure.py`` holds those rules together.
 ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": "set-route"}
 
-#: The words that *read* rather than ask for anything: each names one query, and none is in the manifest.
+#: The words that *read*, and ask for nothing to be done: each names one query, and none is in the manifest.
 #: A manifest lists what a client may ask the kernel to **do**; these ask it to say something and travel
 #: on their own lane (§5, E134), so the table is this adapter's — the word is the query's tag the same way
 #: a command's word is its tag, and ``tests/test_structure.py`` holds the two tables to one shape.
@@ -69,7 +69,7 @@ READS: dict[str, type[AnyQuery]] = {
     "skills": Skills,
 }
 
-#: The one word whose text is written in an editor rather than on the line.
+#: The one word whose text is written in an editor, and never on the line.
 COMPOSED = "submit"
 
 #: What that word does, said in its own terms: the wire's summary describes a ``submit`` whose text is
@@ -101,7 +101,7 @@ READ_USAGE = "[--session TEXT]"
 
 
 def _scoped(kind: type[Query]) -> bool:
-    """Whether this read word asks about one conversation rather than about the program itself.
+    """Whether this read word asks about one conversation, and not about the program itself.
 
     One word asks the other question: the skills are found when the program starts and every conversation
     sees the same table, so ``/skills`` has no name to take and no session to resolve.
@@ -112,7 +112,7 @@ def _scoped(kind: type[Query]) -> bool:
 def _asks_about(kind: type[AnyQuery], session: str) -> AnyQuery:
     """The question one read word puts: the conversation it names, or none at all.
 
-    A builder per word rather than a keyword argument, because the two are not the same shape: a
+    A builder per word, since one keyword argument cannot carry both shapes: a
     ``Grants`` about a conversation takes its name and a ``Skills`` has no field to put one in.
     """
     return _ASKS[kind](session)
@@ -145,7 +145,7 @@ class Entry:
     command: click.Command
     #: Options that must be given zero or twice — a tuple the wire carries as a fixed-length pair.
     pairs: list[str] = field(default_factory=list)
-    #: Whether this word opens an editor instead of taking arguments from the line.
+    #: Whether this word opens an editor, taking no arguments from the line.
     composes: bool = False
 
     @property
@@ -188,7 +188,7 @@ class Composes:
 
 @dataclass(frozen=True)
 class Help:
-    """What to show instead of doing anything."""
+    """What to show when nothing is done."""
 
     text: str
 
@@ -229,8 +229,8 @@ type Intent = Runs | Composes | Reads | Travels | Help | Wrong
 def build(manifest: KernelManifest, *, session: str) -> Catalog:
     """Derive the slash vocabulary from the manifest, once per connection.
 
-    ``session`` is the session in focus, so ``--session`` can default to it instead of making every
-    command say which conversation it means.
+    ``session`` is the session in focus, so ``--session`` can default to it, and no command has to say
+    which conversation it means.
     """
     classes = {cls.__struct_config__.tag: cls for cls in get_args(AnyCommand.__value__)}
     offers: dict[str, Entry] = {}
@@ -265,7 +265,7 @@ def word_help(catalog: Catalog, word: str) -> str:
     rendered from the options the parser was built from, while a read word and the one word this client
     answers itself have no command behind them and say their two lines here.
 
-    A word nobody has is a sentence rather than an exception: a person typed it on the other end.
+    A word nobody has is a sentence, and never an exception: a person typed it on the other end.
     """
     tag = catalog.word(word)
     if tag is not None:
@@ -370,7 +370,7 @@ def _travelling(rest: str, *, catalog: Catalog) -> Intent:
     """Where to stand: one entry id, spelled as the option a person can see in the listing.
 
     One argument and no second: an entry is a name the kernel minted, so there is nothing here to
-    interpret — and an empty one is a line that forgot its value rather than a place to stand.
+    interpret — and an empty one is a line that forgot its value, and no place to stand.
     """
     try:
         parts = shlex.split(rest)
@@ -389,7 +389,7 @@ def _known(tag: str, entry: Entry, rest: str, *, catalog: Catalog, session: str)
     """A word this client can spell: either it wants an editor, or click does the parsing.
 
     The arguments are split like a shell's, so a quoted value stays one argument and an unquoted one is
-    several; a line with an unclosed quote is a sentence rather than an exception, because the person is
+    several; a line with an unclosed quote is a sentence, and never an exception, because the person is
     still typing on the other end of it.
     """
     try:
@@ -426,8 +426,8 @@ def _command(spec: CommandSpec, options: list[click.Parameter]) -> click.Command
     """One click command: the tag is its name, the wire's summary is its help, the options its fields.
 
     Its callback is never run — this client builds a value and sends it — but click still does the
-    parsing, the validation and the usage message, which is the point of deriving it rather than
-    writing a second tokenizer.
+    parsing, the validation and the usage message, which is the point of deriving it: a second tokenizer
+    would be one more thing to keep in step.
     """
     return click.Command(name=spec.name, params=options, help=spec.summary, callback=_ignored, add_help_option=False)
 
@@ -445,11 +445,11 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
     """The options of one command, the ones that are pairs, and why it cannot be spelled (if so).
 
     Every command carries ``session`` — the contract gives each one a target — so it is an option here
-    too, defaulting to the session in focus rather than to the empty string the wire allows.
+    too, defaulting to the session in focus, where the wire allows the empty string.
 
     ``workspace`` is on the wire's base class as well and is *not* an option: which tree a command means
     is the connection's own declaration, made once when it connects, and a per-command override is a thing
-    a frontend with more than one tree does deliberately rather than by typing a flag fifteen times
+    a frontend with more than one tree does deliberately, and typing a flag fifteen times is not that
     (E154).
 
     ``sole`` is whether this command's whole argument is the one field besides ``session``: a word with a
@@ -482,10 +482,10 @@ def _option(
     """One field as a click option: its type, whether it is a pair, and why it cannot be spoken.
 
     ``None`` and a reason travel together: a field this client cannot spell has no option at all, and
-    building a placeholder one would be a click command that cannot be constructed rather than a
-    command that is withheld.
+    building a placeholder one would give a click command that cannot be constructed, where a command
+    that is withheld can be.
     """
-    # A default belongs to the property rather than to the type it refers to, so it is read before the
+    # A default belongs to the property, and not to the type it refers to, so it is read before the
     # reference is followed — otherwise an enum with a default would silently lose it.
     offered = schema.get("default")
     branches = [_object(branch) for branch in _objects(schema.get("anyOf"))]
@@ -651,7 +651,7 @@ def _help_of(entry: Entry) -> str:
 class SlashCompleter(Completer):
     """Completion of slash words and their options, from the same table that parses them.
 
-    Derived rather than maintained: a command that gains an option gains a completion, because both
+    Derived, never maintained by hand: a command that gains an option gains a completion, because both
     read the catalog. A word this client cannot spell is not offered, which is the answer the parser
     gives too.
 

@@ -32,7 +32,7 @@ are. Those are the editor's, the screen's, the offers', and the grammar's, and t
 One thing it keeps that is nobody else's: how far it had *read* (§5 B). The kernel numbers every event
 once, so the number a client rendered up to is a number it can say again after a break — and the only
 place that survives a break is a file. It is written on the way out and claimed on the way in, and a mark
-from another run of a kernel is dropped rather than guessed at: two counts are not one.
+from another run of a kernel is dropped, and nothing about it is guessed: two counts are not one.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def _read_mark(path: Path) -> Mark | None:
 
 
 class _Asked(StrEnum):
-    """Why this client asked for a listing, because a listing's answer is state rather than news.
+    """Why this client asked for a listing, because a listing's answer is state, and carries no news.
 
     A client asks for the whole list of conversations in three states of mind: when it attaches, to
     learn where its own conversation ends; when a person types the word for it; and on the way out, to
@@ -187,7 +187,7 @@ class App:
         # leave knowing it has read everything it asked for.
         self._listings = deque()
         self._goodbye = asyncio.Event()
-        # Set by whatever the kernel says, and read as "something arrived" rather than as a count: a
+        # Set by whatever the kernel says, and read as "something arrived", with no count in it: a
         # client waiting out a turn only needs to know it should ask again, and the watermark it compares
         # is what makes a line that arrived while it was asking impossible to miss (§5 A).
         self._stirred = asyncio.Event()
@@ -195,7 +195,7 @@ class App:
         # error code: a script driving this program has to be able to tell "it answered" from "it broke"
         # without reading the screen (E159).
         self._failed = False
-        # The one message a run was asked to send instead of reading lines (``-p``), or ``None`` for the
+        # The one message a run was asked to send as its whole input (``-p``), or ``None`` for the
         # ordinary run: the same loop either way, and a different way of deciding when to say goodbye.
         self.once = once
         # What the kernel is saying right now, and where this conversation stands while it says it: only
@@ -214,12 +214,12 @@ class App:
     async def run(self) -> int:
         """Serve the connection until somebody says goodbye, then say why before closing it.
 
-        Opening the session is the first thing a client does, and it is a command rather than an
-        argument because a session is admitted into the kernel's assembly, not handed to a process
+        Opening the session is the first thing a client does, and it is a command, with no argument to
+        it, because a session is admitted into the kernel's assembly, not handed to a process
         (R2.3 第 8 步).
 
         Asking where the conversation ends is the second, and it is the reason a restarted client picks up
-        the conversation it left instead of starting a second root beside it: the session's history
+        the conversation it left, and no second root is started beside it: the session's history
         outlives the process, so "what have I said so far" is a question, not a memory. Both commands go
         out before the loops start, so the answer is the first event of the connection and nothing can
         get in front of it.
@@ -229,7 +229,7 @@ class App:
         sessions that has to be told (§10.8).
 
         The very first thing said is how far the run before this one had read, when there was one: it is
-        a claim about the past rather than progress in the present, so the kernel answers it once, and
+        a claim about the past, and it says nothing about the present, so the kernel answers it once, and
         everything after it is this connection's own (§5 B).
 
         From here on a signal is one of the ways a person says "stop that", so it is turned into the
@@ -251,7 +251,7 @@ class App:
             return GONE
         if self.policy.away_danger:
             # Once, before anything is asked: a program that will answer the heaviest questions with a
-            # yes says so rather than being discovered to have done it (§0.15, E115).
+            # yes says so up front, and nobody has to discover it afterwards (§0.15, E115).
             await self._screen.tell(notice(self.policy.opening()))
         background = [
             asyncio.create_task(self._events()),
@@ -301,8 +301,7 @@ class App:
         """Write down how far this run got, so the next one can ask for what it missed.
 
         A mark nobody can write is not a failure: the number is a convenience for the next run, and a
-        conversation that cannot keep one is a conversation that starts where it is rather than where it
-        was.
+        conversation that cannot keep one starts where it is, losing its place.
         """
         if self.mark is None or self._seen == 0:
             return
@@ -354,7 +353,7 @@ class App:
                     self._failed = True
                 if isinstance(event, Compacted) and event.session == self.session:
                     # A summary is a place to continue from, so this client's place moves to it: what is
-                    # written after a compaction goes past it rather than beside it. A compaction of
+                    # written after a compaction goes past it. A compaction of
                     # another session says nothing about where this one stands.
                     self._cursor = event.entry
                 if isinstance(event, Pruned) and event.session == self.session:
@@ -371,7 +370,7 @@ class App:
         Two of the three listings are the client's own business: the one it asks on attaching, whose
         answer is where its conversation ends, and the one it asks on the way out, whose answer is "what
         you said has been handled" (:meth:`_drained`). The third — the word a person typed — is drawn
-        like any other answer, which is why this answers ``False`` for it rather than consuming it
+        like any other answer, which is why this answers ``False`` for it and leaves the reading to another
         silently.
 
         Answering *in order* is what makes the three tellable apart: the kernel answers commands one at
@@ -423,8 +422,8 @@ class App:
         A question may carry its own deadline, and it is always the number the kernel is counting down
         to as well — the connection resolved the two before the question was sent. When it passes, the
         cursor is let go and the answer is :func:`~plyngent.wire.ask.unanswered`: the kernel is told
-        nobody answered instead of waiting on a prompt that nobody is typing into, and the prompt comes
-        down rather than standing there until the person happens to press Enter.
+        nobody answered, with no wait on a prompt that nobody is typing into, and the prompt comes down,
+        leaving nothing standing there until the person happens to press Enter.
         """
         answered = self.policy.answers(question)
         if answered is not None:
@@ -503,7 +502,7 @@ class App:
         shape of the kernel's command lane: it handles one command at a time, in the order they arrived,
         and it is what emits. So the answer to this listing arriving proves every command before it has
         been handled, and reading it in order proves their answers have been read. It is asked and
-        dropped rather than drawn — which conversations this kernel serves is this client's own business
+        dropped, and nothing is drawn — which conversations this kernel serves is this client's own business
         on the way out, not news for the person.
 
         A connection that is already gone answers nothing, and that is not a reason to wait: the event
@@ -550,7 +549,7 @@ class App:
     async def _stirred_after(self, heard: int) -> bool:
         """Wait until the kernel has said something past ``heard``; ``False`` when it never will again.
 
-        The number rather than a flag, and that is the whole of the care here: an event that arrived
+        The number, and no flag, and that is the whole of the care here: an event that arrived
         while the read was out has already moved the watermark, so a client waiting on a flag it had just
         cleared could wait for a line it had already been told. The event lane ending is the other way
         out, and it is the same departure every other wait in this loop has.
@@ -570,7 +569,7 @@ class App:
         match decode(line, self.catalog, session=self.session):
             case Runs(command=command):
                 if isinstance(command, ListSessions):
-                    # The one command whose answer is a listing, and a listing is read rather than told,
+                    # The one command whose answer is a listing, and a listing is read by the client,
                     # so which answer this will be has to be known before it arrives (:class:`_Asked`).
                     self._listings.append(_Asked.LINE)
                 return None if self.client.submit(self._continuing(command)) else GONE
@@ -585,11 +584,11 @@ class App:
     async def _otherwise(self, intent: Reads | Travels | Help | Wrong) -> int | None:
         """The lines that neither send a command nor compose one: a read, a place to stand, or a word.
 
-        Three answers rather than three kinds of answer, and the same exit code: a connection that ended
+        Three answers, one shape between them, and the same exit code: a connection that ended
         while a read was out is the departure any other command would have found, and a word is a line
         this client writes for itself. The parameter is the whole of the last three members of
-        :data:`~plyngent.cli.grammar.Intent`, so a new one fails to type-check at the call above rather
-        than falling through to nothing here.
+        :data:`~plyngent.cli.grammar.Intent`, so a new one fails to type-check at the call above, and
+        never falls through to nothing here.
         """
         match intent:
             case Reads(query=query):
@@ -603,8 +602,9 @@ class App:
     async def _read(self, query: AnyQuery) -> int | None:
         """Put one question to the kernel and print the answer.
 
-        The answer is this client's own row rather than an event, because it is not something the kernel
-        said to everybody: it is what one client asked for, so it goes where this client's own lines go
+        The answer is this client's own row, and no event carries it, because it is not something the
+        kernel said to everybody: it is what one client asked for, so it goes where this client's own
+        lines go
         — the same place ``/help`` writes. A connection that ended while the question was out is the same
         departure any other command would have found.
 
@@ -640,7 +640,7 @@ class App:
         Nothing is asked of the kernel to *do* anything — which branch a frontend reads is the frontend's
         own state (R2.1 D22) — but the entry is checked against the forest first, because a name typed by
         a person is a guess and a message written from a place that does not exist would be refused a turn
-        later with a sentence about an entry rather than about the line they typed.
+        later with a sentence that talks about an entry and never about the line they typed.
 
         The row says where they now stand: a cursor that moved silently is a person who finds out by
         reading the answer to a message they meant to write somewhere else.
@@ -678,7 +678,7 @@ class App:
         which branch is on screen — so this is about ``Submit`` and ``Retry`` and nothing else.
 
         A ``Compact`` with no text is the one command that becomes another: a summary nobody typed has to
-        be asked for, which is a turn (``kind=COMPACT``) rather than a row written where commands are.
+        be asked for, which is a turn (``kind=COMPACT``), so no row is written where commands are.
         The text, when there is one, is what the person wants kept.
         """
         if isinstance(command, Submit | Retry):
@@ -711,7 +711,7 @@ def _a_signal_is_a_stop(stopped: Callable[[], None]) -> Generator[bool]:
     A person pressing Ctrl+C on a terminal is answering a prompt, and a prompt hands the key over as a
     value — so a run with a keyboard in front of it never sees a signal at all. A run reading a pipe, or
     one somebody signals from another process, is the same intention arriving the other way, and it is
-    answered with the same command here rather than with an exit code: leaving is what Ctrl+D and the
+    answered with the same command here, and no exit code: leaving is what Ctrl+D and the
     commands are for, and "stop that" is not "goodbye" (§0.13, E97).
 
     ``False`` is a host or a loop that will not be told — a thread that is not the main one, a platform
