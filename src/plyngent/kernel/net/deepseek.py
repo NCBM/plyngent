@@ -3,7 +3,7 @@
 An *implementation* in the sense :mod:`plyngent.kernel.net.web` means: a name a program knows it by, the
 dialects a route naming it may speak, and the two verbs it can be asked for. Its *accounts* are routes: one
 with ``provider = "deepseek"`` gives this engine a base URL and a key to spend, so two such routes are one
-engine with two accounts rather than two implementations.
+engine holding two accounts.
 
 Which account answers is this module's decision and nobody else's:
 
@@ -12,11 +12,11 @@ Which account answers is this module's decision and nobody else's:
    there;
 2. **otherwise the shared accounts**, in the order the routes were declared (``[route.web].share``), a
    rate-limited or refused one falling through to the next;
-3. **otherwise there is none to charge**, and the search says so instead of spending a stranger's key.
+3. **otherwise there is none to charge**, and the search says so, without spending a stranger's key.
 
-There is no way to name an account from outside: ``on`` is the one route a caller may hand over, and it is
-the conversation's own rather than a choice. Account names belong in the table a person reads, not in what
-a model is told.
+There is no way to name an account from outside: ``on`` is the one route a caller may hand over, and it
+names the conversation's own account, never a free choice. Account names belong in the table a person
+reads, not in what a model is told.
 
 ``POST /v1/tools/search`` answers a query directly, so a program that has a key can search without spending
 a completion just to pick the query. ``POST /v1/tools/fetch`` reads one public page and answers its title
@@ -126,7 +126,7 @@ class DeepSeek:
     async def page(self, url: str, *, on: str = "") -> Page:
         """Read *url* through the first account that can, and answer the page it rendered.
 
-        A malformed URL is refused here rather than at the endpoint, so a request that cannot work costs
+        A malformed URL is refused here, before any request is made, so a request that cannot work costs
         nothing: the same shape a browser accepts — an absolute http(s) URL, no credentials in it.
         """
         _check_url(url)

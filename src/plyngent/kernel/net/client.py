@@ -61,7 +61,7 @@ _CHUNK_BYTES = 65_536
 class BodyKind(StrEnum):
     """What the bytes came back as, in the four answers a reader acts on differently.
 
-    ``EMPTY`` is its own kind rather than "text of length zero" because a ``HEAD`` and a ``304`` really
+    ``EMPTY`` is a kind of its own, and never "text of length zero", because a ``HEAD`` and a ``304`` really
     have nothing to read, and a summary that said "0 bytes text" would be promising an empty page.
     """
 
@@ -86,7 +86,7 @@ class Fix(StrEnum):
 class Leg:
     """One hop's request line: where it goes, with which verb, and whether it still carries a body.
 
-    A gate is asked per leg rather than per call because a redirect is a second destination — and
+    A gate is asked per leg, because a redirect is a second destination — and
     because the verb and the body can change on the way, so what a gate judges is the line about to be
     sent and never the one the call wrote down.
     """
@@ -218,7 +218,7 @@ async def fetch(request: Request, *, gate: Gate) -> Fetched | Stopped:
 def decode_text(data: bytes, content_type: str) -> str:
     """*data* as text, in the charset the content type declares and with the rest replaced.
 
-    A charset this build does not know falls back to utf-8 rather than refusing the body: what came back
+    A charset this build does not know falls back to utf-8: what came back
     is still worth reading, and the alternative is a page of bytes nobody can use.
     """
     charset = "utf-8"
@@ -320,7 +320,7 @@ def _status(response: Any) -> int:
 async def _read_capped(response: Any, *, max_bytes: int) -> tuple[bytes, bool]:
     """At most *max_bytes* of the body, and whether there was more.
 
-    Streamed rather than buffered whole: the cap exists so that one call cannot fill this process's
+    Read as a stream: the cap exists so that one call cannot fill this process's
     memory with somebody else's page, and a body read first and cut afterwards would pay that cost before
     the cap ever applied.
     """

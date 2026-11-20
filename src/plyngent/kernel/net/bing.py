@@ -96,8 +96,8 @@ class Bing:
 def engine(routes: Sequence[Route], *, count: int = DEFAULT_COUNT, timeout: float = DEFAULT_TIMEOUT) -> Engine:
     """This engine, in a program that named it — the routes are not consulted, and neither is ``count``.
 
-    There is nothing to configure it with: no endpoint, no key, and an answer whose length is the index's
-    rather than a caller's.
+    There is nothing to configure it with: no endpoint, no key, and an answer whose length is the index's,
+    decided there and not by a caller.
     """
     _ = routes, count
     return Engine(name=NAME, search=Bing(timeout_seconds=timeout).search)

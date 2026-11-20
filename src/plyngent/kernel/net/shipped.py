@@ -36,7 +36,7 @@ def accounts_of(name: str, routes: Sequence[Route]) -> tuple[str, ...]:
     """The routes an engine called *name* may be asked on, in the order it falls back through them.
 
     The *shared* ones only: a route that shares nothing is still charged for the conversations speaking on
-    it, and that is the engine's own first step rather than a fact for this table. What is listed here is
+    it, and that is the engine's own first step, which this table does not list. What is listed here is
     the fallback a conversation speaking somewhere else gets, which is what a person reading the line wants
     to know.
     """

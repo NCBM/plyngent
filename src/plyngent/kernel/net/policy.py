@@ -15,7 +15,7 @@ Two rules shape the code:
   §10.13 lands; the sentence beside it is for the person. A caller that only needed the sentence would
   leave the next reader slicing prose (§0.9, E34).
 
-``NetPolicy`` is the host's field rather than a component, and its grants are keyed by ``host:port``:
+``NetPolicy`` is a field on the host, with no component around it, and its grants are keyed by ``host:port``:
 an agreement is about one machine at one port, and ``Remember.HOST`` already means the machine this
 kernel runs on, so an approval table entry would be a second meaning for one word (E27).
 """
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     type IpNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
-#: The schemes a request may name. A closed set rather than a check, because ``file://`` is not a
+#: The schemes a request may name. A closed set, with no check to run, because ``file://`` is not a
 #: request this tool has an opinion about — it is not an HTTP request at all.
 ALLOWED_SCHEMES: tuple[str, ...] = ("http", "https")
 
@@ -45,7 +45,7 @@ ALLOWED_SCHEMES: tuple[str, ...] = ("http", "https")
 #:
 #: The literal is the schema the model is shown, and ``msgspec`` emits an enum in the order it was
 #: written — ``test_structure`` asserts every closed set is sorted, so the order here is load-bearing
-#: and the tuple is derived from it rather than spelled a second time (E32).
+#: and the tuple is derived from it, never spelled a second time (E32).
 type Method = Literal["DELETE", "GET", "HEAD", "POST", "PUT"]
 
 ALLOWED_METHODS: tuple[str, ...] = get_args(Method.__value__)
@@ -65,7 +65,7 @@ DEFAULT_MAX_BYTES = 1_000_000
 DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
 
 #: Headers a call may not set: each one changes what the request *is* (who it is from, how the body is
-#: framed, whether it is proxied) rather than what it asks for. ``User-Agent`` is deliberately absent —
+#: framed, whether it is proxied), whatever it asks for. ``User-Agent`` is deliberately absent —
 #: it is the one identity a call may state, and the tool has an argument for it.
 FORBIDDEN_HEADERS: frozenset[str] = frozenset(
     {
@@ -83,8 +83,8 @@ FORBIDDEN_HEADERS: frozenset[str] = frozenset(
 )
 
 #: The addresses this build never contacts, whatever a person would agree to: the cloud metadata
-#: endpoints, which answer about the machine rather than about the web. They are not "private" — a
-#: grant lifts that — so they are a class of their own.
+#: endpoints, which answer about the machine itself and say nothing about the web. They are not "private"
+#: — a grant lifts that — so they are a class of their own.
 NEVER_ALLOWED: tuple[IpNetwork, ...] = (
     ipaddress.ip_network("169.254.169.254/32"),
     ipaddress.ip_network("fd00:ec2::254/128"),
@@ -107,8 +107,9 @@ class HostClass(StrEnum):
 class ReasonKind(StrEnum):
     """Why a request has to be agreed to, as the three axes E34 asks on.
 
-    The kind is data rather than a word in a sentence: severity grading (§10.13) reads it, so the day a
-    ``PAYLOAD`` becomes answerable once for a whole batch, this module does not have to change.
+    The kind is a value the caller branches on, never a phrase to parse: severity grading (§10.13) reads
+    it, so the day a ``PAYLOAD`` becomes answerable once for a whole batch, this module does not have to
+    change.
     """
 
     PRIVATE_HOST = "private-host"
@@ -141,7 +142,7 @@ def weight(reasons: tuple[Reason, ...]) -> Severity:
 class Unreadable:
     """Why a value could not be read as a request: which argument, and what it may be instead.
 
-    A value rather than an exception, because it is the *arguments* that are wrong and the caller
+    A value, and no exception, because it is the *arguments* that are wrong and the caller
     answers that with ``Failure.ARGS`` — the same reasoning that keeps ``Failure`` a closed set.
     """
 
@@ -155,7 +156,7 @@ class ParsedUrl:
 
     ``url`` is the form that is actually requested: the fragment is dropped (it never reaches a server)
     and the path is at least ``/``. ``port`` is filled in from the scheme, so "this machine at this port"
-    is one key rather than two spellings of one.
+    is one key, and no second spelling of it.
     """
 
     url: str

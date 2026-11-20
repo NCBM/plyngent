@@ -1,7 +1,7 @@
 """The web half of the net group: somebody else's network, and the engines this program may ask it with.
 
 A program's web tools are not one backend but a small table of them, and which of them exist is a fact
-about how the program was started rather than about a call. :class:`Engine` is one entry in that table: a
+about how the program was started, and no call decides it. :class:`Engine` is one entry in that table: a
 name a person and a model can both say, and up to two verbs, each present only when that engine really
 does it.
 
@@ -32,8 +32,8 @@ has to name an account — which is the one thing a name must never do.
 
 **An engine arrives by a channel naming it.** :class:`Providers` is what a build ships, and a route's
 ``provider`` is how one of them is installed: that route's base URL and key become one *account* of that
-engine, so two routes naming the same implementation are one engine with two accounts rather than two
-engines. An engine with no account to configure — one that answers a query over somebody's public index —
+engine, so two routes naming the same implementation are one engine holding two accounts. An engine with
+no account to configure — one that answers a query over somebody's public index —
 is in a program only because the program asked for it by name.
 """
 
@@ -110,7 +110,7 @@ class Engine:
 class Engines:
     """The web half this host was given, in the order a search asks it.
 
-    A plain value rather than a component, for the same reason a route table is one: there is nothing to
+    A plain value, with no component around it, for the same reason a route table is one: there is nothing to
     open and nothing to close, and which engines exist is a fact about how the program was started. What
     a *tool* does with it is decided where the tools are assembled (§0.9, E26).
     """
@@ -168,8 +168,8 @@ class Provider:
 
     ``name`` is what a route's ``provider`` says and what ``[web].engines`` lists — never a vendor's
     endpoint, which is the route's word. ``dialects`` is what a route naming this provider may speak, and
-    it is the implementation's answer rather than this program's: a web engine and a wire format are two
-    different things, so the one that knows it also knows which wire formats it arrives on.
+    it is the implementation's answer, and this program does not decide it: a web engine and a wire format
+    are two different things, so the one that knows it also knows which wire formats it arrives on.
 
     ``routed`` is what separates the two kinds of engine: one a route installs by naming it, and one a
     program has because it asked for it by name. Bing is the second — it answers queries and reads
@@ -226,7 +226,7 @@ class Choice:
 class Web:
     """The web half a program asked for: which engines, in what order, and the numbers they default to.
 
-    A value rather than a registry, because it is what a *file* says: ``[web].engines`` is the enable list
+    A value, with no registry behind it, because it is what a *file* says: ``[web].engines`` is the enable list
     and the order, ``count`` and ``timeout`` are what every account that does not override them gets, and
     the routes each engine may charge are the ones they named. What turns this into engines is the
     composition root's business.
@@ -275,7 +275,7 @@ async def search_in_order(engines: Sequence[Engine], query: str, *, gate: Gate, 
 
     An engine that raises, or that answers with nothing, is recorded and the next one gets its chance: a
     broken or rate-limited engine never takes the tool down with it, and what it said travels out to the
-    summary instead of being swallowed. A cancelled turn is not a failing engine, so it is not caught.
+    summary, and nothing is swallowed. A cancelled turn is not a failing engine, so it is not caught.
     """
     failures: list[str] = []
     for engine in engines:
