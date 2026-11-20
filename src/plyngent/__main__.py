@@ -530,7 +530,7 @@ def _colour(*, asked: bool, stream: TextIO) -> bool:
     """Whether lines are painted: a terminal we may write to, and nobody saying no.
 
     Three ways to say no, and they are one answer: the flag for this run, ``NO_COLOR`` for this person,
-    and a stream that is not a terminal — which is not a preference but a fact, since an escape code
+    and a stream that is not a terminal — a fact about this run and not a preference, since an escape code
     written into a file is mojibake and nothing else. ``NO_COLOR`` is the terminal's own convention, and no
     setting of this program's, which is why it is read here beside the stream it is about and not by the
     file's loader (§0.11, E76).

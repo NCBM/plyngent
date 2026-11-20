@@ -1,6 +1,6 @@
 """The web half of the net group: somebody else's network, and the engines this program may ask it with.
 
-A program's web tools are not one backend but a small table of them, and which of them exist is a fact
+A program's web tools are a small table of backends, and which of them exist is a fact
 about how the program was started, and no call decides it. :class:`Engine` is one entry in that table: a
 name a person and a model can both say, and up to two verbs, each present only when that engine really
 does it.
@@ -23,8 +23,8 @@ difference in one place (§0.9).
 
 **The order is the fallback order.** :func:`search_in_order` asks each engine in turn and the first answer
 wins, so an engine that is rate-limited costs a sentence in the summary and not the call. It is also the
-order a model reads when it is told which names it may pass: not alphabetical, but what the program was
-configured with.
+order a model reads when it is told which names it may pass: what the program was configured with, in
+the order it was configured.
 
 **A verb is handed the route the conversation is speaking on** (``on``), because an engine that has more
 than one account charges the one being answered on when it can: the bill stays in one place, and nobody

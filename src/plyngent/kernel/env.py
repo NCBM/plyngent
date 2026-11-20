@@ -95,7 +95,7 @@ class Env:
     def reads(self) -> Reads:
         """What this turn has already shown with line numbers.
 
-        Not a resource but a record of the turn: it is here, because the turn is
+        A record of the turn, not a resource: it is here, because the turn is
         this call's address, and because a record on the turn cannot outlive it or be shared with
         another one.
         """

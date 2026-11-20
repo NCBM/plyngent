@@ -214,9 +214,9 @@ class SqliteTrail(Trail):
     """The journal in one SQLite file: the log, the turn counters, and the projections it has answered.
 
     One connection, opened when the journal comes up and given back when it goes down, and one lock
-    around the calls that use it — not because SQLite could not take two readers, but because every
-    answer here is a step the rest of the kernel is waiting on, and one at a time is what a single
-    connection can honestly promise. WAL and a busy timeout are what let a second process read the same
+    around the calls that use it: every answer here is a step the rest of the kernel is waiting on, and
+    one at a time is what a single connection can honestly promise — not because SQLite could never take
+    two readers. WAL and a busy timeout are what let a second process read the same
     file without the first one's write turning into an error.
 
     **An id is opaque.** Nothing outside this class reads one, and what this class reads out of one is

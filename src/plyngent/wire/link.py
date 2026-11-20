@@ -3,7 +3,7 @@
 One object, two faces, and the difference between them is which verbs it has. A client writes
 commands, reads events, answers questions and says how far it has rendered; the kernel emits events,
 reads commands, and asks a person something. Neither face can be used for the other's purpose, and
-that is not enforced by a runtime check but by the type: whoever holds a :class:`KernelLink` cannot
+the type is what enforces that, with no runtime check: whoever holds a :class:`KernelLink` cannot
 call ``emit``, and whoever holds a :class:`KernelSide` cannot call ``submit``.
 
 Why two protocols and not one object with a ``flip()``: a direction read from the wrong end is a bug

@@ -437,8 +437,8 @@ def test_a_route_names_its_dialect_and_a_dialect_it_does_not_have_is_not_a_name(
 def test_a_refused_request_keeps_the_status_kind_and_the_endpoints_words() -> None:
     """One status→kind table for every dialect, and the sentence the endpoint actually said.
 
-    ``429`` is ``BUSY`` and ``401`` is ``PERMISSION`` — not because either dialect says so, but because
-    that is what those numbers mean for every endpoint there is; and the sentence is the endpoint's own,
+    ``429`` is ``BUSY`` and ``401`` is ``PERMISSION`` — that is what those numbers mean for every
+    endpoint there is, whatever a dialect says; and the sentence is the endpoint's own,
     because a sentence invented here would be a guess about somebody else's reason.
     """
     body = b'{"error": {"type": "rate_limit", "message": "slow down"}}'
