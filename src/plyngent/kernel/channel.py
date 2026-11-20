@@ -14,8 +14,8 @@ Two implementations, differing in exactly one codec:
   a socket differ nowhere else (R2.1 D29). A socket channel is the same lanes with each value written
   down as a frame first (:mod:`plyngent.wire.frame`), and nothing above this module can tell which one it
   is holding.
-* folding a backlog is *here* rather than in the lane that decides when to fold, because folding is a
-  queue operation — it takes adjacent messages out of a backlog and puts one message back. The rule
+* folding a backlog is *here*, because folding is a queue operation — it takes adjacent messages out of a
+  backlog and puts one message back. The rule
   itself is :func:`plyngent.wire.frame.packed`, because more than one queue can fold: the one being
   handed over, and the one that has not been written yet.
 """
@@ -41,9 +41,9 @@ class Stream[T]:
     dropped, folded, or must be waited for — that is the difference between the lanes, so the rule stays
     with the lane, which asks (:meth:`Channel.backlog`) how long the queue is instead.
 
-    One consumer, and the buffer enforces it by handing out **one** reader rather than a way to start
-    reading: :meth:`reader` answers the same object however often it is asked for, so a lane cannot be
-    split. That matters because :meth:`get` arms one wake-up, and a second consumer would sleep through
+    One consumer, and the buffer enforces it by handing out **one** reader: :meth:`reader` answers the
+    same object however often it is asked for, so a lane cannot be split. That matters because
+    :meth:`get` arms one wake-up, and a second consumer would sleep through
     a value meant for it — the quietest failure this file could have. Every lane here has exactly one
     reader by construction, which is the same rule the PTY registry follows.
     """
@@ -104,7 +104,7 @@ class Channel(Protocol):
     """Where a connection's values wait, as the smallest set of verbs both transports can honour.
 
     ``send`` is synchronous by contract (R2.1 D11): whoever hands a value over is never waiting for the
-    other end, and ``False`` is "this connection is gone" rather than "the other end disagreed".
+    other end, and ``False`` means this connection is gone.
     ``read`` hands out one consumer per lane, :meth:`Stream.reader`'s own rule. The last three are what a
     lane needs of its queue, and what a socket does not get for free: how far behind the other end is,
     folding that backlog, and throwing away what nobody will read.
@@ -133,8 +133,8 @@ class Channel(Protocol):
     async def flushed(self) -> None:
         """Wait until everything handed over has been written and the stream is closed at this end.
 
-        The one verb here that is about *timing* rather than about values, and it is here because "what
-        was said has gone out" is a fact only the codec knows: a socket has a buffer and a task writing
+        The one verb here that is about *timing*, and it is here because "what was said has gone out" is
+        a fact only the codec knows: a socket has a buffer and a task writing
         it, one process has neither.
         """
         ...

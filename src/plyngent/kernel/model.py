@@ -14,7 +14,7 @@ Two rules the shapes hold to:
 
 * **A call's arguments stay text.** The model produced text; decoding it into a tool's package is
   that tool's own step (:meth:`plyngent.kernel.toolspec.ToolSpec.decode`), so a malformed call is an
-  argument error of the tool that was named rather than a failure of the request that carried it.
+  argument error of the tool that was named, and the request that carried it does not fail.
 * **A call is named by the model, not by the tool.** ``Call.id`` is what a result quotes back, and it
   has to be, because one answer may ask for the same tool twice and two results cannot be told apart
   by the tool's name.
@@ -87,7 +87,7 @@ class Thought(Struct, frozen=True, kw_only=True):
     thought this build never read at all.
 
     ``text`` and ``sealed`` are never both set — a block either said something to this build or it did not
-    — and a dialect that cannot spell one of those parts writes nothing rather than inventing a shape.
+    — and a dialect that cannot spell one of those parts writes nothing, and never invents a shape.
     """
 
     text: str = ""
@@ -98,14 +98,14 @@ class Thought(Struct, frozen=True, kw_only=True):
 class Assistant(Message, tag="assistant", frozen=True, kw_only=True):
     """What the model answered: something it said, and the calls it asked for, in one message.
 
-    One message rather than two — a text and a set of calls — because they arrived together: a request
+    One message holding both a text and a set of calls, because they arrived together: a request
     that named three tools is one answer, and splitting it would let an interruption leave calls
     attributed to a message that never arrived.
 
     ``thoughts`` is what it thought before it said any of it. It is part of the same message for the same
     reason, and it is kept for a reason of its own: a round that asked for a tool is one a thinking
-    endpoint refuses to read back without the thinking it did, so dropping it costs the next request
-    rather than merely the display (§10.4, E145).
+    endpoint refuses to read back without the thinking it did, so dropping it costs the next request,
+    and not only the display (§10.4, E145).
     """
 
     text: str = ""
@@ -178,7 +178,7 @@ MODEL_TAGS: frozenset[str] = frozenset({"user", "assistant", "tool-result"})
 class ToolDecl(Struct, frozen=True, kw_only=True):
     """One tool as a model is told about it: what to call it, and the schema of its arguments.
 
-    ``schema`` is JSON text rather than a structure because that is what a provider's request carries,
+    ``schema`` is JSON text, because that is what a provider's request carries,
     and because text is what can be compared byte for byte: the tool block sits in front of everything
     else in a prompt, so "the same declarations produce the same bytes" is the property a cached prefix
     rests on (§10.5). The description travels inside the schema — ``msgspec`` writes the argument
@@ -199,7 +199,7 @@ class Request(Struct, frozen=True, kw_only=True):
     ``system`` is the part of the prompt that is not the conversation: the sections a host was installed
     with — who the model is, the tool playbook, one section per group whose tools the session can reach,
     the skills this program can see — ending with the one line saying which groups this session has not
-    been shown (§10.4, §0.10 E63). It is a field rather than a message because nobody said it — a history
+    been shown (§10.4, §0.10 E63). It is a field, because nobody said it — a history
     that carried it would hand it back to the model as its own words on the next turn.
     """
 
@@ -248,8 +248,8 @@ class Usage(Struct, frozen=True, kw_only=True):
 class Reply(Struct, frozen=True, kw_only=True):
     """What one model answered: something it said, and the calls it asked for.
 
-    Both in one value rather than a union of two kinds, because a model may do both at once — say a line
-    and ask for a tool in the same answer — and a union would force this layer to invent a precedence.
+    Both in one value, because a model may do both at once — say a line and ask for a tool in the same
+    answer — and a union would force this layer to invent a precedence.
 
     ``cut`` is why an answer stopped short when it did: a provider's finish reason, in the closed set
     the rest of the kernel already speaks, so "it hit the output limit" and "the provider refused the
@@ -296,10 +296,10 @@ class Delta(Struct, frozen=True, kw_only=True):
 
 
 class NoModel(Exception):  # noqa: N818 — a missing model is a state of the kernel, not a failure of a call
-    """There is nothing to ask: a kernel brought up without a model refuses turns rather than hanging."""
+    """There is nothing to ask: a kernel brought up without a model refuses turns, and nothing waits."""
 
 
-class ModelFailed(Exception):  # noqa: N818 — the asking failed, and the turn reports it rather than raising
+class ModelFailed(Exception):  # noqa: N818 — the asking failed, and the turn reports it as a value
     """A model could not be asked, and which kind of trouble that was.
 
     Not a reply: a reply is what a model said, and a model that never answered said nothing. So the two
@@ -328,7 +328,7 @@ class Model(ABC):
     Two verbs and not three kinds of model: :meth:`respond` is the answer, and :meth:`stream` is the
     answer with the fragments that led to it. The second one's default is a single piece, so every model
     that can only answer — a scripted one, a route whose dialect cannot read a stream — is a streaming
-    model that says one thing, and a caller has one loop rather than two (§0.13, E99).
+    model that says one thing, and a caller has one loop (§0.13, E99).
     """
 
     @abstractmethod
@@ -348,8 +348,8 @@ class ModelChannel(Component, Model):
     """The model a host asks, as a component so that installing one is a declaration and swapping it is a
     ``replace`` — the same move that attaches a client to :class:`~plyngent.kernel.events.HumanChannel`.
 
-    ``None`` is "nothing is installed", and it is a value rather than a field nobody set, so the turn can
-    refuse before it starts instead of failing at the first request. A kernel that answers turns without a
+    ``None`` is "nothing is installed", and it is a value, so the turn can refuse before it starts, and
+    no first request fails. A kernel that answers turns without a
     model would have to invent what the model said.
     """
 

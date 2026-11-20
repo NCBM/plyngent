@@ -44,10 +44,10 @@ class Host(Component):
     """One workspace's share of the process."""
 
     pty: PtyRegistry = require()
-    # How an event reaches a person, and where a question with no turn behind it goes. A component
-    # rather than a field somebody sets, so that attaching a client and detaching it are the same move
-    # (`replace`) and two hosts cannot tell each other's clients. Nobody attached is a channel that
-    # answers "no" and drops events, not a missing one. A turn's own questions do not travel this way:
+    # How an event reaches a person, and where a question with no turn behind it goes. A component,
+    # so that attaching a client and detaching it are the same move (`replace`) and two hosts cannot tell
+    # each other's clients. Nobody attached is a channel that answers "no" and drops events, not a missing
+    # one. A turn's own questions do not travel this way:
     # they go back to the connection that started it (`TurnCtx.asker`, E156).
     human: HumanChannel = require()
     # The tools the connection serving this host offers, and the way to call them. A component for the
@@ -56,17 +56,17 @@ class Host(Component):
     # missing field (§10.8).
     offers: Offers = require()
     # The model a turn asks. A channel like the human's, so that installing one is a declaration and
-    # swapping it is a `replace`; nothing installed is a value (`None`) rather than a missing field, so a
-    # turn can be refused before it starts instead of failing at its first request.
+    # swapping it is a `replace`; nothing installed is a value (`None`), so a turn can be refused before
+    # it starts, and no first request fails.
     model: ModelChannel = require()
     # The web half of what a network tool can do: the engines this program was given, in the order a
     # search asks them. A plain field, like the routes and for the same reason — a table of engines has no
     # lifecycle, and which of them exist is decided where the kernel is assembled. Empty is a value: it is
     # what decides whether `web_fetch` and `web_search` exist at all (§0.9).
     engines: Engines
-    # The conversation's journal. Held as the component that owns a backend rather than as the protocol,
-    # because a requirement is answered by the class that was declared; everything that reads or appends
-    # takes `Trail`, so which backend answers it is a declaration in `boot` and nothing else.
+    # The conversation's journal. Held as the component that owns a backend, because a requirement is
+    # answered by the class that was declared; everything that reads or appends takes `Trail`, so which
+    # backend answers it is a declaration in `boot` and nothing else.
     trail: Journal = require()
     # Where a body too long for the conversation is kept. A component of its own, in a file of its own,
     # because content has a different lifecycle from history: it can be expired, indexed or moved to a
@@ -83,25 +83,25 @@ class Host(Component):
     # a fact about a child.
     pty_policy: PtyPolicy
     # Which machines this host has already been told it may contact, and which requests have to be agreed
-    # to at all. Its own table rather than a row in ``approvals``: an agreement here is about one machine
-    # at one port, which is not one of the four things an approval is remembered by (§0.9, E27).
+    # to at all. Its own table: an agreement here is about one machine at one port, which is not one of the
+    # four things an approval is remembered by (§0.9, E27).
     net: NetPolicy
     # One lock per path, across every session on this host: two turns in two conversations that touch one
     # file take turns. It is the host's because a session comes and goes while a file is still a file.
     locks: Locks
-    # How many turns this host is running, and how many it may. The count is the host's rather than a
-    # connection's because the number is a budget for the process: `[turn] running` is what this machine
-    # will do at once, whichever client asked (E156).
+    # How many turns this host is running, and how many it may. The count is the host's, because the
+    # number is a budget for the process: `[turn] running` is what this machine will do at once, whichever
+    # client asked (E156).
     running: Running
     # How many times one turn may ask the model before it reaches a wall, and whether the wall asks the
-    # person first. `0` is "this program never said", so a turn ends when the model is done rather than
-    # at a count; the wall itself is counted per turn, which is why only the policy lives here (E150).
+    # person first. `0` is "this program never said", so a turn ends when the model is done, and no
+    # count stops it; the wall itself is counted per turn, which is why only the policy lives here (E150).
     rounds: int
     soft: bool
     # The skills this host can read, or ``None`` when it was started without any. A plain field: a skill
     # has no lifecycle, so there is nothing to open or close and nothing that a component would answer.
-    # ``None`` is a value rather than a missing field — a kernel with no skills directory has no skill
-    # tools at all, which is decided where the tools are assembled (§0.10, E36).
+    # ``None`` is a value — a kernel with no skills directory has no skill tools at all, which is decided
+    # where the tools are assembled (§0.10, E36).
     skills: Skills | None
     # The endpoints this program can ask a model at, and which of them answers a session that has not
     # chosen. A plain field, like the skills directory and for the same reason: a table of routes has no
@@ -111,9 +111,9 @@ class Host(Component):
     prompt: PromptPlan
     # Where this workspace's versions are kept, or ``None`` when nothing keeps them — a machine with no
     # git, or a program started without them. A plain field for the reason the skills are: a store is a
-    # directory and a program, with no lifecycle to open. ``None`` is a value rather than a missing
-    # field, and it is decided where the kernel is assembled, because what exists is decided there
-    # (§10.1, E26) — a call that would have kept a version writes none instead of failing.
+    # directory and a program, with no lifecycle to open. ``None`` is a value, and it is decided where the
+    # kernel is assembled, because what exists is decided there (§10.1, E26) — a call that would have kept
+    # a version writes none, and the call does not fail.
     history: History | None
 
     def __init__(
@@ -155,8 +155,8 @@ class Host(Component):
         """Tell every conversation what it is about to lose, while its log is still open (E151).
 
         The two things this process holds on a conversation's behalf and cannot hand over are a child on a
-        terminal and a scratch directory, and both die with the process. This is said **now** rather than at
-        the next start, because now is when it is true: "this process is going down" is a fact here, while
+        terminal and a scratch directory, and both die with the process. This is said **now**, because now
+        is when it is true: "this process is going down" is a fact here, while
         "the last one died" is only provable by a timestamp this tree does not keep, and by a start-up that
         reads every journal to guess.
 

@@ -22,7 +22,7 @@ rows are answers that can be computed again, and nothing depends on their being 
 The log itself is a protocol (:mod:`plyngent.kernel.trail`) with more than one implementation, and a
 component's field can only be annotated with one contract. This is that contract: the host declares
 ``trail: Journal``, and ``boot`` decides which backend is installed inside it — the same move as
-``Host.model`` being a channel over whichever model was installed rather than the model itself.
+``Host.model`` being a channel over whichever model was installed.
 """
 
 from __future__ import annotations
@@ -106,12 +106,12 @@ def _slug(name: str) -> str:
 #: Schema version 1: one row per entry, one counter per session for turn ids, one cached projection.
 #:
 #: ``id`` is the row number and the only thing an entry id is made of (``'e' || id``); ``parent`` is a
-#: row of this same table rather than the id's text, because a parent is a row and nothing needs to read
+#: row of this same table, because a parent is a row and nothing needs to read
 #: one out of the other. Every object is created only if it is absent, which is what makes a step that
 #: was interrupted halfway re-runnable: a script that created half its indexes is a script that can run
 #: again.
 #:
-#: ``projection`` is what a model was shown for one chain end, so a second read is a row rather than a
+#: ``projection`` is what a model was shown for one chain end, so a second read is a row:
 #: walk: ``entry`` is a row of ``entry`` and ``projector`` the code that computed it, and the pair is the
 #: cache key.
 _SCHEMA_1 = """
@@ -145,7 +145,7 @@ MIGRATIONS: tuple[str, ...] = (_SCHEMA_1,)
 
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
-#: rebuildable and may therefore be dropped rather than migrated.
+#: rebuildable and may therefore be dropped and rebuilt.
 PROJECTOR = 1
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
@@ -157,7 +157,7 @@ _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 #: — so what a turn may continue and what a model is shown cannot drift.
 #:
 #: A notice is a message of its own (``note``) but its row is filed under ``notice``, which is why it is
-#: named here rather than being inside ``MODEL_TAGS``: the tags there are the ones a row *is*, and this
+#: named here and not inside ``MODEL_TAGS``: the tags there are the ones a row *is*, and this
 #: one is a record that a projection turns into a message.
 #:
 #: A prune belongs here and not among the model tags: nothing reads a prune *as a message*, and it must
@@ -196,7 +196,7 @@ RETURNING id, seq
 #:
 #: ``depth`` counts the hops from the entry asked about, so ``ORDER BY depth DESC`` puts the root first —
 #: the order a projection is read in. The recursion walks ``parent``, a row of the same table, so a chain
-#: is a join rather than a look-up per entry. A cycle is impossible by construction: a parent must
+#: is a join, with no look-up per entry. A cycle is impossible by construction: a parent must
 #: already exist when the row that names it is appended, so every parent has a smaller row number and the
 #: walk strictly descends.
 _CHAIN = """
@@ -221,7 +221,7 @@ class SqliteTrail(Trail):
 
     **An id is opaque.** Nothing outside this class reads one, and what this class reads out of one is
     its own business: the row an id was minted from. An id that names no row of this shape is a name for
-    nothing, and is answered as such rather than as a parse error.
+    nothing, and is answered as a name for nothing, which is not a parse error.
     """
 
     _path: Path
@@ -251,7 +251,7 @@ class SqliteTrail(Trail):
         self._db = db
         try:
             # WAL: a reader does not wait for a writer, and a crash leaves a log another process can
-            # recover rather than one that has to be written again from the start.
+            # recover from, with no rewriting from the start.
             _ = await db.execute("PRAGMA journal_mode = WAL")
             _ = await db.execute("PRAGMA busy_timeout = 5000")
             await self._migrate(db)
@@ -309,8 +309,8 @@ class SqliteTrail(Trail):
         One statement, because the three things it does are one fact: the number is read from the log, the
         parent is checked against it, and the row is written — all inside SQLite's own write lock, so no
         reader ever sees an entry whose number was taken or whose parent is missing. The parent check is a
-        ``WHERE`` clause rather than a separate query: a parent that does not exist inserts nothing, and an
-        insert that wrote nothing is the refusal.
+        ``WHERE`` clause: a parent that does not exist inserts nothing, and an insert that wrote nothing is
+        the refusal.
         """
         if begin_after is None:
             parent = None
@@ -366,8 +366,8 @@ class SqliteTrail(Trail):
 
         The walk is the database's own recursion: one query returns the chain and the order it is read
         in, because a parent is a row and a chain is a join. Rows carrying a tag no model reads are
-        dropped here rather than refused, so a file written by a build that keeps more than a
-        conversation still projects to one. A prune is the one bookkeeping record that is read before it
+        dropped here, so a file written by a build that keeps more than a conversation still projects to
+        one. A prune is the one bookkeeping record that is read before it
         is dropped: what it names is not handed over, and everything else is — which is why the
         projector's version moved when it arrived.
 
@@ -411,8 +411,8 @@ class SqliteTrail(Trail):
     async def state_of(self, session: str) -> Mapping[str, str]:
         """Everything this session has written down about itself, folded last-write-wins per key.
 
-        Read as the session's own column rather than along a chain, because a fact about a session is
-        not a fact about a branch of it: a conversation that disclosed a group has disclosed it, and a
+        Read as the session's own column, because a fact about a session is not a fact about a branch of
+        it: a conversation that disclosed a group has disclosed it, and a
         branch that grew from before the disclosure is still part of that conversation.
 
         The fold is a dict built in arrival order, so a later entry overwrites an earlier one and no
@@ -455,7 +455,7 @@ class SqliteTrail(Trail):
     async def sessions(self) -> tuple[str, ...]:
         """Every conversation this file holds, in the order the first entry of each arrived.
 
-        ``MIN(id)`` rather than ``MIN(seq)``: a sequence number is per session — every session's first
+        ``MIN(id)``, because a sequence number is per session — every session's first
         entry is number one — so only the row number is comparable across sessions.
         """
         rows = await self._read_all("SELECT session FROM entry GROUP BY session ORDER BY MIN(id)", ())
@@ -620,8 +620,8 @@ def _encode(payload: AnyRecord) -> str:
 
 #: The type each tag is read back as: one row per kind of record, which is what a new kind of row adds.
 #:
-#: A table rather than a branch, because the tag is already a column: ``msgspec`` refuses a union whose
-#: members disagree about the name of their tag field, and these do — a message is tagged ``role`` while
+#: A table, because the tag is already a column: ``msgspec`` refuses a union whose members disagree
+#: about the name of their tag field, and these do — a message is tagged ``role`` while
 #: every other kind is tagged ``type`` — so reading one row is a lookup and no JSON guessing. A tag
 #: nothing here knows is read as a message, which is the only other thing a row could be.
 _RECORDS: Mapping[str, type[AnyRecord]] = {

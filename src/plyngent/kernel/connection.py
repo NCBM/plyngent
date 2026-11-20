@@ -13,13 +13,13 @@ answers:
   happens in a tree is said by that tree's
   :class:`~plyngent.kernel.serving.Serving`, which stamps the tree onto every event.
 * **When it is over.** One lane read per thing that arrives, one task for the reads, and one goodbye:
-  :meth:`stop` says the kernel is leaving and ends the lanes, which is why it is here rather than on any
-  one tree.
+  :meth:`stop` says the kernel is leaving and ends the lanes, which is why it belongs here and to no one
+  tree.
 
 The trees are found through a *foundry* — a callable that hands back a tree this process serves, opening
-one it does not, or saying which of the three structural refusals applies. It is a callable rather than
-this module reaching for the assembly because opening a tree is the composition root's decision: it is
-the only place that knows how a tree is declared and what a process may hold at once (``E157``).
+one it does not, or saying which of the three structural refusals applies. It is a callable, because
+opening a tree is the composition root's decision: it is the only place that knows how a tree is declared
+and what a process may hold at once (``E157``).
 """
 
 from __future__ import annotations
@@ -138,9 +138,8 @@ class Connection:
         """Take a client's later declarations: the same client, saying which tree it means now.
 
         A declaration carries no receipt, so nothing here answers one — what changes is only what a value
-        that names no tree means from then on. A version this kernel does not speak is ignored rather than
-        ending the connection: the connection already exists, and the first frame is where that question
-        was answered (E155).
+        that names no tree means from then on. A version this kernel does not speak is ignored: the
+        connection already exists, and the first frame is where that question was answered (E155).
         """
         async for bind in self.link.bindings():
             if bind.protocol_version == PROTOCOL_VERSION:
@@ -183,9 +182,9 @@ class Connection:
     async def _handle(self, command: AnyCommand) -> None:
         """Give one command to the tree it names, or say which tree it could not reach.
 
-        The refusal names the tree the command *meant* rather than the one it spelled: a connection that
-        declared its tree sends values with no tree in them, and a sentence about the tree that was
-        refused is the one a person can act on (E154).
+        The refusal names the tree the command *meant*: a connection that declared its tree sends values
+        with no tree in them, and a sentence about the tree that was refused is the one a person can act
+        on (E154).
         """
         found = await self._tree(command.workspace, opening=isinstance(command, Open))
         if isinstance(found, Refusal):
@@ -209,8 +208,8 @@ class Connection:
     async def _tree(self, given: str, *, opening: bool = False) -> Serving | Refusal:
         """The serving for the tree ``given`` names, or the reason there is none.
 
-        Only ``Open`` opens: a command that names a tree nothing has opened is answered rather than
-        obeyed, because opening a tree is a change a client asks for by name and not a side effect of
+        Only ``Open`` opens: a command that names a tree nothing has opened is answered with a refusal,
+        because opening a tree is a change a client asks for by name and not a side effect of
         asking about a conversation (E157). Everything else reaches a tree that is already up.
 
         A name that is empty *and* undeclared is not a refusal, because a kernel serving one tree has one
@@ -232,7 +231,7 @@ class Connection:
         """This connection's half of one tree, made the first time it is named and joined once.
 
         Idempotent, because a tree may be named again by any later command: what a second naming gets is
-        the same object, already listening, rather than a second membership in the same audience.
+        the same object, already listening, and not a second membership in the same audience.
         """
         found = self._servings.get(looked.path)
         if found is not None:
@@ -248,8 +247,8 @@ class Connection:
 def _named(where: str) -> str:
     """One spelling of a tree: a path as the greeting would write it, or the empty name for "no tree".
 
-    Resolving here rather than trusting the client's spelling is what makes "the same tree, spelled two
-    ways" one tree: a client that sends ``/a/b`` once and ``/a/b/`` later is looking at one tree, and a
+    Resolving here is what makes "the same tree, spelled two ways" one tree: a client that sends
+    ``/a/b`` once and ``/a/b/`` later is looking at one tree, and a
     relative path resolves against this process's directory — which is what makes a single-run kernel's
     own tree reachable by ``.``.
     """

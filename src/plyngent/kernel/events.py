@@ -61,12 +61,12 @@ class Human(ABC):
 
     ``site`` is where the question belongs, and the caller is the one who knows it: a tool runs under
     a turn and passes that turn's place, so a frontend holding several sessions can show the question
-    under the right one. It stays an argument rather than a field on the channel because the channel
-    is one per host while the place is one per call.
+    under the right one. It stays an argument, because the channel is one per host while the place is one
+    per call.
 
     ``timeout`` is how long *this* question is worth waiting for; ``None`` is the connection's own
     deadline. It is an argument for the same reason ``site`` is: "wait a minute" is the caller's
-    promise, and the channel is one per host rather than one per promise.
+    promise, and the channel is one per host, whatever the number of promises.
 
     ``severity`` is only on :meth:`confirm`, because that is the one question whose silence means
     something: the level says how long it waits and what an unanswered one becomes, and the channel
@@ -108,7 +108,7 @@ class Human(ABC):
 
         ``default`` is a suggested line, not an extra option. Which of the two ways a pick comes back is
         the question's own (:attr:`~plyngent.wire.ask.Selection.multiple`), so it travels with the
-        question rather than being decided by whoever is showing it.
+        question, and whoever shows the question decides nothing about it.
         """
 
     @abstractmethod
@@ -139,10 +139,10 @@ class Human(ABC):
     async def put(self, question: AnyAsk, *, site: AskSite | None = None) -> AnyAnswer:
         """Put whichever of the four this value is, and answer what came back.
 
-        The value form of the four verbs, because a caller can be holding a question rather than
-        asking one — a tool reaches this through :meth:`~plyngent.kernel.env.Env.ask`. It is concrete
-        here rather than abstract so that every channel — the connection's, the headless one, a test
-        double — answers it by implementing the same four verbs and nothing else.
+        The value form of the four verbs, because a caller can already be holding a question — a tool
+        reaches this through :meth:`~plyngent.kernel.env.Env.ask`. It is concrete here so that every
+        channel — the connection's, the headless one, a test double — answers it by implementing the same
+        four verbs and nothing else.
 
         ``timeout`` is the question's own (:attr:`~plyngent.wire.ask.Ask.timeout`), not an argument:
         how long a question is worth waiting for is part of the question, and a second parameter could
@@ -179,8 +179,8 @@ class NoSink(Human):
 
     This is what a headless run and ``--yes`` mean: the questions still have answers
     (:func:`plyngent.wire.ask.unanswered`), so the tool that wanted to ask reports that it was
-    blocked instead of hanging. Every answer says ``NOBODY`` rather than ``TIMEOUT``: nothing was
-    waited for, and a level's fallback is an answer to a deadline arriving, not to there being nobody.
+    blocked and does not hang. Every answer says ``NOBODY``: nothing was waited for, and a level's
+    fallback is an answer to a deadline arriving, not to there being nobody.
     """
 
     @override
@@ -249,25 +249,25 @@ class HumanChannel(Component, Human):
 
     * **events fan out.** Everything this host says goes to every connection watching it, because a
       second frontend on one tree is a second view of one conversation and not a competitor for it
-      (E154). Watching is :meth:`join` and :meth:`leave`, which is a set rather than an
-      ``assembly.replace`` — a connection joins while another is already there, and a replace that had
-      to read the current value and put it back would be a race the framework answers by refusing the
-      second client (:class:`~composat.errors.KeyInTransitError`, which is what this used to be).
+      (E154). Watching is :meth:`join` and :meth:`leave`, which is a set — a connection joins while
+      another is already there, and a replace that had to read the current value and put it back would be
+      a race the framework answers by refusing the second client
+      (:class:`~composat.errors.KeyInTransitError`, which is what this used to be).
     * **a question with no turn behind it goes to one watcher.** A turn's own questions never come
       through here: a turn carries the connection that started it (``TurnCtx.asker``, E156), so a
-      frontend is asked by its own work rather than by whoever attached last. What is left is the lane a
+      frontend is asked by its own work, not by whoever attached last. What is left is the lane a
       stimulus uses, and one answer is owed to it, so it is asked of the first watcher in the order the
       watchers joined.
 
     Nobody watching is not the same as no channel. A question gets an answer, and the answer is "no"
-    (:class:`NoSink`), so a tool reports that it was blocked instead of hanging — the same answer a
+    (:class:`NoSink`), so a tool reports that it was blocked, and no tool hangs — the same answer a
     headless run gives. A question already out when its client went away is refused by the transport
     that carried it (:meth:`plyngent.kernel.link.Link.close`), and the turn it belongs to runs on: a
     client disappearing is a refusal, not a verdict (R2.1 D14).
     """
 
     #: Everybody watching this host, in the order they joined: a dict because one connection joins once
-    #: and the order is what makes "the first watcher answers" a stable answer rather than a lottery.
+    #: and the order is what makes "the first watcher answers" a stable answer.
     watchers: dict[Human, None]
 
     def __init__(self) -> None:
