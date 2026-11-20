@@ -45,6 +45,7 @@ from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory, Tur
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from pathlib import Path
 
     from prompt_toolkit.document import Document
 
@@ -96,6 +97,12 @@ HELP = "help"
 
 #: How a slash line is spelled.
 SLASH = "/"
+
+#: The character a line may put before a file name to point the model at it. It stays in the text as
+#: typed: the model reads ``@src/x.py`` and decides what to do with it, so this client resolves nothing
+#: and checks nothing — completion offers the names the tree holds, and a name that is not there is left
+#: as the word somebody wrote.
+MENTION = "@"
 
 #: The word that asks something beside the conversation. Its text goes as a ``Submit`` of the aside
 #: kind: the kernel runs that turn with the tools that write nothing, and leaves its rows out of the
@@ -690,13 +697,19 @@ class SlashCompleter(Completer):
     Every candidate carries the line that explains it — the command's summary for a word, the option's
     own help for an option — because a list of bare names makes the person guess, and the guess is what
     completion exists to save.
+
+    A word that starts with :data:`MENTION` is a path, and what this offers for it is the names under
+    ``root``. Nothing else happens to such a word: the line reaches the model as it was typed, so
+    completion here is a way to spell a path and never a claim that the path exists.
     """
 
     _catalog: Catalog
+    _root: Path | None
 
-    def __init__(self, catalog: Catalog) -> None:
+    def __init__(self, catalog: Catalog, root: Path | None = None) -> None:
         super().__init__()
         self._catalog = catalog
+        self._root = root
 
     @override
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
@@ -704,6 +717,7 @@ class SlashCompleter(Completer):
         del complete_event
         text = document.text_before_cursor
         if not text.startswith(SLASH):
+            yield from self._mentions(text)
             return
         head, _, tail = text.partition(" ")
         if not tail:
@@ -713,10 +727,37 @@ class SlashCompleter(Completer):
         if tag is not None:
             yield from _taken(self._catalog.offers[tag], tail)
 
+    def _mentions(self, text: str) -> Iterator[Completion]:
+        """The names under the workspace, for a word being typed after an ``@``.
+
+        The last word on the line is the one being typed. Its directory part is read as written —
+        relative to the workspace root — and what is offered is the names in it that start with the part
+        already typed, a directory with its slash so the next level can be typed straight on.
+        """
+        words = text.split()
+        if not words or not words[-1].startswith(MENTION) or self._root is None:
+            return
+        word = words[-1]
+        parent, _, stem = word[len(MENTION) :].rpartition("/")
+        here = self._root / parent if parent else self._root
+        try:
+            children = sorted(here.iterdir())
+        except OSError:
+            return
+        for child in children:
+            if not child.name.startswith(stem) or (child.name.startswith(".") and not stem.startswith(".")):
+                continue
+            suffix = "/" if child.is_dir() else ""
+            yield Completion(
+                f"{MENTION}{parent + '/' if parent else ''}{child.name}{suffix}",
+                start_position=-len(word),
+                display_meta="directory" if suffix else "",
+            )
+
     def _words(self, head: str, text: str) -> Iterator[Completion]:
         """Every word this client has that starts with what has been typed so far."""
         word = head[len(SLASH) :]
-        for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED}):
+        for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED, ASIDE}):
             if candidate.startswith(word):
                 yield Completion(
                     f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
@@ -728,5 +769,7 @@ class SlashCompleter(Completer):
             return _read_summary(READS[candidate])
         if candidate == TRAVELLED:
             return TRAVEL_NOTE
+        if candidate == ASIDE:
+            return ASIDE_NOTE
         tag = self._catalog.word(candidate)
         return "" if tag is None else self._catalog.offers[tag].summary

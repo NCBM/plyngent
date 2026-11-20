@@ -410,7 +410,7 @@ async def _talk(
         client,
         session=session,
         catalog=catalog,
-        editor=_editor(session=session, catalog=catalog, history=history_path(session)),
+        editor=_editor(session=session, catalog=catalog, history=history_path(session), root=workspace),
         out=sys.stdout,
         err=sys.stderr,
         workspace=workspace_label(str(workspace)),
@@ -489,7 +489,14 @@ def _interrupted() -> asyncio.Future[None]:
     return stopping
 
 
-def _editor(*, session: str, catalog: Catalog, stream: TextIO | None = None, history: Path | None = None) -> LineEditor:
+def _editor(
+    *,
+    session: str,
+    catalog: Catalog,
+    stream: TextIO | None = None,
+    history: Path | None = None,
+    root: Path | None = None,
+) -> LineEditor:
     """Who owns the cursor: the terminal's prompt, or the plain lane over whatever is really there.
 
     A pipe is not a terminal, and a program that tries to draw a prompt on one is either guessing or
@@ -502,7 +509,7 @@ def _editor(*, session: str, catalog: Catalog, stream: TextIO | None = None, his
     reading = sys.stdin if stream is None else stream
     if _plain(reading):
         return PlainEditor(session=session, stream=reading, err=sys.stderr)
-    return PromptEditor(session=session, catalog=catalog, history=history)
+    return PromptEditor(session=session, catalog=catalog, history=history, root=root)
 
 
 def _plain(stream: TextIO) -> bool:

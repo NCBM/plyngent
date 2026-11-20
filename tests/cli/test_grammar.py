@@ -26,7 +26,7 @@ from plyngent.cli.grammar import (
     help_text,
     word_help,
 )
-from plyngent.wire.command import Goal, Rollback, SetRoute
+from plyngent.wire.command import Goal, Rollback, SetRoute, Submit
 from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
 from plyngent.wire.query import Grants, Skills, Trajectory
@@ -88,6 +88,27 @@ def test_a_switch_is_a_word_without_a_value() -> None:
     assert intent == Runs(command=Rollback(session="main", force=True)), (
         "a switch says itself; nothing is typed after it"
     )
+
+
+def test_a_path_marked_with_at_is_completed_from_the_workspace(tmp_path) -> None:
+    """An ``@`` word is completed from the tree, and the line is left as typed — nothing is checked.
+
+    Completion is a way to spell a path the model will be told about; whether it exists is the model's
+    question to ask with a tool, so a name that is not there survives the line unchanged.
+    """
+    (tmp_path / "src").mkdir()
+    _ = (tmp_path / "src" / "main.py").write_text("x", encoding="utf-8")
+    _ = (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    completer = SlashCompleter(_catalog(), tmp_path)
+
+    offered = list(completer.get_completions(Document("look at @"), CompleteEvent()))
+    deeper = list(completer.get_completions(Document("look at @src/ma"), CompleteEvent()))
+
+    assert [one.text for one in offered] == ["@notes.txt", "@src/"], "a directory is offered with its slash"
+    assert [one.text for one in deeper] == ["@src/main.py"]
+    assert decode("look at @nowhere.txt", _catalog(), session="main") == Runs(
+        command=Submit(session="main", text="look at @nowhere.txt")
+    ), "the word reaches the model as it was typed"
 
 
 def test_completion_of_a_word_says_what_the_word_does() -> None:

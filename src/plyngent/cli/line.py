@@ -357,6 +357,7 @@ class PromptEditor:
         session: str,
         catalog: Catalog | None = None,
         history: Path | None = None,
+        root: Path | None = None,
         keys: Input | None = None,
         output: Output | None = None,
     ) -> None:
@@ -373,7 +374,7 @@ class PromptEditor:
         self._restore = ""
         self._prompt = PromptSession[str](
             message=self._message(),
-            completer=SlashCompleter(catalog) if catalog is not None else None,
+            completer=SlashCompleter(catalog, root) if catalog is not None else None,
             history=self._history,
             key_bindings=KEYS,
             multiline=True,
