@@ -12,7 +12,6 @@ dependencies = [
   "prompt_toolkit>=3.0",
   "msgspec>=0.21.1",
   "niquests>=3.20",
-  "sqlalchemy>=2.0.51",
   "aiosqlite>=0.22.1",
   "platformdirs>=4.10.0",
   "tomlkit>=0.15.0",
