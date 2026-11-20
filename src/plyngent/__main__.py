@@ -14,6 +14,11 @@ lines it writes are painted (§0.13, E90), and whether an answer is laid out as 
 change is shown as the difference itself (§5 A, E121). All five are facts about the streams in front of
 it and about this person's own data directory, not about how a line looks, and together they are the
 whole difference between a program somebody types at and one a script drives.
+
+`main` is the command line and `run` is what it does, and the two are separate so that a program that
+brings components of its own can start this one without copying 300 lines of it: a launcher is a
+`run(components=…)` inside `asyncio.run`. Everything click owns — the arguments, the usage errors, the
+exit codes — is in `main`, and what `run` is handed is values (E143).
 """
 
 from __future__ import annotations
@@ -38,6 +43,8 @@ from plyngent.wire.bind import Bind
 
 if TYPE_CHECKING:
     from typing import TextIO
+
+    from composat import Declaration
 
     from plyngent.cli.grammar import Catalog
     from plyngent.cli.line import LineEditor
@@ -144,35 +151,79 @@ def main(
         # directory" is not something it can be told at this end of the connection (E154, E157).
         msg = "--serve opens no tree: the trees it serves are the ones a client names with --workspace"
         raise click.UsageError(msg)
-    # Read before anything is started, and before a terminal is taken: a file this program will not run
-    # with is a sentence and an exit code, not half a kernel (§0.11, E72).
-    try:
-        settings = config.load(config_path)
-    except config.ConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    # What this client answers by itself is a flag and not a setting: a policy is about *this* run,
-    # while the file says how the program starts (§0.15, E114).
-    policy = Policy(yolo=yolo, away=away or away_danger, away_danger=away_danger)
     # A signal is the stop a keyboard's Ctrl+C is, and ``App.run`` turns it into one — so reaching this
     # is a host or a loop that would not be told, where the signal is the process's own business and what
     # is left to do is an exit code and no traceback (§0.13, E97).
     try:
         code = asyncio.run(
-            _serve(
+            run(
                 session=session,
-                root=workspace,
-                settings=settings,
+                workspace=workspace,
+                config_path=config_path,
                 no_colour=no_colour,
                 no_diff=no_diff,
-                policy=policy,
+                yolo=yolo,
+                away=away,
+                away_danger=away_danger,
+                once=once,
                 serve_at=serve_at,
                 connect_at=connect_at,
-                once=once,
             )
         )
+    except config.ConfigError as exc:
+        # A file this program will not run with is a sentence and an exit code (§0.11, E72) — said here
+        # because saying it is the command line's job and not the program's.
+        raise click.ClickException(str(exc)) from exc
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
     sys.exit(code)
+
+
+async def run(
+    *,
+    session: str = DEFAULT_SESSION,
+    workspace: Path | None = None,
+    config_path: Path | None = None,
+    no_colour: bool = False,
+    no_diff: bool = False,
+    yolo: bool = False,
+    away: bool = False,
+    away_danger: bool = False,
+    once: str | None = None,
+    serve_at: Path | str | None = None,
+    connect_at: Path | str | None = None,
+    components: tuple[Declaration, ...] = (),
+) -> int:
+    """Be this program in whichever of its three shapes it was asked for, and answer its exit code.
+
+    It is the body of the command without the command line: the same shapes, the same file read before
+    anything starts, and the same policy for this run. Nothing here asks a person anything and nothing
+    here exits — a run that will not start travels out as the exception it is, and `main` is what words
+    it and picks the code — so a program that brings something of its own starts this one instead of
+    copying it. That program is a launcher, and it is a few lines: what a component may do is what its
+    declaration was constructed with, and it is declared where every other one is (E143).
+
+    ``components`` is the one argument the command line has no flag for, because it is code and not a
+    setting (§6, E143). ``()`` is the program this tree ships with.
+    """
+    # Read before anything is started, and before a terminal is taken: a file this program will not run
+    # with is a sentence and an exit code, not half a kernel (§0.11, E72).
+    settings = config.load(config_path)
+    # What this client answers by itself is a flag and not a setting: a policy is about *this* run,
+    # while the file says how the program starts (§0.15, E114).
+    policy = Policy(yolo=yolo, away=away or away_danger, away_danger=away_danger)
+    return await _serve(
+        session=session,
+        root=workspace,
+        settings=settings,
+        no_colour=no_colour,
+        no_diff=no_diff,
+        policy=policy,
+        serve_at=serve_at,
+        connect_at=connect_at,
+        once=once,
+        components=components,
+    )
 
 
 async def _serve(
@@ -186,6 +237,7 @@ async def _serve(
     serve_at: Path | str | None,
     connect_at: Path | str | None,
     once: str | None,
+    components: tuple[Declaration, ...] = (),
 ) -> int:
     """Be one of this program's three shapes, and take down whatever it started.
 
@@ -196,12 +248,13 @@ async def _serve(
 
     ``-p`` and the three shapes are read before this, so what is left here is the one decision the three
     do not share: where this run's workspace is, which is the directory it was started in unless it was
-    told (§5 B, E154).
+    told (§5 B, E154). ``components`` goes to the two shapes that bring a kernel up and stops there: the
+    third one is in front of a kernel somebody else started, and what that one declared is its own.
     """
     if connect_at is None:
         _say_engines(settings)
     if serve_at is not None:
-        return await _serving(settings=settings, endpoint=_address(serve_at))
+        return await _serving(settings=settings, endpoint=_address(serve_at), components=components)
     if connect_at is not None:
         return await _connected(
             session=session,
@@ -217,7 +270,7 @@ async def _serve(
     workspace = Path.cwd() if root is None else root
     # What this kernel is was decided by the file, and it is handed over as one value: which routes exist,
     # which of them answers, where skills are looked for, and where the conversation is kept (§0.11, E69).
-    installed = await config.install(workspace, settings)
+    installed = await config.install(workspace, settings, components=components)
     try:
         return await _talk(
             installed.client,
@@ -398,16 +451,17 @@ def _say_engines(settings: config.Settings) -> None:
     _ = sys.stderr.flush()
 
 
-async def _serving(*, settings: config.Settings, endpoint: Path) -> int:
+async def _serving(*, settings: config.Settings, endpoint: Path, components: tuple[Declaration, ...] = ()) -> int:
     """Be the kernel at one address, until this program is interrupted (``--serve``).
 
     Nothing is drawn and nothing is read: a daemon has no terminal in front of it, and the only thing it
     still says is where it is listening — on the error stream, because that is where a program's own
     remarks go (§5 A, E130). It is listening for clients that will each name the trees they mean, so the
-    one thing it cannot say is which tree it is working in (E157).
+    one thing it cannot say is which tree it is working in (E157). ``components`` is a launcher's, and a
+    daemon declares them like any other program does.
     """
     try:
-        daemon = await config.serve(settings, endpoint=endpoint)
+        daemon = await config.serve(settings, endpoint=endpoint, components=components)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _ = sys.stderr.write(f"serving at {endpoint}, for as long as this program runs\n")

@@ -60,8 +60,9 @@ from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import WorkspaceConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
+    from composat import Declaration
     from tomlkit.toml_document import TOMLDocument
 
     from plyngent.boot import Daemon, Installed
@@ -479,6 +480,7 @@ async def install(
     *,
     model: Model | None = None,
     transport: str = "inproc",
+    components: Iterable[Declaration] = (),
 ) -> Installed:
     """Bring a kernel up configured by *settings*, which is what a program does at its one entry point.
 
@@ -491,21 +493,36 @@ async def install(
     model while everything else is configured by a file: ``None`` is the routes' own model, which is what a
     program gets. ``transport`` is not in that list on purpose — a file says what this program *is*, and how
     a frontend reaches it is the frontend's business — but it is here so that a story about a file still
-    runs over every transport the kernel can open.
+    runs over every transport the kernel can open. ``components`` is the same kind of extra: not something
+    a file may say, and how a launcher adds a component of its own (E143).
     """
-    return await install_kernel(root, transport=transport, model=model, **_from_the_file(root=root, settings=settings))
+    return await install_kernel(
+        root,
+        transport=transport,
+        model=model,
+        components=components,
+        **_from_the_file(root=root, settings=settings),
+    )
 
 
-async def serve(settings: Settings, *, endpoint: Path | str, model: Model | None = None) -> Daemon:
+async def serve(
+    settings: Settings, *, endpoint: Path | str, model: Model | None = None, components: Iterable[Declaration] = ()
+) -> Daemon:
     """Serve a kernel configured by *settings* at one address (``--serve``).
 
     The same translation as :func:`install` and the same host, with an address instead of a client: a
     daemon has nobody in front of it, so the only thing this program still decides is where it listens.
     It is handed no tree either — the trees it serves are the ones a client names (E157) — and the one
     place that shows is the project's skills directory, which a program with no tree cannot have: the
-    roots are the file's own plus the person's, and nothing is guessed in its place.
+    roots are the file's own plus the person's, and nothing is guessed in its place. ``components`` means
+    what it means there: a launcher's own, declared beside this process's.
     """
-    return await serve_kernel(endpoint=endpoint, model=model, **_from_the_file(root=None, settings=settings))
+    return await serve_kernel(
+        endpoint=endpoint,
+        model=model,
+        components=components,
+        **_from_the_file(root=None, settings=settings),
+    )
 
 
 def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, Any]:

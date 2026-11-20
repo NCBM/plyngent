@@ -548,6 +548,7 @@ async def install(
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
+    components: Iterable[Declaration] = (),
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
 
@@ -628,6 +629,13 @@ async def install(
     to keep it with, so a machine without one records *what* changed and not the bytes. That degradation
     is decided here rather than discovered at the first write (§10.1, E26), the way a kernel with no
     skills directory has no skill tools.
+
+    ``components`` is the one thing here that is not a value out of a file: a launcher that brings
+    something of its own — a resource, a provider, whatever the kernel reaches for by class — hands the
+    declarations over and they are declared beside this process's own. What such a component can *do* is
+    what it was constructed with: it is built by this assembly and reaches for the rest the way anything
+    else does, so no resolver is passed in and no table is handed out (E143). ``()`` is the program this
+    tree ships with.
     """
     if transport not in KERNEL_TRANSPORTS:
         msg = f"{transport!r} is not a transport this kernel can open; it knows {KERNEL_TRANSPORTS}"
@@ -651,6 +659,7 @@ async def install(
         versions=versions,
         deadline=deadline,
         grades=grades,
+        components=components,
     )
     listening: local.Listening | None = None
     streams: tuple[local.SocketChannel, ...] = ()
@@ -792,6 +801,7 @@ async def serve(
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
+    components: Iterable[Declaration] = (),
 ) -> Daemon:
     """Serve every client that reaches one address, over the trees it is given.
 
@@ -826,6 +836,7 @@ async def serve(
         versions=versions,
         deadline=deadline,
         grades=grades,
+        components=components,
     )
     daemon = Daemon(kernel, await local.Listening.at(Path(endpoint)))
     daemon.start()
@@ -893,6 +904,7 @@ async def _assembled(
     versions: bool,
     deadline: float | None,
     grades: Grades | None,
+    components: Iterable[Declaration] = (),
 ) -> _Kernel:
     """Bring a kernel up: the declarations, and the tree it was pointed at when it was pointed at one.
 
@@ -921,7 +933,9 @@ async def _assembled(
     specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
     # One broker for the whole process: it is the root-qualified component, and it is the only thing here
     # that a host reaches for across the qualifier axis (§9.4). A tree shares it rather than owning one.
-    _ = registry.declare_all([Declaration(PtyBroker)])
+    # What a launcher brought is declared beside it, and a declaration that reaches for something nothing
+    # declared is the registry's refusal to make — order here is dependency order, not declaration order.
+    _ = registry.declare_all([Declaration(PtyBroker), *components])
     rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     assembly = Assembly(registry, up=up, rule=rule)
     kernel = _Kernel(
