@@ -203,7 +203,7 @@ class _Kept:
     This is the whole reason a session may be unread for an hour: a tty is a pipe with a small buffer,
     so a child that out-writes its reader blocks in ``write(2)`` until somebody reads — forever, if
     nobody is looking. Keeping the newest bytes here means the child is always being read, and what
-    could not be kept is a count rather than a hole nobody hears about (§9).
+    could not be kept is a count, so nothing is a hole nobody hears about (§9).
 
     The lock is for the one platform that fills this from another thread (a ConPTY has no descriptor to
     select on); on POSIX the broker's own thread is the only writer and it never contends.
@@ -459,7 +459,7 @@ class _Broker:
 
         A broker that opened the channel and could not get a terminal would otherwise look alive until
         the first spawn was refused, so the answer to "can this platform give a child a terminal" is
-        sent here rather than discovered later. A wrong protocol is not negotiated: this program's two
+        sent here, where it is found at the greeting. A wrong protocol is not negotiated: this program's two
         halves are built together.
         """
         self._transport.wait(5.0)

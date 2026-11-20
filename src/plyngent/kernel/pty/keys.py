@@ -123,8 +123,8 @@ def decode_write_data(data: str) -> str:
     Escapes are literal characters in ``data``: ``\\n`` ``\\r`` ``\\t`` ``\\e``/``\\E`` (ESC) ``\\0``,
     ``\\xHH`` for one byte and ``\\uHHHH`` for one code point. Anything else is sent as it is.
 
-    Raises :class:`KeySyntaxError` for a marker that names nothing: a typo must be reported rather than
-    typed into somebody's shell prompt.
+    Raises :class:`KeySyntaxError` for a marker that names nothing: a typo is reported here, so it never
+    reaches somebody's shell prompt.
     """
     if not data:
         return data

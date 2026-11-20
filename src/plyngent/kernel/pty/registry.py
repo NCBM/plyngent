@@ -10,7 +10,7 @@ process dies belong to the broker (:mod:`plyngent.kernel.pty.broker`), which is 
 is the one thing in the program that forks. What is left here is what is about *this host* — a small
 integer per session that means nothing outside it, the size of the window each session is opened with,
 the "one reader" rule, the waiting a read does, the sweep of idle terminals, and the answer to "is
-there room" — every one of which is a decision about a conversation rather than about a terminal. The
+there room" — every one of which is a decision about a conversation. The
 broker's ids are mapped onto those integers, so a broker that restarted and started counting from one
 cannot collide with a session this host still remembers.
 
@@ -23,7 +23,7 @@ Two things are deliberately *not* here:
   that is the renderer's job — the kernel does not know a terminal exists.
 
 **One owner.** Every field of every session, and the table itself, is written on the loop thread and
-nowhere else; that is why there is no lock here. The rule holds rather than being hoped for: the broker
+nowhere else; that is why there is no lock here. The rule holds: the broker
 delivers its frames on that loop, and ``open`` refuses to run on any other — a request answered on a
 foreign loop is exactly the crossing the rule exists for.
 """
@@ -61,13 +61,13 @@ POLL_SECONDS = 0.02
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    """How much of a host its terminals may take, as one value rather than one parameter per number.
+    """How much of a host its terminals may take, as one value.
 
     A host's budgets are a fact about how the program was started, so they are handed in at install — but
     they are three numbers that only ever travel together, and a composition root that grew a parameter
     per number is the signature this rewrite exists to end. The defaults are this value's, so a program
     started with no configuration file has the numbers this tree shipped with, and a story that wants one
-    terminal's worth of room says so here rather than by reaching into a registry it did not build.
+    terminal's worth of room says so here, and reaches no registry it did not build.
 
     Only the three that bound a *terminal* are here. What a listing may return is a tool's own declaration
     in its schema, and "a result too long to send" is the move-to-a-handle track (§10.3): neither is a
@@ -87,7 +87,7 @@ class Limits:
         """The keyword arguments a registry is declared from — the one place these three names are spelled.
 
         It exists so that the composition root hands over a value and does not restate the field names,
-        which is the same move as handing over a ``Routes`` rather than a list and a default.
+        which is the same move as handing over a ``Routes``.
         """
         return {
             "max_sessions": self.max_sessions,
@@ -133,7 +133,7 @@ class PtyReadResult:
     matched: bool = False
     #: How many bytes nobody will ever see: what the window overwrote while nobody was reading, plus the
     #: front of this answer that ``max_bytes`` cut off (only an ``until`` read accumulates that much). It
-    #: is the price of not reading for a while, said as a number instead of a hole in the transcript (§9).
+    #: is the price of not reading for a while, said as a number (§9).
     dropped: int = 0
 
 
@@ -145,7 +145,7 @@ class PtyCloseResult:
     exit_code: int | None
     message: str = ""
     #: What the child had said and nobody had read, as the newest window of it — a close is the last
-    #: chance to hand those bytes over rather than let them die with the fd (E148).
+    #: chance to hand those bytes over before the fd goes (E148).
     data: str = ""
 
 
@@ -157,12 +157,12 @@ class PtyRegistry(Component):
     shared — one session that opens eight terminals leaves every other session with none, and the
     refusal would name a host-wide number the caller cannot act on.
 
-    Both are counted off the table itself at the moment of the check, rather than kept in counters
-    beside it: a count that can be derived cannot leak, and a slot returned in a ``finally`` is a slot
+    Both are counted off the table itself at the moment of the check, because a count that can be derived
+    cannot leak, and a slot returned in a ``finally`` is a slot
     somebody will eventually forget to return.
     """
 
-    #: The process-wide fork. A field rather than a module global, so that a replaced generation is
+    #: The process-wide fork. A field, so that a replaced generation is
     #: simply what the next read answers — a broker that died takes its sessions with it, not the host.
     broker: PtyBroker = require()
     max_sessions: int
@@ -219,7 +219,7 @@ class PtyRegistry(Component):
         call to discover it (E151). Then the new generation's exits are the ones to listen for.
 
         The rows stay in the table, marked closed, so that a call still holding one of those ids is told
-        *which generation took it* rather than that this host never heard of it
+        *which generation took it*, where a host that never heard of it is a different answer
         (:meth:`_require_generation`), while everything that answers "how many are open" reads the truth
         at once. **Nothing here reads the requirement**: a replacement lands the new generation at
         ``LOADED`` and only then tells its dependants, so ``self.broker`` is not answerable for the length
@@ -251,7 +251,7 @@ class PtyRegistry(Component):
     def take_lost(self, owner: str) -> int:
         """How many terminals ``owner`` lost to a replaced broker, said once and then forgotten.
 
-        Taken rather than read, because what it becomes is a row: a count that stayed in the table would be
+        Taken, because what it becomes is a row: a count that stayed in the table would be
         written again at the next round, and once is what happened (E151).
         """
         return self._lost.pop(owner, 0)
@@ -356,7 +356,7 @@ class PtyRegistry(Component):
             msg = f"closed PTY session: {session_id}"
             raise PtyError(msg, Failure.MISSING)
         # One reader per session: two readers would split the byte stream between them, and a tool
-        # that asked for `until` would never see the whole match. Refused rather than queued.
+        # that asked for `until` would never see the whole match, so it is refused.
         if session.reading:
             msg = f"PTY session is already being read: {session_id}"
             raise PtyError(msg, Failure.BUSY)
@@ -400,7 +400,7 @@ class PtyRegistry(Component):
 
         The caller that marks the session ``closing`` owns the teardown. Marking happens before the
         first ``await``, so a second close arriving in the same window reports the truth — the child is
-        going away — instead of asking the broker to close the same session twice.
+        going away, so the broker is never asked to close the same session twice.
 
         A session the broker no longer knows is closed all the same: the child is gone either way, and
         a close that reported "unknown" would leave the host's own table believing in it.
@@ -440,7 +440,7 @@ class PtyRegistry(Component):
         exit_code: int | None = None
         said = ""
         try:
-            # The last thing a child said goes out with the answer rather than dying with the fd: the
+            # The last thing a child said goes out with the answer: the
             # broker moves whatever is still in the terminal into the window before it kills, and hands
             # the window back with the exit (E148, §9).
             ending = await self.broker.close(session.pty_id, grace_seconds=max(0.0, grace_seconds))
@@ -551,7 +551,7 @@ class PtyRegistry(Component):
     def _mark_lost(self) -> None:
         """Write down what a replaced broker took, and let each row answer once more.
 
-        Marked rather than deleted, because there are two readers and they want different things. A turn
+        Marked, because there are two readers and they want different things. A turn
         wants a count at the moment it is true, so it can say it before the model reaches for an id
         (:meth:`take_lost`). A call still holding one of those ids wants the sentence that says *which*
         generation took it, which only a row that is still there can answer

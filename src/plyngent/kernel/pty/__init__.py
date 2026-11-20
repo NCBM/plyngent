@@ -1,8 +1,8 @@
 """PTY sessions as the kernel owns them: a registry per host, and one broker per process.
 
 Five parts, deliberately apart: ``broker`` is the process that has a terminal to give (and the only
-part that forks), ``registry`` knows which children *this host* has and belongs to it rather than to
-the process, ``errors`` says which kind of refusal each of them is, ``keys`` turns ``<c-c>`` into the
+part that forks), ``registry`` knows which children *this host* has and belongs to it, ``errors``
+says which kind of refusal each of them is, ``keys`` turns ``<c-c>`` into the
 bytes a terminal would send, and ``policy`` answers whether a person has to agree to changing a session
 — an answer, never a question.
 

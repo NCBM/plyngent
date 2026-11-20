@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.pty.broker.frames import AnyReply, AnyRequest
 
 #: How long the kernel waits for a broker to answer its first frame. A broker that says nothing for this
-#: long is a broker that did not start, and ``open`` says so instead of parking the caller.
+#: long is a broker that did not start, and ``open`` says so.
 GREETING_SECONDS = 10.0
 
 
@@ -229,7 +229,7 @@ class PipeLink:
 async def open_link(epoch: str) -> tuple[subprocess.Popen[bytes], BrokerLink]:
     """Start a broker and hand back its process and the channel it answers on.
 
-    The process is returned rather than kept: who waits for it, kills it and gives the channel back is
+    The process is returned: who waits for it, kills it and gives the channel back is
     the component's business, and a transport that also owned a lifetime would be a second answer to
     "is this broker up".
     """

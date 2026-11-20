@@ -4,7 +4,7 @@ A *policy* answers whether a person has to be asked; it never asks. That separat
 kernel free of a callback into the CLI, and it is why this module holds no reference to
 ``Host.human`` — the tool that was refused does the asking and records the answer back here.
 
-Two questions live here, both of them about run state rather than about a declaration:
+Two questions live here, both of them about run state:
 
 * **Does this write or close need agreement?** Writing into a live process cannot be taken back, so the
   first one is asked and the answer is remembered by session. Closing a session that already ended
@@ -33,7 +33,7 @@ class PtyPolicy:
     second, because that is what the limit it is exceeding is counted by.
 
     **A conversation's room is soft** (§0.15, E115): a session that is at its limit is asked once, and
-    a yes is remembered for that conversation rather than for that call. The host's limit is not soft
+    a yes is remembered for that conversation. The host's limit is not soft
     and lives in the registry: no answer of a person's changes how many terminals the machine carries.
     """
 

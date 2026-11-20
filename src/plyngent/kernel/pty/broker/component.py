@@ -1,7 +1,7 @@
 """The broker component: the process, the channel, the epoch, and the ids only it can hand out.
 
 One per process, at the root qualifier, because one process needs one place to fork from. Its lifecycle
-is why it is a component rather than something ``Host.load`` starts: a broker that dies takes a
+is why it is a component: ``Host.load`` would tie its life to the host's, and a broker that dies takes a
 *generation* with it, not the host — the composition root can replace it, and every reader of the field
 sees the new one with nothing refreshed. Each :class:`BrokerSession` carries the epoch it was made in,
 so a session from a generation that is gone can never be mistaken for a live one.
@@ -83,8 +83,8 @@ class BrokerSession:
 class BrokerClose:
     """How a session ended, and what it said that nobody had taken.
 
-    ``data`` is the window's tail — the bytes left when the kill arrived go out with the answer instead of
-    dying with the descriptor — and ``dropped`` is what fell off its front before that.
+    ``data`` is the window's tail — the bytes left when the kill arrived go out with the answer, and
+    nothing dies with the descriptor — and ``dropped`` is what fell off its front before that.
     """
 
     exit: int | None
@@ -282,7 +282,7 @@ class PtyBroker(Component):
     async def _ask(self, request: AnyRequest, *, within: float | None = None) -> AnyAnswer:
         """Send one request and wait for the answer that names it.
 
-        One at a time, and queued rather than refused. The broker answers in the order it was asked, so a
+        One at a time, and queued. The broker answers in the order it was asked, so a
         second caller waits its turn; refusing it out of hand — which is what this did while a read was
         the only thing that parked here — would turn two conversations reading their own terminals into
         one of them failing, and a read that looks at a window repeatedly makes that overlap ordinary. The

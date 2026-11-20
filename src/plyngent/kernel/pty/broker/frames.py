@@ -41,7 +41,7 @@ class Spawn(Struct, frozen=True, kw_only=True, tag="spawn"):
     """Start ``argv`` on a fresh terminal in ``cwd`` (absolute: the kernel resolved it already).
 
     ``keep_bytes`` is how much of what the child says the broker holds for it. It is asked for at spawn
-    rather than per read because it is the size of the window itself: a terminal whose reader looks in
+    because it is the size of the window itself: a terminal whose reader looks in
     once an hour still cannot stall the child in ``write(2)``, and what does not fit falls out of the
     oldest end (§9).
     """
@@ -98,8 +98,8 @@ class Ready(Struct, frozen=True, kw_only=True, tag="ready"):
 
     Nothing may be spawned before this arrives — a broker that half-started would otherwise look alive
     until the first ``Spawn`` timed out. ``pty`` is whether this platform could give the process a
-    terminal at all; ``False`` is a broker that answers ``Refused`` to every spawn rather than a broker
-    that is not there.
+    terminal at all; ``False`` is a broker that answers ``Refused`` to every spawn, and one that is not
+    there answers nothing at all.
     """
 
     epoch: str
@@ -142,8 +142,8 @@ class Wrote(Struct, frozen=True, kw_only=True, tag="wrote"):
 class Closed(Struct, frozen=True, kw_only=True, tag="closed"):
     """The session is gone: killed if it had to be, reaped, its descriptor released.
 
-    ``data`` is the last thing the child said and nobody had taken — the window's tail, kept rather than
-    thrown away with the descriptor. ``dropped`` is what fell off its front before that.
+    ``data`` is the last thing the child said and nobody had taken — the window's tail, kept when the
+    descriptor goes away. ``dropped`` is what fell off its front before that.
     """
 
     id: int
@@ -160,8 +160,8 @@ class Answer(Struct, frozen=True, kw_only=True, tag="answer"):
     """One answer, and the request it answers.
 
     The ``seq`` is what makes a cancelled request harmless: a caller that stopped waiting leaves an
-    entry out of its table, and the answer that arrives anyway finds nobody home instead of becoming
-    the next request's answer.
+    entry out of its table, and an answer that arrives anyway finds nobody home; it never becomes the
+    next request's answer.
     """
 
     seq: int
@@ -169,7 +169,7 @@ class Answer(Struct, frozen=True, kw_only=True, tag="answer"):
 
 
 class Exited(Struct, frozen=True, kw_only=True, tag="exited"):
-    """A child died while nobody was asking; the kernel is told rather than left to find out."""
+    """A child died while nobody was asking, and the kernel is told."""
 
     id: int
     exit: int | None = None

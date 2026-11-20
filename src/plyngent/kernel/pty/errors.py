@@ -7,8 +7,8 @@ say defaults to ``BUG`` — an unclassified refusal is our own mistake, not the 
 
 ``PtyUnavailable`` is the same kind of thing one step out: no terminal *at all* on this machine, right
 now — no broker, no platform support, no ``pywinpty``. It is the one refusal that is not about a session
-and not about a call's arguments, which is why it is a class of its own instead of a message; it is
-still ``BLOCKED``, because a step is missing rather than a decision having been made.
+and not about a call's arguments, which is why it is a class of its own; it is
+still ``BLOCKED``, because a step is missing and nobody decided anything.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class PtyError(RuntimeError):
 class PtyUnavailable(PtyError):  # noqa: N818 — "unavailable" is the state, not a fault suffix
     """There is no terminal to be had here: no broker, no platform support, no ``pywinpty``.
 
-    Raised rather than returned because there is nothing to return: the call did not start anything, and
+    Raised, because there is nothing to return: the call did not start anything, and
     the reason is a sentence the caller shows. It is always ``BLOCKED``.
     """
 
