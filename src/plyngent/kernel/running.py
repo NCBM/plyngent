@@ -3,7 +3,7 @@
 Turns run beside each other because a conversation is the unit of work, not the process: four frontends on
 one kernel, or one frontend with four conversations, each waiting on its own model. What a machine cannot
 do is run an unbounded number of them, so there is a number — `[turn] running`, four by default — and a
-fifth turn is refused rather than queued.
+fifth turn is refused.
 
 **Refused, not queued.** A queue would make "how many turns are running" a number that is not the work in
 flight: the frontend that asked would be told its turn started and would then wait behind turns it cannot

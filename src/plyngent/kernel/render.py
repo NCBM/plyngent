@@ -1,12 +1,12 @@
 """What the model reads, projected from a result's parts in exactly one place.
 
-A result carries parts rather than a string because three readers want different things from it, and
-the model is only one of them. This module is the model's side of that: one function per part, and
+A result carries parts, because three readers want different things from it, and the model is only one
+of them. This module is the model's side of that: one function per part, and
 one function that lays them out in order. Nothing here knows about a terminal, a journal or a status —
 and nothing outside this module decides what text a part becomes, which is what makes "what the model
 saw" a thing that can be asserted in a test.
 
-Two decisions live here because they are decisions about text rather than about execution:
+Two decisions live here because they are decisions about text:
 
 * **Control characters become visible.** A child on a PTY can write anything, and that text lands in
   a conversation whose other end is somebody's terminal: an unescaped ESC is a sequence the *reader's*
@@ -52,8 +52,8 @@ def visible(text: str) -> str:
 def render_part(part: Part) -> str:
     """The text one part contributes.
 
-    A new kind of part has to be taught here, and says so by name rather than being rendered as its
-    own repr: what the model reads is a decision, and a fallback would make it an accident.
+    A new kind of part has to be taught here, and says so by name: what the model reads is a decision,
+    and a fallback would make it an accident.
     """
     if isinstance(part, Text):
         return visible(part.value)

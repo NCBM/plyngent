@@ -2,8 +2,8 @@
 
 Most of what this kernel says carries a count: how many tools a group brought, how many paths a diff
 found, how many groups are still hidden. The line that says it is prose a model and a person both read,
-and "1 tools" is prose that reads like a bug — which is why the rules for it live here rather than
-being re-decided by each tool that has a number in its summary.
+and "1 tools" is prose that reads like a bug — which is why the rules for it live here, and no tool
+re-decides them.
 
 Two functions, because there are two shapes: a noun on its own (the inside of a longer sentence) and a
 noun with the number in front of it. Nothing here knows what a noun *means*, and nothing takes a plural

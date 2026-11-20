@@ -39,12 +39,12 @@ class Skills(Resources[Skill]):
         person installed for themselves. The two ``claude`` roots follow — the user's own directory, then
         the one a checkout ships — so a project's copy of a name loses to the user's. That is the one place
         this tree turns the usual specificity around, and on purpose: a skill is a piece of somebody's
-        environment rather than a property of the checkout they happen to be standing in.
+        environment, and not a property of the checkout they happen to be standing in.
 
         ``workspace`` is the tree whose ``.claude`` directory is the third root, and ``None`` is a program
         that was started without one — a daemon serving trees a client names (E157). A store is one per
         process either way, so a kernel that names no tree has no project to read and says so by leaving
-        that root out rather than guessing a directory.
+        that root out.
         """
         roots = [
             Root(path=user_config_path("plyngent") / SKILL_DIR, origin="plyngent", scope="user"),
@@ -58,7 +58,7 @@ class Skills(Resources[Skill]):
         """Where a new skill goes: our own directory when it is one of the roots, else the first.
 
         Our own comes first in :meth:`standard`, so this is "the first root" in practice — but it is
-        written as a question about the origin rather than about the position, because a store built some
+        written as a question about the origin, because a store built some
         other way must still not write into another program's directory.
         """
         for root in self.roots:

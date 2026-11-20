@@ -1,6 +1,6 @@
 """The kernel: what a turn is, and what it is allowed to touch.
 
-Everything here is transport-agnostic, and the boundary is a directory rather than a habit:
+Everything here is transport-agnostic, and the boundary is a directory:
 
 * nothing under ``plyngent.kernel`` imports ``plyngent.cli``, ``click``, ``rich``,
   ``prompt_toolkit``, ``readline`` or ``termios``;

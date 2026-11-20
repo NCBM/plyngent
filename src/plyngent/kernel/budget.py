@@ -5,8 +5,8 @@ request it describes and cannot be asked about one that has not been sent. So th
 is honest about being one: characters divided by a rule of thumb, with the one thing that is not text
 counted as a floor. What makes it usable is that it is **paired**: a request's estimate is written beside
 the ``prompt_tokens`` the provider charged for that same payload
-(:attr:`plyngent.kernel.trail.Usage.estimate`), so the error between the two is a measurement rather than a
-guess, and a caller that needs tokens rather than characters scales by it.
+(:attr:`plyngent.kernel.trail.Usage.estimate`), so the error between the two is a measurement, and a
+caller that needs tokens scales by it.
 
 Three decisions, none of them a detail:
 
@@ -71,9 +71,9 @@ def estimate(
 ) -> int:
     """How many tokens this request is likely to be counted as, rounded up.
 
-    ``system`` and ``tools`` are what the request carries besides the conversation, and they are here
-    rather than added by the caller because they travel to the same place and are counted by the same
-    number at the other end: a tool block of a thousand characters is two hundred and fifty tokens of
+    ``system`` and ``tools`` are what the request carries besides the conversation, and they are here,
+    because they travel to the same place and are counted by the same number at the other end: a tool
+    block of a thousand characters is two hundred and fifty tokens of
     ``prompt_tokens`` whoever counted them.
     """
     chars = len(system)
@@ -92,7 +92,7 @@ def calibrated(measured: int, pair: tuple[int, int] | None) -> int:
     ``pair`` is ``(estimate, prompt_tokens)`` of one answered request — the same payload counted twice —
     and the ratio between them is this build's error for this text, this tool block and this endpoint.
     Applying it to the next estimate is what turns a rule of thumb into a measurement that survives: a
-    provider that counts a token per two characters instead of four would otherwise be overrun by half.
+    provider that counts a token per two characters would otherwise be overrun by half.
 
     ``None`` is "nothing has been measured yet", and it answers *measured* unchanged: a session that has
     asked nothing is one request away from knowing, not permanently wrong. A pair that says nothing —

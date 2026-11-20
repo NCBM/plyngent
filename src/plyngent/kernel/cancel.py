@@ -85,7 +85,7 @@ class CancelToken:
         """Cancel ``scope`` and everything under it; ``False`` when it was already cancelled.
 
         The first reason wins: a second caller reaching a scope that is already gone learns that
-        nobody's decision was overturned, rather than overwriting what the work will report.
+        nobody's decision was overturned, and what the work will report stays as it was.
         """
         if scope in self._fired:
             return False
@@ -129,7 +129,7 @@ class CancelToken:
     async def settle(self, scope: CancelScope) -> int:
         """Wait for the work still running under ``scope``; the number of tasks it waited for.
 
-        Called after :meth:`fire`, never instead of it: what ends the work is the reason, and this is
+        Called after :meth:`fire`, never in its place: what ends the work is the reason, and this is
         how the caller that wants a clean history waits for the tools to report it.
         """
         tasks = [task for held, group in self._running.items() if held.under(scope) for task in group]

@@ -16,7 +16,7 @@ Two refusals, and the difference is the whole point of having two:
 A temporary workspace is not a root here: it belongs to the conversation that asked for it, so it is the
 caller's own scratch that reaches it and nobody else's (E152).
 
-The root is taken as given rather than checked: a root that is gone is a problem for the tools that
+The root is taken as given: a root that is gone is a problem for the tools that
 touch it, and a workspace whose directory was unmounted must not fail to exist.
 """
 
@@ -111,7 +111,7 @@ class Denied(PathRefused):
 class WorkspaceConfig:
     """What the config file says about this workspace, as one value.
 
-    A config reload replaces the whole value rather than poking fields, so there is no moment where
+    A config reload replaces the whole value, so there is no moment where
     the denylist is half the old file and half the new one.
     """
 
@@ -176,7 +176,7 @@ class Workspace:
 
         Relative paths resolve against :attr:`root`; an absolute path is taken as it is. ``need`` is what
         the caller is about to do with the result, and ``grants`` is the table of whoever is asking — the
-        conversation's, passed in rather than reached for, because a process holds none of its own
+        conversation's, passed in, because a process holds none of its own
         (E153). ``scratch`` is the caller's own conversation, and it is the only one whose temporary
         workspace this call may reach: a directory somebody else asked for is not a root, it is somebody
         else's (E152).

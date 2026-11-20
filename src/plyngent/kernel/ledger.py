@@ -1,7 +1,7 @@
 """One host's events, numbered once: what was said, and how much of it a client may be handed again.
 
-The number on an event says what order a client may render it in, and it is the *host's* count rather
-than a connection's, for one reason: a client that comes back holds a number it read up to, and that
+The number on an event says what order a client may render it in, and it is the *host's* count, for one
+reason: a client that comes back holds a number it read up to, and that
 number has to mean the same thing on the other side of a reconnect. Two counters — one per connection —
 would make every reconnect a renumbering, and a renumbering is a replay nobody can ask for.
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 #: How many events a host keeps for a client that comes back. It is a transport budget and not a
 #: contract fact: nothing says a replay is complete, and a client that needs a complete account reads the
-#: conversation rather than the stream.
+#: conversation, and not the stream.
 REPLAY_EVENTS = 512
 
 
@@ -56,7 +56,7 @@ class Ledger:
     def since(self, mark: int) -> tuple[AnyEvent, ...]:
         """Everything still in the window that was said after ``mark``, oldest first.
 
-        A ``mark`` beyond what this kernel has said answers nothing rather than everything: it names a
+        A ``mark`` beyond what this kernel has said answers nothing: it names a
         count this kernel is not the one that made, and guessing at it would replay a stranger's words.
         """
         if mark >= self._seq:

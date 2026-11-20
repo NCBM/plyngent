@@ -6,14 +6,14 @@ read. So this module knows the syntax and nothing about which files use it: :cla
 one source contributed, and :class:`IgnoreSources` is the list of file names a walk looks for in each
 directory, plus the workspace-wide patterns that belong to no file at all. :class:`Rules` is the whole
 of what one workspace keeps back — those sources, and the directory names it hides whatever a call
-asks for — which is why it lives here rather than beside the walk that reads it.
+asks for — which is why it lives here, away from the walk that reads it.
 
 The syntax is the one editors and tools already write:
 
 * a blank line, or a line whose first character is ``#``, says nothing;
 * ``!`` in front re-includes what an earlier rule left out, and later rules win over earlier ones;
 * a trailing ``/`` matches directories only; a leading ``/`` — or a ``/`` anywhere inside — anchors
-  the rest of the rule to the directory that carried it instead of matching a name at any depth;
+  the rest of the rule to the directory that carried it, and it does not match a name at any depth;
 * ``*`` and ``?`` never cross ``/``; ``**`` as a whole segment covers any number of segments;
 * a backslash escapes the next character.
 

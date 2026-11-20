@@ -2,7 +2,7 @@
 
 A skill is somebody else's directory, so everything here is about not being surprised by one: the head
 of the file is what is read (the metadata is at the top, and the body is read by the tool that means to
-read it), and anything that cannot be understood becomes a **note on the record** rather than a repair.
+read it), and anything that cannot be understood becomes a **note on the record**.
 A skill whose frontmatter is broken, or that forgot a description, is still a skill — it is listed with
 the name of its directory and the first paragraph of its body, and says which of those it had to do.
 """
@@ -102,7 +102,7 @@ def scan(root: Root) -> tuple[Skill, ...]:
     """Every skill under one root, in name order — the root itself may be one.
 
     A missing root holds nothing; that is the ordinary state of the directory a new skill is about to be
-    written into, and it is reported by the table rather than raised here.
+    written into, and the table reports it.
     """
     return tuple(skill for directory in _directories(root.path) if (skill := _read(directory, root)) is not None)
 

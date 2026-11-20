@@ -11,8 +11,8 @@ exists whether or not anybody ever ran `git init` in that tree.
 
 **One commit per changing call.** A version is not a turn, a file, or a session — it is one call, which
 is the unit a result is written for and the unit a person means by "undo that". The commits are a line:
-each names the one before it, so the *previous* state of a path is a property of the store rather than
-something the caller had to remember to keep. Nothing here rewinds the line — a rollback restores
+each names the one before it, so the *previous* state of a path is a property of the store, and no
+caller had to remember to keep it. Nothing here rewinds the line — a rollback restores
 content and records a new commit — because the journal's own rule is that history is appended to.
 
 **What enters a version is decided here, not by git.** ``record`` is handed the paths a call left
@@ -160,7 +160,7 @@ class History:
         self.path = Path(path)
         #: What two conversations in one tree may not do at the same time: read the head, write this
         #: store's private index, and move the branch. A store is one tree's, so this is one per tree
-        #: (E156) — and a thread lock rather than an ``asyncio.Lock`` because the commit runs in a
+        #: (E156) — and a thread lock, because the commit runs in a
         #: thread: a cancelled turn's thread goes on working, and a lock released at the await would
         #: let a second commit into a half-written index.
         self._writing = threading.Lock()
@@ -172,7 +172,7 @@ class History:
 
         ``changed`` is absolute and may name a path that is no longer there — that is a removal, and a
         version has to record it or a deleted file looks like one that never existed. A path outside the
-        tree is not this store's to keep, and is dropped rather than hashed, which is the same line
+        tree is not this store's to keep, and is dropped, which is the same line
         :class:`~plyngent.kernel.toolresult.Effects` already draws between ``changed`` and ``external``.
 
         Everything below happens in one thread hop: it is file system work and process starts, and the
@@ -217,7 +217,7 @@ class History:
         This is for the one caller that cannot say what it changed: a program was started, and its argv
         says nothing about the files it touched (§10.12 — a command's paths are not in the batch graph
         either). So the tree is enumerated by the caller's own rules and handed here, and the answer is a
-        content comparison rather than a timestamp: a file written back to the same bytes is not a change,
+        content comparison: a file written back to the same bytes is not a change,
         which is what keeps a build that touched everything from becoming a version of everything.
 
         Two lines are drawn and both are the store's: a path outside the tree is not compared at all, and
@@ -296,7 +296,7 @@ class History:
         """The blob id and mode of each of these paths, in the order they were given.
 
         A symlink is the link's target as text, because that is what the path *is*; a file is its bytes.
-        Both are asked of git rather than computed here, so the id this build stores is the same id any
+        Both are asked of git, so the id this build stores is the same id any
         other git would store for the same content. ``write`` keeps the objects in the store; a comparison
         that only wants to know whether something moved computes the same id and keeps nothing.
         """

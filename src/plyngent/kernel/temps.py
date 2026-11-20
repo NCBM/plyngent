@@ -7,7 +7,7 @@ is what a scratch *is* — and a directory with no owner is one that three quest
 reach it, how long it lives, and what a sentence about it disappearing would even be about.
 
 The directories go with their conversation: when it is closed, or when the host goes down. Removal is for
-good rather than to the trash, because nobody restores scratch space and a trash on the temp volume would
+good, because nobody restores scratch space and a trash on the temp volume would
 only collect it (E152).
 
 The limit exists because every temporary workspace is also an entry in a listing a human reads, and a few
@@ -101,7 +101,7 @@ class TempWorkspaces:
     def release(self, path: Path | str) -> None:
         """Stop handing out *path*: the directory is gone, or it moved out of scratch space.
 
-        Silent for a path this host did not make, which is the ordinary case rather than an error: every
+        Silent for a path this host did not make, which is the ordinary case: every
         delete hands its target here, and almost none of them is a scratch directory.
         """
         _ = self._owned.pop(_resolved(path), None)

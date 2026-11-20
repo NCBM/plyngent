@@ -14,7 +14,7 @@ program needs to be at either end of it:
 
 Two rules of the lanes decide what the two tasks do. ``send`` is synchronous, so a value is queued and
 a writer task hands it over — and the queue is bounded, because a client that cannot keep up must be
-*stopped* by the transport rather than have an instruction dropped on the floor: a full queue ends the
+*stopped* by the transport, and no instruction is dropped on the floor: a full queue ends the
 connection. And a connection that ends is drained before it ends, so a message already said is not lost
 with the socket that was about to carry it.
 
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from plyngent.wire.event import AnyEvent
 
 #: Whether this platform has the address this transport is made of. A build without one has one
-#: transport rather than a transport that fails when it is used.
+#: transport, and no transport that fails when it is used.
 AVAILABLE = hasattr(socket, "AF_UNIX")
 
 #: How many values may wait to be written on one lane before this connection is dropped. It is a
@@ -77,8 +77,8 @@ class SocketChannel:
 
     Each direction is one task. Reading turns bytes into values and puts each on its lane, which is
     where the kernel or the client finds it; writing takes values off the lanes in the order they were
-    queued and hands them to the stream, one ``drain`` per turn of the loop rather than per frame, so a
-    burst of events is one syscall and not forty.
+    queued and hands them to the stream, one ``drain`` per turn of the loop, so a burst of events is one
+    syscall and not forty.
 
     ``close`` is a departure and not a failure: no new value is accepted, and what was already queued is
     still written before the stream closes — so the last thing the kernel says reaches the client that

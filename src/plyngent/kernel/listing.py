@@ -12,8 +12,8 @@ Three questions look alike and answer to different owners, so they are kept apar
   to read, says so in :class:`Filter`, which can only widen: hiding more than the workspace already
   hides is not a request a tool takes.
 
-The walk is here rather than in each tool because a listing built by two implementations is a listing
-that disagrees with itself: the same tree searched by ``glob_paths`` and shown by ``tree`` must show
+The walk is here, because a listing built by two implementations is a listing that disagrees with
+itself: the same tree searched by ``glob_paths`` and shown by ``tree`` must show
 the same paths.
 """
 
@@ -41,8 +41,7 @@ class Filter(Struct, frozen=True, forbid_unknown_fields=True):
     *files* are visible either way — ``.env`` and ``.gitignore`` are files a checkout is made of, and
     hiding them only teaches a model to guess. ``ignore_lists`` is which ignore sources to read, by
     file name, in this order (a later one wins): ``None`` means the workspace's own list and ``[]``
-    means read none of them. The workspace's own patterns are policy rather than a file and stay in
-    force in every case.
+    means read none of them. The workspace's own patterns are policy and stay in force in every case.
 
     Both defaults are fixed, and deliberately not configurable: what a checkout keeps back is
     :class:`~plyngent.kernel.ignore.Rules`, and what one call asks to see is this. A default taken from
@@ -65,8 +64,8 @@ class EnumerateArgs(ToolArgs, kw_only=True):
     """The one field every tool that lists a tree shares, and nothing else.
 
     A tool that enumerates cannot help having an opinion about what to leave out, so the opinion is
-    declared once, next to the policy it is answered by, rather than as a boolean per class of path
-    in each tool's own package.
+    declared once, next to the policy it is answered by, and
+    not as a boolean per class of path in each tool's own package.
     """
 
     filter: Filter = Filter()
@@ -91,8 +90,8 @@ class Listing:
     """One walk's answer: the entries, in the order they are shown, and how much it kept back.
 
     ``skipped`` counts what the rules hid, so "why is that file not here" has an answer that is not a
-    guess. A listing is taken whole rather than streamed because every caller already needs all of
-    it — a truncated answer is counted as it is truncated.
+    guess. A listing is taken whole, because every caller already needs all of it — a truncated answer is
+    counted as it is truncated.
     """
 
     entries: tuple[Entry, ...] = ()

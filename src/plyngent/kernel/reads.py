@@ -6,7 +6,7 @@ up from a summary would be an edit to lines nobody read — so a turn keeps what
 with the file's modification time, and ``edit_lineno`` asks this record whether the range it was given
 is one the model actually saw.
 
-It belongs to the turn rather than to a module-level variable for the reason nothing else does: the
+It belongs to the turn, because nothing else does: the
 record has to end with the turn, and two turns of two conversations must not teach each other
 anything. A turn's rounds share one, because a file read in round one is still read in round two.
 """

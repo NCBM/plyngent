@@ -19,8 +19,8 @@ from __future__ import annotations
 import msgspec
 from msgspec import Struct, field
 
-#: The one number two processes have to agree about. A broker that speaks another one is killed rather
-#: than talked to: there is no compatibility to keep, only our own two halves.
+#: The one number two processes have to agree about. A broker that speaks another one is killed: there is
+#: no compatibility to keep, only our own two halves.
 PROTOCOL = 1
 
 #: How long a broker waits for the kernel's opening word before deciding nobody is coming.

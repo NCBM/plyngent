@@ -39,7 +39,7 @@ def normalize(path: str | Path, *, base: Path) -> Path:
 def key(path: Path) -> str:
     """The identity of a path for a lock, a batch edge or an effect record.
 
-    Case comes from the platform (``os.path.normcase``), decided here rather than in each caller: on
+    Case comes from the platform (``os.path.normcase``), decided here: on
     a case-folding filesystem ``A.txt`` and ``a.txt`` are one file, and two locks would let one call
     write what the other is writing.
     """

@@ -8,8 +8,8 @@ A plain scalar folds the indented lines under it, which is YAML's own multi-line
 **A whole YAML implementation is a dependency for six fields, and a guess is worse than a refusal.**
 So the subset is a contract: a block outside it raises :class:`FrontmatterError` and the caller falls
 back to "no metadata, the directory's name and the first paragraph" — a third-party skill is then
-listed with a note saying it was not parsed, rather than silently repaired into something it is not.
-Nested mappings are the one construct skipped rather than refused: they carry no field this kernel
+listed with a note saying it was not parsed, and never silently repaired into something it is not.
+Nested mappings are the one construct skipped: they carry no field this kernel
 reads, and refusing the whole block over one would cost a skill its description as well.
 """
 

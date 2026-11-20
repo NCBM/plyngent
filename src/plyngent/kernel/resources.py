@@ -14,7 +14,7 @@ skill that lost a collision is exactly what somebody needs to see before deletin
 **Two ways to answer a collision are two kinds of table.** ``FIRST`` is the ordinary one — the more
 specific root wins, as a workspace's conventions win over a user's. ``REFUSE`` is for a kind where two
 roots holding one name is a configuration nobody could have meant, and where picking one would hide a
-mistake instead of stopping on it; it answers by raising :class:`Clash` rather than by choosing.
+mistake; it answers by raising :class:`Clash`.
 
 Nothing here caches: every question re-reads the roots, and the roots are the only thing that is fixed.
 """
@@ -76,7 +76,7 @@ class Resources[T]:
     """Everything of one kind under an ordered list of roots.
 
     ``scan`` reads one root and yields what is under it, ``named`` says what a scanned value is called.
-    Both belong to the kind rather than to this module: a new kind of resource is a ``scan`` and a list
+    Both belong to the kind: a new kind of resource is a ``scan`` and a list
     of roots, and nothing in the discovery below has to be told that it exists.
     """
 
@@ -132,7 +132,7 @@ class Resources[T]:
         """The roots with no directory under them.
 
         A root that is not there holds nothing, which is not an error: the default write root does not
-        exist until the first thing is written into it, and a listing says so rather than failing.
+        exist until the first thing is written into it, and a listing says so.
         """
         return tuple(root for root in self.roots if not root.path.is_dir())
 

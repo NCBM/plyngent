@@ -726,7 +726,7 @@ class Link:
     async def trajectory(self, session: str) -> tuple[Entry, ...]:
         """Read one conversation's rows, in the order they were written.
 
-        One question and one answer, so this is :meth:`query` with a shape rather than a second lane: the
+        One question and one answer, so this is :meth:`query` with a shape, and not a second lane: the
         reply a kernel sends for a ``Trajectory`` is a ``Forest`` and by nothing else, which is the rule
         every read keeps. A kernel that answers a kind this client has no value for is not a conversation
         to guess at, so what arrives is read only when it is one.
