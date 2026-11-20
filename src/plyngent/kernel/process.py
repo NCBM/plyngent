@@ -57,6 +57,12 @@ MAX_DEPTH = 4
 NODE_OUTPUT_CAP = 32_000
 #: How much output the whole call may produce before it is stopped rather than truncated.
 OUTPUT_BUDGET = 128_000
+#: How much of one pipe is taken at a time while a command runs.
+PIPE_CHUNK = 65_536
+#: How long a command's pipes are still read after its group was killed. What a program said *before* a
+#: deadline is usually the answer to why it hung, and killing it takes the rest with it — but a program
+#: that left the group can hold a pipe open forever, so this is a wait and not a promise (§2 R6).
+DRAIN_SECONDS = 0.5
 
 #: Variables a caller may not inject: each one changes how a program *it did not write* loads code.
 #: ``PYTHONPATH`` is deliberately absent — ``PYTHONPATH=src pytest`` is how a project runs its own
@@ -479,13 +485,28 @@ class _Run:
     async def _wait(
         self, process: asyncio.subprocess.Process, *, stdin: bytes | None, wait_seconds: float
     ) -> tuple[bytes, bytes, bool]:
-        """Wait for the child, the deadline, or the turn — whichever arrives first."""
+        """Wait for the child, the deadline, or the turn — whichever arrives first.
+
+        The pipes are read here rather than by ``communicate``, and the deadline is why: a cancelled
+        ``communicate`` takes what it had already read with it, so a command that said why it was hanging
+        came back as one that had said nothing. These readers are shielded from that cancellation and are
+        given a moment past the kill to finish, so a timeout answers with what the command had said up to
+        then — the lines are the answer to "why did it never finish" far more often than silence is.
+        """
+        output = bytearray()
+        errors = bytearray()
+        reading = asyncio.ensure_future(_collected(process, stdin=stdin, output=output, errors=errors))
         try:
-            out, err = await self.scope.guard(asyncio.wait_for(process.communicate(input=stdin), wait_seconds))
+            await self.scope.guard(asyncio.wait_for(asyncio.shield(reading), wait_seconds))
         except TimeoutError:
             await _stop(process)
-            return b"", b"", True
-        return out or b"", err or b"", False
+            await _salvaged(reading)
+            return bytes(output), bytes(errors), True
+        except Cancelled, asyncio.CancelledError:
+            _ = reading.cancel()
+            _ = await asyncio.gather(reading, return_exceptions=True)
+            raise
+        return bytes(output), bytes(errors), False
 
     def _stdin(self, node: Execution, permit: Permit, fed: str | None) -> bytes | Refused | None:
         """What this command reads, as bytes: the pipe's output, a string, a file, or nothing."""
@@ -574,6 +595,54 @@ class _CannotStartError(Exception):
         super().__init__(message)
         self.failure = failure
         self.message = message
+
+
+async def _collected(
+    process: asyncio.subprocess.Process, *, stdin: bytes | None, output: bytearray, errors: bytearray
+) -> None:
+    """Everything the child writes, into buffers that outlive a cut-short wait, and then its exit."""
+    reading = [_read_into(process.stdout, output)]
+    if process.stderr is not None:
+        reading.append(_read_into(process.stderr, errors))
+    # Fed and read at the same time, which is what ``communicate`` did: a command that answers a large
+    # input would deadlock on two full pipes if this handed the whole of it over before reading.
+    _ = await asyncio.gather(*reading, _fed(process.stdin, stdin), return_exceptions=True)
+    _ = await process.wait()
+
+
+async def _read_into(stream: asyncio.StreamReader | None, into: bytearray) -> None:
+    """One pipe, in chunks, to its end — so a kill leaves behind what had already arrived."""
+    if stream is None:
+        return
+    while chunk := await stream.read(PIPE_CHUNK):
+        into += chunk
+
+
+async def _fed(stream: asyncio.StreamWriter | None, stdin: bytes | None) -> None:
+    """Hand the child its input and close the pipe, which is what makes a reader see its end.
+
+    A child that never read what it was sent closes the pipe under the write, and that is a fact about
+    the command rather than a failure of the call.
+    """
+    if stream is None:
+        return
+    try:
+        if stdin:
+            stream.write(stdin)
+            await stream.drain()
+    except BrokenPipeError, ConnectionResetError:
+        pass
+    finally:
+        stream.close()
+
+
+async def _salvaged(reading: asyncio.Future[None]) -> None:
+    """Give the readers a moment past the kill, then take the buffers as they stand."""
+    try:
+        _ = await asyncio.wait_for(asyncio.shield(reading), DRAIN_SECONDS)
+    except TimeoutError:
+        _ = reading.cancel()
+        _ = await asyncio.gather(reading, return_exceptions=True)
 
 
 async def _spawn(

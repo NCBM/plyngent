@@ -270,6 +270,21 @@ async def test_a_command_that_never_answers_is_stopped_and_said_so(tmp_path) -> 
     assert batch.stopped is not None and batch.stopped.failure is Failure.TIMEOUT
 
 
+async def test_a_command_that_ran_out_of_time_still_says_what_it_had_said(tmp_path) -> None:
+    """The deadline ends the waiting, not the record: what a program said before it hung is the answer.
+
+    A kill is what ends a command that never finishes, and it takes whatever had not been read yet with
+    it — so this has to be read while it arrives rather than afterwards. `sh -c 'echo hi; sleep 30'` is
+    the whole case: everything worth knowing is already on the pipe by the time the deadline is reached
+    (§2 R6).
+    """
+    batch = await _run([Execution(argv=["sh", "-c", "echo hi; sleep 30"], timeout_secs=0.3)], tmp_path)
+
+    (ran,) = batch.ran
+    assert (ran.timed_out, ran.stdout) == (True, "hi\n")
+    assert batch.stopped is not None and batch.stopped.failure is Failure.TIMEOUT
+
+
 async def test_the_call_can_ask_for_longer_once_instead_of_per_command(tmp_path) -> None:
     batch = await _run([Execution(argv=["sleep", "0.3"], timeout_secs=0.05)], tmp_path, extra_timeout_secs=2)
 
