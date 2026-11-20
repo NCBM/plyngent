@@ -3,7 +3,7 @@
 Everything else is a story now (:mod:`tests.stories.test_terminals`). What stayed is a session that is
 still running with *nobody* to ask: the story's CLI always has a person on the other end, and what this
 asks is that the write does not happen. Expressing it outside would need a story verb that detaches the
-human channel, which is not a thing to invent for one test (see ``docs/rewrite-requirements.md`` §0.3).
+human channel, which is not a thing to invent for one test (see ``docs/rewrite-requirements.md`` §7).
 """
 
 from __future__ import annotations
