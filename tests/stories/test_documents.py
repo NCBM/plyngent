@@ -143,7 +143,7 @@ async def test_a_read_has_to_name_exactly_one_thing_to_read(story_with: Scripted
 
     (_, both, neither) = story.requests()
     assert _told_of(both).startswith("give either 'path' or 'document_id', not both"), "two locators is a guess"
-    assert _told_of(neither).startswith("give 'path' (a file in the workspace) or 'document_id'"), (
+    assert _told_of(neither).startswith("give 'path' (a path in the workspace) or 'document_id'"), (
         "and no locator is not a request"
     )
 
@@ -456,6 +456,42 @@ async def test_a_search_finds_the_lines_that_match(story_with: Scripted) -> None
     assert await _told(story) == "1 match in notes.txt\n2: two", (
         "the line number the model is shown is the number edit_lineno counts by"
     )
+
+
+async def test_a_search_of_a_directory_finds_the_line_in_whichever_file_holds_it(story_with: Scripted) -> None:
+    """A tree search says which file each hit is in, because a tree has more than one of them."""
+    story = await story_with(calling("search", {"path": ".", "pattern": "two"}), text("found"))
+    _ = _file(story, "notes.txt", "one\ntwo\n")
+    (story.workspace / "sub").mkdir()
+    _ = _file(story, "sub/more.txt", "two again\n")
+
+    await story.require("document")
+
+    await story.type("where does anything say two")
+
+    assert (await _told(story)).splitlines() == [
+        "2 matches in 2 files under .",
+        "notes.txt:2 two",
+        "sub/more.txt:1 two again",
+    ], "each hit is named by its file, and the walk reads the tree the way a listing shows it"
+
+
+async def test_a_search_of_a_directory_says_what_it_did_not_look_at(story_with: Scripted) -> None:
+    """A tree search is where "no match" can mean "did not look", so what was skipped is counted."""
+    story = await story_with(calling("search", {"path": ".", "pattern": "zzz"}), text("fair"))
+    _ = _file(story, "notes.txt", "one\ntwo\n")
+    _ = (story.workspace / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    (story.workspace / ".cache").mkdir()
+    _ = _file(story, ".cache/kept.txt", "zzz\n")
+
+    await story.require("document")
+
+    await story.type("nothing anywhere?")
+
+    assert (await _told(story)).splitlines() == [
+        "no line under . matches 'zzz'",
+        "not searched: 1 picture, 1 path the rules keep back",
+    ], "a picture has no lines, and a hidden directory is not walked"
 
 
 async def test_a_search_with_no_hits_says_so_about_what_it_looked_in(story_with: Scripted) -> None:

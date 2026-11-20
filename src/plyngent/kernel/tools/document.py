@@ -1,8 +1,9 @@
 """Tools whose operand is the content of one file — the document half of the tool surface.
 
 A document tool reads, searches or changes **one** operand, and that operand is named in one of two
-ways: a ``path`` (a file in the workspace) or a ``document_id`` (a handle a previous result carried
-when its body was too long to send). The two are the same question asked of two stores, so one tool holds
+ways: a ``path`` (a file or a directory in the workspace) or a ``document_id`` (a handle a previous
+result carried when its body was too long to send). The two are the same question asked of two stores,
+so one tool holds
 them as two fields — and a call gives exactly one of them, which is the rule :func:`locator` enforces
 before any handler runs.
 
@@ -23,16 +24,19 @@ import msgspec
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.documents import MAX_KEPT_BYTES, MAX_TEXT_CHARS, TEXT_MEDIA, picture_media
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.listing import walk
 from plyngent.kernel.paths import display
-from plyngent.kernel.toolresult import Effects, Hint, Part, Text, ToolResult
+from plyngent.kernel.toolresult import Effects, Hint, Part, Skips, Text, ToolResult
 from plyngent.kernel.tools import lifted
 from plyngent.kernel.tools.bodies import kept, kept_bytes
 from plyngent.kernel.tools.fs import LISTDIR
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, Role, ToolArgs, ToolSpec, argument
+from plyngent.kernel.words import counted
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.ask import Severity
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from plyngent.kernel.cancel import Scope
@@ -271,20 +275,21 @@ def locator(args: Any) -> None:
         msg = "give either 'path' or 'document_id', not both: they name two different things"
         raise ArgsError("", msg)
     if not named and not handle:
-        msg = "give 'path' (a file in the workspace) or 'document_id' (a handle a result carried)"
+        msg = "give 'path' (a path in the workspace) or 'document_id' (a handle a result carried)"
         raise ArgsError("", msg)
 
 
 class SearchArgs(ToolArgs, kw_only=True):
-    """Find the lines of one file, or of one kept document, that match a regular expression.
+    """Find the lines of one file, of one kept document, or of every file under a directory.
 
     ``pattern`` is a **Python** ``re`` regex matched per line, with multiline on — a filename glob is
     not a regex, so ``**/*.py`` draws a refusal that says what went wrong. Give exactly one of ``path``
-    (a file in the workspace) and ``document_id`` (a handle a result carried).
+    (a file or a directory in the workspace) and ``document_id`` (a handle a result carried).
 
     ``max_matches`` bounds how many hits come back, and a list that was cut says so.
     ``context_lines`` shows that many lines around each hit: a hit reads ``12: text`` and a line shown
-    for its company reads ``13- text``, the way a person reading a diff expects.
+    for its company reads ``13- text``, the way a person reading a diff expects. A hit under a
+    directory names its file first (``src/x.py:12 text``), because a tree has more than one of them.
     """
 
     path: str = ""
@@ -296,14 +301,35 @@ class SearchArgs(ToolArgs, kw_only=True):
 
 async def search(env: Env, args: SearchArgs) -> ToolResult:
     """The matching lines of one operand, with as much company as the call asked for."""
-    named = await _searched(env, args)
-    if isinstance(named, ToolResult):
-        return named
-    name, text = named
     try:
         regex = compile_lines(args.pattern)
     except re.error as exc:
         return ToolResult.of(Failure.ARGS, f"invalid regex: {exc}")
+    if args.document_id:
+        found = await _document_text(env, args.document_id)
+        return found if isinstance(found, ToolResult) else _matched(found[0], found[1], regex, args)
+    return await _at_path(env, args, regex)
+
+
+async def _at_path(env: Env, args: SearchArgs, regex: re.Pattern[str]) -> ToolResult:
+    """The path half of a search: one file, or every file under a directory."""
+    try:
+        target = env.resolve(args.path, AccessMode.READ)
+    except PathRefused as exc:
+        return lifted(exc)
+    if target.is_dir():
+        return await _in_tree(env, args, regex, target)
+    if not target.is_file():
+        return _nothing_there(args.path, target)
+    text = await _scan_text(args.path, target, scope=env.scope())
+    if isinstance(text, str):
+        return _matched(args.path, text, regex, args)
+    assert text is not None, "one file is never 'left out': that is a tree search's tally"
+    return text
+
+
+def _matched(name: str, text: str, regex: re.Pattern[str], args: SearchArgs) -> ToolResult:
+    """One operand's hits, each line with its number."""
     lines = text.splitlines()
     hits = [index for index, line in enumerate(lines) if regex.search(line)]
     if not hits:
@@ -315,6 +341,73 @@ async def search(env: Env, args: SearchArgs) -> ToolResult:
         summary = f"{len(shown)} of {len(hits)} matches in {name}"
         body.append(f"...[truncated at {args.max_matches} matches]")
     return ToolResult.ok(summary, body=Text(value="\n".join(body)))
+
+
+async def _in_tree(env: Env, args: SearchArgs, regex: re.Pattern[str], base: Path) -> ToolResult:
+    """Every line under a directory that matches, one file at a time, and what went unlooked at.
+
+    A tree search is the one search where "no match" can mean "did not look", so everything left out
+    is counted and said: a file the rules keep back, one bigger than this build holds, one that is a
+    picture, one that cannot be read. The walk is a listing's own, so what a search sees in a tree is
+    what ``tree`` shows in it.
+    """
+    scope = env.scope()
+    listing = await scope.blocking(walk, env.workspace, base)
+    left_out: dict[tuple[str, str], int] = {}
+    body: list[str] = []
+    touched: set[str] = set()
+    hits_so_far = 0
+    cut = False
+    for entry in listing.entries:
+        if entry.is_dir or hits_so_far >= args.max_matches:
+            continue
+        where = base / entry.relative
+        text = await _scan_text(where.name, where, scope=scope, left_out=left_out)
+        if not isinstance(text, str):
+            continue
+        lines = text.splitlines()
+        hits = [index for index, line in enumerate(lines) if regex.search(line)]
+        if not hits:
+            continue
+        room = args.max_matches - hits_so_far
+        hits_so_far += len(hits)
+        cut = cut or len(hits) > room
+        touched.add(entry.relative.as_posix())
+        body.extend(around_in(entry.relative.as_posix(), lines, hits[:room], args.context_lines))
+    if cut:
+        body.append(f"...[truncated at {args.max_matches} matches]")
+    summary = f"{matches(min(hits_so_far, args.max_matches))} in {counted(len(touched), 'file')} under {args.path}"
+    if not touched:
+        summary = f"no line under {args.path} matches {args.pattern!r}"
+    said = _leftovers(left_out, listing.skipped)
+    if said:
+        body.append(said)
+    return ToolResult.ok(summary, body=Text(value="\n".join(body)))
+
+
+def _leftovers(counted_out: Mapping[tuple[str, str], int], skipped: Skips) -> str:
+    """What a tree search did not look at, in one sentence, or nothing when it looked at everything."""
+    parts = [f"{counted(how_many, noun)}{f' {why}' if why else ''}" for (noun, why), how_many in counted_out.items()]
+    kept = skipped.files + skipped.dirs
+    if kept:
+        parts.append(f"{counted(kept, 'path')} the rules keep back")
+    if not parts:
+        return ""
+    return f"not searched: {', '.join(parts)}"
+
+
+def around_in(name: str, lines: list[str], hits: list[int], context: int) -> list[str]:
+    """``around``, with every line named by the file it is in — a tree has more than one of them."""
+    said: list[str] = []
+    last = -1
+    for hit in hits:
+        first = max(0, hit - context)
+        if said and first > last + 1:
+            said.append("--")
+        for index in range(max(first, last + 1), min(len(lines), hit + context + 1)):
+            said.append(f"{name}{':' if index == hit else '-'}{index + 1} {clipped(lines[index])}")
+            last = index
+    return said
 
 
 def compile_lines(pattern: str, *, case_insensitive: bool = False) -> re.Pattern[str]:
@@ -330,13 +423,6 @@ def compile_lines(pattern: str, *, case_insensitive: bool = False) -> re.Pattern
     return re.compile(pattern, re.MULTILINE | (re.IGNORECASE if case_insensitive else 0))
 
 
-async def _searched(env: Env, args: SearchArgs) -> tuple[str, str] | ToolResult:
-    """What to search, as its name and its text — or the result that says why there is nothing to search."""
-    if args.document_id:
-        return await _document_text(env, args.document_id)
-    return await _file_text(env, args.path)
-
-
 async def _document_text(env: Env, document_id: str) -> tuple[str, str] | ToolResult:
     """A kept document's text, or what to answer when there is no such document."""
     found = await env.documents.get(env.session, document_id)
@@ -347,38 +433,44 @@ async def _document_text(env: Env, document_id: str) -> tuple[str, str] | ToolRe
     return found.kept.id, found.data.decode("utf-8", errors="replace")
 
 
-async def _file_text(env: Env, name: str) -> tuple[str, str] | ToolResult:
-    """One file's text, or the answer for a file that cannot be read."""
-    try:
-        target = env.resolve(name, AccessMode.READ)
-    except PathRefused as exc:
-        return lifted(exc)
-    if not target.is_file():
-        return _nothing_there(name, target)
-    found = await _scan_text(name, target, scope=env.scope())
-    return found if isinstance(found, ToolResult) else (name, found)
-
-
-async def _scan_text(name: str, target: Path, *, scope: Scope) -> str | ToolResult:
+async def _scan_text(
+    name: str, target: Path, *, scope: Scope, left_out: dict[tuple[str, str], int] | None = None
+) -> str | ToolResult | None:
     """This file's text, or why a line-by-line scan of it is not a thing this call will do.
 
     A search holds one file's text in memory a line at a time, so a file past what this build keeps is
     refused before it is read: the size on disk is the first answer (it counts bytes, so it refuses a
     little early on multi-byte text, which is the safe direction), and the text's own length is the
     exact one after decoding.
+
+    ``left_out`` is how a tree search collects the files it could not look at: given one, such a file is
+    counted under its reason and answered with ``None``, because one unreadable file in a tree belongs in
+    a sentence at the end and not in the place the answer would be.
     """
     try:
         size = (await scope.blocking(target.stat)).st_size
         if size > MAX_KEPT_BYTES:
-            return _too_big(name, size, "bytes")
+            return _left(_too_big(name, size, "bytes"), left_out, "file", "past the size a search holds")
         source = await scope.blocking(_read_file, target)
     except OSError as exc:
-        return ToolResult.of(Failure.of(exc), f"search failed: {exc}")
+        return _left(ToolResult.of(Failure.of(exc), f"search failed: {exc}"), left_out, "file", "unreadable")
     if isinstance(source, _Picture):
-        return ToolResult.ok(f"search {name}: it is {source.media}, and a picture has no lines to match")
+        return _left(
+            ToolResult.ok(f"search {name}: it is {source.media}, and a picture has no lines to match"),
+            left_out,
+            "picture",
+        )
     if len(source.text) > MAX_TEXT_CHARS:
-        return _too_big(name, len(source.text), "characters")
+        return _left(_too_big(name, len(source.text), "characters"), left_out, "file", "past the size a search holds")
     return source.text
+
+
+def _left(result: ToolResult, tally: dict[tuple[str, str], int] | None, noun: str, why: str = "") -> ToolResult | None:
+    """Count one file a tree search could not look at, or answer the call that named it alone."""
+    if tally is None:
+        return result
+    tally[noun, why] = tally.get((noun, why), 0) + 1
+    return None
 
 
 def _too_big(name: str, size: int, unit: str) -> ToolResult:

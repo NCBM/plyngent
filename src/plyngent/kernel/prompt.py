@@ -108,7 +108,10 @@ def _network(served: Collection[str], engines: Sequence[str]) -> str:
 GROUP_PLAYBOOK: Mapping[Group, str] = {
     Group.DOCUMENT: """\
 The rest of a document: a body too long for an answer is kept rather than cut, and `documents` lists what
-is kept while `search` looks inside it. `read` takes a line window, so a big file is read in pieces.""",
+is kept while `search` looks inside it. `read` takes a line window, so a big file is read in pieces.
+`search` takes one file, a kept handle, or a directory: a directory is every file under it that the
+rules show, and the answer ends with what it did not look at — a picture, a file too big to hold, one the
+ignore rules keep back.""",
     Group.FS: """\
 Finding things: `listdir` shows one directory, `tree` shows a subtree, and `glob_paths` finds by glob
 under one directory. `copy_path`, `move_path` and `delete_path` change the tree; a delete goes to the
