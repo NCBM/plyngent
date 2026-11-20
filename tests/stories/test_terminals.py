@@ -93,12 +93,13 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
     assert any(line.startswith(f"close_pty ok: closed PTY session {used}") for line in story.screen()), story.screen()
 
 
-async def test_a_terminal_that_has_said_too_much_is_still_readable(story_with: Scripted) -> None:
-    """E148: a spent budget is a number in the answer, not a terminal nobody can read again.
+async def test_a_terminal_that_has_said_too_much_says_what_it_lost(story_with: Scripted) -> None:
+    """§9: a terminal nobody is reading is still being read, and what overflowed is a number.
 
-    The budget bounds what a *model* is handed. A read that answered "spent" would leave the bytes in the
-    tty, and a child that keeps writing blocks there for the rest of its life — so the read happens, the
-    newest window comes back, and what fell out of it is said as ``dropped``.
+    Only the newest ``session_output_budget`` of a session is kept, because a child that talks a lot must
+    not be blocked in ``write(2)`` while it waits for somebody to look. So the window a read finds is the
+    end of the flood, and the bytes that fell off the front of it are said as ``dropped`` rather than as
+    a hole in the middle of what the program said.
     """
     story = await story_with(
         calling(
@@ -106,7 +107,7 @@ async def test_a_terminal_that_has_said_too_much_is_still_readable(story_with: S
             {"command": ["/bin/sh", "-c", "yes zz | head -c 2000; echo MARK; sleep 300"], "intention": "flood"},
         ),
         _by_session("read_pty", max_bytes=8192, timeout=5.0, until="MARK"),
-        _by_session("read_pty", max_bytes=64, timeout=5.0),
+        _by_session("read_pty", max_bytes=64, timeout=0.5),
         _by_session("close_pty"),
         text("it talks too much"),
         pty=Limits(session_output_budget=1024),
@@ -114,20 +115,19 @@ async def test_a_terminal_that_has_said_too_much_is_still_readable(story_with: S
 
     await story.require("process")
 
-    # The first read spends the budget before the mark it asked for; the second one is still a read.
+    # The mark at the end of the flood is in the window: none of it had to be read for it to survive.
     await story.type("talk to the terminal")
     for _ in range(2):
         await story.answer("y")
     await story.finished()
 
     (_, _, first, second, closed) = story.requests()
-    assert "budget_exhausted=true" in told(first).splitlines(), (
-        "the first read is bounded by the budget, and says the terminal is over it"
-    )
-    assert told(first).startswith("read 1024 chars"), told(first)
-    assert "dropped=0" not in told(second).splitlines(), "a read past the budget says what it lost"
-    assert "--- data ---" in told(second)
-    assert told(second).split("--- data ---\n")[-1].strip(), "and what comes back is a window, not nothing"
+    assert "matched=true" in told(first).splitlines(), "the mark at the end of the flood was still there"
+    assert told(first).split("--- data ---\n")[-1].rstrip().endswith("MARK"), told(first)
+    assert "dropped=0" not in told(first).splitlines(), "and what fell out of the window is a number"
+    assert "truncated=true" in told(first).splitlines(), "the window is not everything the child said"
+    assert told(second).split("--- data ---\n")[-1] == "", "a quiet terminal says nothing rather than guessing"
+    assert "dropped=0" in told(second).splitlines(), "and it lost nothing while it was empty"
     assert "closed PTY session" in told(closed)
 
 

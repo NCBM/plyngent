@@ -80,9 +80,11 @@ class PtyFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[pty]``: how much of the host its terminals may take, and nothing else (§0.11, E85).
 
     Named for the thing the three numbers are about rather than for the idea of a ceiling: everything
-    here is a quota on a terminal — how many a host opens, how many one conversation holds, and how many
-    bytes of one are handed over at a time — and the value they turn into is the one a
-    :class:`~plyngent.kernel.pty.registry.PtyRegistry` is given (E150).
+    here is a quota on a terminal — how many a host opens, how many one conversation holds, and how much
+    of one session's output is kept — and the value they turn into is the one a
+    :class:`~plyngent.kernel.pty.registry.PtyRegistry` is given (E150). The last one is a window and not
+    a spend limit: the terminal is read whether or not anybody is looking, and this is how much of what
+    it said survives until somebody does (§9).
     """
 
     max_sessions: int = DEFAULT_MAX_SESSIONS

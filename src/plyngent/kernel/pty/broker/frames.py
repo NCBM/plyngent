@@ -38,20 +38,30 @@ class Hello(Struct, frozen=True, kw_only=True, tag="hello"):
 
 
 class Spawn(Struct, frozen=True, kw_only=True, tag="spawn"):
-    """Start ``argv`` on a fresh terminal in ``cwd`` (absolute: the kernel resolved it already)."""
+    """Start ``argv`` on a fresh terminal in ``cwd`` (absolute: the kernel resolved it already).
+
+    ``keep_bytes`` is how much of what the child says the broker holds for it. It is asked for at spawn
+    rather than per read because it is the size of the window itself: a terminal whose reader looks in
+    once an hour still cannot stall the child in ``write(2)``, and what does not fit falls out of the
+    oldest end (§9).
+    """
 
     seq: int
     argv: list[str]
     cwd: str
+    keep_bytes: int
 
 
 class Read(Struct, frozen=True, kw_only=True, tag="read"):
-    """What the child wrote, waiting up to ``wait_seconds`` for some of it."""
+    """The newest ``max_bytes`` of what the child said and nobody has taken yet.
+
+    It is answered from the window the broker keeps, so it never waits and never parks the broker: the
+    waiting is the kernel's, and the terminal is being read whether or not anybody asks.
+    """
 
     seq: int
     id: int
     max_bytes: int
-    wait_seconds: float
 
 
 class Write(Struct, frozen=True, kw_only=True, tag="write"):
@@ -113,23 +123,16 @@ class Refused(Struct, frozen=True, kw_only=True, tag="refused"):
 
 
 class Data(Struct, frozen=True, kw_only=True, tag="data"):
-    """Bytes the child wrote. Empty with no ``Ended`` means only that nothing was ready."""
+    """What the child said and nobody had taken: up to ``max_bytes`` of it from the front of the window.
+
+    Empty ``data`` means only that nothing was waiting. ``dropped`` is the bytes nobody will ever see —
+    what the window overwrote before this read, and only that: a read that took less than the window held
+    leaves the rest for the next one, which is what reading a terminal in small pieces means.
+    """
 
     id: int
     data: bytes
-
-
-class Ended(Struct, frozen=True, kw_only=True, tag="ended"):
-    """The child is gone; ``exit`` is what it left behind (``None`` when the platform could not say)."""
-
-    id: int
-    exit: int | None = None
-
-
-class Timeout(Struct, frozen=True, kw_only=True, tag="timeout"):
-    """Nothing arrived within ``wait_seconds``. The child may still be alive."""
-
-    id: int
+    dropped: int = 0
 
 
 class Wrote(Struct, frozen=True, kw_only=True, tag="wrote"):
@@ -137,14 +140,20 @@ class Wrote(Struct, frozen=True, kw_only=True, tag="wrote"):
 
 
 class Closed(Struct, frozen=True, kw_only=True, tag="closed"):
-    """The session is gone: killed if it had to be, reaped, its descriptor released."""
+    """The session is gone: killed if it had to be, reaped, its descriptor released.
+
+    ``data`` is the last thing the child said and nobody had taken — the window's tail, kept rather than
+    thrown away with the descriptor. ``dropped`` is what fell off its front before that.
+    """
 
     id: int
     exit: int | None = None
+    data: bytes = b""
+    dropped: int = 0
 
 
 #: The answers a request can get, without the envelope that names which request it is.
-type AnyAnswer = Ready | Spawned | Refused | Data | Ended | Timeout | Wrote | Closed
+type AnyAnswer = Ready | Spawned | Refused | Data | Wrote | Closed
 
 
 class Answer(Struct, frozen=True, kw_only=True, tag="answer"):

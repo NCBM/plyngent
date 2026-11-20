@@ -161,12 +161,13 @@ async def test_bytes_go_through_and_are_raw(tmp_path) -> None:
     assert done.ok, done.failed
 
 
-async def test_a_session_past_its_budget_still_drains(tmp_path) -> None:
-    """E148: the budget bounds what is handed over, not whether the terminal can be read at all.
+async def test_a_session_that_talked_too_much_keeps_the_newest_of_it(tmp_path) -> None:
+    """§9: the window bounds what survives, not whether the terminal is being read.
 
-    A read that answered "spent" left the bytes in the tty, and a child that keeps writing blocks there
-    for the rest of its life. So the fd is drained all the same: the newest window comes back and how much
-    fell out of it is a number beside it.
+    A child that out-writes its reader blocks in ``write(2)`` until somebody reads — for the rest of its
+    life, when nobody is watching a terminal. So the broker reads every session on its own, and what a
+    read arriving afterwards finds is the *end* of the flood, with the part nobody will ever see said as
+    a number rather than as a hole. Nothing reads while the child talks here, which is the whole point.
     """
     assembly = _one_host(tmp_path, session_output_budget=1024)
     host_a = _key(Host, "ws-a")
@@ -175,24 +176,81 @@ async def test_a_session_past_its_budget_still_drains(tmp_path) -> None:
     a = assembly.instance(host_a)
     assert isinstance(a, Host)
 
-    session = await a.pty.open(["/bin/sh", "-c", "yes zz"], cwd=tmp_path)
-    handed = 0
-    chunk = await a.pty.read(session.session_id, max_bytes=4096, wait_seconds=5.0)
-    for _ in range(64):
-        handed += len(chunk.data)
-        if chunk.budget_exhausted:
+    session = await a.pty.open(["/bin/sh", "-c", "yes zz | head -c 200000; echo MARK"], cwd=tmp_path)
+    for _ in range(500):
+        if not session.alive:
             break
-        chunk = await a.pty.read(session.session_id, max_bytes=4096, wait_seconds=5.0)
+        await asyncio.sleep(0.01)
 
-    assert chunk.budget_exhausted, "the budget runs out, however many reads it takes to say so"
-    assert handed == 1024, "and what was handed over is exactly the budget, not more"
+    read = await a.pty.read(session.session_id, max_bytes=4096, wait_seconds=0.0)
 
-    after = await a.pty.read(session.session_id, max_bytes=8, wait_seconds=5.0)
+    assert read.matched is False, "no substring was asked for"
+    assert read.data.endswith("MARK\r\n"), "the window kept the newest of it, and the end is the newest"
+    assert len(read.data) <= 1024, "and it is the window: nothing older than its size survived"
+    assert read.dropped > 100_000, "what nobody will see is counted rather than lost silently"
+    assert read.truncated and not read.alive and read.exit_code == 0, "the child is done, and the read says so"
 
-    assert after.budget_exhausted, "and the session is still over it"
-    assert after.data and set(after.data) <= {"z", "\r", "\n"}, "what comes back is the newest window"
-    assert len(after.data) == 8
-    assert after.dropped > 0, "the rest is said as a number rather than a terminal nobody can read"
+    quiet = await a.pty.read(session.session_id, max_bytes=8, wait_seconds=0.1)
+
+    assert (quiet.data, quiet.dropped) == ("", 0), "what a read took is gone, and a quiet session loses nothing"
+
+    done = await assembly.stop(*assembly.keys())
+    assert done.ok, done.failed
+
+
+async def test_reading_less_than_the_window_loses_nothing(tmp_path) -> None:
+    """§9: a small ``max_bytes`` is a small bite, not a cut — the rest waits for the next read.
+
+    The window is what bounds the loss, and nothing else does: a model reading four bytes at a time still
+    gets the whole stream, in order, as long as it comes back before the window is overwritten.
+    """
+    assembly = _one_host(tmp_path, session_output_budget=1024)
+    host_a = _key(Host, "ws-a")
+    started = await assembly.start(host_a)
+    assert started.ok, started.failed
+    a = assembly.instance(host_a)
+    assert isinstance(a, Host)
+
+    session = await a.pty.open(["/bin/sh", "-c", "sleep 0.2; printf abcdefgh; sleep 300"], cwd=tmp_path)
+    said = ""
+    for _ in range(10):
+        bite = await a.pty.read(session.session_id, max_bytes=3, wait_seconds=5.0)
+        if not bite.data:
+            break
+        assert len(bite.data) <= 3
+        assert bite.dropped == 0, "a window larger than the bites loses nothing"
+        said += bite.data
+
+    assert said == "abcdefgh", "the whole stream, in the order it was said"
+
+    done = await assembly.stop(*assembly.keys())
+    assert done.ok, done.failed
+
+
+async def test_two_sessions_are_read_at_the_same_time(tmp_path) -> None:
+    """One broker, one request at a time, and two conversations each waiting on their own terminal.
+
+    The channel answers in the order it was asked, so a read that is looking at a window does not fail
+    because another session's read is in flight. Refusing the second would make two terminals readable
+    only one at a time — a limit nobody asked for, and one a poll would hit constantly (§9).
+    """
+    assembly = _one_host(tmp_path)
+    host_a = _key(Host, "ws-a")
+    started = await assembly.start(host_a)
+    assert started.ok, started.failed
+    a = assembly.instance(host_a)
+    assert isinstance(a, Host)
+
+    one = await a.pty.open(["/bin/sh", "-c", "sleep 0.3; echo one"], cwd=tmp_path)
+    two = await a.pty.open(["/bin/sh", "-c", "sleep 0.3; echo two"], cwd=tmp_path)
+
+    first, second = await asyncio.gather(
+        a.pty.read(one.session_id, wait_seconds=5.0, until="one"),
+        a.pty.read(two.session_id, wait_seconds=5.0, until="two"),
+    )
+
+    assert (first.matched, second.matched) == (True, True)
+    assert ("one" in first.data, "two" in second.data) == (True, True), "each read its own child"
 
     done = await assembly.stop(*assembly.keys())
     assert done.ok, done.failed

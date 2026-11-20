@@ -23,9 +23,14 @@ What it owns (:mod:`plyngent.kernel.pty.broker.frames` is the vocabulary):
 Two rules about requests, both of them consequences of being single-threaded:
 
 * **one request is answered at a time**, so an answer never has to guess which request it belongs to.
-* **a request that arrives while one is waiting ends the waiting one** — nobody is waiting for that
-  answer any more, or the new request would not have been sent. A read that is parked on a quiet child
-  is therefore abandonable, which is what makes a cancelled ``read_pty`` cost nothing.
+* **nothing waits on a child**: a read is answered from the window this process keeps, so a request
+  never parks the loop, and a terminal is being read whether or not anybody is asking about it.
+
+What the window is for: a tty is a small buffer, and a child that out-writes its reader blocks in
+``write(2)`` until somebody reads — which, for a terminal nobody is looking at, is the rest of its
+life, and looks exactly like a hang. So every session has a fixed-size window that is filled on each
+pass of the loop (``select`` watches the children's fds beside the channel), the newest bytes are what
+survives, and what fell off the oldest end is counted for the next reader to be told (§9).
 
 It is not a daemon and nothing attaches to it: the kernel spawns it, and it dies when the kernel does —
 the channel goes EOF and the broker follows, and every child it made dies with it (``PR_SET_PDEATHSIG``).
@@ -34,7 +39,6 @@ the channel goes EOF and the broker follows, and every child it made dies with i
 from __future__ import annotations
 
 import argparse
-import queue
 import select
 import socket
 import sys
@@ -52,7 +56,6 @@ from plyngent.kernel.pty.broker.frames import (
     Close,
     Closed,
     Data,
-    Ended,
     Exited,
     Failing,
     Framer,
@@ -63,7 +66,6 @@ from plyngent.kernel.pty.broker.frames import (
     Shutdown,
     Spawn,
     Spawned,
-    Timeout,
     Write,
     Wrote,
     encode,
@@ -71,6 +73,8 @@ from plyngent.kernel.pty.broker.frames import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from plyngent.kernel.pty.broker.frames import AnyAnswer, AnyRequest
     from plyngent.kernel.pty.broker.link import PipeEnd
 
@@ -78,23 +82,25 @@ if TYPE_CHECKING:
 #: worst case between a child dying and the kernel being told, and nothing else depends on it.
 IDLE_POLL_SECONDS = 0.1
 
+#: How much of one terminal is moved into its window per round, and how many rounds one pass takes. The
+#: rounds are what keeps a child that never stops talking from holding the loop: it is drained a lot at
+#: a time, and the requests that arrived meanwhile are answered between two passes.
+_PUMP_BYTES = 65_536
+_PUMP_ROUNDS = 4
+
 #: How long a close waits between the two looks at a child that was just signalled.
 _KILL_POLL_SECONDS = 0.02
 
 #: What a child that cannot be reaped in a second is left as. Nothing waits longer than this.
 _REAP_SECONDS = 1.0
 
-#: How much one ConPTY read asks for. It is the thread's own size, and the answer is cut to what the
-#: request asked for: a desktop terminal has no descriptor, so what is not taken cannot be left behind.
+#: How much one ConPTY read asks for. It is the thread's own size; a desktop terminal has no descriptor
+#: to leave bytes behind in, so the window is filled a chunk at a time.
 _WIN_READ_BYTES = 4096
 
 
 class _KernelGoneError(Exception):
     """The channel to the kernel is closed. Nothing is left to serve, so the broker follows it down."""
-
-
-class _AbandonedError(Exception):
-    """The kernel asked something else while this request waited: nobody is waiting for an answer."""
 
 
 class _SocketTransport:
@@ -110,16 +116,10 @@ class _SocketTransport:
         self._queued: list[AnyRequest] = []
         self.fd = sock.fileno()
 
-    def wait(self, timeout: float) -> None:
-        """Block until something arrives or *timeout* passes, then keep what arrived."""
-        ready, _, _ = select.select([self.fd], [], [], timeout)
-        if ready:
-            self._arrived()
-
-    def absorb_ready(self) -> None:
-        """Take whatever is already there and wait for nothing — the abandonable read uses this."""
-        ready, _, _ = select.select([self.fd], [], [], 0)
-        if ready:
+    def wait(self, timeout: float, watching: Sequence[int] = ()) -> None:
+        """Block until a request arrives, a watched terminal has something, or *timeout* passes."""
+        ready, _, _ = select.select([self.fd, *watching], [], [], timeout)
+        if self.fd in ready:
             self._arrived()
 
     def _arrived(self) -> None:
@@ -146,8 +146,9 @@ class _PipeTransport:
     """Windows: the broker's end of a named pipe, which has no descriptor to select on.
 
     ``multiprocessing.connection`` is what the rest of this program already uses for a channel to
-    another process. ``poll`` is the readiness test, and there is none to give a *sesssion* read — which
-    is why a ConPTY read gets a thread of its own (:class:`_Child`).
+    another process. ``poll`` is the readiness test, and it is the only one there is: a ConPTY has no
+    descriptor either, so there is nothing for ``wait`` to watch and each session fills its window on a
+    thread of its own (:class:`_Child`).
     """
 
     #: No descriptor: a read parked on a desktop terminal has nothing to wait on beside it.
@@ -162,7 +163,8 @@ class _PipeTransport:
         self._framer = Framer(request_decoder)
         self._queued: list[AnyRequest] = []
 
-    def wait(self, timeout: float) -> None:
+    def wait(self, timeout: float, watching: Sequence[int] = ()) -> None:
+        del watching  # nothing of a terminal's is a pipe this process can poll
         try:
             arrived = self._conn.poll(timeout)
         except OSError, EOFError:
@@ -174,9 +176,6 @@ class _PipeTransport:
         except OSError, EOFError:
             raise _KernelGoneError from None
         self._queued.extend(self._framer.feed(chunk))
-
-    def absorb_ready(self) -> None:
-        self.wait(0.0)
 
     def pending(self) -> bool:
         return bool(self._queued)
@@ -198,69 +197,105 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class _Child:
-    """One child on a terminal, as the broker remembers it: its handle, and how it ended.
+class _Kept:
+    """What a terminal has said and nobody has taken: the newest ``keep_bytes`` of it, and the rest.
 
-    ``exit`` is deliberately not "closed": a child that died still has bytes in its terminal that nobody
-    has read yet, so the fd stays open until the kernel closes the session. Reporting an exit and
-    letting go of the descriptor are two events, and only the second one is a close.
+    This is the whole reason a session may be unread for an hour: a tty is a pipe with a small buffer,
+    so a child that out-writes its reader blocks in ``write(2)`` until somebody reads — forever, if
+    nobody is looking. Keeping the newest bytes here means the child is always being read, and what
+    could not be kept is a count rather than a hole nobody hears about (§9).
+
+    The lock is for the one platform that fills this from another thread (a ConPTY has no descriptor to
+    select on); on POSIX the broker's own thread is the only writer and it never contends.
+    """
+
+    keep_bytes: int
+    _kept: bytearray = field(default_factory=bytearray)
+    _lost: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        self.keep_bytes = max(1, self.keep_bytes)
+
+    def add(self, data: bytes) -> None:
+        """Keep what arrived, dropping the oldest end when it does not fit."""
+        with self._lock:
+            self._kept += data
+            over = len(self._kept) - self.keep_bytes
+            if over > 0:
+                del self._kept[:over]
+                self._lost += over
+
+    def take(self, max_bytes: int) -> tuple[bytes, int]:
+        """Up to ``max_bytes`` from the front of what is kept, and what the window overwrote before this.
+
+        From the front, because a terminal is a transcript: a reader that asks for less than the window
+        holds gets the oldest of it and comes back for the rest, which is what a small ``max_bytes``
+        means. ``lost`` is reported once and reset — those bytes went out of the window while nobody was
+        taking any, so this is the read that has to say it.
+        """
+        with self._lock:
+            data = bytes(self._kept[: max(1, max_bytes)])
+            del self._kept[: len(data)]
+            lost, self._lost = self._lost, 0
+        return data, lost
+
+
+@dataclass
+class _Child:
+    """One child on a terminal, as the broker remembers it: its handle, its window, and how it ended.
+
+    ``exit`` is deliberately not "closed": a child that died may still have bytes in its window that
+    nobody has taken, so the fd stays open and the window stays readable until the kernel closes the
+    session. Reporting an exit and letting go of the descriptor are two events, and only the second one
+    is a close.
     """
 
     id: int
     handle: PtyHandle
+    kept: _Kept
     exit: int | None = None
-    _arrived: queue.Queue[bytes] | None = None
-    _reader: threading.Thread | None = None
+    #: Whether the fd is finished as a source: it is readable forever once the terminal is hung up, and a
+    #: ``select`` that kept watching it would spin.
+    spent: bool = False
+    _thread: threading.Thread | None = None
 
-    def read(self, max_bytes: int, wait_seconds: float, transport: _Transport) -> bytes | None:
-        """What the child wrote, ``None`` when nothing arrived in time, ``b""`` at end of output.
+    def pump(self) -> None:
+        """Take what the terminal has, without waiting, and let the window keep it.
 
-        POSIX waits on the master fd and on the kernel's channel together, so a kernel that leaves is
-        noticed instead of waited out, and a kernel that gives up on this read ends it on the spot
-        (:class:`_AbandonedError`). ConPTY has no fd to wait on, which is what the one thread per session is
-        for; there is nothing to select on, so neither notice is available there.
+        POSIX reads the master fd this process already watched; the ConPTY path is filled by
+        :meth:`drain_on_its_own_thread` instead and has nothing to do here.
         """
-        master = self.handle.master_fd
-        if master is None:
-            return self._read_through_thread(max_bytes, wait_seconds)
-        watched = [master] if transport.fd is None else [master, transport.fd]
-        deadline = time.monotonic() + max(0.0, wait_seconds)
-        while True:
-            remaining = max(0.0, deadline - time.monotonic())
-            ready, _, _ = select.select(watched, [], [], remaining)
-            if transport.fd is not None and transport.fd in ready:
-                transport.absorb_ready()
-                raise _AbandonedError
-            if master in ready:
-                return self.handle.read_available(max_bytes)
-            return None
+        if self.handle.master_fd is None or self.spent:
+            return
+        for _ in range(_PUMP_ROUNDS):
+            data = self.handle.read_available(_PUMP_BYTES)
+            if not data:
+                alive, _exit_code = self.handle.poll_exit()
+                self.spent = not alive
+                return
+            self.kept.add(data)
 
-    def _read_through_thread(self, max_bytes: int, wait_seconds: float) -> bytes | None:
-        """The ConPTY read, on its own thread: pywinpty's ``read`` blocks with no timeout to give it."""
-        if self._reader is None:
-            self._arrived = queue.Queue()
-            self._reader = threading.Thread(target=self._drain, name=f"pty-{self.id}", daemon=True)
-            self._reader.start()
-        assert self._arrived is not None
-        try:
-            data = self._arrived.get(timeout=max(0.0, wait_seconds))
-        except queue.Empty:
-            return None
-        return data[: max(1, max_bytes)]
+    def drain_on_its_own_thread(self) -> None:
+        """ConPTY: no descriptor to watch, so one thread blocks on the read and fills the window.
 
-    def _drain(self) -> None:
-        """Block on the ConPTY read and hand over what it gives, one chunk at a time."""
-        arrived = self._arrived
-        assert arrived is not None
+        It is the second thread this design buys and the reason a desktop terminal pays nothing for the
+        window: ``pywinpty``'s read has no timed form, so parking on it is the only way to be told.
+        """
+        self._thread = threading.Thread(target=self._fill, name=f"pty-{self.id}", daemon=True)
+        self._thread.start()
+
+    def _fill(self) -> None:
+        """Block on the ConPTY read until it stops answering, keeping what it gives."""
         while True:
             try:
                 data = self.handle.read_bytes(_WIN_READ_BYTES, 0.0)
             except OSError:
                 data = b""
             if not data:
-                arrived.put(b"")
+                self.spent = True
                 return
-            arrived.put(data)
+            self.kept.add(data)
 
     def reap(self) -> int | None:
         """Record how the child ended, if it has; ``None`` while it is still running."""
@@ -296,7 +331,7 @@ class _Sessions:
     exits: dict[int, int | None] = field(default_factory=dict)
     next_id: int = 1
 
-    def spawn(self, argv: list[str], cwd: str) -> AnyAnswer:
+    def spawn(self, argv: list[str], cwd: str, keep_bytes: int) -> AnyAnswer:
         if not argv:
             return Refused(reason="command argv must not be empty")
         if not self.ready:
@@ -305,24 +340,44 @@ class _Sessions:
             handle = spawn_pty(argv, cwd=Path(cwd))
         except OSError as exc:
             return Refused(reason=f"failed to open PTY: {exc}")
-        child = _Child(id=self.next_id, handle=handle)
+        child = _Child(id=self.next_id, handle=handle, kept=_Kept(keep_bytes))
+        if handle.master_fd is None:
+            child.drain_on_its_own_thread()
         self.sessions[child.id] = child
         self.next_id += 1
         return Spawned(epoch=self.epoch, id=child.id, pid=handle.pid)
 
-    def read(self, session_id: int, max_bytes: int, wait_seconds: float, transport: _Transport) -> AnyAnswer:
+    def watching(self) -> list[int]:
+        """The fds a wait may also block on: every session that still has something to say.
+
+        Only the live ones: a terminal that has hung up answers "readable" for ever, so watching it
+        would turn the broker's one ``select`` into a spin (:attr:`_Child.spent`).
+        """
+        fds: list[int] = []
+        for child in self.sessions.values():
+            master = child.handle.master_fd
+            if master is not None and not child.spent:
+                fds.append(master)
+        return fds
+
+    def pump(self) -> None:
+        """Move whatever the terminals have said into their windows, waiting for none of it."""
+        for child in self.sessions.values():
+            child.pump()
+
+    def read(self, session_id: int, max_bytes: int) -> AnyAnswer:
+        """The newest ``max_bytes`` of what this session said, and what nobody will ever see.
+
+        Nothing waits here even when the window is empty: waiting is the kernel's, and a broker that
+        parked on a quiet child would stop filling every other window while it did.
+        """
         child = self.sessions.get(session_id)
         if child is None:
             return Refused(reason=f"unknown PTY session: {session_id}")
-        data = child.read(max_bytes, wait_seconds, transport)
+        child.pump()
+        data, dropped = child.kept.take(max_bytes)
         _ = self.reap(child)
-        if data:
-            return Data(id=session_id, data=data)
-        if child.exit is not None:
-            return Ended(id=session_id, exit=child.exit)
-        if data is None:
-            return Timeout(id=session_id)
-        return Data(id=session_id, data=b"")
+        return Data(id=session_id, data=data, dropped=dropped)
 
     def write(self, session_id: int, data: bytes) -> AnyAnswer:
         child = self.sessions.get(session_id)
@@ -338,9 +393,13 @@ class _Sessions:
         child = self.sessions.pop(session_id, None)
         if child is None:
             return Refused(reason=f"unknown PTY session: {session_id}")
+        # Whatever it said last is still in the terminal: it is moved into the window before the kill, and
+        # the window goes out with the answer. A close is the one call that cannot lose the tail.
+        child.pump()
         child.terminate(grace_seconds)
         self.exits[child.id] = child.exit
-        return Closed(id=child.id, exit=child.exit)
+        tail, dropped = child.kept.take(child.kept.keep_bytes)
+        return Closed(id=child.id, exit=child.exit, data=tail, dropped=dropped)
 
     def reap(self, child: _Child) -> bool:
         """Record a child's exit once, and say whether it is news the kernel has not been told."""
@@ -374,17 +433,17 @@ class _Broker:
             self._greet()
             while True:
                 if not self._transport.pending():
-                    self._transport.wait(IDLE_POLL_SECONDS)
+                    # One wait for both halves: a request from the kernel, or a terminal with something
+                    # to say. There is no polling of the children at all, which is what lets this pass
+                    # keep up with one that never stops talking.
+                    self._transport.wait(IDLE_POLL_SECONDS, self._table.watching())
+                self._table.pump()
                 self._report_exits()
                 for request in self._transport.take():
                     if isinstance(request, Shutdown):
                         self._table.stop()
                         return 0
-                    try:
-                        reply = self._answer(request)
-                    except _AbandonedError:
-                        continue
-                    self._transport.send(Answer(seq=request.seq, reply=reply))
+                    self._transport.send(Answer(seq=request.seq, reply=self._answer(request)))
         except _KernelGoneError:
             # The kernel is gone: nothing can be read or written any more, so the children go with it.
             self._table.stop()
@@ -427,11 +486,11 @@ class _Broker:
             case Hello():
                 return Refused(reason="hello has already been said")
             case Spawn():
-                return self._table.spawn(request.argv, request.cwd)
+                return self._table.spawn(request.argv, request.cwd, max(1, request.keep_bytes))
             case Read():
                 if request.max_bytes < 1:
                     return Refused(reason="max_bytes must be >= 1")
-                return self._table.read(request.id, request.max_bytes, max(0.0, request.wait_seconds), self._transport)
+                return self._table.read(request.id, request.max_bytes)
             case Write():
                 return self._table.write(request.id, request.data)
             case Close():

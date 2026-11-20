@@ -57,14 +57,15 @@ class OpenPtyArgs(ToolArgs, kw_only=True):
 class ReadPtyArgs(ToolArgs, kw_only=True):
     """Read what a PTY session wrote, with its state.
 
-    Without ``until``, waits up to ``timeout`` seconds for any data; with it, polls until that substring
+    Without ``until``, waits up to ``timeout`` seconds for any data; with it, waits until that substring
     appears, the child dies, or the deadline passes. Empty data with ``alive=true`` means nothing was
     ready — not that the child has finished. Only one read per session at a time: two would split the
     byte stream between them.
 
-    A session that has spent its output budget is still readable: the terminal is drained all the same,
-    ``data`` is the newest window of it, and ``dropped`` says how many bytes fell out of the window. A
-    chatty child is then not a terminal nobody can read again.
+    A session is being read whether or not you are looking, so a child that talks a lot does not block;
+    but only the newest of its output is kept. ``dropped`` says how many bytes you will never see — what
+    went out of the window while nobody was reading — and the oldest of what is left is what comes back,
+    so a small ``max_bytes`` loses nothing: read again for the rest.
     """
 
     session_id: int
@@ -241,9 +242,10 @@ async def _write(env: Env, session_id: int, payload: str) -> ToolResult:
     """The half of both write verbs that touches the terminal.
 
     What the child says back is *not* read here, on purpose: one reader per session is the rule that keeps
-    an ``until`` read from having half its stream taken, so a write that drained the terminal would make a
-    legitimate read fail (or abandon a parked one). The fix for a model that forgets to read is the read
-    itself being affordable after the budget is spent (E148), not a second reader in the write path.
+    an ``until`` read from having half its stream taken, so a write that drained the window would make a
+    legitimate read miss what it was waiting for. A model that forgets to read is not helped by a second
+    reader — it is helped by the terminal keeping its own output (§9), which is what ``read_pty`` then
+    finds, and by a read past the window still saying what it lost.
     """
     session = env.pty.get(session_id)
     if session is not None:
@@ -343,7 +345,6 @@ def _read(result: PtyReadResult) -> str:
         (
             f"matched={'true' if result.matched else 'false'}",
             f"truncated={'true' if result.truncated else 'false'}",
-            f"budget_exhausted={'true' if result.budget_exhausted else 'false'}",
             f"dropped={result.dropped}",
         )
     )
@@ -352,7 +353,7 @@ def _read(result: PtyReadResult) -> str:
 
 
 def _read_meta(result: PtyReadResult) -> Meta:
-    """What the read cost and whether the session's budget is what stopped it."""
+    """What the read cost, and whether the window is not the whole of what the child said."""
     return Meta(chars=len(result.data), truncated=result.truncated)
 
 

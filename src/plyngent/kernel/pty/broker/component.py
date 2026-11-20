@@ -10,8 +10,10 @@ There are two things this type deliberately does not decide:
 
 * **whether a call may open a terminal.** Budgets, ``cwd``, the command denylist and the confirmations
   belong to the registry and the tools. This answers "there is no broker" and nothing else.
-* **how long a caller waits.** ``until``, output budgets and read timeouts are tool semantics; the
-  broker is asked for one bounded read at a time and says ``Timeout`` when it has nothing.
+* **how long a caller waits.** ``until``, keep sizes and read timeouts are tool semantics; the broker
+  answers a read from the window it keeps for each session, at once, and an empty answer means only
+  that nothing had arrived — waiting is the kernel's, and a broker that waited could not fill the other
+  terminals while it did.
 
 The one promise it makes is about failure: it never raises from ``load``. A broker that cannot start —
 no permission, no platform support, no ``pywinpty`` — is recorded as a reason, and the first ``spawn``
@@ -37,7 +39,6 @@ from plyngent.kernel.pty.broker.frames import (
     Close,
     Closed,
     Data,
-    Ended,
     Exited,
     Failing,
     Hello,
@@ -47,7 +48,6 @@ from plyngent.kernel.pty.broker.frames import (
     Shutdown,
     Spawn,
     Spawned,
-    Timeout,
     Write,
     Wrote,
 )
@@ -79,6 +79,19 @@ class BrokerSession:
     pid: int | None = None
 
 
+@dataclass(frozen=True)
+class BrokerClose:
+    """How a session ended, and what it said that nobody had taken.
+
+    ``data`` is the window's tail — the bytes left when the kill arrived go out with the answer instead of
+    dying with the descriptor — and ``dropped`` is what fell off its front before that.
+    """
+
+    exit: int | None
+    data: bytes = b""
+    dropped: int = 0
+
+
 class PtyBroker(Component):
     """The process that forks, and the channel that reaches it."""
 
@@ -94,6 +107,7 @@ class PtyBroker(Component):
     _platform: str
     _supports_pty: bool
     _ever_ready: bool
+    _asking: asyncio.Lock
 
     def __init__(self) -> None:
         super().__init__()
@@ -109,6 +123,7 @@ class PtyBroker(Component):
         self._platform = ""
         self._supports_pty = False
         self._ever_ready = False
+        self._asking = asyncio.Lock()
 
     # -- lifecycle -----------------------------------------------------------------
 
@@ -216,8 +231,8 @@ class PtyBroker(Component):
         """Who this broker is and how its children ended — no round trip, and not the session table."""
         return BrokerStatus(epoch=self._epoch, exits=dict(self._exits))
 
-    async def spawn(self, argv: list[str], *, cwd: Path) -> BrokerSession:
-        reply = await self._ask(Spawn(seq=self._seq(), argv=argv, cwd=str(cwd)))
+    async def spawn(self, argv: list[str], *, cwd: Path, keep_bytes: int) -> BrokerSession:
+        reply = await self._ask(Spawn(seq=self._seq(), argv=argv, cwd=str(cwd), keep_bytes=keep_bytes))
         match reply:
             case Spawned():
                 return BrokerSession(epoch=reply.epoch, id=reply.id, pid=reply.pid)
@@ -226,16 +241,16 @@ class PtyBroker(Component):
             case _:
                 raise _unexpected("spawn", reply)
 
-    async def read(self, session_id: int, *, max_bytes: int, wait_seconds: float) -> bytes | None:
-        """What the child wrote: ``None`` when nothing arrived in time, ``b""`` at end of output."""
-        reply = await self._ask(Read(seq=self._seq(), id=session_id, max_bytes=max_bytes, wait_seconds=wait_seconds))
+    async def read(self, session_id: int, *, max_bytes: int) -> tuple[bytes, int]:
+        """The newest ``max_bytes`` the child said and nobody took, and what fell out of the window.
+
+        It answers at once whatever the child is doing: the terminal is read by the broker whether or not
+        anybody asks, and waiting for a quiet one is the kernel's business and not this channel's (§9).
+        """
+        reply = await self._ask(Read(seq=self._seq(), id=session_id, max_bytes=max_bytes))
         match reply:
             case Data():
-                return reply.data
-            case Timeout():
-                return None
-            case Ended():
-                return b""
+                return reply.data, reply.dropped
             case Refused():
                 raise PtyError(reply.reason, Failure.MISSING)
             case _:
@@ -251,12 +266,12 @@ class PtyBroker(Component):
             case _:
                 raise _unexpected("write", reply)
 
-    async def close(self, session_id: int, *, grace_seconds: float) -> int | None:
-        """Terminate, kill if it has to, reap, and let go of the descriptor."""
+    async def close(self, session_id: int, *, grace_seconds: float) -> BrokerClose:
+        """Terminate, kill if it has to, reap, and let go of the descriptor — with whatever it said last."""
         reply = await self._ask(Close(seq=self._seq(), id=session_id, grace_seconds=grace_seconds))
         match reply:
             case Closed():
-                return reply.exit
+                return BrokerClose(exit=reply.exit, data=reply.data, dropped=reply.dropped)
             case Refused():
                 raise PtyError(reply.reason, Failure.MISSING)
             case _:
@@ -267,30 +282,30 @@ class PtyBroker(Component):
     async def _ask(self, request: AnyRequest, *, within: float | None = None) -> AnyAnswer:
         """Send one request and wait for the answer that names it.
 
-        One at a time, refused rather than queued: two requests in flight would make the answer a guess,
-        and the registry is a single reader anyway. The answer is matched by ``seq`` so that a request
-        the caller gave up on leaves nothing behind — its answer, if it ever comes, finds no waiter.
+        One at a time, and queued rather than refused. The broker answers in the order it was asked, so a
+        second caller waits its turn; refusing it out of hand — which is what this did while a read was
+        the only thing that parked here — would turn two conversations reading their own terminals into
+        one of them failing, and a read that looks at a window repeatedly makes that overlap ordinary. The
+        answer is matched by ``seq`` anyway, so a request its caller gave up on leaves nothing behind.
 
         A broker that does not answer within *within* seconds is treated as gone: a broker that cannot
         answer is not a broker, and the generation is dropped so the next read of the field is a new one.
         """
-        link = self._link
-        if link is None:
-            raise PtyUnavailable(self._reason or "the PTY broker is not running")
-        if self._pending:
-            msg = "the PTY broker is already answering a request"
-            raise PtyError(msg, Failure.BUSY)
-        future: asyncio.Future[AnyAnswer] = asyncio.get_running_loop().create_future()
-        self._pending[request.seq] = future
-        try:
-            link.send(request)
-            return await (future if within is None else asyncio.wait_for(future, within))
-        except TimeoutError:
-            reason = f"the PTY broker did not answer within {within:.0f}s"
-            self._lost(reason)
-            raise PtyUnavailable(reason) from None
-        finally:
-            _ = self._pending.pop(request.seq, None)
+        async with self._asking:
+            link = self._link
+            if link is None:
+                raise PtyUnavailable(self._reason or "the PTY broker is not running")
+            future: asyncio.Future[AnyAnswer] = asyncio.get_running_loop().create_future()
+            self._pending[request.seq] = future
+            try:
+                link.send(request)
+                return await (future if within is None else asyncio.wait_for(future, within))
+            except TimeoutError:
+                reason = f"the PTY broker did not answer within {within:.0f}s"
+                self._lost(reason)
+                raise PtyUnavailable(reason) from None
+            finally:
+                _ = self._pending.pop(request.seq, None)
 
     def _seq(self) -> int:
         self._next_seq += 1
@@ -304,7 +319,7 @@ class PtyBroker(Component):
             case Failing():
                 self._lost(frame.reason)
             case Answer():
-                if isinstance(frame.reply, (Ended, Closed)):
+                if isinstance(frame.reply, Closed):
                     self._remember(frame.reply.id, frame.reply.exit)
                 future = self._pending.get(frame.seq)
                 if future is not None and not future.done():
