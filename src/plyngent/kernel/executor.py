@@ -347,8 +347,8 @@ class ToolExecutor:
 
         A tree too big to compare is not compared: the effect still says the program ran, and the call
         costs no stall. That bound is the honest one — a version nobody could afford to take is worse
-        than a record that says where it stopped — and the number it gives up at is the answer rather
-        than silence, because a log that says nothing about a version reads like a call that changed
+        than a record that says where it stopped — and the number it gives up at is the answer, because a
+        log that says nothing about a version reads like a call that changed
         nothing.
         """
         root = ctx.host.workspace.root

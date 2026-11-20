@@ -7,8 +7,8 @@ does it.
 
 **Two verbs, and neither is implied by the other.** ``search`` asks an index and answers hits; ``page``
 reads one URL and answers a title and readable text. An engine may have one and not the other — Bing
-answers queries and cannot render a page — which is why they are two optional verbs on one value rather
-than two tables: "may I read a page" is then one scan of one list, and so is "may I search".
+answers queries and cannot render a page — which is why they are two optional verbs on one value:
+"may I read a page" is then one scan of one list, and so is "may I search".
 
 **``page`` promises readable form, not a response.** The conversion — HTML to Markdown, a PDF to its text
 — happens inside the engine, so the tool hands a model prose and never a body. A channel that can only

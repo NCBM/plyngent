@@ -79,8 +79,8 @@ def validate_name(name: str) -> str | None:
 def resolve_inside(base: Path, relative: str) -> Path | None:
     """*relative* resolved under *base*, or ``None`` when it is absolute or ends up outside.
 
-    Symlinks are followed and then checked, so a link pointing out of the directory is refused rather
-    than becoming the way around the boundary it looks like. Nothing is created here: this answers
+    Symlinks are followed and then checked, so a link pointing out of the directory is refused, and never
+    becomes the way around the boundary it looks like. Nothing is created here: this answers
     where a path would be, and the caller decides what to do about it.
     """
     token = relative.strip()

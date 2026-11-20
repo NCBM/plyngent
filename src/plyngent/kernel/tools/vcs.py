@@ -71,8 +71,8 @@ ABOVE = " (repository starts above this workspace)"
 class KindArgs(ToolArgs, kw_only=True):
     """Ask which version control answers for this workspace, and what it can answer.
 
-    There is nothing to say about *where*: which repository this is, is a fact about the workspace rather
-    than about one call, so a ``cwd`` would let one workspace have two answers.
+    There is nothing to say about *where*: which repository this is, is a fact about the workspace, and
+    not about one call, so a ``cwd`` would let one workspace have two answers.
     """
 
 
@@ -151,8 +151,8 @@ class _Asked:
         """Run one git command and hand back what it said, or the result that says there is nothing.
 
         ``precheck`` is the one confirmation this module makes before it answers anything: the marker file
-        said a repository is here, and this is git agreeing. Its non-zero exit is a missing thing rather
-        than a protocol error, because that is what it means — the marker was stale.
+        said a repository is here, and this is git agreeing. Its non-zero exit is a missing thing, because
+        that is what it means — the marker was stale.
         """
         try:
             batch = await run_tree(

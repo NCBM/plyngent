@@ -46,8 +46,8 @@ class TodoStatus(StrEnum):
     """Where one task stands.
 
     The members are declared in name order and not in the order a task moves through them, because
-    this is the closed set a tool's schema carries and a schema is written in a stable order rather
-    than in a meaningful one (§10.5). Which of them still count as work is :data:`OPEN`.
+    this is the closed set a tool's schema carries and a schema is written in a stable order (§10.5).
+    Which of them still count as work is :data:`OPEN`.
     """
 
     CANCELLED = "cancelled"

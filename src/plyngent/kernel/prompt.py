@@ -244,8 +244,8 @@ class PromptPlan:
         the next turn starts from. What it keeps is the one part of a prompt that says who is writing: the
         persona.
 
-        ``asks`` is what the operator wanted kept, and it is appended to the plan's own instruction rather
-        than replacing it: the closing rule of a summary (what a later reader needs) is not something a
+        ``asks`` is what the operator wanted kept, and it is appended to the plan's own instruction: the
+        closing rule of a summary (what a later reader needs) is not something a
         person should have to remember to type. ``dropped`` is how many earlier entries did not fit the
         route the request is going to, and it opens the instruction when there are any, because the summary
         would otherwise describe a conversation it only read the end of.

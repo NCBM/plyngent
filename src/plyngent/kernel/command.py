@@ -199,8 +199,8 @@ class CommandPolicy:
     def verdict(self, argv: Sequence[str]) -> Verdict:
         """Judge *argv* without asking anybody.
 
-        ``ValueError`` is for an argv this policy cannot read at all (empty, or a shell line instead
-        of an argv list): that is a bug in the caller, not something a human should be asked to
+        ``ValueError`` is for an argv this policy cannot read at all (empty, or a shell line in place of
+        an argv list): that is a bug in the caller, not something a human should be asked to
         allow. A model-facing complaint about the shape belongs to the tool that took the argument.
 
         A denylisted program is the answer when there is one — it is a fact, and its yes is kept by name.

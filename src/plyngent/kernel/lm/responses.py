@@ -1,8 +1,8 @@
 """The responses dialect: an ``instructions`` field, and a conversation as a list of typed items.
 
 The third row, and the one that proves the shape: adding it changed this file and one line of the table,
-and nothing else — no loop, no journal, no cap, no command. Its conversation is a list of *items* rather
-than of turns: a message item, a ``function_call`` item, a ``function_call_output`` item, each standing
+and nothing else — no loop, no journal, no cap, no command. Its conversation is a list of *items*:
+a message item, a ``function_call`` item, a ``function_call_output`` item, each standing
 on its own, which is why a run of results needs no merging here the way it does in ``messages``.
 
 Two things it does differently from the other two, both of them this endpoint's opinion:

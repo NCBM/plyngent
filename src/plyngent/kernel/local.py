@@ -302,8 +302,8 @@ async def _claim(endpoint: Path) -> None:
     """Take an address nobody is answering on, and refuse one somebody is.
 
     A path left behind by a run that ended badly is not a kernel, and the difference between the two is
-    one connection attempt: making it here is what keeps "somebody is already there" a sentence rather
-    than a socket that binds and then serves nobody.
+    one connection attempt: making it here is what keeps "somebody is already there" a sentence, and not
+    a socket that binds and then serves nobody.
     """
     if not await asyncio.to_thread(endpoint.exists):
         return

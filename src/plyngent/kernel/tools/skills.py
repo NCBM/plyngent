@@ -615,8 +615,8 @@ SPECS: tuple[ToolSpec, ...] = (SKILL_LIST, SKILL_READ, SKILL_SEARCH, SKILL_CREAT
 def skill_specs(store: Skills | None) -> tuple[ToolSpec, ...]:
     """The skill tools a kernel serves **because** it was given somewhere to look, and none when it was not.
 
-    The one place where these tools exist or do not, and it is decided by what the host holds rather
-    than by what a call names — the same move ``net_specs`` makes for a kernel with no web backend
+    The one place where these tools exist or do not, and it is decided by what the host holds, not by
+    what a call names — the same move ``net_specs`` makes for a kernel with no web backend
     (E26, E36). A call naming a tool that is not there is answered as a name nothing has, and the index
     line a model is given does not mention a group this kernel cannot serve.
     """
