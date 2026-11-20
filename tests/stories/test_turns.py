@@ -1,7 +1,7 @@
 """A turn: what the model is asked, what it answers, what the calls did, and what stops it.
 
 Every story here says what the model replies, because a turn is the one thing the kernel cannot do on
-its own — and a reply it did not script is a failed story rather than an invented answer. What is
+its own — and a reply it did not script fails the story, with no answer invented. What is
 asserted is still only faces outside the boundary: the lines on the screen, what the model was asked, the
 disk, and the exit code.
 """
@@ -152,13 +152,13 @@ async def test_a_person_can_ask_which_turn_is_working(story_with: Scripted) -> N
     await story.settle()
 
     assert story.notices()[read_from:] == ("nothing is running in this conversation",), (
-        "and a conversation with nothing in flight says so rather than printing nothing"
+        "and a conversation with nothing in flight says so, where silence would say nothing"
     )
 
 
 async def test_a_turn_kind_this_build_does_not_run_is_refused_by_name(story_with: Scripted) -> None:
     """``ASIDE`` is declared in the contract and implemented nowhere: running it as a chat would write the
-    history an aside exists to leave alone, so the answer is a refusal rather than a quietly wrong turn."""
+    history an aside exists to leave alone, so the answer is a refusal, not a quietly wrong turn."""
     story = await story_with(text("one"))
 
     assert story.client.submit(Submit(session=story.session, kind=TurnKind.ASIDE, text="a thought"))
@@ -172,7 +172,7 @@ async def test_a_signal_is_the_stop_a_key_is(story_with: Scripted) -> None:
     """A run reading a pipe has no key to press, so the same intention arrives as a signal and means the same.
 
     The signal is raised by the story at its own process, which is the only way to have one arrive: what
-    is under test is that the loop answers it with a ``Cancel`` rather than by leaving, so the turn says
+    is under test is that the loop answers it with a ``Cancel``, not by leaving, so the turn says
     why it stopped and the session takes the next message.
     """
     was = signal.signal(signal.SIGINT, lambda *_: None)
@@ -256,7 +256,7 @@ async def test_a_retry_asks_again_and_repeats_no_call(story_with: Scripted) -> N
 
 
 async def test_a_turn_past_what_the_kernel_can_run_is_refused_and_not_queued(story_with: Scripted) -> None:
-    """`[turn] running` is the process's budget, and being over it is an answer now rather than later (E156)."""
+    """`[turn] running` is the process's budget, and being over it is an answer now, not later (E156)."""
     held = Held(text("the first answer"))
     story = await story_with(held, text("the second answer"), running=1)
 
@@ -267,7 +267,7 @@ async def test_a_turn_past_what_the_kernel_can_run_is_refused_and_not_queued(sto
     await story.until("turn refused")
 
     assert "already running 1 turns" in "\n".join(story.screen()), (
-        "the second conversation is told the ceiling rather than left waiting behind it"
+        "the second conversation is told the ceiling, not left waiting behind it"
     )
 
     held.ready.set()
@@ -308,7 +308,7 @@ async def test_a_turn_stops_at_the_round_wall_and_says_both_numbers(story_with: 
 async def test_a_soft_wall_asks_and_an_answered_window_keeps_the_turn_going(story_with: Scripted) -> None:
     """`[turn] soft` turns the wall into a question, and the person's answer is the new window (E150).
 
-    The rhythm is a window at a time rather than every round: asked at two, allowed four, and the third
+    The rhythm is a window at a time: asked at two, allowed four, and the third
     round ended the work by itself so nothing was asked again.
     """
     story = await story_with(
@@ -324,7 +324,7 @@ async def test_a_soft_wall_asks_and_an_answered_window_keeps_the_turn_going(stor
     await story.finished()
 
     (question,) = story.questions()
-    assert isinstance(question, Selection), "three answers, so it is a choice rather than a yes or a no"
+    assert isinstance(question, Selection), "three answers, so it is a choice, not a yes or a no"
     assert question.options == ("another 2 rounds", "no more limit for this turn", "stop here")
     assert question.default == "another 2 rounds", "and an empty line opens the window it would have anyway"
     assert len(story.requests()) == 3, "the turn went past the wall and finished on its own"

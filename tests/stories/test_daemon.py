@@ -275,7 +275,7 @@ async def test_a_daemon_starts_with_no_tree_and_a_client_names_one(daemon, tmp_p
     """A kernel that was pointed at no tree opens none: what it serves is what a client names (E157).
 
     one command that opens a tree is ``Open``, which is what makes a daemon's first tree a client's
-    choice rather than a directory this process happened to be started in (E154).
+    choice, and not a directory this process happened to be started in (E154).
 
     The declaration is sent *after* the greeting, which is what a frontend that had to ask a person does:
     ``Open`` then names no tree of its own and means the one it declared (E154).

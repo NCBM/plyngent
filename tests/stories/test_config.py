@@ -60,8 +60,8 @@ def _settings(tmp_path: Path, body: str, *, journal: str | None = "journal.db", 
 async def test_the_file_names_the_route_a_session_asks(tmp_path: Path, transport: str) -> None:
     """``default_route`` is what a session that never chose asks, and the request says which one it was.
 
-    A file with two routes and one of them named is the ordinary shape, and it is asserted on the request
-    rather than on the route table because that is what the kernel actually did.
+    A file with two routes and one of them named is the ordinary shape, and it is asserted on the request,
+    because that is what the kernel actually did.
     """
     settings = _settings(tmp_path, 'default_route = "two"\n' + ROUTES)
 
@@ -84,7 +84,7 @@ async def test_the_persona_and_the_directives_are_the_file_s_own_words(tmp_path:
     """The first and the third section, said by the file, in the place the plan puts them.
 
     This is the pair E79 exists for: a program that is not this one says who its model is and how its tools
-    are to be used, and it says it in the file rather than by patching the prompt afterwards. The default
+    are to be used, and it says it in the file. The default
     persona and the default playbook are not said as well — a plan carries one section each, not two — and
     the index line still ends the whole thing.
     """
@@ -149,7 +149,7 @@ async def test_a_host_whose_file_says_one_terminal_says_the_number_it_hit(
 
     The story is the same one ``test_terminals`` tells about a session's own budget, one level up: what is
     being counted here is the host's, and the point of starting the kernel from a file is that the number in
-    the sentence is the number in the file rather than one this tree happened to ship with.
+    the sentence is the number in the file, and not one this tree happened to ship with.
     """
     settings = _settings(tmp_path, "[pty]\nmax_sessions = 1\n")
 
@@ -215,7 +215,7 @@ async def test_a_program_whose_only_engine_searches_has_no_web_fetch(
 ) -> None:
     """An engine named in ``[web]`` is one a person asked for, and a keyless one reads no pages.
 
-    The two tools are two verbs, so the table is one tool shorter rather than one refusal longer: what is
+    The two tools are two verbs, so the table is one tool shorter, and no refusal is longer: what is
     not in the table is a name nothing has, which is the same answer a program with no engine at all gets.
     """
     settings = _settings(tmp_path, CONFIGURED + '\n[web]\nengines = ["bing"]\n')

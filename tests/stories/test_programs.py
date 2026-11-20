@@ -3,7 +3,7 @@
 A command is the only tool whose work is a tree: a node may hand its output on, a non-zero exit may skip
 what follows, and a call can stop half way with some of its commands already run. These stories are about
 that tree from the outside — who is asked before a program starts, what the screen says came of the call,
-and what the model is handed afterwards. Exit codes are the program's answer rather than the call's
+and what the model is handed afterwards. Exit codes are the program's answer, not the call's
 verdict, so a story that wants a verdict has to look at the status line.
 """
 
@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     type Scripted = Callable[..., Awaitable[Story]]
 
 #: What a story says when it is not about asking: yes to everything a program can raise, danger included.
-#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this rather than
-#: interrupting its own subject with an answer at the terminal.
+#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this, and does not
+#: interrupt its own subject with an answer at the terminal.
 _YES = Policy(away=True, away_danger=True)
 
 
@@ -125,7 +125,7 @@ async def test_a_shell_is_asked_about_every_time_and_the_answer_is_not_remembere
     await story.finished()
 
     asked = [question.prompt for question in story.questions()]
-    assert len(asked) == 2, "the second call is asked again rather than trading on the first answer"
+    assert len(asked) == 2, "the second call is asked again, and does not trade on the first answer"
     assert all(prompt.startswith("run sh -c") for prompt in asked), asked
     assert all("runs code given on its own command line" in prompt for prompt in asked), "and says why"
 

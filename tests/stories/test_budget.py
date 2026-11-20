@@ -2,7 +2,7 @@
 
 A budget is invisible until it acts, and when it acts it does things a person can see: it writes a
 checkpoint — a prune row, the text it kept, and the line the model reads about both — and, when nothing can
-be put aside, it ends the turn at the wall instead of sending a request a provider would reject. Both are
+be put aside, it ends the turn at the wall, and no request a provider would reject is sent. Both are
 stories, because both are things this program does to a conversation somebody is having (E149).
 
 Every window here is a real one, and it has to be: this program's standing prompt — a persona, the
@@ -36,8 +36,8 @@ WRITTEN = re.compile(r"prune e\d+ written \((\d+) withheld\)")
 #: And the line the model is owed about it, said at the boundary where it can be read.
 NOTICED = re.compile(r"notice e\d+ written: \d+ earlier entries put aside to fit the window")
 
-#: The three lines the model reads instead of the stretch. The handle's id is the store's to make, so it
-#: is matched rather than written down; the wording around it is model-visible and pinned.
+#: The three lines the model reads in place of the stretch. The handle's id is the store's to make, so it
+#: is matched; the wording around it is model-visible and pinned.
 HIDDEN = (
     "Hidden from you: 2 earlier entries of this conversation, put aside because it outgrew the room this "
     "route gives it. They are kept, not gone:"
@@ -69,7 +69,7 @@ def _route(name: str, *, window: int) -> Route:
 
 
 async def test_a_conversation_that_outgrows_its_window_puts_the_oldest_rounds_aside(story_with: Scripted) -> None:
-    """It is written down rather than trimmed away: a row, a line about it, and the entries still there."""
+    """It is written down: a row, a line about it, and the entries still there."""
     story = await story_with(text(LONG), text("done"), routes=(_route("roomy", window=7_000),), route="roomy")
 
     await story.type("a first question")

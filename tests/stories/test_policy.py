@@ -1,6 +1,6 @@
 """A client that answers some of the kernel's questions itself, and says which ones it answered.
 
-Both names here are flags rather than settings, so these are stories about one run: what was answered
+Both names here are flags, not settings, so these are stories about one run: what was answered
 without a person, what was deliberately still put to them, and what the screen says afterwards. The
 kernel half of the promise is that it cannot tell the difference — an answer is an answer with an
 author, and every one of these carries ``policy``.

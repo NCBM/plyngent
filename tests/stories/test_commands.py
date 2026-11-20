@@ -38,7 +38,7 @@ async def test_resume_says_what_it_is_missing(story: Story) -> None:
         "and no second one",
         "resume refused: no store named 'elsewhere': this workspace keeps one journal, and nothing else to point at",
         "[nowhere] resume refused: no such session here: open one first",
-    ), "each answer names the thing it lacks, and the last one is about the session rather than the store"
+    ), "each answer names the thing it lacks, and the last one is about the session, not the store"
 
 
 async def test_a_new_session_is_admitted_and_listed(story: Story) -> None:

@@ -83,8 +83,8 @@ async def test_a_tree_nobody_opened_is_opened_by_naming_it(story_with: Scripted,
 async def test_a_path_that_is_not_a_directory_is_refused_by_name(story: Story, tmp_path: Path) -> None:
     """A tree that is not a directory is answered, and the sentence says which path it was.
 
-    Nothing is opened and nothing is guessed: a client that mistyped a path learns that, rather than
-    getting a conversation in a tree it did not mean.
+    Nothing is opened and nothing is guessed: a client that mistyped a path learns that, and gets no
+    conversation in a tree it did not mean.
     """
     missing = tmp_path / "not-a-tree"
 
@@ -108,7 +108,7 @@ async def test_a_tree_inside_one_already_open_is_refused(story: Story) -> None:
 async def test_a_command_naming_a_tree_nothing_opened_is_refused_rather_than_obeyed(
     story: Story, tmp_path: Path
 ) -> None:
-    """Opening is ``Open``'s job: every other command naming a tree says so instead of opening one.
+    """Opening is ``Open``'s job: every other command naming a tree says so, and opens nothing.
 
     A turn is the case that matters: a command that opened a tree behind the client's back would start
     writing a conversation somewhere nobody asked for.
@@ -126,7 +126,7 @@ async def test_a_listing_answers_for_the_tree_it_names(story_with: Scripted, tmp
     """``ListSessions`` is still per tree, so two trees with a conversation each are two answers and not one.
 
     The kernel grows no "all conversations" table: a client that wants to see every tree asks once per
-    tree, which is what makes the answer a fact about a journal rather than about a process (E154).
+    tree, which is what makes the answer a fact about a journal, not about a process (E154).
     """
     second = tmp_path / "second"
     second.mkdir()
@@ -147,7 +147,7 @@ async def test_two_frontends_on_one_tree_both_hear_it(story_with: Scripted) -> N
 
     Both are told what happens: the screen this story types into draws the answer, and the connection the
     story holds directly is handed the same turn's events — which is what makes "our CLI draws one
-    conversation" a choice of that CLI rather than a limit of the kernel (E154/E156).
+    conversation" a choice of that CLI, not a limit of the kernel (E154/E156).
     """
     story = await story_with(text("hello from the model"))
     other = await story.another_client()

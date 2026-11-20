@@ -96,8 +96,8 @@ async def test_a_client_that_is_not_this_program_drives_the_kernel(talking) -> N
 class Frames:
     """A stream read as contract values, by hand: the frames that have arrived and the ones still coming.
 
-    It is what a frontend written in another language would write first, and it is here rather than in the
-    package on purpose — a codec that lived beside the kernel could hide a disagreement between the two
+    It is what a frontend written in another language would write first, and it is here, away from the
+    package, on purpose — a codec that lived beside the kernel could hide a disagreement between the two
     ends, and this story exists to have none.
     """
 
@@ -253,7 +253,7 @@ async def test_the_program_runs_against_a_kernel_that_is_not_this_one(tmp_path: 
 
     There is no host here and no journal: the frontend opens a conversation, offers its tools, says a
     line and leaves, and everything it needed from the other end was a value. That is what makes "the
-    CLI does not reach into the kernel" an assertion rather than a promise.
+    CLI does not reach into the kernel" an assertion, not a promise.
     """
     stand_in = await StandIn.at(tmp_path / "workspace")
     try:

@@ -53,7 +53,7 @@ def _index(request: Request) -> str:
     """The last section of the prompt: what this session has not been shown, and whether anyone can be asked.
 
     The prompt is five sections and this is the one the tool set writes (§0.10, E63), so a story about
-    disclosure reads it rather than the playbook that precedes it.
+    disclosure reads it, and not the playbook that precedes it.
     """
     return request.system.rsplit("\n\n", 1)[-1]
 

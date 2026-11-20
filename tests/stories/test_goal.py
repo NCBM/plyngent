@@ -35,7 +35,7 @@ async def test_a_plan_that_is_not_finished_keeps_the_conversation_going(story_wi
     """The whole of the mode: a turn that left work in the plan is followed by one nobody asked for.
 
     Asserted on the requests, because that is what "kept going" means for a model: the second one carries
-    the plan and the reason it is being asked, and the third one is the second's own doing rather than a
+    the plan and the reason it is being asked, and the third one is the second's own doing, not a
     line somebody typed at it. Every turn here is two rounds — a call, and the answer that ends it —
     because one reply is not one turn.
     """
@@ -66,7 +66,7 @@ async def test_a_plan_that_is_not_finished_keeps_the_conversation_going(story_wi
 
 
 async def test_a_goal_turn_that_did_nothing_does_not_drive_another(story_with: Scripted) -> None:
-    """A turn that only talked changed nothing, so asking again would be insisting rather than progress."""
+    """A turn that only talked changed nothing, so it does not drive another."""
     story = await story_with(_plan("write the parser"), text("the plan is written down"), text("nothing more to do"))
 
     await story.type("/goal on")

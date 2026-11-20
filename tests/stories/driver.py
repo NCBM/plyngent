@@ -6,7 +6,7 @@ a real connection, and the CLI's own loop — with two substitutions, and neithe
 * **the human** is a :class:`~plyngent.cli.line.LineEditor`, which is exactly the interface the loop
   is handed: replacing it is the same move as attaching a client (R2.4 C2);
 * **the model** is a :class:`~tests.stories.model.ScriptedModel`, installed through ``boot.install`` the
-  way a real one is: one step per request, and a request past the script is a failed story rather than
+  way a real one is: one step per request, and a request past the script fails the story, with no answer
   an invented answer.
 
 A story observes four faces, all outside the boundary:
@@ -72,14 +72,14 @@ SETTLE_TURNS = 64
 #: hands the work over and waits for it to report back, and a spin of ``sleep(0)`` never lets that thread
 #: run. A short real pause is not a story about a clock — it is the same "let the work happen" as
 #: :data:`SETTLE_PAUSE`, and it is small enough that a story still costs about what its work costs. It is
-#: a count of pauses rather than a deadline, which is why it can afford to be generous: what is being
+#: a count of pauses, which is why it can afford to be generous: what is being
 #: waited for is a thread being scheduled, and that is a fact about the machine this suite runs on.
 SETTLE_ROUNDS = 8
 SETTLE_TICK = 0.0005
 
 #: How long a story waits for work the loop handed to a thread, and how many times it looks.
 #:
-#: A bounded count of short pauses rather than a timeout: the loop has to give the OS a chance to run
+#: A bounded count of short pauses: the loop has to give the OS a chance to run
 #: the thread, and a spin of ``sleep(0)`` never does.
 SETTLE_TRIES = 1000
 SETTLE_PAUSE = 0.005
@@ -261,11 +261,11 @@ class Story:
 
         ``pty`` is how much of the host its terminals may take, handed through to ``boot.install``:
         ``None`` is the numbers this tree ships with, and a story about running out of room says the
-        smaller one here rather than building a registry of its own.
+        smaller one here, so no registry of its own is built.
 
         ``deadline`` is the connection's deadline for a question or a call that nobody answers, which is
-        how a story about one lost call costs a hundredth of a second instead of half a minute.
-        ``grades`` is how long a question of each level gets instead of that one deadline: a story about
+        how a story about one lost call costs a hundredth of a second, where half a minute is the default.
+        ``grades`` is how long a question of each level gets: a story about
         a question timing out says the level's hundredth of a second here, and a level left ``None`` is
         the connection's ``deadline`` — which is what makes "the connection's clock" observable without
         sleeping through a real one (§0.15, E112).
@@ -274,7 +274,7 @@ class Story:
         the program's own door: a story that hands one is a story about a program started from a file, and
         the kernel is brought up by :func:`plyngent.config.install`, which is the same call ``__main__``
         makes. Everything the file decides is then the file's, so naming one of those here as well is
-        refused rather than silently outvoted.
+        refused, and it is not silently outvoted.
 
         ``markdown`` says the screen is a terminal: the answer is laid out as the markdown it is and grown
         in place while it arrives, which a story reads as the rows plus the cursor movements the screen
@@ -284,7 +284,7 @@ class Story:
         remembers nothing: a story about a reconnect names a file in its own directory, the way a program
         names the one in the person's.
 
-        ``once`` is the one message a run sends instead of reading lines (``-p``), and ``None`` is the
+        ``once`` is the one message a run sends in place of reading lines (``-p``), and ``None`` is the
         ordinary run: a story about a script's shape says what it would say here (E159).
         """
         root.mkdir(parents=True, exist_ok=True)
@@ -354,7 +354,7 @@ class Story:
         markdown: bool = False,
         mark: Path | None = None,
     ) -> Story:
-        """Put a person in front of a kernel that is reached at an address rather than built here.
+        """Put a person in front of a kernel that is reached at an address, not built here.
 
         ``client`` is what :func:`plyngent.boot.connect` answered: the far end of a socket, whose manifest
         arrived before the value did. Everything else is the same program — the same ``App``, the same
@@ -406,7 +406,7 @@ class Story:
         await self.settle()
 
     async def decline(self) -> None:
-        """End the question instead of answering it: the kernel is told nobody gave an answer.
+        """End the question without answering it: the kernel is told nobody gave an answer.
 
         A terminal's Ctrl+C at a prompt is how a person backs out of a question — not an empty line,
         which some questions read as an answer.
@@ -453,7 +453,7 @@ class Story:
 
         A connection's own manifest says it too, which is how a frontend that has no kernel in its
         process still knows which tree it is looking at — and how ``--workspace`` becomes a claim to
-        check rather than an assumption (E123).
+        check (E123).
         """
         if self.kernel is None:
             return Path(self.client.manifest.workspaces[0].path)
@@ -534,7 +534,7 @@ class Story:
     def toolset_epoch(self) -> int:
         """How many times this session's tool set has changed — the number a provider cache keys on.
 
-        It has no screen and it is the only thing a story reads *out* of the kernel rather than at its
+        It has no screen and it is the only thing a story reads *out* of the kernel, and not at its
         boundary: the acceptance for disclosure is that one ask costs one change, and no line a person
         sees can say that (§10.5).
         """
@@ -611,7 +611,7 @@ class Story:
         raise AssertionError(msg)
 
     async def finished(self, turn: int = 1) -> None:
-        """Wait for a turn to end, and fail on a turn that ended for a reason rather than by itself.
+        """Wait for a turn to end, and fail on a turn that ended for a reason of its own.
 
         A turn that raised still says it finished — with the reason — so "that line is there" is not the
         same as "the turn ran to its own end". A story that means the second one says so here.

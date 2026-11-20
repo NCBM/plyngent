@@ -47,7 +47,7 @@ def _skill(
 
     ``frontmatter=False`` writes the body alone, which is what a test about line numbers wants: the block
     is five lines of metadata, and a window asserted against a file that has one is a window asserted
-    against arithmetic rather than against the tool.
+    against arithmetic, not against the tool.
     """
     directory = store.roots[root].path / name
     directory.mkdir(parents=True, exist_ok=True)
@@ -94,12 +94,12 @@ async def test_a_person_can_ask_the_program_what_skills_it_has(story_with: Scrip
     assert rows[0].endswith(" — the first"), "the description is what a person reads the row for"
     assert "shadowed: beta — mine-user wins (also theirs-user)" in told_, "the copy that lost is not hidden"
     assert any(line.startswith("roots without a directory: ") for line in told_), (
-        "a root with nothing in it is said rather than left out"
+        "a root with nothing in it is said, not left out"
     )
 
 
 async def test_a_program_with_no_skill_store_says_so(story_with: Scripted) -> None:
-    """A kernel started without a store answers the word with the truth rather than with an error."""
+    """A kernel started without a store answers the word with the truth, not with an error."""
     story = await story_with(text("one"))
 
     await story.type("/skills")

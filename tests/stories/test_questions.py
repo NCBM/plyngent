@@ -85,7 +85,7 @@ async def test_a_question_that_runs_out_of_time_takes_the_prompt_with_it(story: 
 
     assert answer.text is None, "nobody wrote anything, so the answer is the absence of one"
     assert story.questions()[0].timeout == 0.01, "the question says how long it is worth waiting for"
-    assert story.editor.waiting == 0, "the prompt came down instead of standing there unread"
+    assert story.editor.waiting == 0, "the prompt came down, and does not stand there unread"
 
 
 async def test_an_answer_that_arrives_too_late_changes_nothing(story: Story) -> None:

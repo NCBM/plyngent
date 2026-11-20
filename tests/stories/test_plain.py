@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 async def test_a_pipe_is_a_session_from_a_command_to_the_end_of_its_input(tmp_path: Path) -> None:
-    """One command, one message, and the end of the input, over a descriptor rather than a keyboard.
+    """One command, one message, and the end of the input, over a descriptor, not a keyboard.
 
     What the person reads is what a terminal would have read, less the drawing: the command's listing
     goes to the notices because that is where a complaint goes, and the refusal goes to the screen
@@ -105,7 +105,7 @@ async def test_a_pipe_waits_for_the_turn_a_message_started(tmp_path: Path) -> No
     kernel started and reports the end of by an event, so a program that left when the last line was read
     would drop the answer that line asked for. The model here is held until this story lets it go, which
     is what makes the difference observable: the loop is still there, waiting, and what it is waiting for
-    is the end of the turn rather than another line.
+    is the end of the turn, not another line.
     """
     reading, writing = os.pipe()
     with os.fdopen(reading, "r", encoding="utf-8") as stream, os.fdopen(writing, "w", encoding="utf-8") as feed:
@@ -139,7 +139,7 @@ async def _until(stream: TextIO, wanted: str) -> None:
 
     The same bounded wait the story driver uses, and for the same reason: a verb that reads on a thread
     makes no progress while the loop spins without yielding time, so waiting is a number of short
-    pauses rather than a number of turns.
+    pauses, not a number of turns.
     """
     for _ in range(SETTLE_TRIES):
         if wanted in stream.getvalue():

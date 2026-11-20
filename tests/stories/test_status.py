@@ -1,6 +1,6 @@
 """Where the conversation is, and what it cost: the rows a frontend works out for itself.
 
-These are the frontend's own rows rather than the kernel's, which is why a story is the only place they
+These are the frontend's own rows, not the kernel's, which is why a story is the only place they
 can be read from the outside: :func:`plyngent.cli.render.render` says nothing about them, and a unit
 test of a row cannot say whether the loop put it on the right stream.
 
@@ -68,21 +68,21 @@ async def test_a_turn_says_what_it_cost(story_with: Scripted) -> None:
 
     tally = [line for line in story.notices() if line.startswith("turn 1 ")]
     assert tally, story.notices()
-    assert "1 step" in tally[0], "one request to the model, and 'one step' rather than '1 steps'"
+    assert "1 step" in tally[0], "one request to the model, and 'one step', not '1 steps'"
     assert "1200+30 tokens" in tally[0], "what was sent and what came back"
     rows = [row.payload for row in await story.host.trail.entries(story.session) if isinstance(row.payload, Spent)]
     assert [(row.prompt, row.completion, row.cached) for row in rows] == [(1200, 30, None)], (
         "the same three numbers, written down where a reader who was not here can find them"
     )
-    assert rows[0].route == "", "the session never chose one, so the row names none rather than guessing"
+    assert rows[0].route == "", "the session never chose one, so the row names none"
 
 
 async def test_the_context_row_says_a_share_when_the_route_stated_a_window(story_with: Scripted) -> None:
-    """A percentage needs a denominator, and the denominator is the model's fact rather than a guess.
+    """A percentage needs a denominator, and the denominator is a fact the model stated.
 
     E128 kept this row at an absolute number while ``Caps`` had no window to divide by; the number lives
     on the route announcement, so a route that stated one gets the share and a route that did not gets the
-    count alone rather than a percentage of something this client made up.
+    count alone, and not a percentage of something this client made up.
 
     The window is a real one and not a small fiction: a route whose window cannot even hold this
     program's standing prompt — a persona, the playbook and the tool declarations — is a route whose

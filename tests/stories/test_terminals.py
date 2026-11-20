@@ -98,7 +98,7 @@ async def test_a_terminal_that_has_said_too_much_says_what_it_lost(story_with: S
 
     Only the newest ``session_output_budget`` of a session is kept, because a child that talks a lot must
     not be blocked in ``write(2)`` while it waits for somebody to look. So the window a read finds is the
-    end of the flood, and the bytes that fell off the front of it are said as ``dropped`` rather than as
+    end of the flood, and the bytes that fell off the front of it are said as ``dropped``, not as
     a hole in the middle of what the program said.
     """
     story = await story_with(
@@ -126,7 +126,7 @@ async def test_a_terminal_that_has_said_too_much_says_what_it_lost(story_with: S
     assert told(first).split("--- data ---\n")[-1].rstrip().endswith("MARK"), told(first)
     assert "dropped=0" not in told(first).splitlines(), "and what fell out of the window is a number"
     assert "truncated=true" in told(first).splitlines(), "the window is not everything the child said"
-    assert told(second).split("--- data ---\n")[-1] == "", "a quiet terminal says nothing rather than guessing"
+    assert told(second).split("--- data ---\n")[-1] == "", "a quiet terminal says nothing, and nothing is guessed"
     assert "dropped=0" in told(second).splitlines(), "and it lost nothing while it was empty"
     assert "closed PTY session" in told(closed)
 
@@ -221,7 +221,7 @@ async def test_keys_are_what_a_terminal_reads_and_a_typo_is_reported(story_with:
     assert told(written) == f"wrote 6 chars to session {session}\nsession_id={session}\nwrote=6 chars"
     assert "there" in told(read), told(read)
     assert told(bad) == "unknown key <nope> (see the write_pty_keys docs for the names)", (
-        "a typo is reported rather than typed into somebody's terminal"
+        "a typo is reported, not typed into somebody's terminal"
     )
 
 

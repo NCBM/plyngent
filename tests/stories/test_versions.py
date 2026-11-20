@@ -91,7 +91,7 @@ async def test_a_rollback_puts_back_what_the_last_call_left(story_with: Scripted
 
 
 async def test_a_rollback_leaves_a_file_somebody_wrote_over_alone(story_with: Scripted) -> None:
-    """The bytes on disk are not what that version left, so it is refused rather than quietly applied."""
+    """The bytes on disk are not what that version left, so it is refused, not quietly applied."""
     story = await story_with(calling("write_file", {"path": "notes.txt", "content": "one\n"}), text("written"))
 
     await story.type("write the note")

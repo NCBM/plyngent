@@ -1,7 +1,7 @@
 """A model asking a real checkout: five read-only calls, and what git's own words become.
 
-The group is not resident, so each story asks for it first — that is the rule every group follows rather
-than anything about version control. The repository is real (``tests.repositories``), because what these
+The group is not resident, so each story asks for it first — that is the rule every group follows, and
+it says nothing about version control. The repository is real (``tests.repositories``), because what these
 stories are about is the translation: git's sentences and exit codes turned into a summary a model reads
 first, a body it can read second, and the two endings that are not a failure.
 """

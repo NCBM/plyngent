@@ -3,7 +3,7 @@
 A workspace is a tree a person works in. Opening a conversation over it may not leave anything in it —
 no database, no sidecar, no directory — because the first thing a person does with such a tree is commit
 it. The history therefore belongs to a data directory of its own, one file per workspace, and a story
-names that file so a test's history lands beside the test's workspace instead of in the person's own
+names that file so a test's history lands beside the test's workspace, not in the person's own
 data.
 """
 
@@ -37,7 +37,7 @@ async def test_a_conversation_is_kept_beside_the_workspace_and_leaves_it_alone(t
 
         assert story.screen() == ("turn 1 started (chat)", "noted", "turn 1 finished")
         assert set(story.workspace.iterdir()) == before, "the conversation was kept out of the workspace"
-        assert journal.exists(), "and it was kept where the story said, rather than in the person's data directory"
+        assert journal.exists(), "and it was kept where the story said, not in the person's data directory"
     finally:
         await story.close()
 

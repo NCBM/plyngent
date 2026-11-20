@@ -49,7 +49,7 @@ async def test_a_new_conversation_can_start_from_another_ones_text(story_with: S
 
 
 async def test_what_was_copied_is_what_the_next_turn_is_given(story_with: Scripted) -> None:
-    """The copy is a history rather than a note about one: a turn continues from it as from its own."""
+    """The copy is a history, not a note about one: a turn continues from it as from its own."""
     story = await _one_exchange(story_with)
     await story.type("/new --session work --seed-from main --seed-from e3")
     other = await story.another_client()

@@ -45,7 +45,7 @@ async def _opened(tmp_path: Path, transport: str, *script: Step) -> Story:
 
     Both of those are things a program's own machine has: an ``AGENTS.md`` in the tree and a skills root.
     The skill is read into the plan once, at install (§0.10, E65/E66); the file is not read at all, and
-    every story here runs in a workspace that *has* one, which is what makes that a fact rather than an
+    every story here runs in a workspace that *has* one, which is what makes that a fact, and not an
     accident of an empty directory.
     """
     root = tmp_path / "workspace"
@@ -66,7 +66,7 @@ async def _opened(tmp_path: Path, transport: str, *script: Step) -> Story:
 async def test_the_prompt_is_five_sections_in_one_order(tmp_path: Path, transport: str) -> None:
     """Everything the prompt is made of, in the one order it is made in — which is the whole point.
 
-    The order is a constant rather than whatever the state produced, because a prompt is the front of a
+    The order is a constant, because a prompt is the front of a
     provider's cached prefix: two requests that differ only in what a turn did must differ only in what the
     turn touched (§10.5). So the five sections are asserted as one string, with the one that arrived in
     between — the ``session`` group, asked for in the first round — sitting where it belongs.

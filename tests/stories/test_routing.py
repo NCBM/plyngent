@@ -231,7 +231,7 @@ async def test_the_route_a_session_chose_outlives_a_restart(tmp_path: Path) -> N
 async def _attempts(story: Story) -> tuple[Attempt, ...]:
     """Every attempt row this session's journal holds, found the way a reader would: as its roots.
 
-    An attempt is written with no parent, so it sits beside the conversation instead of in it — which is
+    An attempt is written with no parent, so it sits beside the conversation, not in it — which is
     why the roots are where to look, and why finding one here also proves it cannot have become a place
     the conversation continues from.
     """
@@ -303,7 +303,7 @@ async def test_an_attempt_beside_the_chain_does_not_move_where_the_conversation_
 async def _read_a_picture(story: Story) -> Result:
     """Put a picture in the workspace, read it, and answer the message the model was left with.
 
-    Waits for the turn to end rather than for the loop to have got somewhere: reading a picture is a
+    Waits for the turn to end, not for the loop to have got somewhere: reading a picture is a
     file read, which a tool hands to a thread, and the request the answer belongs to is assembled after
     that thread reports back.
     """

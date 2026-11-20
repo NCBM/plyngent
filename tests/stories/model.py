@@ -1,8 +1,8 @@
 """A model a story can script, and the record of what it was asked.
 
 A story's model has to be two things at once: the thing the kernel asks, and the thing the story reads
-back. So the replies are *scheduled* rather than computed — the story says what the model answers and in
-what order, and a request past the end of the script is a failure rather than an invented answer — apart
+back. So the replies are *scheduled*: the story says what the model answers and in
+what order, and a request past the end of the script is a failure, with no answer invented — apart
 from one kind of step, which is chosen by what the model was just read (:data:`Step`). That kind exists
 because a tool's answer can carry a value the story cannot know before the call runs, and the call after
 it has to take that value the way a model would: out of the request, not out of the test's bookkeeping.

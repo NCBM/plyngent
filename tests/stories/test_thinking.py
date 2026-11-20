@@ -3,11 +3,11 @@
 Thinking is two things at once, and the second is the one that is not a preference: a round that thought
 and then asked for a tool has to carry its thinking into the next request, or a thinking endpoint refuses
 the request. So the story that matters asserts the *second* request, and the ones about the screen assert
-that a thought is readable as what it is rather than mixed into the answer (E145, §0.13 E94).
+that a thought is readable as what it is, not mixed into the answer (E145, §0.13 E94).
 
-What a thought is not: a message. It is a field of the answer the model gave, so it belongs to that round
-rather than standing between the speakers — which is why a pipe gets the answer and nothing else, and why
-the two screenings below are the two lanes rather than one screen read twice.
+What a thought is not: a message. It is a field of the answer the model gave, so it belongs to that
+round, not between the speakers — which is why a pipe gets the answer and nothing else, and why
+the two screenings below are two lanes, not one screen read twice.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ async def test_a_round_that_thought_hands_its_thinking_to_the_next_one(story_wit
     """The acceptance: the second request carries the first round's thinking, signature and all.
 
     A model that thinks and then asks for a tool is the case a thinking endpoint refuses when the
-    thinking went missing, so this is asserted on the request rather than on the screen.
+    thinking went missing, so this is asserted on the request.
     """
     story = await story_with(
         Reply(

@@ -3,7 +3,7 @@
 A connection that breaks takes nothing with it — the turn keeps running, the events go into the kernel's
 window — but a frontend that comes back has no way of knowing what it missed unless it says where it was.
 That is the whole of this file: one number on the way out, the same number on the way in, and the rule
-that a number from another run of a kernel is dropped rather than guessed at.
+that a number from another run of a kernel is dropped, and nothing is guessed.
 
 What is asserted is the screen, because a replayed event is drawn exactly like a live one: nothing about
 the transport is visible from in front of the program.

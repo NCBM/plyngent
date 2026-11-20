@@ -3,7 +3,7 @@
 A projection answers what a model is given — one chain, and only the rows a model reads. What a person
 asks is the other question, and it is the one thing a stored journal can answer that a screen cannot:
 every row is still there, the bookkeeping included. The read that answers it carries the parent each row
-names, so the shape of the conversation travels with the rows instead of costing a question per branch.
+names, so the shape of the conversation travels with the rows, at no question per branch.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ async def test_the_entries_are_shown_in_the_order_they_were_written(story_with: 
     """The word `/history`, which is why the read exists: what is in this conversation, and what is not.
 
     The first row is the tool set this client attached, which the session wrote down about itself: the
-    journal answers what happened rather than what was said, and the two are not the same list.
+    journal answers what happened, not what was said, and the two are not the same list.
     """
     story = await story_with(text("hello there"))
     await story.type("say something")
@@ -119,7 +119,7 @@ async def test_the_whole_forest_can_be_read_with_its_parents(story_with: Scripte
 
 
 async def test_a_conversation_this_kernel_is_not_serving_has_no_rows(story_with: Scripted) -> None:
-    """A read about a conversation nobody opened is answered with nothing rather than with invention."""
+    """A read about a conversation nobody opened is answered with nothing, and nothing is invented."""
     story = await story_with(text("hello"))
     await story.type("say something")
     await story.finished()

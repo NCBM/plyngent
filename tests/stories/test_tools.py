@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     type Scripted = Callable[..., Awaitable[Story]]
 
 #: What a story says when it is not about asking: yes to everything a program can raise, danger included.
-#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this rather than
-#: interrupting its own subject with an answer at the terminal.
+#: A shell is a danger-level question here (§R12 乙), so a story that runs one says this, and does not
+#: interrupt its own subject with an answer at the terminal.
 _YES = Policy(away=True, away_danger=True)
 
 

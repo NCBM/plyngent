@@ -1,7 +1,7 @@
 """What a program says at the moment it takes something with it (E151).
 
 Two writers and one rule between them: the sentence is written **when the loss is true** — a process that is
-going down, or a broker that has just been replaced — rather than guessed at by the next start, and it is
+going down, or a broker that has just been replaced — and not guessed at by the next start, and it is
 written only into a conversation that really loses something. What a story can show is the row, read back by
 the next process, and the fact that a conversation which lost nothing was told nothing.
 
@@ -110,7 +110,7 @@ async def test_a_replaced_terminal_broker_is_said_before_a_model_calls_an_old_id
     """The refusal for a dead id is still there; what this ends is the call a model would spend finding it.
 
     The broker is replaced while the second request is in flight, so the sentence is written at the next
-    boundary — the third round's reminder — rather than in the middle of one. What the request carries is
+    boundary — the third round's reminder — not in the middle of one. What the request carries is
     the one thing that changed: a note, and no call of ours in between.
     """
     held = Held(calling("read", {"path": "notes.txt"}))

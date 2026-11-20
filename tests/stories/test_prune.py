@@ -5,7 +5,7 @@ says it wrote one, the next request no longer carries the words it named, and th
 is still there. That the row itself stayed is the journal's own story (`tests/test_kernel/test_prune.py`) —
 the screen cannot show a thing that is deliberately not shown.
 
-The entry to hide is read off a listing rather than written down: ids are the journal's to allocate, and a
+The entry to hide is read off a listing: ids are the journal's to allocate, and a
 story that guessed one would be testing its own arithmetic.
 """
 

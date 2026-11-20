@@ -1,7 +1,7 @@
 """Compaction: the one entry a summary is, and what a session does with it.
 
 A summary is an ordinary entry with one rule attached — **where it continues is its whole meaning** — so
-the stories here are about placement rather than about summarising: what a compaction writes (one row, no
+the stories here are about placement: what a compaction writes (one row, no
 turn), what a session says when it cannot write one, and where a restarted client continues once the
 summary is the end of the conversation it can reach.
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     type Scripted = Callable[..., Awaitable[Story]]
 
 #: The line a written summary earns on the screen: the entry it went to, and how much text stands in
-#: for what it replaced. The id is the journal's to allocate, so it is matched rather than guessed.
+#: for what it replaced. The id is the journal's to allocate, so it is matched.
 WRITTEN = re.compile(r"summary e\d+ written \((\d+) chars\)")
 
 
@@ -69,7 +69,7 @@ async def test_a_summary_that_stands_for_a_stretch_names_one_this_conversation_h
     await story.type("/compact --replaces e999 --replaces e998 --text later")
 
     assert story.screen()[before:] == ("compact refused: no entry 'e999' in session main",), (
-        "a span nothing could ever be read back from is refused rather than written"
+        "a span nothing could ever be read back from is refused, not written"
     )
     await story.type(f"/compact --replaces {first} --replaces {last} --text settled")
 
@@ -136,7 +136,7 @@ async def test_the_model_is_given_the_summary_and_not_what_it_replaced(story_wit
     first, second = story.requests()
     assert first.messages == (User(text="a first thought"),), "the first turn read the conversation as it stood"
     assert second.messages == (as_message(Summary(text="settled")), User(text="and another")), (
-        "the next turn read the summary instead of the stretch it stands for"
+        "the next turn read the summary, and not the stretch it stands for"
     )
 
 
@@ -176,7 +176,7 @@ async def test_the_plan_epoch_moves_once_per_compaction(story_with: Scripted) ->
 async def test_a_summary_nobody_typed_is_asked_for(story_with: Scripted) -> None:
     """`/compact` with no text is a request: the model writes the summary, and the turn is one request long.
 
-    Three things make this a turn rather than a row written where commands are: it carries a place, it
+    Three things make this a turn: it carries a place, it
     costs what a request costs, and it can be stopped. What it does not do is write a message — the
     summary stands for the stretch below it, so a user row reading "please summarise" would be a thing
     the model is told happened.
