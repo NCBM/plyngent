@@ -918,7 +918,6 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.NO_SESSION: "no such session here: open one first",
     Refusal.NO_MODEL: "this kernel has no model installed, so it cannot run a turn",
     Refusal.BUSY: "a turn is already running in this session",
-    Refusal.NO_ASIDE: "an aside is not a kind of turn this build runs",
     Refusal.NO_HOST: "this kernel's host is not up, so there is nowhere to write a conversation",
     Refusal.NO_SUCH_ENTRY: "no entry {entry!r} in session {session}: an entry can only continue one that exists",
     Refusal.NOT_A_SPAN: "no entry {entry!r} in session {session}",

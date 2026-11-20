@@ -20,7 +20,6 @@ from plyngent.kernel.model import Assistant, Result, User
 from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Confirmation, Selection
 from plyngent.wire.command import Open, Submit
-from plyngent.wire.event import TurnKind
 from tests.stories.model import Failing, Held, calling, text
 
 if TYPE_CHECKING:
@@ -156,16 +155,54 @@ async def test_a_person_can_ask_which_turn_is_working(story_with: Scripted) -> N
     )
 
 
-async def test_a_turn_kind_this_build_does_not_run_is_refused_by_name(story_with: Scripted) -> None:
-    """``ASIDE`` is declared in the contract and implemented nowhere: running it as a chat would write the
-    history an aside exists to leave alone, so the answer is a refusal, not a quietly wrong turn."""
+async def test_an_aside_answers_beside_the_conversation_and_stays_out_of_it(story_with: Scripted) -> None:
+    """``/btw`` costs one request and one answer, and the next turn is sent the conversation it had before.
+
+    The rows are in the log — that is where an answer lives — and what makes them an aside is that the
+    projection a model is given walks past them, until somebody says to keep them (E163).
+    """
+    story = await story_with(text("first answer"), text("second answer"))
+
+    await story.type("/btw what about Tuesday")
+    await story.answer("n")
+    await story.until("turn 1 finished")
+    await story.type("carry on")
+    await story.finished(turn=2)
+
+    _aside, next_turn = story.requests()
+    assert [message.text for message in next_turn.messages] == ["carry on"], (
+        "the aside is not part of the conversation the next request carries"
+    )
+    assert story.questions()[0].prompt == "keep this in the main conversation?"
+    assert story.questions()[0].default is False, "and an empty line keeps it out, which is the quiet answer"
+
+
+async def test_a_kept_aside_joins_the_conversation_from_then_on(story_with: Scripted) -> None:
+    """A yes to that question writes one row, and a projection below it reads the aside's own rows."""
+    story = await story_with(text("first answer"), text("second answer"))
+
+    await story.type("/btw what about Tuesday")
+    await story.answer("y")
+    await story.until("turn 1 finished")
+    await story.type("carry on")
+    await story.finished(turn=2)
+
+    _aside, next_turn = story.requests()
+    assert [message.text for message in next_turn.messages] == ["what about Tuesday", "first answer", "carry on"]
+
+
+async def test_an_aside_is_offered_only_what_writes_nothing(story_with: Scripted) -> None:
+    """The tools of an aside are the ones no call could change anything with — a property, not a list."""
     story = await story_with(text("one"))
 
-    assert story.client.submit(Submit(session=story.session, kind=TurnKind.ASIDE, text="a thought"))
-    await story.until("turn refused: an aside is not a kind of turn this build runs")
+    await story.type("/btw what can you see")
+    await story.answer("n")
+    await story.finished()
 
-    assert story.screen() == ("turn refused: an aside is not a kind of turn this build runs",), story.screen()
-    assert story.requests() == (), "and nothing was asked of the model"
+    (aside,) = story.requests()
+    offered = {tool.name for tool in aside.tools}
+    assert "write_file" not in offered, "a tool that writes is not offered to a turn that changes nothing"
+    assert "read" in offered, "and the ones that only read are"
 
 
 async def test_a_signal_is_the_stop_a_key_is(story_with: Scripted) -> None:

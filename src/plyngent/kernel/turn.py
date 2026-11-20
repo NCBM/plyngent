@@ -53,6 +53,7 @@ from plyngent.kernel.trail import (
     Attempt,
     Effect,
     Notice,
+    Promoted,
     Summary,
     TurnEnded,
     Withheld,
@@ -61,7 +62,7 @@ from plyngent.kernel.trail import (
 )
 from plyngent.kernel.trail import Usage as UsageRow
 from plyngent.kernel.words import counted
-from plyngent.wire.ask import Selection, Severity, as_picked
+from plyngent.wire.ask import Confirmation, Selection, Severity, as_agreed, as_picked
 from plyngent.wire.event import (
     AnswerCut,
     AssistantDelta,
@@ -248,6 +249,8 @@ class TurnRunner:
                     if not state.more:
                         break
                     state = replace(state, ctx=state.ctx.next_round())
+                if ctx.kind is TurnKind.ASIDE:
+                    state = await self._promoted(state)
         except Cancelled as stopped:
             reason = str(stopped.reason)
         except _WalledError as walled:
@@ -356,6 +359,26 @@ class TurnRunner:
                 )
                 raise _WalledError(msg)
 
+    async def _promoted(self, state: TurnState) -> TurnState:
+        """Ask whether this aside stays in the conversation, and write the row that says it does.
+
+        The question is asked at ``CONFIRM`` because that level's silence is "no": an aside is a thought
+        beside the work, and an unattended run that kept every one of them would fill the conversation its
+        person left alone. A yes writes one row where the conversation stands — the aside's own rows are
+        already in the log, and this is the fact that tells a projection to read them (E163).
+        """
+        ctx = state.ctx
+        agreed = as_agreed(
+            await ctx.ask(
+                Confirmation(prompt="keep this in the main conversation?", default=False, severity=Severity.CONFIRM),
+                tool="",
+                call="aside",
+            )
+        )
+        if not agreed.accepted:
+            return state
+        return await self._append(state, Promoted(turn=ctx.turn_id))
+
     def _terminals_gone(self, state: TurnState) -> None:
         """Say the terminals a replaced broker took, if this conversation lost any (E151).
 
@@ -425,7 +448,12 @@ class TurnRunner:
         ctx = self._ctx
         entry = await ctx.host.trail.append(
             ctx.session.session_id,
-            TurnEnded(turn=ctx.turn_id, reason=reason, failure="" if failure is None else str(failure)),
+            TurnEnded(
+                turn=ctx.turn_id,
+                reason=reason,
+                failure="" if failure is None else str(failure),
+                kind=str(ctx.kind),
+            ),
             begin_after=cursor,
             turn=ctx.turn_id,
         )
@@ -528,7 +556,7 @@ class TurnRunner:
         longer what it was handed.
         """
         ctx = state.ctx
-        view = self._catalog.view(ctx.session.disclosed)
+        view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
         asked = ctx.host.routes.resolve(ctx.session.route)
         system = ctx.host.prompt.compose(view, continuing=self._carrying_on(state))
         tools = view.prompts()

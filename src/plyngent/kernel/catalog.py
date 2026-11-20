@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 from plyngent.kernel.client import CLIENT
 from plyngent.kernel.model import ToolDecl
 from plyngent.kernel.tools import document, fs, meta, net, process, session, skills, vcs
+from plyngent.kernel.toolspec import Mutation
 from plyngent.kernel.words import plural
 
 if TYPE_CHECKING:
@@ -160,17 +161,23 @@ class ToolCatalog:
         spec = self._specs.get(name)
         return None if spec is None else _group_of(spec)
 
-    def view(self, disclosed: Collection[str]) -> ToolView:
+    def view(self, disclosed: Collection[str], *, reading: bool = False) -> ToolView:
         """What one session may see: the residents, plus whatever groups it has been shown.
 
         A view is a value and not a second catalog: it is built from the same specs, says what is
         visible and what is still missing, and asks nothing of the session that made it. The name
         order and the byte-stable schemas are the catalog's own (:func:`_declared`), so a request
         assembled from a view and a request assembled from the catalog differ only in what is in them.
+
+        ``reading`` is a turn that writes nothing — an aside. What it may reach is what cannot change
+        anything at all, which is a property of the tool and not a second list to keep: the alternative
+        was a "read-only tools" table that would fall behind this one (E163).
         """
         visible = {
             name: spec for name, spec in self._specs.items() if name in self.resident or _group_of(spec) in disclosed
         }
+        if reading:
+            visible = {name: spec for name, spec in visible.items() if spec.mutates == Mutation.NONE}
         return ToolView(specs=visible, groups=self.groups(), disclosed=frozenset(disclosed))
 
 

@@ -73,9 +73,6 @@ class Refusal(StrEnum):
     NO_SESSION = "no-session"
     NO_MODEL = "no-model"
     BUSY = "busy"
-    #: A turn kind this build declares and does not run: an aside reads without writing a history, and
-    #: nothing here implements that yet — saying so is better than running it as a chat.
-    NO_ASIDE = "no-aside"
     NO_HOST = "no-host"
     #: A pointer into an entry this conversation does not have: a parent, a summary's span, a prune's
     #: target, or the row a copy was asked to read from. Four answers because they are four claims.

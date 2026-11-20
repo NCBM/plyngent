@@ -247,6 +247,25 @@ class TurnEnded(Struct, tag=TURN_ENDED_TAG, frozen=True, kw_only=True):
     reason: str = ""
     #: Which kind of trouble ended it, when a model could not be asked — empty otherwise.
     failure: str = ""
+    #: Which kind of turn this was. The one thing a projection cannot work out for itself: nothing else
+    #: in a row says whose rows they are, and an ``aside`` turn's rows are in the log and out of the
+    #: model's conversation until somebody keeps them (E163).
+    kind: str = ""
+
+
+#: The tag a kept aside carries. Spelled here because it is half of the record's identity.
+PROMOTED_TAG = "promote"
+
+
+class Promoted(Struct, tag=PROMOTED_TAG, frozen=True, kw_only=True):
+    """One aside a person decided to keep in the conversation.
+
+    Written after that aside ended, where the conversation stands, so a projection walking down from the
+    head reads it before it reaches the rows it names. That is the whole of why keeping can be a row
+    written later: nothing rewrites a tag, and a decision is a fact with a place and a time.
+    """
+
+    turn: int = 0
 
 
 #: The tag one call's changes carry. Spelled here because it is half of the record's identity.
@@ -374,7 +393,9 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
 #: compressed into, what the harness told the model, what it has stopped showing, what became of a request
 #: that was never answered, what one call left different, what one person said when they were asked, and
 #: what one request cost.
-type AnyRecord = AnyMessage | StateChange | Summary | Notice | Withheld | Attempt | Effect | Consent | Usage | TurnEnded
+type AnyRecord = (
+    AnyMessage | StateChange | Summary | Notice | Withheld | Attempt | Effect | Consent | Usage | TurnEnded | Promoted
+)
 
 
 def as_message(record: AnyRecord) -> AnyMessage | None:
@@ -396,13 +417,14 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     not told what a person agreed to before its call ran, and a person reading the row is. A usage is the
     third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
     the model is told about itself. And a turn's end is the fourth: a model reading "turn 3 ended" as part
-    of its conversation would be reading the log.
+    of its conversation would be reading the log. A kept aside is the fifth: it says which rows a person
+    decided to keep, and the rows themselves are what a model reads.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
     if isinstance(record, Notice):
         return Note(text=record.text) if record.text else None
-    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded | Promoted):
         return None
     return record
 

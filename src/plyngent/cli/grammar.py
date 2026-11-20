@@ -40,6 +40,7 @@ import msgspec
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, Submit
+from plyngent.wire.event import TurnKind
 from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory, Turns
 
 if TYPE_CHECKING:
@@ -95,6 +96,17 @@ HELP = "help"
 
 #: How a slash line is spelled.
 SLASH = "/"
+
+#: The word that asks something beside the conversation. Its text goes as a ``Submit`` of the aside
+#: kind: the kernel runs that turn with the tools that write nothing, and leaves its rows out of the
+#: model's history until somebody keeps them (E163).
+ASIDE = "btw"
+
+#: What that word is for, in the words a person reads.
+ASIDE_NOTE = "Ask something beside the conversation; the answer joins it only if you say to keep it."
+
+#: The only argument that word takes: the question itself, spelled as it was typed.
+ASIDE_USAGE = "<question>"
 
 #: The only argument a read word takes: which conversation to ask about, and nothing else.
 READ_USAGE = "[--session TEXT]"
@@ -275,6 +287,8 @@ def word_help(catalog: Catalog, word: str) -> str:
         return f"{SLASH}{word} {_read_usage(kind)}\n\n  {_read_summary(kind)}"
     if word == TRAVELLED:
         return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
+    if word == ASIDE:
+        return f"{SLASH}{ASIDE} {ASIDE_USAGE}\n\n  {ASIDE_NOTE}"
     return f"no command {SLASH}{word} here"
 
 
@@ -286,6 +300,7 @@ def help_text(catalog: Catalog) -> str:
     ]
     spelled.extend((f"{SLASH}{word} {_read_usage(kind)}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
     spelled.append((f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}", TRAVEL_NOTE))
+    spelled.append((f"{SLASH}{ASIDE} {ASIDE_USAGE}", ASIDE_NOTE))
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
     lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
     lines.append(
@@ -309,6 +324,8 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
         return _reading(said, reading, rest, catalog=catalog, session=session)
     if said == TRAVELLED:
         return _travelling(rest, catalog=catalog)
+    if said == ASIDE:
+        return _betwixt(rest, catalog=catalog, session=session)
     tag = catalog.word(said)
     if tag is None:
         return Wrong(text=f"no command {SLASH}{said} here; {SLASH}help lists the ones there are")
@@ -326,7 +343,7 @@ def _asking_help(said: str, rest: str, catalog: Catalog) -> Intent:
     if said and asked:
         # The example is the word they asked about when this client has it, so the sentence points at the
         # line that would actually answer them.
-        known = catalog.word(asked) is not None or asked in READS or asked == TRAVELLED
+        known = catalog.word(asked) is not None or asked in READS or asked in (TRAVELLED, ASIDE)
         example = asked if known else "open"
         return Wrong(text=f"{SLASH}{HELP} takes no argument; a word describes itself, as {SLASH}{example} --help")
     return Help(text=help_text(catalog))
@@ -364,6 +381,21 @@ def _read_usage(kind: type[Query]) -> str:
 def _read_summary(kind: type[Query]) -> str:
     """What one read is for: the first line of its own docstring, as a command's summary is its own."""
     return (kind.__doc__ or "").strip().splitlines()[0]
+
+
+def _betwixt(rest: str, *, catalog: Catalog, session: str) -> Intent:
+    """A question beside the conversation: the words after the slash, sent as the aside kind of turn.
+
+    The text is taken as it was typed and not through ``shlex``, because a question is a sentence: the
+    quotes in it are the person's and there is no second argument here to take them apart for. ``--help``
+    is the one exception, and it is every word's.
+    """
+    text = rest.strip()
+    if text in ("--help", "-h"):
+        return Help(text=word_help(catalog, ASIDE))
+    if not text:
+        return Wrong(text=f"{SLASH}{ASIDE} takes {ASIDE_USAGE}")
+    return Runs(command=Submit(session=session, text=text, kind=TurnKind.ASIDE))
 
 
 def _travelling(rest: str, *, catalog: Catalog) -> Intent:

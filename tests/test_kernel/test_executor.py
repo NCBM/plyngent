@@ -37,6 +37,7 @@ from plyngent.kernel.tools.process.execution import ExecuteArgs
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
 from plyngent.kernel.workspace import Workspace
 from plyngent.wire.ask import AskSite
+from plyngent.wire.event import TurnKind
 from tests import repositories
 
 if TYPE_CHECKING:
@@ -84,6 +85,7 @@ class _Ctx:
     host: _Host
     session: _Session = field(default_factory=_Session)
     turn_id: int = 1
+    kind: TurnKind = TurnKind.CHAT
 
     def scope(self, *segments: str) -> Scope:
         return CancelToken().at("1", "r0", *segments)

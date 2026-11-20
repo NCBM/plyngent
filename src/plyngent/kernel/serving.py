@@ -135,7 +135,6 @@ if TYPE_CHECKING:
 #: The turn kinds this kernel starts and a client may not: each is named by its own command, and a
 #: ``Submit`` asking for the kind is refused with the reason that belongs to it.
 _KERNELS_OWN: dict[TurnKind, Refusal] = {
-    TurnKind.ASIDE: Refusal.NO_ASIDE,
     TurnKind.GOAL: Refusal.NO_GOAL,
     TurnKind.RETRY: Refusal.NO_RETRY,
 }
@@ -953,9 +952,10 @@ class Serving:
             self._say(TurnRefused(session=session, reason=Refusal.NO_SESSION, holder=0))
             return
         if kind in _KERNELS_OWN:
-            # Three kinds are this kernel's to start and never a client's to name: an aside is declared
-            # and not run, a goal turn is the plan saying the work is not done, and a retry is a person
-            # saying "ask again" through the command of that name (E146/E158).
+            # Two kinds are this kernel's to start and never a client's to name: a goal turn is the plan
+            # saying the work is not done, and a retry is a person saying "ask again" through the command
+            # of that name (E146/E158). An aside is a client's to ask for — it is a message that writes
+            # nothing the conversation keeps — so it arrives here as a ``Submit`` (E163).
             self._say(TurnRefused(session=session, reason=_KERNELS_OWN[kind], holder=0))
             return
         await self._start(found, session, text, kind, begin_after)
@@ -1030,7 +1030,7 @@ class Serving:
         session has one turn at a time.
         """
         session = turned.session
-        if not session.goal or turned.kind is TurnKind.COMPACT:
+        if not session.goal or turned.kind in (TurnKind.ASIDE, TurnKind.COMPACT):
             return None
         if end.reason or not end.acted or not session.todos.reminder() or session.turns():
             return None

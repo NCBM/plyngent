@@ -46,6 +46,7 @@ from plyngent.kernel.trail import (
     CONSENT_TAG,
     EFFECT_TAG,
     NOTICE_TAG,
+    PROMOTED_TAG,
     STATE_CHANGE_TAG,
     SUMMARY_TAG,
     TURN_ENDED_TAG,
@@ -57,6 +58,7 @@ from plyngent.kernel.trail import (
     Effect,
     Entry,
     Notice,
+    Promoted,
     Shape,
     StateChange,
     Summary,
@@ -67,6 +69,10 @@ from plyngent.kernel.trail import (
     as_message,
     kind_of,
 )
+from plyngent.wire.event import TurnKind
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -145,8 +151,9 @@ MIGRATIONS: tuple[str, ...] = (_SCHEMA_1,)
 
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
-#: rebuildable and may therefore be dropped and rebuilt.
-PROJECTOR = 1
+#: rebuildable and may therefore be dropped and rebuilt. It moved to 2 when an aside's rows stopped
+#: being part of the conversation a model is given (E163).
+PROJECTOR = 2
 
 _COLUMNS = "SELECT id, seq, turn, parent, tag, payload FROM entry"
 
@@ -176,6 +183,11 @@ _CONVERSATION_TAGS: frozenset[str] = frozenset(MODEL_TAGS) | {
 _CONVERSATION = tuple(sorted(_CONVERSATION_TAGS))
 _CONVERSATION_IN = ", ".join("?" for _ in _CONVERSATION)
 
+#: The tags a projection reads without handing over: the row that says which kind of turn a stretch
+#: belongs to, and the row that says a person kept it. Neither is a message, and neither is a
+#: conversation tag — a turn does not grow from them, so they are read here and not in ``head`` (E163).
+_KEEPING_TAGS: frozenset[str] = frozenset({TURN_ENDED_TAG, PROMOTED_TAG})
+
 #: One append: the number, the parent check and the row, as one statement.
 #:
 #: The number comes from this session's own log, and the parent check is the ``WHERE``: a parent that
@@ -200,13 +212,13 @@ RETURNING id, seq
 #: already exist when the row that names it is appended, so every parent has a smaller row number and the
 #: walk strictly descends.
 _CHAIN = """
-WITH RECURSIVE chain(id, parent, tag, payload, depth) AS (
-    SELECT id, parent, tag, payload, 0 FROM entry WHERE session = ? AND id = ?
+WITH RECURSIVE chain(id, parent, tag, payload, turn, depth) AS (
+    SELECT id, parent, tag, payload, turn, 0 FROM entry WHERE session = ? AND id = ?
     UNION ALL
-    SELECT e.id, e.parent, e.tag, e.payload, c.depth + 1
+    SELECT e.id, e.parent, e.tag, e.payload, e.turn, c.depth + 1
       FROM entry e JOIN chain c ON e.id = c.parent
 )
-SELECT id, tag, payload FROM chain ORDER BY depth DESC
+SELECT id, tag, payload, turn FROM chain ORDER BY depth DESC
 """
 
 
@@ -390,15 +402,29 @@ class SqliteTrail(Trail):
         chain = await self._read_all(_CHAIN, (session, row))
         if not chain:
             raise ValueError(_broken_chain(begin_after, session))
-        records = [(f"e{entry}", _decode(tag, payload)) for entry, tag, payload in chain if tag in _CONVERSATION_TAGS]
+        records = [
+            (f"e{entry}", int(turn), _decode(tag, payload))
+            for entry, tag, payload, turn in chain
+            if tag in _CONVERSATION_TAGS or tag in _KEEPING_TAGS
+        ]
         # What a prune takes away is decided in one pass before anything is read out of the chain: a
         # prune is a row like any other and its targets are older than it, but the entry it hides may sit
         # anywhere below, so the answer has to be known before the first message is handed over.
-        withheld = {target for _entry, record in records if isinstance(record, Withheld) for target in record.targets}
+        withheld = {
+            target for _entry, _turn, record in records if isinstance(record, Withheld) for target in record.targets
+        }
+        # An aside is in the log and not in the conversation, and both halves of that are rows: the one
+        # its turn ended with says which kind of turn it was, and a person keeping it later writes one
+        # naming it. Read in the same pass as the prune, for the same reason (E163).
+        aside = {
+            turn for _entry, turn, record in records if isinstance(record, TurnEnded) and record.kind == TurnKind.ASIDE
+        }
+        kept = {record.turn for _entry, _turn, record in records if isinstance(record, Promoted)}
+        apart = aside - kept
         messages = tuple(
             message
-            for entry, record in records
-            if entry not in withheld and (message := as_message(record)) is not None
+            for entry, turn, record in records
+            if entry not in withheld and turn not in apart and (message := as_message(record)) is not None
         )
         remembered = msgspec.json.encode(list(messages)).decode()
         _ = await self._execute(
@@ -634,6 +660,7 @@ _RECORDS: Mapping[str, type[AnyRecord]] = {
     CONSENT_TAG: Consent,
     USAGE_TAG: Usage,
     TURN_ENDED_TAG: TurnEnded,
+    PROMOTED_TAG: Promoted,
 }
 
 

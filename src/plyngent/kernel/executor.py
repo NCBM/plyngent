@@ -65,7 +65,7 @@ from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Mutation, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.ask import By, Confirmation, as_agreed
-from plyngent.wire.event import Changed, DocumentStored, ToolCalled, ToolReturned
+from plyngent.wire.event import Changed, DocumentStored, ToolCalled, ToolReturned, TurnKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -187,7 +187,7 @@ class ToolExecutor:
         which group that tool is in — naming it here is this layer's job, because it is the only one
         that holds both the registry and the session.
         """
-        view = self._catalog.view(ctx.session.disclosed)
+        view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
         nodes = _prepared(ctx, self._catalog, view, calls)
         _ordered(nodes)
         await self._run(ctx, nodes, view)
