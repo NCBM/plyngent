@@ -2,7 +2,7 @@
 
 None of these measures what a function does: they hold the *skeleton*, which no story can express —
 who may import whom, that every event a client can receive has something to say on a terminal, and
-that the stories run over every transport rather than over the one that happened to exist. This is
+that the stories run over every transport, not over the one that happened to exist. This is
 the only part of the suite that is not a story, and it is here because "the boundary must not rot" is
 otherwise a matter of review (§11).
 """
@@ -107,7 +107,7 @@ def _ours(name: str) -> bool:
 
 
 def _modules_of(package: ModuleType) -> list[pathlib.Path]:
-    """Every module in a package, as files, so the rules are read off the source rather than imports."""
+    """Every module in a package, as files, so the rules are read off the source, not off imports."""
     return sorted(pathlib.Path(package.__file__).parent.rglob("*.py"))
 
 
@@ -158,8 +158,8 @@ def test_the_kernel_names_no_dialect() -> None:
     """One dialect is one file and one row: a provider's name outside ``kernel/lm`` is a row that failed.
 
     This is the acceptance for the whole provider layer written as a machine check (§6, R11). It is a
-    *word* scan rather than an import scan because the failure it guards against is a comparison, not a
-    dependency: the day a loop writes ``if provider == "…"``, nothing new is imported and the layer is
+    *word* scan, because the failure it guards against is a comparison and not a dependency: the day a
+    loop writes ``if provider == "…"``, nothing new is imported and the layer is
     gone. A route names a dialect by a string it was handed; the kernel is not allowed to know any.
 
     ``kernel/net`` is out of scope, and not as a loophole: a vendor's *search* endpoint is named after
@@ -239,15 +239,15 @@ def test_the_kernel_does_not_know_how_it_was_configured() -> None:
 def test_only_the_loader_reads_the_environment() -> None:
     """E76: the environment holds a secret and never a setting, so one function reads it — the loader's.
 
-    The readers that are not configuration are named rather than merely permitted, because a name in
+    The readers that are not configuration are named, because a name in
     this list is a claim somebody has to write down: a child process is handed the environment its parent
     had — twice, once for a tool's command and once for the git this build keeps versions with — then
     ``$EDITOR`` is how a person says which program they write in, and the last two are facts about
     the stream in front of this run — there is no terminal here, and ``NO_COLOR`` says not to paint. They
-    are the exception to E76 and they are narrow on purpose: they say what the *input and output* are
-    rather than what the program does, and setting them where a terminal was reading is a worse picture,
+    are the exception to E76 and they are narrow on purpose: they say what the *input and output* are,
+    not what the program does, and setting them where a terminal was reading is a worse picture,
     not different behaviour. Any other reader — a value that quietly changed because of how the program
-    was launched — arrives here as a failure rather than as a habit (§0.11, E70/E76).
+    was launched — arrives here as a failure, not as a habit (§0.11, E70/E76).
     """
     readers = {found for path in _modules_of(plyngent) for found in _environment_readers(path)}
 
@@ -295,7 +295,7 @@ def test_every_event_can_be_read() -> None:
 
 
 def test_every_line_an_event_makes_says_what_kind_of_line_it_is() -> None:
-    """E90: the roles are a closed set, so a new kind of line is a decision rather than a colour."""
+    """E90: the roles are a closed set, so a new kind of line is a decision, not a colour."""
     roles = set(get_args(Role.__value__))
     wrong = [
         (type(sample).__name__, shown.role)
@@ -338,7 +338,7 @@ SPEC = pathlib.Path(wire.__file__).parent / "SPEC.md"
 
 
 def test_the_spec_names_exactly_the_words_this_build_answers() -> None:
-    """The document a frontend is written from is kept true by a test rather than by care.
+    """The document a frontend is written from is kept true by a test, not by care.
 
     A table one word away from the union is worse than no table at all: the client is written, and the
     word it sends is refused forever. So the two word lists are the derived ones, exactly (E155).
@@ -437,7 +437,7 @@ def _untyped(node: object, where: str = "") -> list[str]:
 
     A schema is a tree of three shapes: an object with ``properties``, an array with ``items``, and
     ``$defs`` beside them. Walking all three is what makes "no argument is left undescribed" a claim
-    about the whole tree rather than about the top level.
+    about the whole tree, not about the top level.
     """
     if not isinstance(node, dict):
         return []
@@ -515,7 +515,7 @@ def test_the_tools_that_must_say_why_are_the_ones_that_leave_no_trace() -> None:
 def test_the_group_table_is_a_fold_over_the_tools() -> None:
     """A group is what a tool says it travels in, so no second list may disagree with one.
 
-    Written as a walk over the tools rather than over a table: a tool that forgot its group, or a group
+    Written as a walk over the tools, not over a table: a tool that forgot its group, or a group
     listed twice with different members, would otherwise be a thing only a reviewer could notice.
     """
     catalog = ToolCatalog()
@@ -547,7 +547,7 @@ def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> No
 
 
 def test_a_client_group_is_what_says_a_client_is_attached() -> None:
-    """The two things a catalog takes as input rather than derives: residency, and whether one is here.
+    """The two things a catalog takes as input: residency, and whether one is here.
 
     Both are the same fact seen twice — a client's tools travel in a ``client:<id>`` group that exists
     only while it is attached — so neither is a field anybody has to remember to set (§10.8, E44).
@@ -577,7 +577,7 @@ def test_the_terminal_offers_one_way_to_ask_and_nothing_else() -> None:
     """§10.8: a client offers questions and no other privilege, and it does not shape them itself.
 
     One name and not three, because the questions are one array: a line, a menu, and a block of five are
-    the same tool with a different list, and the array is the kernel's shape rather than the client's.
+    the same tool with a different list, and the array is the kernel's shape, not the client's.
     """
     names = {tool.name for tool in offers.TERMINAL.offer}
 
@@ -633,7 +633,7 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
 
     Nothing installed is a kernel with one net tool, and the index line says so; a backend is two more
     tools and a longer line. What never changes with the answer is a name or a schema — that is what keeps
-    the block a function of the *set* rather than of how the program was started (§0.9, E26).
+    the block a function of the *set*, not of how the program was started (§0.9, E26).
     """
     assert net_specs(None) == (), "a kernel with no backend serves nothing because of one"
     any_engine = _Any()
@@ -715,7 +715,7 @@ def test_a_net_body_is_kept_rather_than_paged_through() -> None:
     A response body is not read that way: it is kept, and the handle is the one way to the rest of it.
     """
     for spec in (*net.SPECS, *net.CONDITIONAL):
-        assert "offset" not in spec.schema()["properties"], f"{spec.name} pages a body instead of keeping it"
+        assert "offset" not in spec.schema()["properties"], f"{spec.name} pages a body, and does not keep it"
 
 
 class _Any:
@@ -815,8 +815,8 @@ def test_every_record_arrives_as_who_actually_spoke() -> None:
 
     A summary is made into the person's turn it stands in for, and a notice into the harness speaking —
     with a marker in its text, so the model does not take it for somebody else in the conversation. Every
-    other record is dropped, and that split is the whole check: a new record has to be classified here
-    rather than arriving in a history because nobody asked who said it.
+    other record is dropped, and that split is the whole check: a new record has to be classified here,
+    and not arrive in a history because nobody asked who said it.
     """
     assert get_args(AnyRecord.__value__) == (
         AnyMessage,
@@ -862,7 +862,7 @@ def test_every_record_written_is_a_record_read_back() -> None:
 
     Nothing else would notice: a row of a kind the reader does not know decodes as a message and fails
     there, which is a journal that cannot be listed — so the shape is checked here, once, over the whole
-    union rather than by each writer remembering.
+    union, not by each writer remembering.
     """
     for kind in get_args(AnyRecord.__value__):
         if kind is AnyMessage:

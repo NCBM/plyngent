@@ -2,7 +2,7 @@
 
 Two halves, neither of which needs a person at a terminal. :func:`plyngent.config.load` is a pure function
 of a file and a mapping of the environment, so what it accepts and what it will not start with are asserted
-here rather than through a program that would have to come up to say anything (§0.11, E69-E85). The
+here, with no program to bring up to say anything (§0.11, E69-E85). The
 credential is the one thing worth a real server: a secret that arrived as a value and never as a header
 would pass every assertion about ``Settings`` and fail the only one that matters.
 
@@ -315,7 +315,7 @@ async def test_the_credential_named_in_the_file_is_the_header_the_route_sends(tm
     Nothing here is a second code path — ``Posted`` is the model a kernel with routes and no installed model
     asks — so what this asserts is what a session would do: the file says where the secret is, the
     environment holds it, the route's ``auth`` says which header, and a request arrives carrying it. The
-    route is named by ``default_route`` rather than by the request, which is the other half of E72.
+    route is named by ``default_route``, not by the request, which is the other half of E72.
     """
     site: Site = serve()
     base = site.says(answered({}))
@@ -376,8 +376,8 @@ def test_the_configured_skill_roots_come_first_and_the_standard_three_still_foll
 def test_the_file_is_kept_as_it_was_written(tmp_path: Path) -> None:
     """E84: the document survives the read, comments and order included, so an edit need not reflow it.
 
-    Nothing writes yet. What is asserted is the reason ``tomlkit`` is here rather than the standard library's
-    parser: a future ``config set`` edits the document somebody wrote, and a reader that kept only the values
+    Nothing writes yet. What is asserted is the reason ``tomlkit`` is here: a future ``config set`` edits
+    the document somebody wrote, and a reader that kept only the values
     could only ever write the file back as a machine would have laid it out.
     """
     path = _written(tmp_path, "# why it is four\n[pty]\nmax_sessions = 4\n")
@@ -393,7 +393,7 @@ def test_the_two_prompt_sections_are_absent_only_until_the_file_says_something()
     """``None`` and the empty string are two answers: nothing said, and a program that has none.
 
     A persona of ``""`` is a program saying it has no persona — the section then is not there — which is why
-    the file's field is nullable and why this is asserted as a distinction rather than as a value.
+    the file's field is nullable and why this is asserted as a distinction, not as a value.
     """
     assert config.Settings().persona is None and config.Settings().directives is None
 

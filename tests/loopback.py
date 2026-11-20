@@ -1,4 +1,4 @@
-"""A server on the loopback, so a test can watch what went over the wire rather than what was intended.
+"""A server on the loopback, so a test can watch what went over the wire, not what was intended.
 
 Two things in this tree end at somebody else's program: a request to a model, and a page a web tool
 fetched. Both are asserted from the other side — the path, the header, the body that arrived — because the

@@ -2,9 +2,9 @@
 
 ``TRANSPORTS`` comes from the driver, which takes it from the kernel itself: a story says nothing
 about how it reaches the kernel, so every story runs once per transport the kernel can open, and
-adding one adds the runs instead of adding a suite (R2.1 D29).
+adding one adds the runs, and no suite (R2.1 D29).
 
-``serve`` is here rather than in the one test file that first needed it, because the two tests that watch a
+``serve`` is here, because the two tests that watch a
 route from the other side of a socket — ``test_route`` and ``test_config`` — are in different directories
 and one of them is not under ``tests/test_kernel``. A web fetch has its own server in ``test_net``: it
 answers ``GET``, which is a different handler and a different thing to watch.
@@ -47,7 +47,7 @@ def the_kernel_does_not_fork(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The kernel hands its terminals to a process of its own (§9), and this is the assertion that it
     does: anything that forks from inside the kernel — directly, or through something it calls — fails
-    on the call instead of leaving the hazard to a warning nobody reads. The broker is a process of its
+    on the call, and leaves no hazard to a warning nobody reads. The broker is a process of its
     own, so the one fork this design has still happens; it just does not happen in here.
     """
 
@@ -69,7 +69,7 @@ def serve() -> Iterator[Callable[[], Site]]:
 
     The returned callable starts one and hands back the :class:`~tests.loopback.Site` that answers for it:
     what it says next, and what arrived — the path, the headers and the body, which is the only way "the
-    credential became that header" can be an assertion rather than a wish.
+    credential became that header" can be an assertion, not a wish.
     """
     running: list[ThreadingHTTPServer] = []
 
@@ -116,7 +116,7 @@ async def story(tmp_path, transport):
 async def story_with(tmp_path, transport):
     """A person in front of a kernel that asks a scripted model: one step per request, in order.
 
-    A story names its replies, so what the model answers is part of the story rather than a default
+    A story names its replies, so what the model answers is part of the story, not a default
     somewhere: ``story = await story_with(text("hello"))``. Every kernel a test starts this way is closed
     with the fixture, whether or not the story got as far as stopping it.
     """

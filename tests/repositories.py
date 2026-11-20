@@ -58,7 +58,7 @@ def configure(root: Path, *args: str) -> None:
 def run(root: Path, *args: str) -> str:
     """One git command of the test's own, and what it said on stdout.
 
-    It has to work or the test is about nothing, so a non-zero exit is the test failing rather than a
+    It has to work or the test is about nothing, so a non-zero exit is the test failing, not a
     value to look at.
     """
     done = subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True, env=_ENV)
