@@ -1,9 +1,9 @@
 """A conversation, and the address of one of its turns.
 
-A session is a component so that the things the design asks of it are answers rather than bookkeeping
-of our own: it comes up and goes down with ``admit`` / ``evict``, its ``drain`` is where the turns it
-still has are told to stop, and ``in_transit`` / ``state`` say what it is doing without a flag
-somewhere in the CLI. Its requirements are read one level up the address — a session at ``ws-a/s1``
+A session is a component so that the design's questions about it have answers of its own: it comes up
+and goes down with ``admit`` / ``evict``, its ``drain`` is where the turns it still has are told to
+stop, and ``in_transit`` / ``state`` say what it is doing without a flag somewhere in the CLI. Its
+requirements are read one level up the address — a session at ``ws-a/s1``
 takes ``ws-a``'s host — which is what ``answering_from_the_root(..., below=ancestors)`` lays out.
 
 What a session does *not* hold is anything that has to be withdrawn explicitly. A child on a terminal,
@@ -68,13 +68,14 @@ GOAL = "goal"
 
 #: The key the session's route is written under: which of the host's endpoints answers it, and the epoch
 #: that says when that changed. A fourth key in the same vocabulary, and the first one whose value is a
-#: *choice* rather than a fact the kernel tracked — which is why the epoch is written beside the name:
-#: an attempt records the epoch it ran under, so "which model answered this" is answerable after the fact.
+#: *choice* — which is why the epoch is written
+#: beside the name: an attempt records the epoch it ran under, so "which model answered this" is answerable
+#: after the fact.
 ROUTE = "route"
 
 #: The key the session's own path grants are written under: which paths outside the workspace this
-#: conversation may reach, and how far. A fifth key, and the only one whose subject is the world rather
-#: than this conversation — it is written because a person said yes once, and it has to outlive the
+#: conversation may reach, and how far. A fifth key, and the only one whose subject is the world outside
+#: this conversation — it is written because a person said yes once, and it has to outlive the
 #: process for that to mean anything (§0.11, E73).
 GRANTS = "grants"
 
@@ -83,9 +84,9 @@ GRANTS = "grants"
 class TurnCtx:
     """One turn's address: the session and host it works through, and where its cancellation lives.
 
-    The host is captured when the turn begins rather than read again later: ``Session.host`` is a
-    live read that raises once the assembly is down, and a turn that already started still has to
-    settle its results into the history after the session has begun to leave.
+    The host is captured when the turn begins: ``Session.host`` is a live read that raises once the
+    assembly is down, and a turn that already started still has to settle its results into the history
+    after the session has begun to leave.
 
     ``begin_after`` is the entry this turn continues, and ``None`` is a root. It is recorded here and
     carried on ``TurnStarted``; which branch a frontend is looking at is the frontend's own state, so
@@ -98,7 +99,7 @@ class TurnCtx:
     round_id: int
     cancel: CancelToken
     #: Where this turn's questions go: the connection that started it, so a frontend is asked by the
-    #: turns it began and by no other. Carried rather than read from the host because a host may be
+    #: turns it began and by no other. Carried, because a host may be
     #: serving several connections at once, and "whoever is attached" is not an answer to "who is
     #: waiting for this" (E156).
     asker: Human
@@ -204,16 +205,14 @@ class Session(Component):
 
     What it does keep is what it has been told about itself: the tool groups it has been shown, how
     often its tool set has changed, the todo stack, the paths it may reach outside the workspace, and
-    what it has already been allowed to do in them.
-    Those live here rather than on the turn because
-    a turn is too short to be shown anything and too frequent to be the record of it, and they come
-    back from the journal in :meth:`load` so that reopening a conversation does not mean asking for the
-    same groups again or losing its plan.
+    what it has already been allowed to do in them. Those live here: a turn is too short to be shown
+    anything and too frequent to be the record of it, and they come back from the journal in
+    :meth:`load` so that reopening a conversation does not mean asking for the same groups again or
+    losing its plan.
 
     They are kept as **one kind of thing**: a setting, spelled as a key and a whole JSON value, written
     by :meth:`change` and read back by :meth:`state`. The properties beside it are decoders of that
-    value rather than fields of their own, so there is one fact in one place and no second copy to keep
-    in step with the journal.
+    value, so there is one fact in one place and no second copy to keep in step with the journal.
     """
 
     host: Host = require()
@@ -227,8 +226,9 @@ class Session(Component):
     approvals: Approvals
     #: The last answered request, counted twice: what this build estimated it at, and what the provider
     #: charged for it. The ratio between them is what turns a character estimate into a number a budget can
-    #: act on (:meth:`plyngent.kernel.budget.calibrated`), and it is *this process's* measurement rather
-    #: than a setting — a reopened conversation re-learns it in one request. ``None`` until it has asked.
+    #: act on (:meth:`plyngent.kernel.budget.calibrated`), and it is *this process's* measurement, which
+    #: a setting could not be: a reopened conversation re-learns it in one request. ``None`` until it has
+    #: asked.
     calibration: tuple[int, int] | None
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
@@ -300,10 +300,10 @@ class Session(Component):
     async def disclose(self, groups: Iterable[str]) -> frozenset[str]:
         """Show this session these groups, and answer which of them it had not seen.
 
-        The whole set is written rather than the difference, so reading it back is one value and not a
-        replay: a fold that had to apply deltas in order would be a second projector to keep in step.
-        Nothing is written when nothing is new, which is what makes two calls asking for one group in
-        one answer cost a single epoch — the second call is answered from the state the first one left.
+        The whole set is written, so reading it back is one value: a fold that had to apply deltas in
+        order would be a second projector to keep in step. Nothing is written when nothing is new, which
+        is what makes two calls asking for one group in one answer cost a single epoch — the second call
+        is answered from the state the first one left.
         """
         asked = frozenset(groups)
 
@@ -343,7 +343,8 @@ class Session(Component):
         The second of the two numbers a provider cache keys on (§10.5), and a separate one because the
         two move for different reasons: a disclosure changes the tools block, and a change to the
         conversation under it — a summary written, a stretch put aside — changes the rest. Keeping them
-        apart is what makes a cache miss attributable to one of them instead of to "something happened".
+        apart is what makes a cache miss attributable to one of them: "something happened" is not a
+        diagnosis.
         """
         return _epoch(self._state.get(PROMPT_PLAN))
 
@@ -367,8 +368,8 @@ class Session(Component):
     def route(self) -> str:
         """The route this session chose, or nothing when it never chose and takes the host's default.
 
-        Read at the boundary of every request and not remembered by a turn: that is what makes a route
-        change take effect at the next request rather than needing to refuse anybody (R7's ``SetRoute``).
+        Read at the boundary of every request and never remembered by a turn: that is what lets a route
+        change take effect at the next request, with nobody refused (R7's ``SetRoute``).
         """
         return _route(self._state.get(ROUTE))[0]
 
@@ -435,7 +436,7 @@ class Session(Component):
         """The plan this conversation wrote down, as the stack it is.
 
         The same decoder the todo tools read, in the same place they read it from: one setting, one value,
-        and a reader that folds it here rather than in whoever needed it (§10.4, E146).
+        and one reader that folds it here, so no caller folds its own (§10.4, E146).
         """
         return Todos.load(self._state.get(TODOS))
 
@@ -446,18 +447,18 @@ class Session(Component):
         """The paths outside the workspace this conversation is allowed, and how far.
 
         Read by every path tool through ``Env.resolve``, which is what makes one "yes" mean the rest of
-        the conversation rather than the one call that asked (§0.11, E73). A grant is a gate in front of
-        a resolving tool and never a sandbox: what runs inside a granted directory is still judged by the
-        command policy, and a path the denylist refuses is refused whatever this says.
+        the conversation, and the call that asked is where it started (§0.11, E73). A grant is a gate in
+        front of a resolving tool and never a sandbox: what runs inside a granted directory is still
+        judged by the command policy, and a path the denylist refuses is refused whatever this says.
         """
         return _grants(self._state.get(GRANTS))
 
     async def grant(self, path: Path, need: AccessMode) -> bool:
         """Allow *need* on *path* for the rest of this conversation; ``False`` when it already did.
 
-        The whole table is written rather than the one new row, for the same reason the disclosure set
-        is: reading it back is one value instead of a replay of differences. A narrower need leaves a
-        wider grant alone, so a second "yes" never makes the first one smaller.
+        The whole table is written, for the same reason the disclosure set is: reading it back is one
+        value, with no replay of differences. A narrower need leaves a wider grant alone, so a second
+        "yes" never makes the first one smaller.
         """
 
         def mutate(before: str | None) -> tuple[str | None, bool]:
@@ -473,9 +474,9 @@ class Session(Component):
     async def revoke(self, path: Path) -> bool:
         """Take back this conversation's permission for *path*; ``False`` when it held nothing.
 
-        The row is removed rather than narrowed, because a grant is one row and "how far" is the whole
-        of it: a person who says "not any more" is not asking for a smaller permission. One path and not
-        a prefix — a directory's entries are not separate rows, so nothing else is left behind.
+        The row is removed, because a grant is one row and "how far" is the whole of it: a person who
+        says "not any more" is not asking for a smaller permission. One path and not a prefix — a
+        directory's entries are not separate rows, so nothing else is left behind.
         """
 
         def mutate(before: str | None) -> tuple[str | None, bool]:
@@ -491,9 +492,8 @@ class Session(Component):
     def prefix_epoch(self) -> tuple[int, int]:
         """The two numbers a provider's prefix cache is keyed on, in one value (§10.5).
 
-        A pair rather than a sum, because the two move for different reasons and a miss has to be
-        attributable to one of them: a disclosure moves the tool block, a compaction moves the
-        conversation under it.
+        A pair: the two move for different reasons and a miss has to be attributable to one of them — a
+        disclosure moves the tool block, a compaction moves the conversation under it.
         """
         return (self.toolset_epoch, self.prompt_plan_epoch)
 
@@ -516,7 +516,7 @@ class Session(Component):
 
         Reading ``self.host`` here is the one place the session touches its host for a turn: a
         requirement answers at whatever generation is serving, so the turn works through the host that
-        was up when it started rather than through a field that may be gone by the time it settles.
+        was up when it started, with no field that may be gone by the time it settles.
 
         ``asker`` is who this turn's questions go to, and it has no default on purpose: the answer is
         the connection the turn came from, and a caller that cannot name it has not thought about who is
@@ -525,12 +525,12 @@ class Session(Component):
 
         ``begin_after`` is the entry the turn continues, and the only rule is that such an entry must
         exist — the turn is otherwise free to grow from anywhere, which is what makes branching a
-        frontend's decision rather than a command. The id itself is the journal's to allocate, because
+        frontend's decision, with no command for it. The id itself is the journal's to allocate, because
         a stored log has to resume the count where the last process left it (D17).
 
         A turn also takes one of the places the host has for running turns, and raises
         :class:`~plyngent.kernel.running.TooManyTurns` when there is none: the ceiling is a budget for
-        the process, so it is counted here rather than by whoever asked (E156).
+        the process, so it is counted here, and no caller keeps its own count (E156).
         """
         host = self.host
         if begin_after is not None and (await host.trail.entry(self.session_id, begin_after)) is None:
@@ -539,7 +539,7 @@ class Session(Component):
             )
             raise ValueError(msg)
         # The last thing checked and the first thing taken: this turn's place among the ones the host is
-        # running, which it is refused without rather than queued behind (E156).
+        # running. A turn that finds none is refused, with nothing queued behind it (E156).
         host.running.start()
         turn = TurnCtx(
             session=self,
@@ -576,11 +576,11 @@ class Session(Component):
 
         The turn is the first segment because that is what makes the address portable: a consumer that
         knows only a session and a turn id can name any scope under it. A scope naming no turn of this
-        session fires nothing rather than raising — a cancel that arrived too late is not an error, and
-        a consumer that guessed a turn id is told the same thing.
+        session fires nothing — a cancel that arrived too late is not an error, and a consumer that
+        guessed a turn id is told the same thing.
 
         Session-wide means every live turn, and only the live ones: a turn that already ended has
-        nothing left to stop, and firing at it would say it was cancelled rather than finished.
+        nothing left to stop, and firing at it would claim it was cancelled, which it was not.
         """
         if scope is None:
             moved = False
@@ -605,11 +605,10 @@ class Session(Component):
         A session is admitted fresh every time a client opens it, so anything it learned in an earlier
         process has to come out of the journal: which tool groups it was shown, how many times its tool
         set has changed, and what its plan was. The fold is the journal's — the last value written per
-        key — so this is one read and not a replay of the settings.
+        key — so this is one read.
 
-        A stored value this build cannot read is skipped rather than fatal, and skipping it is each
-        decoder's job: a conversation that cannot be opened at all is worse than one that forgot a
-        setting.
+        A stored value this build cannot read is skipped, and skipping it is each decoder's job: a
+        conversation that cannot be opened at all is worse than one that forgot a setting.
         """
         self._state.update(await self.host.trail.state_of(self.session_id))
 
@@ -641,9 +640,9 @@ class Session(Component):
 def _disclosure(value: str | None) -> tuple[frozenset[str], int]:
     """The groups a disclosure setting holds, and the epoch it was written with.
 
-    A value this build cannot read answers "nothing has been shown" rather than raising, and it is read
-    here rather than in :meth:`Session.load` so that a stored value a later build cannot parse costs a
-    forgotten setting and not an unopenable conversation.
+    A value this build cannot read answers "nothing has been shown", and it is decoded here, away from
+    :meth:`Session.load`, so that a stored value a later build cannot parse costs a forgotten setting and
+    not an unopenable conversation.
     """
     if not value:
         return frozenset(), 0
@@ -670,7 +669,7 @@ def _disclosure_value(shown: frozenset[str], epoch: int) -> str:
 def _epoch(value: str | None) -> int:
     """The number a counter setting holds; a value this build cannot read is a counter at zero.
 
-    Read here rather than in :meth:`Session.load` for the same reason a disclosure is: a stored value a
+    Decoded here, away from :meth:`Session.load`, for the same reason a disclosure is: a stored value a
     later build cannot parse costs a forgotten count and not an unopenable conversation.
     """
     if not value:
@@ -688,9 +687,9 @@ def _epoch(value: str | None) -> int:
 def _grants(value: str | None) -> dict[Path, AccessMode]:
     """The path grants a setting holds; a value this build cannot read is no grants at all.
 
-    Read here rather than in :meth:`Session.load` for the same reason the other decoders are: a stored
-    value a later build cannot parse costs a forgotten grant, and a forgotten grant is refused rather
-    than honoured — the direction that is safe to be wrong in.
+    Decoded here, away from :meth:`Session.load`, for the same reason the other decoders are: a stored
+    value a later build cannot parse costs a forgotten grant, and a forgotten grant is refused — the
+    direction that is safe to be wrong in.
     """
     if not value:
         return {}

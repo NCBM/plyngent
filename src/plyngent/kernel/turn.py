@@ -1,10 +1,9 @@
 """One turn, run: four stages between what a person said and what the journal holds.
 
 ``assemble → call → dispatch → settle``, in that order, over one :class:`TurnState`. Each stage is one
-method and does one thing, which is the whole point of writing it this way rather than as one loop with
-conditionals: a question about a request is asked in :meth:`~TurnRunner.assemble`, a question about an
-answer in :meth:`~TurnRunner.dispatch`, and what happens when somebody interrupts is decided once, in
-:meth:`~TurnRunner.run`.
+method and does one thing, which is the whole point of the shape: a question about a request is asked in
+:meth:`~TurnRunner.assemble`, a question about an answer in :meth:`~TurnRunner.dispatch`, and what
+happens when somebody interrupts is decided once, in :meth:`~TurnRunner.run`.
 
 Nothing else writes to the journal during a turn. The person's line, the model's answer and every tool
 result go through :meth:`~TurnRunner._append`, so "what the history holds" has one author and a turn
@@ -14,8 +13,9 @@ goes through :meth:`~TurnRunner._notice`, which is the one row that has to annou
 Two rules this file is built around:
 
 * **Every await is guarded.** A request, a tool call, and the round they run under are all addressed in
-  the turn's cancellation scope, so the token is what stops them — not an ``asyncio.CancelledError`` from
-  somewhere else in the process — and a stopped turn still reports its reason instead of vanishing.
+  the turn's cancellation scope, so the token is the only thing that stops them — an
+  ``asyncio.CancelledError`` raised elsewhere in the process is not — and a stopped turn still reports its
+  reason; a turn that vanished would leave the reader guessing.
 * **A cancelled turn is settled, not abandoned.** The results of calls that were in flight are still owed
   to the history, so the turn waits for the work it started before it says it finished.
 
@@ -115,7 +115,7 @@ class _WalledError(Exception):
 
 
 def _said(payload: AnyRecord) -> bool:
-    """Whether this row is something one of the two speakers said, rather than a line about the log.
+    """Whether this row is something one of the two speakers said; a line about the log is bookkeeping.
 
     A summary and a reminder project to messages as well, and neither is a round's: one is the compressed
     past, which a budget that hid it would be hiding the beginning of the conversation to make room for
@@ -156,7 +156,7 @@ class TurnState:
     """What a turn carries from one stage to the next.
 
     ``cursor`` is the entry the conversation ends at right now, and it is the only thing that moves as
-    the turn goes on: a stage answers a *new* state rather than editing this one, so no stage can be
+    the turn goes on: a stage answers a *new* state and the one it was handed stays put, so no stage can be
     surprised by a cursor a later stage replaced. ``more`` is whether another round is owed — a reply
     that asked for no tool ends the turn.
     """
@@ -173,7 +173,7 @@ class TurnEnd:
 
     ``acted`` is "it asked for at least one tool", and it exists for the one reader that has to decide
     whether to start another turn: a goal turn that only talked changed nothing a second turn could carry
-    on from, so asking again would be insisting rather than progress (§10.4, E146). ``reason`` is the row's
+    on from, so it does not start one (§10.4, E146). ``reason`` is the row's
     own answer to "did it end on its own", because a turn that was stopped or that failed is a turn a
     person is done with.
     """
@@ -315,12 +315,12 @@ class TurnRunner:
     async def _asked_for_more(self, state: TurnState, allowed: int, limit: int) -> int | None:
         """Ask whether this turn may keep going, and answer the window that came back — or end the turn.
 
-        Three answers, and the third one is why this is a choice rather than a yes-or-no question: a
-        person watching a turn that is getting somewhere says "no more counting" and means it, while a
-        person who wants to look at what it did says stop. The question is asked at the lightest level
+        Three answers, and the third one is why this is a choice: a person watching a turn that is getting
+        somewhere says "no more counting" and means it, while a person who wants to look at what it did
+        says stop. The question is asked at the lightest level
         with its own default in front of the person, so a client left to answer by itself repeats the
         option an empty line would have given — which is what keeps an unattended run inside the ceiling
-        it was given rather than turning the wall into a checkpoint (E150).
+        it was given, with the wall still a wall for a client that answers alone (E150).
 
         Nobody answering is the wall: an answer with no option in it is not "again", and a question put
         to a client that is not there is never permission to go on.
@@ -360,9 +360,9 @@ class TurnRunner:
         """Say the terminals a replaced broker took, if this conversation lost any (E151).
 
         Taken at the top of a round, before anything is owed to the model, because it belongs with the
-        other things said at a boundary: what a model needs to know before it chooses its next call. It is
-        not a call that failed — the refusal for an old id still stands — it is the news that arrives
-        before the model would have spent a call on finding out.
+        other things said at a boundary: what a model needs to know before it chooses its next call. The
+        refusal for an old id still stands, and this is the news arriving before the model would have
+        spent a call on finding out.
 
         Nothing is written here: this fires a sentence, and :meth:`_told` is the one place a fired sentence
         becomes a row.
@@ -394,9 +394,9 @@ class TurnRunner:
     async def _notice(self, state: TurnState, pending: Pending) -> TurnState:
         """Write one line the session owes the model, and say where it landed.
 
-        Its own append rather than :meth:`_append` because it is the one row that announces itself: the id
-        is what a person's line names, so it comes back from the same call that wrote it rather than being
-        read off the state afterwards.
+        It appends for itself, because it is the one row that announces where it landed: the id is what a
+        person's line names, so the call that writes the row answers with it, and the state is not read
+        afterwards.
         """
         ctx = state.ctx
         entry = await ctx.host.trail.append(
@@ -417,10 +417,10 @@ class TurnRunner:
         a process that was killed in the middle of one, and the second is the case a person needs to know
         about, because nothing was settled.
 
-        Below the last entry of the turn rather than beside the chain, because a turn's end is a place the
-        next message really does continue from. Nothing can be written after it: this is the last thing the
-        turn does, which is what makes the row worth trusting as an answer — and it is why the cursor is a
-        parameter rather than read off the state: what the session owed the model is written above it.
+        It hangs below the last entry of the turn, because a turn's end is a place the next message really
+        does continue from. Nothing can be written after it: this is the last thing the turn does, which is
+        what makes the row worth trusting as an answer — and it is why the cursor comes in as a parameter:
+        what the session owed the model is written above it.
         """
         ctx = self._ctx
         entry = await ctx.host.trail.append(
@@ -436,11 +436,11 @@ class TurnRunner:
         """Ask the model for a summary of the stretch this turn was pointed at, and write that one row.
 
         A compaction is a turn because the request is one: it is cancelled like any other, it costs what
-        it costs, and an endpoint that could not be reached leaves an attempt rather than nothing. What it
+        it costs, and an endpoint that could not be reached still leaves an attempt. What it
         does *not* do is dispatch — a summary request carries no tools, and an answer that asked for one
         anyway is not something this turn can act on.
 
-        The operator's line is a **directive, not a message**: the summary stands for the stretch below it,
+        The operator's line is a **directive**: the summary stands for the stretch below it,
         so a user row reading "please summarise this" would be a thing the model is told happened.
 
         The one request that cannot be checkpointed is this one. A compaction *is* what makes room, so
@@ -488,7 +488,7 @@ class TurnRunner:
         """The stretch a summary stands for: the first and last rows of the chain it was given.
 
         ``replaces`` is bookkeeping a person reads ("this text stands for X..Y"), so it is worked out from
-        the chain rather than guessed at: the two ends of the very rows the request carried.
+        the chain: the two ends of the very rows the request carried.
         """
         if cursor is None:
             return None
@@ -507,21 +507,21 @@ class TurnRunner:
     async def assemble(self, state: TurnState) -> tuple[TurnState, Request]:
         """What the model is asked: the conversation up to ``cursor``, and the tools in name order.
 
-        The conversation is the journal's projection rather than a list this turn kept up to date, so a
+        The conversation is the journal's projection, so a
         request is exactly "what the history says" and a second turn of the same session sees what the
         first one wrote without anything having to be handed over.
 
         The tools are the view this session has: the residents, plus the groups it has been shown, and
         the prompt the host was installed with says what that view means — the playbook of every group it
-        can reach, and the index line naming the ones it cannot. A view is built per *round* rather than
-        per turn, because a group asked for in one round arrives in the next — a block that changed inside
+        can reach, and the index line naming the ones it cannot. A view is built per *round*,
+        because a group asked for in one round arrives in the next — a block that changed inside
         a round would be a prefix that changed between two requests for no reason a provider could cache
         (§10.5).
 
         ``route`` and ``cache_key`` are filled here for the same reason the tools are: both are facts
         about *this* request. Which route answers is read at this boundary, so a ``SetRoute`` lands on the
-        next round rather than on a turn that is half way through, and the key names the prefix by the
-        session and the two counters that say where its prompt stands.
+        next round, and a turn half way through keeps the route it started with: the key names the prefix by
+        the session and the two counters that say where its prompt stands.
 
         The answer is the *state* as well as the request, because fitting a conversation to its route may
         write a row (:meth:`_fitted`): a checkpoint hides a stretch, so what the turn continues from is no
@@ -554,18 +554,18 @@ class TurnRunner:
         endpoint never said", and a denominator nobody stated is not a small one, so an unbudgeted route
         is sent its whole history however long it is.
 
-        When the room is stated and the request outgrows it, the oldest **whole rounds** are put aside —
-        a checkpoint, not a truncation (§10.4, E149). Three things that are decisions rather than
-        details: the cut is by round, because half a round is a question with no answer or an answer to
-        nothing; it goes *deep*, to half the room, because every checkpoint moves the prefix a provider
+        When the room is stated and the request outgrows it, the oldest **whole rounds** are put aside as
+        a checkpoint (§10.4, E149). Three things here are decisions: the cut is by round, because half a
+        round is a question with no answer or an answer to nothing; it goes *deep*, to half the room,
+        because every checkpoint moves the prefix a provider
         cached and a shallow cut would move it every round; and it is written down, so the same history
         is read the same way twice and the entries are still there to travel back to. The line the model
         reads about it is a notice the session owes, said here because this is a boundary where no
         request is in flight.
 
-        What cannot be fitted even after that is the one case this refuses instead of guessing: a
-        conversation whose newest round alone is too big ends the turn with ``LIMIT`` rather than being
-        sent to a provider that would reject it, and rather than being pruned to nothing.
+        What cannot be fitted even after that is the one case this refuses: a conversation whose newest
+        round alone is too big ends the turn with ``LIMIT``. It is not sent to a provider that would
+        reject it, and it is not pruned to nothing.
         """
         room = self._room(state)
         messages = await self._shown(state)
@@ -624,7 +624,7 @@ class TurnRunner:
         The character estimate is a rule of thumb; the provider's own count of the payload it was just
         handed is the correction, and :func:`~plyngent.kernel.budget.calibrated` applies it. A session that
         has asked nothing yet — or whose route just moved — has no correction and is measured as it is:
-        wrong by one request, rather than wrong until somebody says so.
+        off by whatever that request turns out to differ by, and the next one corrects it.
         """
         measured = estimate(messages, system=system, tools=tools)
         return calibrated(measured, state.ctx.session.calibration)
@@ -651,11 +651,11 @@ class TurnRunner:
     ) -> tuple[tuple[Entry, AnyMessage], ...]:
         """Which entries to put aside, and what they said: whole rounds, oldest first, to half the room.
 
-        Read off the chain every time rather than remembered, because "what is still shown" is a fact
+        Read off the chain every time, because "what is still shown" is a fact
         about the log: an earlier checkpoint already hid a stretch, and what this one may hide is what
         that one left.
 
-        Half the room is the target rather than the wall itself: a conversation pruned exactly to the edge
+        The target is half the room: a conversation pruned exactly to the edge
         would be back at the wall within one answer, and every visit writes a row and moves a prefix.
         """
         ctx = state.ctx
@@ -711,7 +711,7 @@ class TurnRunner:
         arrives with (E56/E149).
 
         Nothing is kept when the store would refuse it: a body past the store's own limit is a body no
-        handle can stand for, and the sentence then says what is true instead of promising a handle.
+        handle can stand for, and the sentence then says what is true, with no handle in it.
         """
         ctx = state.ctx
         text = transcript(messages)
@@ -748,7 +748,7 @@ class TurnRunner:
         inventing a speaker. Where either says no, the handle stays in the words and nothing is fetched:
         the model reads what the tool said, which is true either way.
 
-        The bytes are fetched here rather than stored in the row, which is what keeps "a body never enters
+        The bytes are fetched here and stay out of the row, which is what keeps "a body never enters
         an entry" true while a model still sees an image (E56).
         """
         asked = ctx.host.routes.resolve(ctx.session.route)
@@ -784,18 +784,18 @@ class TurnRunner:
         """Ask the model for the next message, under the round's own address.
 
         The guard is what makes an interruption reach a request that is in flight: the round's scope sits
-        under the turn's, so a cancel of either stops this, and the request is cancelled instead of being
-        left running while the turn says it finished.
+        under the turn's, so a cancel of either stops this, and the turn does not report itself finished
+        while the request is still running.
 
-        What the asking cost is said outward and written down here rather than by the model: a model
-        answers a value, and every event on this lane is the kernel's to emit. An answer that stopped short
+        What the asking cost is said outward and written down here: every event on this lane is the
+        kernel's to emit, and a model answers a value. An answer that stopped short
         is said the same way, because both are facts about the request that just came back and neither is
         the turn's end.
 
         What the model *is saying* is said outward while it is still saying it — one event per fragment,
         as they arrive — but the answer this returns is the whole one, because that is what the turn
         writes down (§0.13, E94). A model that cannot stream says one thing and no fragments, so this is
-        one loop and not two.
+        one loop.
         """
         reply = await state.ctx.round_scope().guard(self._answered(state, request))
         if reply.usage.reported:
@@ -969,8 +969,8 @@ class TurnRunner:
         """Write down that a request was made and never answered, and under which route.
 
         A **root**, deliberately: an attempt is not a place a conversation continues from, so it goes
-        beside the chain rather than into it, and a turn that stopped here leaves the history it had
-        rather than a node every later message would descend from. It is also the only record of the
+        beside the chain, and a turn that stopped here leaves the history it had, with no node every later
+        message would descend from. It is also the only record of the
         route *epoch* that was in force — the setting says where the session is now, and this says where
         it was when it tried (R4's "attempt is a first-class citizen").
         """

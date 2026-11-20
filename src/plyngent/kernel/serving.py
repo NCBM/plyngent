@@ -18,12 +18,12 @@ Two rules shape it:
 * **A command is an intent, not a call.** ``Open`` admits a session, ``Close`` evicts it, ``Submit``
   starts a turn — the dispatcher decides, and the client learns the outcome from the event lane. There
   is no reply to correlate (R2.1 D5), so a command whose meaning has not landed yet is *accepted and
-  silent* rather than refused with an invented event.
+  silent* — nothing invents an event for it.
 * **The human belongs to the connection, and the audience to the tree.** A question is asked by a turn,
   and it goes back to the connection that started that turn (``TurnCtx.asker``), so what a frontend
   answers is what its own work asked (E156). What a tree *says* goes to everyone watching it:
   :meth:`~Serving.begin` joins the audience and :meth:`~Serving.end` leaves it, so a second frontend on
-  one tree is a second view rather than a competitor for the stream (E154).
+  one tree is a second view of the same stream (E154).
 
 What the commands do not yet have: ``Resume`` answers with what it is missing, because reattaching a
 session to another journal needs a *second* store and this build keeps one journal per tree — so a
@@ -151,10 +151,10 @@ class Serving:
     ``workspace`` is how the wire names the tree — its path, the same spelling the greeting uses and the
     one stamped onto every event that leaves here.
 
-    It is handed the tool set as a tuple of declarations rather than a catalog, because it is the one
-    place that adds to it: a client offering its tools appends to this table and rebuilds the catalog
-    and the executor around the new set (§10.8). A turn that already started holds the table it began
-    with, which is what makes "the tools do not change inside a round" free rather than enforced.
+    It is handed the tool set as a tuple of declarations, because it is the one place that adds to it:
+    a client offering its tools appends to this table and rebuilds the catalog and the executor around
+    the new set (§10.8). A turn that already started holds the table it began with, which is what makes
+    "the tools do not change inside a round" true by construction.
     """
 
     assembly: Assembly
@@ -329,9 +329,9 @@ class Serving:
     async def _trajectory(self, session: str) -> tuple[Entry, ...]:
         """One conversation's rows, as the forest a person walks: what each one is, and what it continues.
 
-        The journal answers arrival order and parents, and everything else here is said *about* a row
-        rather than by it: ``kind`` is the record's own tag, ``preview`` is one line for somebody picking
-        a place to continue from, and ``children`` is a count over the same tuple — which is what makes
+        The journal answers arrival order and parents, and everything else here is said *about* a row:
+        ``kind`` is the record's own tag, ``preview`` is one line for somebody picking a place to
+        continue from, and ``children`` is a count over the same tuple — which is what makes
         "nothing continues this one" visible without a second read (the head is the row whose count is
         zero). A session this kernel is not serving holds no rows here, for the reason a grant table does
         not either: it is a conversation nobody opened.
@@ -378,7 +378,7 @@ class Serving:
     def _skills(self, number: int) -> SkillTable:
         """Every skill this host can see, said as values: the rows, the shadows, and the roots that are not.
 
-        Read out of the discovery rather than kept: it re-reads its roots on every question on purpose,
+        Read out of the discovery every time: it re-reads its roots on every question on purpose,
         so a table cached here would be the one thing in this tree that a person's new skill file could
         not change. A host with no store answers with the empty table, which is the truth about a
         program that was started without one.
@@ -418,7 +418,7 @@ class Serving:
                 await self._close(session)
 
     async def _setting(self, command: SetRoute | Ungrant | Goal) -> None:
-        """The commands that move one of a session's own settings rather than touching the world."""
+        """The commands that move one of a session's own settings and touch nothing outside it."""
         match command:
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
@@ -461,7 +461,7 @@ class Serving:
 
         A cancel naming a session this kernel does not serve is a message that arrived too late or from a
         frontend that guessed, and both are answered by doing nothing — which is why the check is here
-        rather than a refusal on the wire.
+        and the wire carries no refusal.
         """
         found = self._session(session)
         if found is not None:
@@ -565,7 +565,7 @@ class Serving:
         table to carry, which is the same answer as asking about a conversation nobody has open.
 
         The opening answers with the route this session stands at, whether or not it was already
-        served: a client that has just attached is told where it is rather than having to ask, and the
+        served: a client that has just attached is told where it is, with no question to ask, and the
         answer is the same one ``SetRoute`` gives so a client reads both lines with one rule.
         """
         if seed_from is not None and not await self._seed(session, *seed_from):
@@ -670,7 +670,7 @@ class Serving:
 
         Attaching changes what every session in this kernel is shown, so nothing about it is silent:
         each refusal is an event with the rule it broke, and each session's tool set epoch moves once
-        for the whole offer rather than once per tool (§10.8, E44/E46).
+        for the whole offer, whatever the number of tools (§10.8, E44/E46).
 
         A second ``Offer`` on one connection replaces the first — the client is the same client, and
         what it can run is whatever it last said. An offer that attaches nothing and finds nothing
@@ -710,7 +710,7 @@ class Serving:
     def _retable(self, attached: tuple[ToolSpec, ...], resident: frozenset[str]) -> None:
         """Rebuild the table and the executor around what this kernel now serves.
 
-        A new catalog rather than a change to the old one, because a turn in flight holds the old value:
+        A new catalog, because a turn in flight holds the old value:
         replacing it is what makes "a call runs with the tools the round was asked with" true for the
         rounds already running, without anything having to check.
         """
@@ -744,7 +744,7 @@ class Serving:
 
         Nothing here asks the model anything or waits for a turn: the setting moves, and a turn already
         in flight keeps the route it started with — the change lands at the next request, which is the
-        boundary that makes a mid-turn route change legal instead of a race (R7).
+        boundary that makes a mid-turn route change legal (R7).
         """
         found = self._session(session)
         if found is None:
@@ -781,10 +781,10 @@ class Serving:
         ``begin_after=None`` is the ordinary case: the summary is a root, so the conversation continues
         past the whole stretch it stands for. Naming an entry keeps that much of the prefix on the chain
         instead, and naming nothing at all is refused by the journal, whose own sentence is passed on
-        rather than rewritten — a parent pointer into nothing is one fact and it is already said once.
+        unchanged — a parent pointer into nothing is one fact and it is already said once.
 
-        ``replaces`` is bookkeeping rather than a pointer, but it names two entries of *this* conversation
-        and nothing else reads it — so a name that is not here would be a claim nothing could ever check
+        ``replaces`` is bookkeeping, and it names two entries of *this* conversation and nothing else
+        reads it — so a name that is not here would be a claim nothing could ever check
         again. It is refused the way the parent pointer is, before anything is written.
         """
         found = self._session(session)
@@ -857,12 +857,12 @@ class Serving:
         That also makes the prune the new head, which is what a client's cursor moves to.
 
         Every target is checked before anything is written: a list naming one entry this session does not
-        have writes nothing at all rather than hiding the half of it that did exist, because a prune that
-        half happened is a history nobody can account for.
+        have writes nothing at all, because a prune that half happened is a history nobody can account
+        for.
 
-        What the model is told about it is a line the session *owes* rather than a row written here — the
-        command may arrive while a turn is in flight, and a message appended inside a round would sit
-        between an answer and its results. So the elision is one sentence on the next boundary, and a
+        What the model is told about it is a line the session *owes*: the command may arrive while a turn
+        is in flight, and a message appended inside a round would sit between an answer and its results.
+        So the elision is one sentence on the next boundary, and a
         history that stops showing something stops quietly no more (E149).
         """
         found = self._session(session)
@@ -883,8 +883,8 @@ class Serving:
             Withheld(targets=targets, reason=reason, by=BY_PERSON),
             begin_after=None if head is None else head.id,
         )
-        # What the model is told is owed rather than written here: a prune may land while a turn is in
-        # flight, and a message appended inside a round would sit between an answer and its results.
+        # What the model is told is owed and written at the next boundary: a prune may land while a turn
+        # is in flight, and a message appended inside a round would sit between an answer and its results.
         found.notices.say(
             ELIDED,
             elided(len(targets), by=BY_PERSON, reason=reason),
@@ -914,8 +914,8 @@ class Serving:
         """Ask the model again from the chain's end, and not from a place the chain does not have.
 
         A retry that names no place continues where the conversation stands, which is what "again" means;
-        a conversation with nothing in it has nothing to ask again, and is told so rather than sending a
-        request with no history in it (E158).
+        a conversation with nothing in it has nothing to ask again, and is told so, with no request
+        carrying an empty history (E158).
         """
         found = self._session(session)
         if found is None:
@@ -942,7 +942,7 @@ class Serving:
         compaction may coexist") is already true without anything being relaxed here. A compaction a
         *model* writes is a turn (``kind=COMPACT``): it is a request, it costs what a request costs, and
         it takes this slot like any other. ``holder`` names the turn in the way, so a client can say
-        "waiting on turn 7" rather than invent a message.
+        "waiting on turn 7", with no message invented.
 
         A turn is also refused when the kernel is already running as many as it may, which is a different
         answer from ``busy``: that one is about *this* conversation, and the ceiling is about the process.
@@ -1006,7 +1006,7 @@ class Serving:
         where the loop's default handler would print it onto the terminal the kernel is not allowed to
         write to.
 
-        The chain is here rather than in the runner because this is where a turn is *started*: a goal turn
+        The chain is here, because this is where a turn is *started*: a goal turn
         is one more turn, with its own address, its own cost and its own end row (§10.4, E146).
         """
         while True:
@@ -1051,8 +1051,8 @@ class Serving:
         """The host this kernel serves under, or ``None`` when the assembly has it down.
 
         What a read of another conversation needs and a served session does not: seeding writes rows for
-        a session this kernel has not admitted, so the journal is reached through the host rather than
-        through the session that would have pointed at it.
+        a session this kernel has not admitted, so the journal is reached through the host, since there
+        is no session to point at it.
         """
         found = self.assembly.instance(Declaration(Host, instance=self.host).key)
         return found if isinstance(found, Host) else None

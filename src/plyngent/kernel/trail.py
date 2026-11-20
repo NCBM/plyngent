@@ -2,9 +2,9 @@
 
 A session's history is append-only. Nothing here rewrites a row and nothing deletes one: a branch is a
 row whose ``begin_after`` points somewhere else, a rewind is a frontend looking at another entry, and
-trimming is a mark rather than a removal. What a model is given is a *projection* of the log
+trimming is a mark. What a model is given is a *projection* of the log
 (:meth:`Trail.derive`) — walk the parent pointers from one entry to a root and read the tags a model
-understands — so "what the model saw" is a function of the log instead of a second list kept in step
+understands — so "what the model saw" is a function of the log, with no second list to keep in step
 with it.
 
 The log is keyed by session, so one host has one journal and a session is a forest inside it. Two
@@ -52,7 +52,7 @@ on a terminal among them. What the protocol costs is one ``await`` per call and 
 Nothing holds a backend directly. The host holds the
 :class:`~plyngent.kernel.journal.Journal`, a component that owns one backend and drives its
 :meth:`Trail.open` / :meth:`Trail.close` from its own lifecycle, so which backend a host has is a
-declaration in ``boot`` rather than a field an implementation leaks through.
+declaration in ``boot``, and no implementation leaks a field through.
 """
 
 from __future__ import annotations
@@ -98,8 +98,8 @@ class StateChange(Struct, tag=STATE_CHANGE_TAG, frozen=True, kw_only=True):
 #: state change's is.
 SUMMARY_TAG = "summary"
 
-#: What a model is told around a summary's text: the heading says this block is a compression rather
-#: than something somebody said, and the closing line says what to do with it. Model-visible wording, so
+#: What a model is told around a summary's text: the heading says this block is a compression of what
+#: somebody said, and the closing line says what to do with it. Model-visible wording, so
 #: it is spelled once and pinned by a test.
 SUMMARY_HEADING = "Conversation summary (compacted):"
 SUMMARY_TAIL = "Continue from this summary. Prefer not to re-ask for information already covered."
@@ -129,7 +129,7 @@ NOTICE_TAG = "notice"
 
 #: What a notice's text begins with, so that the harness speaking is not read as a person speaking.
 #:
-#: In the row rather than applied when a request is assembled, because the byte a model reads has to be
+#: In the row, because the byte a model reads has to be
 #: the byte the log keeps: a projection that added a marker would be a second version of a line, and an
 #: offline reader would have to know to add it back.
 NOTICE_MARKER = "[notice from harness]"
@@ -142,8 +142,8 @@ class Notice(Struct, tag=NOTICE_TAG, frozen=True, kw_only=True):
     a model's next turn depends on it. So it is a row **in the chain**, at the place it was said — a turn
     continues from below it, and the projection reads it as a message
     (:func:`~plyngent.kernel.trail.as_message`) whose speaker is the harness. Append-only holds: every
-    notice written stays where it was written and stays in that projection, rather than a note being
-    recomputed at assembly time and the log saying something else than the request carried.
+    notice written stays where it was written and stays in that projection, and no note is recomputed
+    at assembly time with the log saying something other than the request carried.
 
     ``text`` is what the model reads, marker and all, so the log's own line is the byte the model saw.
     ``summary`` is the sentence for a person — the one a client prints when the row is written — and is
@@ -161,7 +161,7 @@ class Notice(Struct, tag=NOTICE_TAG, frozen=True, kw_only=True):
 #: The tag one failed asking carries. Its own record kind, and the third of them: a state change is what a
 #: session knows, a summary is what a conversation was compressed into, and an attempt is what happened to
 #: a request that never became an answer. No model reads it, so it stays out of the projector — and it is
-#: written as a **root**, so it sits beside the conversation rather than in it and can never become the
+#: written as a **root**, so it sits beside the conversation and can never become the
 #: place a turn continues from.
 ATTEMPT_TAG = "attempt"
 
@@ -169,8 +169,8 @@ ATTEMPT_TAG = "attempt"
 class Attempt(Struct, tag=ATTEMPT_TAG, frozen=True, kw_only=True):
     """One request that did not produce an answer, and what became of it.
 
-    R4's "an attempt is a first-class citizen": a failed request is a row somebody can query rather than a
-    line that scrolled past, and it is the only place the *route epoch* of one asking is written down. That
+    R4's "an attempt is a first-class citizen": a failed request is a row somebody can query long after
+    the line scrolled past, and it is the only place the *route epoch* of one asking is written down. That
     is what makes "which model was asked, and when did that change" answerable after the fact — the
     setting says where the session is now, and this says where it was when it tried.
 
@@ -196,7 +196,7 @@ WITHHELD_TAG = "prune"
 BY_PERSON = "person"
 
 #: The budget asked: the conversation stopped fitting, so the oldest whole rounds were put aside. Nobody
-#: wanted these words gone — which is why what they said is kept rather than merely hidden (E149).
+#: wanted these words gone — which is why what they said is kept, and only hidden from the model (E149).
 BY_BUDGET = "budget"
 
 
@@ -215,7 +215,7 @@ class Withheld(Struct, tag=WITHHELD_TAG, frozen=True, kw_only=True):
     a conversation that outgrew its window means "put this aside, keep it" — and a model that cannot tell
     them apart would read a deliberate silence as the same thing as a full buffer.
 
-    ``by`` is text rather than a closed set because it is a stored field: a row written by today's build
+    ``by`` is text, because it is a stored field: a row written by today's build
     has to stay readable when the set of reasons grows, the way :attr:`Attempt.failure` does.
     """
 
@@ -254,7 +254,7 @@ EFFECT_TAG = "effect"
 
 
 class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
-    """What one tool call left different, as an index to the content rather than the content itself.
+    """What one tool call left different, as an index to the content: the body stays in the store.
 
     ``changed`` names the paths the call did not put back as it found them — the same list the result
     carries, written down where the conversation can still find it after that result is a paragraph
@@ -339,7 +339,7 @@ USAGE_TAG = "usage"
 
 
 class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
-    """What one request to the model cost, as a row rather than as an event that has scrolled past.
+    """What one request to the model cost, as a row.
 
     :class:`~plyngent.wire.event.Usage` says the same three numbers while a turn is running, and that is
     all it is: an event is read once and gone, so "what has this conversation cost" could not be asked
@@ -396,7 +396,7 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     not told what a person agreed to before its call ran, and a person reading the row is. A usage is the
     third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
     the model is told about itself. And a turn's end is the fourth: a model reading "turn 3 ended" as part
-    of its conversation would be reading the log rather than the conversation.
+    of its conversation would be reading the log.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
@@ -411,7 +411,7 @@ def kind_of(record: AnyRecord) -> str:
     """What kind of row this is, in the one word every reader of the journal names it by.
 
     The tag the record carries, which is the same word the row is stored under: a message's role, or the
-    kind of bookkeeping it is. It is read from the value rather than kept beside it, so a caller that has
+    kind of bookkeeping it is. It is read from the value, so a caller that has
     a record never has to be told what it is.
     """
     tag = record.__struct_config__.tag
@@ -423,14 +423,14 @@ PREVIEW_CHARS = 80
 
 
 def preview(record: AnyRecord) -> str:
-    """One line of what this row says, for somebody choosing among rows rather than reading them.
+    """One line of what this row says, for somebody choosing among rows.
 
     A record a model reads says its own text, and a summary says the text it stands for — which is the one
     the person looking for a place to continue from is actually looking for. A consent says the question
     it was, because "consent" alone is a row nobody can act on: which question it was is the whole of what
     a person reading their own log came for; a turn's end says the reason the turn gave, because a row of
-    that kind with nothing after it is the one a person is looking for. A notice says its summary rather
-    than the line a model was handed: the marker in that line is addressed to the model, and what a person
+    that kind with nothing after it is the one a person is looking for. A notice says its summary: the
+    marker in that line is addressed to the model, and what a person
     picking among rows is looking for is what the reminder was about. The rest of the bookkeeping has no
     words of its own (:func:`as_message` drops it), so it previews as nothing and is known by its kind.
     """
@@ -451,7 +451,7 @@ def preview(record: AnyRecord) -> str:
 def transcript(messages: Iterable[AnyMessage]) -> str:
     """The conversation as one text, with who said what, for a reader who wants it back later.
 
-    It is the projection — the same messages a model would be given — written down rather than sent, which
+    It is the projection — the same messages a model would be given — written down as text, which
     is why it lives beside :func:`as_message` and not beside the event that carries it. A result is named
     by its tool and its status, because a person reading an export has no turn to tell them which call
     produced that block, and a model reading the same text does not need a second rendering of it.
@@ -518,7 +518,7 @@ class Trail(ABC):
     async def open(self) -> None:
         """Take what this backend holds for as long as the journal is up: a connection, a file.
 
-        Answers nothing rather than raising when it was already open, because the journal may be
+        Answers nothing when it was already open, because the journal may be
         brought up again over a backend that never went down.
         """
 
@@ -554,7 +554,7 @@ class Trail(ABC):
     async def head(self, session: str) -> Entry | None:
         """The last entry a conversation continues from — bookkeeping does not count.
 
-        A state change is a fact about the session rather than about a branch of it, so it is written
+        A state change is a fact about the session, so it is written
         as a root and nothing continues from it (§10.9). That makes "the newest row" the wrong answer
         for the one caller that asks: a session that disclosed a group before anybody said anything
         has a newest row and no conversation, and continuing from it would project to nothing.
@@ -564,18 +564,18 @@ class Trail(ABC):
     async def derive(self, session: str, begin_after: str | None) -> tuple[AnyMessage, ...]:
         """The conversation a model is given, as the projection from ``begin_after`` to its root.
 
-        ``None`` is an empty history rather than "the whole journal": a turn that begins at a root
+        ``None`` is an empty history, never "the whole journal": a turn that begins at a root
         sees what grows above it and nothing beside it. Only the tags a model understands are read, so
         an entry that is bookkeeping (a prune, a state change) changes nothing here — and a summary is
-        read as the one message it stands for (:func:`as_message`), so a compressed conversation is
-        given to a model as the text its author wrote instead of the stretch it replaced.
+        read as the one message it stands for (:func:`as_message`), so a compressed conversation reaches
+        a model as the text its author wrote, with the stretch it replaced in no request.
         """
 
     @abstractmethod
     async def state_of(self, session: str) -> Mapping[str, str]:
         """What this session knows about itself, as the last value written under each key.
 
-        Read across the whole session rather than along one chain: what a session has been shown is a
+        Read across the whole session: what a session has been shown is a
         fact about the conversation and not about a place inside it, and a branch that never saw a
         disclosure is still a branch of a session that has one. Keys with no entry are simply absent —
         "nothing has been written" and "nothing is true" are the same answer here, and a caller that
@@ -603,7 +603,7 @@ class Trail(ABC):
 
         Not "the sessions this process has served": a journal outlives the process that wrote it, and a
         conversation nobody has opened since is exactly the one somebody is looking for. Order is first
-        arrival rather than name, because a name sorts into a list of names and a log does not.
+        arrival: a name sorts into a list of names and a log does not.
         """
 
     @abstractmethod

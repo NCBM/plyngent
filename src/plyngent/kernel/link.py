@@ -1,7 +1,7 @@
 """One connection, four streams: the only way in or out of a kernel.
 
 A client and a kernel share this object — the client holds its far face, the kernel its near one —
-and nothing else. The faces are methods on one value rather than a pair of channels, because a
+and nothing else. The faces are methods on one value: a
 channel pair has to name a direction, and a direction read from the wrong end is a bug that still
 works in one process (R2.1 D8).
 
@@ -22,7 +22,7 @@ The streams differ in exactly one thing, and it is the reason they are separate 
 
 The queues themselves are not here: they are a :class:`~plyngent.kernel.channel.Channel`, and this file
 holds what both ends *do* with them — the lanes, the watermark, who is waiting on what, and what a claim
-about the past is answered with. That is what makes a socket a channel rather than a second connection:
+about the past is answered with. That is what makes a socket one more channel:
 the lanes travel one way each, and what crosses them is the channel's business
 (:mod:`plyngent.kernel.channel`).
 
@@ -95,7 +95,7 @@ class EventLane:
     number it read before with the numbers of a connection it had not met yet.
 
     The queue is the channel's, so "is the client behind" is a question to the channel
-    (:meth:`~plyngent.kernel.channel.Channel.backlog`) rather than a count of a buffer this class owns: a
+    (:meth:`~plyngent.kernel.channel.Channel.backlog`): a
     socket is behind in a way an in-process pair never is, and a lane that measured only its own buffer
     would measure one transport and guess at the other. Folding is bounded twice — a message may carry
     at most ``batch_items`` items, and the backlog may hold ``capacity`` before it is packed — so "pack
@@ -267,7 +267,7 @@ def _placed[Q: Ask](question: Q, site: AskSite | None) -> Q:
 class _Waiting(NamedTuple):
     """One outstanding question: what was asked, and who is waiting on the answer.
 
-    The question is kept rather than only its answer kind because :func:`~plyngent.wire.ask.unanswered`
+    The question is kept, because :func:`~plyngent.wire.ask.unanswered`
     has to know which question is being given up on — and the answer kind is read off it, so a
     connection never holds a separate opinion about what it is waiting for.
     """
@@ -297,7 +297,8 @@ class Link:
     whole of "``inproc`` and ``local`` are one implementation, and the difference is a codec".
 
     ``ledgers`` is one count per tree this kernel serves, keyed as the greeting spells a tree's path, and
-    ``ledger`` is the count for what a *connection* says rather than a tree (a goodbye, a listing). One
+    ``ledger`` is the count for what a *connection* says (a goodbye, a listing), which belongs to no
+    tree. One
     connection may be reading several trees at once, so "how far have I read" is one number per tree;
     ``bound`` is the tree a value means when it names none, which is what a client declared on its first
     frame. A mark about a tree that is not here is not answered: replaying a stranger's count would be
@@ -351,7 +352,7 @@ class Link:
         # A connection made on its own numbers its own events: it is what a story or a test needs, and it
         # is the same rule a host's ledger follows, one degree smaller.
         self._ledger = Ledger() if ledger is None else ledger
-        # The mapping is kept by reference rather than copied: a tree opened while this connection is
+        # The mapping is kept by reference: a tree opened while this connection is
         # being served becomes a tree it can read, which is what makes the greeting a snapshot (E157).
         self._ledgers = {} if ledgers is None else ledgers
         self._events = EventLane(
@@ -376,7 +377,7 @@ class Link:
     def start(self) -> None:
         """Begin reading what the other end sends back: acks, answers, and what its calls came to.
 
-        Those three lanes are settled here rather than by whoever asked, because settling has to happen
+        Those three lanes are settled here, because settling has to happen
         in exactly one place: in one process the two ends are the same object, and over a socket they are
         two, so a rule that lived where the question was asked would be written twice and could disagree
         with itself. Doing nothing twice is what makes this safe to call from a composition root.
@@ -479,7 +480,7 @@ class Link:
     async def _replying(self) -> None:
         """Give each arriving answer to the read waiting on it.
 
-        Started by the first question rather than by :meth:`start`, because the two faces are not
+        Started by the first question, because the two faces are not
         started the same way: ``start`` is what the *kernel* does with a connection it opened, and a
         client over a socket has one without ever calling it.
         """
@@ -500,7 +501,7 @@ class Link:
     def _take_answer(self, answer: AnyAnswer) -> None:
         """Hand one answer to its question, or drop it because that wait is over.
 
-        A wrong kind is dropped rather than accepted: it leaves the question outstanding, so a client
+        A wrong kind is dropped: it leaves the question outstanding, so a client
         can see the refusal and answer the question it was actually asked.
         """
         waiting = self._waiting.get(answer.id)
@@ -512,7 +513,7 @@ class Link:
     def _take_returned(self, returned: Returned) -> None:
         """Hand one result to its call, or drop it because the kernel stopped waiting for that one.
 
-        A call the kernel gave up on is gone, and a late result is dropped rather than taken: what was
+        A call the kernel gave up on is gone, and a late result is dropped: what was
         written when the deadline passed is the history, and a second answer would be a second one.
         """
         waiter = self._running.get(returned.id)
@@ -543,7 +544,7 @@ class Link:
     async def declared(self) -> Bind | None:
         """Read the one value a client owes before it may be served, or ``None`` when it never came.
 
-        Read from the lane rather than kept in a field, for the reason every other arrival here is read
+        Read from the lane, for the reason every other arrival here is read
         where it arrives: in one process the two faces are one object, so a value this side stored when
         the other side sent it would be a shortcut past the lane that no socket can honour.
 
@@ -571,7 +572,7 @@ class Link:
 
         The answer is of the kind the question admits (:func:`~plyngent.wire.ask.answer_kind`); a
         wrong kind is refused at :meth:`answer` and leaves this wait running. Nobody answering is two
-        answers rather than one (:func:`~plyngent.wire.ask.unanswered`): a deadline falls back to the
+        answers, and :func:`~plyngent.wire.ask.unanswered` names both: a deadline falls back to the
         level's answer, and a connection that closed is never a yes.
         """
         if self._closed:
@@ -663,7 +664,7 @@ class Link:
     def bind(self, bind: Bind) -> bool:
         """Say which version of the contract this client speaks, and say it before anything else.
 
-        Handed over rather than compared here: the number is a claim about *this* client, and the two
+        Handed over, because the number is a claim about *this* client, and the two
         ends are entitled to different opinions about it — a kernel that does not speak it stops serving
         the connection, and this side learns that the way it learns every other departure: its lanes end.
         """
@@ -672,7 +673,7 @@ class Link:
     def ack(self, ack: Ack) -> None:
         """Say how far this client has rendered: the resume point and the heartbeat, one mark per tree.
 
-        Handed over rather than applied: the watermark is the kernel's own count, and it moves when the
+        Handed over: the watermark is the kernel's own count, and it moves when the
         lane that judges silence reads it (:meth:`_acknowledging`).
         """
         _ = self._channel.send(Wire.ACK, ack)
@@ -704,7 +705,7 @@ class Link:
         The reply lane is read by a task this starts, not by the one ``start`` starts: a client over a
         socket holds a link nobody called ``start`` on, and a question that opened its own reader is a
         question that cannot be forgotten. A connection that ends with one out raises
-        :class:`~plyngent.wire.query.Unanswered` rather than waiting for an answer that will not come.
+        :class:`~plyngent.wire.query.Unanswered`; an answer that will not come is not waited for.
         """
         if self._closed:
             raise Unanswered
@@ -774,11 +775,11 @@ class Link:
     def close(self) -> None:
         """End the connection: the lanes stop, and questions still in flight are refused.
 
-        A question that is still queued is dropped rather than handed over, because nobody could act
+        A question that is still queued is dropped, because nobody could act
         on the answer: the turn that asked it is not waiting for it any more.
 
         A call in flight is the one exception, and being the exception is the reason the two kinds are
-        two kinds: it is left to its own deadline instead of being answered here, so a client that
+        two kinds: it is left to its own deadline, so a client that
         vanished does not decide what happened to work it may still be doing (§10.8, E47).
         """
         if self._closed:
@@ -787,7 +788,7 @@ class Link:
         if self._pump is not None:
             _ = self._pump.cancel()
             self._pump = None
-        # A question that is still waiting is dropped rather than handed over, so the two lanes that
+        # A question that is still waiting is dropped, so the two lanes that
         # carry one are emptied before they are ended; the command lane is only ended, because what a
         # client already said is still the kernel's to read.
         self._channel.drop(Wire.QUESTION)
