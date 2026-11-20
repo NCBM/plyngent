@@ -435,6 +435,7 @@ async def test_a_handle_outlives_the_process_that_made_it(tmp_path, transport: s
     )
     try:
         await second.type("the first line of the log I kept")
+        await second.finished(2)  # the first turn of this journal was the one that made the handle
 
         assert _told_of(second.requests()[-1]) == "read d1 (lines 1-1 of 4000)\nline 0\n", (
             "a handle names content, and the content is still there after a restart"
