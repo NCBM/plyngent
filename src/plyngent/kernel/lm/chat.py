@@ -3,10 +3,10 @@
 The oldest of the three shapes and the one every compatible gateway speaks, which is why it is the
 dialect a local vLLM, a LiteLLM proxy or a vendor's OpenAI-compatible endpoint is reached over. It is
 also the least precise: a conversation is a list of dictionaries keyed by ``role``, a tool call is a
-member of the assistant message that asked for it, and a tool's answer is *another* message rather than
-a run of blocks — so "which result answers which call" is carried by an id inside the tool message.
+member of the assistant message that asked for it, and a tool's answer is *another* message, since this
+shape has no blocks — so "which result answers which call" is carried by an id inside the tool message.
 
-Two things this dialect cannot do, and they are said here rather than discovered later:
+Two things this dialect cannot do, said here so that nobody discovers them later:
 
 * **A picture has no channel.** Its only image slot is inside a *person's* message, and a tool's answer
   is not a person's; putting pixels there would be inventing a speaker. ``pictures`` is therefore
@@ -19,7 +19,7 @@ Two things this dialect cannot do, and they are said here rather than discovered
 
 **The one thing it does that the others do not yet**: it reads a streamed answer (``sse``). Each frame
 carries a fragment of what the model is saying, and the calls it asks for arrive as fragments keyed by an
-index — which is why the calls are assembled at the end rather than read from one document.
+index — which is why the calls are assembled at the end, out of the fragments, with no document to read.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 #: The word a route names this dialect by.
 CHAT = "chat-completions"
 
-#: What the last frame of a stream says instead of an answer: the endpoint's own full stop.
+#: The word the last frame of a stream carries: the endpoint's own full stop, and no answer.
 DONE = "[DONE]"
 
 #: What a ``finish_reason`` means when it is not "it ended on its own".
@@ -121,10 +121,10 @@ class Chat(Codec):
 
         This dialect streams inside ``choices[0].delta``: a fragment of text, a fragment of a *call* (an
         id once, a name once, and the arguments a few characters at a time), and at the end the reason it
-        stopped. So the calls are assembled here rather than read: ``index`` says which of them a
+        stopped. So the calls are assembled here: ``index`` says which of them a
         fragment belongs to, and a call is complete only when the stream is.
 
-        ``data: [DONE]`` is the endpoint saying it is finished, and it is a word rather than an event:
+        ``data: [DONE]`` is the endpoint saying it is finished, and it arrives as a word, not as an event:
         arriving without it is not an error — the body ending is the same thing said differently — but a
         frame that is not JSON is.
         """
@@ -288,8 +288,8 @@ def _usage(document: Any) -> Usage:
 
     Two vendors, two names for "this much of the prompt was already on their side": OpenAI nests it in
     ``prompt_tokens_details.cached_tokens`` and DeepSeek reports ``prompt_cache_hit_tokens``. The
-    numbers are the point of §10.5, so both spellings are read here rather than left to a report that
-    would silently say zero.
+    numbers are the point of §10.5, so both spellings are read here, since a report left to itself would
+    silently say zero.
     """
     usage = as_dict(as_dict(document).get("usage"))
     details = as_dict(usage.get("prompt_tokens_details"))

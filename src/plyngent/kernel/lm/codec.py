@@ -39,8 +39,8 @@ type Body = dict[str, object]
 
 #: What an HTTP status means in the closed set, for the statuses that mean something specific.
 #:
-#: ``409`` and ``422`` are ``ARGS`` because they say the request was wrong, which for a model call is
-#: this kernel's own mistake rather than the model's; everything in the 500s is ``BUSY`` because a
+#: ``409`` and ``422`` are ``ARGS`` because they say the request was wrong, which for a model call means
+#: this kernel built it wrongly; everything in the 500s is ``BUSY`` because a
 #: server that is unwell is the one thing trying again can fix (§10.11's one table).
 _STATUS: dict[int, Failure] = {
     400: Failure.ARGS,
@@ -67,12 +67,12 @@ class Codec(ABC):
     #: Whether this dialect has a channel for a picture at all. ``messages`` and ``responses`` do;
     #: ``chat`` does not — a tool result there is text, and the only image channel is a person's message,
     #: which is not who a tool's answer came from. A route whose dialect says ``False`` cannot claim
-    #: ``Caps.vision``, and asking one to is answered as blind rather than as a silently dropped picture.
+    #: ``Caps.vision``, and asking one to is answered as blind, with no picture dropped in silence.
     pictures: bool = False
 
     #: Whether this dialect can read an answer that arrives in pieces (server-sent events). A route whose
     #: dialect says ``False`` cannot claim ``Caps.stream``, and asking one to is answered as an ordinary
-    #: request rather than as a body read as if it were a stream — the same two-gate rule a picture has.
+    #: request, and the body is not read as if it were a stream — the same two-gate rule a picture has.
     sse: bool = False
 
     @abstractmethod
@@ -116,7 +116,7 @@ class Codec(ABC):
 #: The first status in the range that means "the server is unwell", which is the one thing trying again
 #: can fix (§10.11's one table).
 _SERVER_ERRORS = 500
-#: The first status that is not an answer at all: at or above it, the endpoint refused rather than replied,
+#: The first status that is not an answer at all: at or above it, the endpoint did not reply,
 #: and what it said is the reason.
 FAILURE_STATUS = 400
 
@@ -138,8 +138,8 @@ def refused(codec: Codec, payload: bytes, *, status: int, where: str) -> ModelFa
 def decoded(payload: bytes, *, where: str) -> Any:
     """One JSON body, or a ``PROTOCOL`` failure naming the place that could not be read.
 
-    ``Any`` rather than a typed shape because every dialect walks its own document: the one thing they
-    share is that a body which is not JSON is not an answer, and that is all this answers. The four
+    ``Any``, because every dialect walks its own document and no one shape covers them all: the one thing
+    they share is that a body which is not JSON is not an answer, and that is all this answers. The four
     readers below are what every walk is then made of, and they exist so that no dialect writes an
     ``isinstance`` — a body is somebody else's document, and reading one should not need a type guard
     per field.
@@ -153,7 +153,7 @@ def decoded(payload: bytes, *, where: str) -> Any:
 def as_dict(value: Any) -> dict[str, Any]:
     """*value* as a JSON object, and the empty one when it is anything else.
 
-    Empty rather than raising, because "this part of the document is missing" is not a failure of the
+    Empty, and never raised, because "this part of the document is missing" is not a failure of the
     whole answer: a provider that omits ``usage`` still answered, and a dialect that raised over it would
     lose the text it did say.
     """
@@ -179,11 +179,11 @@ def spelled(arguments: str) -> Any:
     """A call's arguments as the object a dialect wants, falling back to the text that was given.
 
     A dialect that takes an object (``messages`` and ``responses`` do) needs the arguments parsed; one
-    that takes text (``chat``) does not. Parsing here rather than in every dialect keeps the rule that
+    that takes text (``chat``) does not. Parsing here, once, keeps the rule that
     *this* layer never judges a model's arguments: text that is not JSON is handed back as text, and the
     tool that was named is the one that reports it as an argument error (see ``kernel.model``).
 
-    No arguments at all is the empty object rather than the empty string: a tool that takes none is
+    No arguments at all is the empty object, and never the empty string: a tool that takes none is
     still called with a package, and a dialect that needs an object there would otherwise be handed text
     that is not one.
     """
@@ -215,7 +215,7 @@ async def frames(chunks: AsyncIterator[bytes]) -> AsyncIterator[tuple[str, str]]
     Lines are decoded only once they are whole, and never a chunk at a time: a chunk boundary can fall
     inside a multi-byte character, and a stream that mangles one emoji is a stream nobody can trust.
     ``id`` and ``retry`` are read and dropped — resuming a model call is not a thing this build does —
-    and a comment line is what a heartbeat looks like, so it is skipped rather than reported.
+    and a comment line is what a heartbeat looks like, so it is skipped, and nothing is reported for it.
     """
     pending = b""
     name = ""

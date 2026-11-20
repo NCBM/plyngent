@@ -45,8 +45,8 @@ def codec_named(name: str) -> Codec | None:
     """The dialect filed under *name*, or ``None`` when this build does not speak it.
 
     ``None`` and not an exception: a name is a word from a configuration file, and a route naming a
-    dialect this build does not have is a fact about the configuration rather than a failure of a call
-    — the caller says which of the two it is (see :class:`~plyngent.kernel.lm.route.Routes`).
+    dialect this build does not have is a fact about the configuration; whether that is a failure belongs
+    to the caller, who says which of the two it is (see :class:`~plyngent.kernel.lm.route.Routes`).
     """
     for codec in DIALECTS:
         if codec.name == name:

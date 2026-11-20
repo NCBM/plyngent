@@ -2,18 +2,19 @@
 
 Where ``chat`` flattens a conversation into roles, this one keeps it as blocks: an assistant turn is a
 list that may hold text and the calls it asked for *in one message*, and a tool's answer is a
-``tool_result`` block inside a **person's** message rather than a message of its own. Two consequences
+``tool_result`` block inside a **person's** message, with no message of its own. Two consequences
 shape this file:
 
 * **A run of results is one message.** Consecutive tool answers have to arrive together, because this
-  dialect wants one turn of each speaker at a time; the merge is here rather than in the caller, since
+  dialect wants one turn of each speaker at a time; the merge is here, since
   "what counts as one turn" is the dialect's opinion.
 * **A picture has a channel, and it is inside a tool's answer.** So ``pictures`` is ``True``: a result
   whose pixels were fetched carries them here as an ``image`` block beside the text, base64-encoded,
   which is what lets a route on this dialect honestly claim ``Caps.vision``.
 
 Two more things are this dialect's alone and are read off ``Caps``: ``max_tokens`` is **required** —
-there is no request without it — and a thinking budget is a token count rather than an effort level.
+there is no request without it — and a thinking budget is a token count, where ``responses`` carries an
+effort level.
 That budget is the only place in this build that asks a model to think out loud, and what comes back is
 the one thing this dialect refuses to see dropped: the next round carries it, signature and all, because
 a round whose thinking went missing is a round the endpoint will not read (§10.4, E145).
@@ -155,7 +156,7 @@ def _result(message: Result) -> Body:
     """One tool's answer as this dialect's ``tool_result`` block, pictures and all.
 
     ``is_error`` is written because this dialect has the word and the status already says it: a result
-    that failed reads as a failure to the model rather than as prose that happens to start with a dash.
+    that failed reads as a failure to the model, and never as prose that happens to start with a dash.
     """
     said: Body = {"type": "tool_result", "tool_use_id": message.call, "content": _told(message)}
     if message.status in {Status.REFUSED, Status.FAILED}:

@@ -7,7 +7,7 @@ on its own, which is why a run of results needs no merging here the way it does 
 
 Two things it does differently from the other two, both of them this endpoint's opinion:
 
-* **The prompt that is not the conversation is a field** (``instructions``) rather than a leading
+* **The prompt that is not the conversation is a field** (``instructions``) of its own, with no leading
   message, so a cached prefix starts at it and the tools follow.
 * **A picture travels inside a tool's answer** as an ``input_image`` part beside the ``input_text`` one,
   so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.vision``.

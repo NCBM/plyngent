@@ -7,8 +7,8 @@ implies and the timeout the route was given.
 
 **A route is a name, not a provider.** ``name`` is what a session's setting holds and what ``SetRoute``
 takes; ``dialect`` is a word in the table of dialects; nothing here compares either to a company. That is
-the whole reason the table is a value the composition root hands in rather than something this file could
-have built for itself: which endpoints exist is a fact about how the program was started.
+the whole reason the table is a value the composition root hands in, which this file could never have built
+for itself: which endpoints exist is a fact about how the program was started.
 
 **Retry belongs here and not in a frontend.** ``main`` retried on the CLI's side, which meant a second
 consumer would have had to write it again and a cancelled turn had to unwind a sleep somebody else owned.
@@ -19,8 +19,8 @@ scope races.
 
 **A response that is not an answer is a failure, not a reply.** A status at or above 400 is
 :func:`plyngent.kernel.lm.codec.refused`; a body the dialect cannot read is the codec's ``PROTOCOL``. Both
-arrive as :class:`~plyngent.kernel.model.ModelFailed`, which is what lets a turn say why it could not run
-instead of raising into a task nobody awaits.
+arrive as :class:`~plyngent.kernel.model.ModelFailed`, which is what lets a turn say why it could not run,
+with no exception raised into a task nobody awaits.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class RouteWeb(Struct, frozen=True, kw_only=True):
 class Route(Struct, frozen=True, kw_only=True):
     """One endpoint of one model: where it is, what it answers in, and what it can do.
 
-    ``secret`` is the credential and it is a value here rather than something read from the environment:
+    ``secret`` is the credential, and it is a value here; nothing is read from the environment:
     what a program is allowed to talk to is a fact about how it was started, and a route that went
     looking would be a second place that decides. The *name* of the variable it came from never reaches
     this field — configuration resolves it, and a route holds only what it will send (§0.11, E71/E77).
@@ -110,7 +110,7 @@ class Route(Struct, frozen=True, kw_only=True):
     def codec(self) -> Codec | None:
         """The dialect this route says it speaks, or ``None`` when this build does not speak it.
 
-        The table is read here rather than imported at the top because the table's module imports *this*
+        The table is read here, inside the call, because the table's module imports *this*
         one to file the route type: looked up per call, the two modules cannot get into an argument about
         which of them is imported first.
         """
@@ -131,7 +131,7 @@ class Route(Struct, frozen=True, kw_only=True):
 class Routes:
     """The endpoints this program was started with, and which one answers when nobody says.
 
-    A plain value rather than a component, for the same reason a skill store is one: there is nothing to
+    A plain value, with no component around it, for the same reason a skill store is one: there is nothing to
     open and nothing to close, so there is no lifecycle a component would have answered. What a route
     table is is a fact about how the program was started, and it is handed to the host by the composition
     root exactly like the model's channel and the skills directory.
@@ -205,7 +205,7 @@ class Posted(Model):
 
         Two gates, like a picture's: the *route's* ``stream`` says what the endpoint will do and the
         *dialect's* ``sse`` says whether this build can read it. A route that claims one over a dialect
-        that cannot is answered as an ordinary request rather than as a body read as if it were frames —
+        that cannot is answered as an ordinary request, and the body is not read as if it were frames —
         the caps handed to ``encode`` are what makes that one decision, so nothing downstream has to
         check twice.
         """

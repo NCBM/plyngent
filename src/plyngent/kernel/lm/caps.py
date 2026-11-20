@@ -1,4 +1,4 @@
-"""What one route's model can do, as values a loop reads instead of asking who the provider is.
+"""What one route's model can do, as values a loop reads, so that nothing asks who the provider is.
 
 A capability is a fact about *one endpoint of one model*, not about a company: the same vendor serves a
 model that reads pictures and one that does not, and a compatible gateway can do anything its author
@@ -16,7 +16,7 @@ Three rules, and they are what makes the table worth its lines:
   dialect that must state it (``messages`` does) would otherwise invent one silently.
 * **The defaults are the conservative ones.** A route that was told nothing gets a model that cannot
   see, cannot think out loud, and is asked for one call at a time — and its author says so where the
-  route is declared rather than discovering it as a truncation.
+  route is declared, which keeps the discovery from arriving as a truncation.
 """
 
 from __future__ import annotations
