@@ -12,24 +12,24 @@ leaves the log a log, and lets the store be given retention, an index or a blob 
 migration that first has to know what a transcript is. The price is a second connection, a second lock,
 two files per workspace and no transaction across both — and the price is paid in one direction only:
 **the row is written before the result that carries the handle**, so a crash between the two leaves
-content nobody refers to rather than a handle pointing at nothing.
+content nobody refers to, and never a handle pointing at nothing.
 
 **Every read is scoped to a session.** Content is as private as the conversation it was kept for, so
 two sessions on one host do not see each other's documents by id, and an id that belongs to somebody
 else is answered as if it did not exist.
 
 **The same bytes are kept once, per session.** A row is (content, media) under the session that asked for
-it, so a window read twice is one handle rather than two, and a handle is something a model can hold on
+it, so a window read twice is one handle, and a handle is something a model can hold on
 to. Sessions never share a row — that is the privacy rule above, read in the other direction.
 
 **It is a cache, not an archive.** Every body here can be had again: a tool can be asked twice, a file
 read twice, an export derived from the log again. So each session has a budget, and writing past it lets
-the oldest bodies go — at the write, when the answer is known, rather than on a timer somebody would have
-to trust. A handle to a body that has gone is not a broken handle: it is an id this session no longer
+the oldest bodies go — at the write, when the answer is known. A handle to a body that has gone is not
+a broken handle: it is an id this session no longer
 has, which is the answer a made-up id already gets.
 
 **How much fits is a property of the store.** :data:`KEEP_CHARS` is the threshold a tool asks this
-object for rather than a number in a schema: a schema that changed with it would rewrite the prompt
+object for, and no schema carries it: a schema that changed with it would rewrite the prompt
 prefix a provider caches (§10.5), and the executor does not know what a body means.
 :data:`MAX_TEXT_CHARS` and :data:`MAX_KEPT_BYTES` are the other end of the same idea — what this build
 will hold at all — and :data:`SUMMARY_CHARS` keeps the line that stands in for content a line.
@@ -132,7 +132,7 @@ def refuses(content: str | bytes) -> str | None:
 #:
 #: ``sha256`` is what makes the same bytes kept once per session: a row written with a hash is matched by
 #: a later ``put`` of the same bytes and media, or not at all. The index that answers that question is
-#: part of the shape rather than a later step, because there is no released file that predates it.
+#: part of the shape, because there is no released file that predates it.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS document (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,11 +281,11 @@ class Documents(Component):
         ``chars`` counts characters for text and bytes for everything else, because it is there to say
         how big the thing is to the reader that will ask for it. Content over :func:`refuses`' limit is
         not kept, and a summary longer than :data:`SUMMARY_CHARS` is cut: both are the store keeping its
-        own promise rather than trusting every writer to have asked.
+        own promise, and no writer has to have asked.
 
         The same bytes of the same media in the same session are one row: a model that reads one window
-        twice is handed the handle it already has, which is what makes a handle something it can keep
-        rather than something that quietly multiplies. The row keeps the summary it was first given —
+        twice is handed the handle it already has, which is what makes a handle something it can keep,
+        and what stops handles from multiplying. The row keeps the summary it was first given —
         a handle names content, and where it came from is the first place it came from. Sessions never
         share a row: content is as private as the conversation it was kept for.
         """
@@ -314,7 +314,7 @@ class Documents(Component):
     async def _made_room(self, session: str) -> None:
         """Let this session's oldest bodies go until it is inside its budget; the newest one always stays.
 
-        Making room at the write rather than on a timer is the whole design: there is no clock to trust,
+        Making room at the write is the whole design: there is no clock to trust,
         no sweep to schedule, and the moment a body does not fit is exactly the moment to decide. The
         newest row is never dropped — a store that threw away what it had just been given would keep
         nothing at all for a body that is large on its own.

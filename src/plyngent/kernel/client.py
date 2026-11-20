@@ -62,7 +62,7 @@ class AskUser(ToolArgs, kw_only=True):
 
     ``questions`` is the call: the questions themselves — :class:`~plyngent.wire.ask.Confirmation`,
     :class:`~plyngent.wire.ask.Selection`, :class:`~plyngent.wire.ask.FreeText` — in the order they are
-    to be put, and one line to answer each. One tool rather than three, for the reason ``execute`` is one
+    to be put, and one line to answer each. One tool, for the reason ``execute`` is one
     tool with a tree of steps: what differs between a line, a menu, and a block of five is an *array*,
     not a different reach — and a form is that array with more in it.
 
@@ -136,7 +136,7 @@ class ClientOffers:
 class Gone:
     """Nobody offers anything: a call that reaches here lost its client before it was sent.
 
-    A value rather than ``None`` for the same reason :class:`~plyngent.kernel.events.NoSink` is one: a
+    A value, for the same reason :class:`~plyngent.kernel.events.NoSink` is one: a
     handler that asked for something it declared should get an answer, not an exception. Nothing was
     sent, so nothing is declared — the external effect recorded on the way out belongs to
     :meth:`ClientOffers.run`, which is the only path that has one.
@@ -159,8 +159,8 @@ class Offers(Component):
     move, a reader never sees a half-attached state, and two hosts cannot answer for each other's
     clients. Nothing attached is a value (:data:`NO_CLIENT`), not a missing field.
 
-    ``issued`` is how many client ids this host has handed out. It lives here rather than in a field
-    of its own because the id belongs to the offer: the connection does not name itself, and a name
+    ``issued`` is how many client ids this host has handed out. It lives here, because the id belongs to
+    the offer: the connection does not name itself, and a name
     that came from the party being named would not be an identity.
     """
 
@@ -179,8 +179,8 @@ def specs_from(
     """What one offer becomes: the tools it may attach, and the ones refused with why.
 
     ``taken`` is every name this kernel already has — its own tools, and whatever an earlier offer left
-    attached. A name is how a model asks for a tool, so two tools answering to one is refused here
-    rather than making which one runs depend on an order.
+    attached. A name is how a model asks for a tool, so two tools answering to one is refused here, and
+    which one runs never depends on an order.
 
     The two kinds of tool are decided by *name* and nothing else: a name the kernel answers people
     through carries the kernel's shape, and every other name carries the schema its provider sent.
@@ -202,8 +202,8 @@ def specs_from(
 def declaration(client: str, tool: str, arguments: str) -> str:
     """What left this process, said in one line: ``client c1: run search({"q": …})``.
 
-    It is recorded on the result rather than in a log of its own because it is part of what the call
-    did: an effect nobody here can verify, which is exactly what ``Effects.external`` is for.
+    It is recorded on the result, because it is part of what the call did: an effect nobody here can
+    verify, which is exactly what ``Effects.external`` is for.
     """
     return f"client {client}: run {tool}({_short(arguments)})"
 
@@ -211,7 +211,7 @@ def declaration(client: str, tool: str, arguments: str) -> str:
 def declared(spec: ToolSpec, arguments: str) -> str:
     """The declaration of one call to a client's tool, named after the group the tool travels in.
 
-    The group is ``client:<id>``, so the id is read off the spec rather than off the host: a call is
+    The group is ``client:<id>``, so the id is read off the spec: a call is
     declared the same way whether or not that client is still attached, and the executor is not the
     layer that should be asking who is connected.
     """
@@ -271,7 +271,7 @@ def _asked(tool: OfferedTool, group: str) -> ToolSpec:
 def _external(tool: OfferedTool, group: str) -> ToolSpec:
     """Somebody else's tool: their schema, in their words, and a call that leaves this kernel.
 
-    ``intention`` is spelled out as ``OPTIONAL`` rather than derived, and that is the honest price of
+    ``intention`` is spelled out as ``OPTIONAL``, and that is the honest price of
     the rule above it: ``Mutates.OUTSIDE`` would derive ``REQUIRED``, and a required field the provider
     never declared would make every call of the tool fail to decode (§10.2, §10.8 rule 6).
     """

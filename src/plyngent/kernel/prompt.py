@@ -103,8 +103,8 @@ def _network(served: Collection[str], engines: Sequence[str]) -> str:
 
 #: What each group's tools add, and the mistake each one invites. Filled for every :class:`Group`: a
 #: group is a disclosure unit, so its playbook is a unit too — the section arrives when the group is shown
-#: and with the tools it describes, which is what keeps the standing prompt at one compressed block
-#: instead of 1.5k of instructions for calls a session cannot make yet (§10.4).
+#: and with the tools it describes, which is what keeps the standing prompt at one compressed block, and
+#: not 1.5k of instructions for calls a session cannot make yet (§10.4).
 GROUP_PLAYBOOK: Mapping[Group, str] = {
     Group.DOCUMENT: """\
 The rest of a document: a body too long for an answer is kept rather than cut, and `documents` lists what
@@ -144,8 +144,8 @@ and none of its calls writes.""",
 }
 
 #: What a compaction is asked for, when the program did not install its own instruction. It says what the
-#: summary is *for* rather than how to write one: the row it becomes is what later turns are handed instead
-#: of the stretch below it, so a summary that leaves out a decision or a path makes that turn worse.
+#: summary is *for*: the row it becomes stands in for the stretch below it, so a summary that leaves out a
+#: decision or a path makes that turn worse.
 COMPACT = """\
 Write a summary of the conversation above, which later turns will be given instead of it. Keep what a
 later reader needs to continue the work: what was asked for, what was decided and why, which paths and
@@ -184,9 +184,9 @@ class PromptPlan:
     the empty string for a host with no skills, and an empty section is not an empty line — it is not there
     at all.
 
-    ``persona`` and ``directives`` are the two sections a program is expected to replace rather than
-    inherit: the first is who the model is, the second is how it is told to use what it was given, and
-    both are questions about the product rather than about this kernel. ``directives`` defaults to
+    ``persona`` and ``directives`` are the two sections a program is expected to replace: the first is
+    who the model is, the second is how it is told to use what it was given, and
+    both are questions about the product, not about this kernel. ``directives`` defaults to
     :data:`CORE`, and an empty one is a program that has no playbook — the section disappears like any
     other empty one (§0.11, E79).
 
@@ -219,7 +219,7 @@ class PromptPlan:
 
         ``continuing`` is the one section that depends on *why* this request is being made, and it is
         therefore the only one a turn hands in: a turn the kernel started itself says so, and the index line
-        still ends the prompt because what a session cannot reach is a fact about the session rather than
+        still ends the prompt because what a session cannot reach is a fact about the session, not
         about this request (E146).
         """
         sections = (

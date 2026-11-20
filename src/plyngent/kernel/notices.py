@@ -11,7 +11,7 @@ Four rules, and they are the whole of it:
 * **One sentence per writer.** Writers are told apart by a key, and a second fire under one key replaces
   what the first said. What a model needs is what is true now, not everything that was ever true.
 * **Declaration order, not arrival order.** The lines are said in the order their writers were declared,
-  so what a model reads is the same for the same state rather than a function of which tool ran first.
+  so what a model reads is a function of the state, and not of which tool ran first.
   A key nobody declared is refused: a line under a key no flush consults would be a sentence nobody ever
   says.
 * **Nothing is said when nothing changed**, and a reminder that stopped being true is said as an empty
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 #: Every writer there is, in the order their lines are said.
 #:
 #: A tuple and not a set, because the order is the answer to "what does the model read first" — and it is
-#: written down here rather than discovered, so that two writers cannot disagree about it by arriving at
+#: written down here, so that two writers cannot disagree about it by arriving at
 #: different times.
 
 #: The plan's writer: what is left of the todo stack.
@@ -51,7 +51,7 @@ LIMIT = "limit"
 ELIDED = "elided"
 
 #: The terminal broker's writer: the terminals this conversation had are gone, so the ids it holds are
-#: dead. Before the plan, because it is about what the model can still do at all rather than about what
+#: dead. Before the plan, because it is about what the model can still do at all, and not about what
 #: it should do next (E151).
 TERMINALS = "terminals"
 
@@ -110,7 +110,7 @@ def elision_summary(hidden: int, *, by: str) -> str:
 def lost_terminals(gone: int) -> str:
     """What a model is told when the terminals it had were taken away by a broker being replaced (E151).
 
-    Said at the next boundary rather than found out by a call, and said as the one fact that changes what
+    Said at the next boundary, and said as the one fact that changes what
     a model does next: every id it was handed is dead. The refusal is still there for a model that tries
     one anyway — what this ends is the *call* it would have spent discovering it.
     """
@@ -196,7 +196,7 @@ class Notices:
         """Note what *key* has to tell the model now, replacing whatever it last owed.
 
         ``text`` is the sentence as a model reads it, without the marker; empty means "this reminder no
-        longer holds". A key nobody declared is refused rather than stored, because a line that no flush
+        longer holds". A key nobody declared is refused, because a line that no flush
         consults is worse than an error: it would look like the model was told something.
         """
         if key not in self.keys:
