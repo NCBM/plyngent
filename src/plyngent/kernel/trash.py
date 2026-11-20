@@ -48,8 +48,8 @@ class Trouble(msgspec.Struct, frozen=True, kw_only=True):
 def available() -> bool:
     """Whether ``send2trash`` can be imported.
 
-    It is a declared dependency, so ``False`` means a broken install rather than an expected absence;
-    the caller reports it instead of destroying the file.
+    It is a declared dependency, so ``False`` means a broken install, and not an expected absence; the
+    caller reports it, and the file is not destroyed.
     """
     return find_spec("send2trash") is not None
 

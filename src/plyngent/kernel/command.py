@@ -87,9 +87,9 @@ class Allowed:
 class NeedsHuman:
     """The denylisted programs a human has to allow, outermost first.
 
-    ``reasons`` is what this build could not answer for besides them. It is carried here rather than
-    returned as a second verdict because both are one question to one person — but it changes the answer's
-    worth: a yes to a *named* program is remembered by that name, and a yes to a command whose program is a
+    ``reasons`` is what this build could not answer for besides them. It is carried here, because both
+    are one question to one person — but it changes the answer's worth: a yes to a *named* program is
+    remembered by that name, and a yes to a command whose program is a
     guess is worth this call only, so a reason makes the whole thing asked again next time.
     """
 
@@ -205,7 +205,7 @@ class CommandPolicy:
 
         A denylisted program is the answer when there is one — it is a fact, and its yes is kept by name.
         Anything this build could not answer for comes beside it (and alone, when nothing is denylisted),
-        and that is what makes the answer worth one call rather than the rest of the session (§R12 乙).
+        and that is what makes the answer worth one call, and not the rest of the session (§R12 乙).
         """
         if not argv:
             msg = "command argv must not be empty"

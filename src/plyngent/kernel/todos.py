@@ -97,8 +97,8 @@ class Todos(Struct, kw_only=True):
     """The stack: ``groups[0]`` is the bottom, ``groups[-1]`` is the TOP group.
 
     Every method that changes the stack changes this value in place, and the caller decides what to
-    write down — which is what lets the session write one whole setting per change instead of a
-    difference that a reader would have to apply in order.
+    write down — which is what lets the session write one whole setting per change, with no difference
+    for a reader to apply in order.
     """
 
     groups: list[TodoGroup] = field(default_factory=list)
@@ -124,8 +124,8 @@ class Todos(Struct, kw_only=True):
     def push_group(self, titles: Iterable[str], *, notes: str = "") -> TodoGroup:
         """Put one new group of siblings on top, and answer it.
 
-        Blank titles are dropped rather than stored: a task with no name is a level of breakdown that
-        says nothing, and what a tool refuses is a group where *every* title was blank — a call that
+        Blank titles are dropped: a task with no name is a level of breakdown that says nothing, and what
+        a tool refuses is a group where *every* title was blank — a call that
         wrote one real task and one accidental newline meant the one real task.
         """
         group = TodoGroup(items=[self._item(title, notes) for title in titles if title.strip()])
@@ -174,8 +174,8 @@ class Todos(Struct, kw_only=True):
     def reminder(self) -> str:
         """What is left of the plan, as the one line a model is told between rounds.
 
-        Empty when nothing is open, and that is a real answer rather than a missing one: a reminder that
-        has nothing to say is how a writer says the one it wrote before no longer holds (E142). The
+        Empty when nothing is open, and that is a real answer: a reminder that has nothing to say is how
+        a writer says the one it wrote before no longer holds (E142). The
         titles are named up to :data:`NAMED` and counted past that, because this line is written once and
         then read in every request that follows it.
         """

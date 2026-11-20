@@ -1,13 +1,13 @@
 """One lock per path, for as long as the host lives, so two turns cannot change one file at once.
 
 A lock is keyed by the same normalization a batch's ordering uses (:func:`plyngent.kernel.paths.key`), so
-``a/../b`` and ``b`` are one lock rather than two. The table is reference-counted and drops a lock when
+``a/../b`` and ``b`` are one lock. The table is reference-counted and drops a lock when
 nobody holds or wants it: a host that lives for a day would otherwise keep one lock for every path
 anybody ever read.
 
 Several paths are one acquisition, taken in sorted key order across both halves at once. Sorting by key
 and not by role is what makes two calls that want the same two paths — one reading the first and writing
-the second, the other the reverse — wait for each other instead of each holding one and waiting for the
+the second, the other the reverse — wait for each other, and neither holds one while waiting for the
 other forever.
 
 **A read is shared and a write is not.** Two calls reading one file take it at the same time; a call
@@ -37,7 +37,7 @@ class _Entry:
 
     readers: int = 0
     writing: bool = False
-    #: Writers waiting, counted so a reader behind one lets it through instead of joining the readers.
+    #: Writers waiting, counted so a reader behind one lets it through.
     writers_waiting: int = 0
     waiters: list[asyncio.Future[None]] = field(default_factory=list)
     #: How many callers hold or want this lock, so the table can forget it when nobody does.

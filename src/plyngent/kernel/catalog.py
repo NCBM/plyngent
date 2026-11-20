@@ -1,14 +1,14 @@
 """The tools one session has, by name, and the block a model is told about them.
 
 A catalog is not a registry. It holds a table and nothing else: it runs nothing, it cannot be added to
-while a turn is using it, and asking it for a name it does not have answers ``None`` rather than
-raising — a model naming a tool that is not there is a call to refuse, not an exception to catch.
+while a turn is using it, and asking it for a name it does not have answers ``None``: a model naming a
+tool that is not there is a call to refuse, not an exception to catch.
 
 The order of the block is the point of the second half. It is **name order**, never the order the
 modules happened to be imported in: a provider caches the prompt prefix, so a tool block whose order
 depends on discovery order rewrites that prefix whenever a tool is added, renamed or moved, and the cost
 is paid on every following request (§10.5). Sorting here makes the block a function of the set, which is
-what lets "the same tools produce the same bytes" be true rather than hoped for.
+what lets "the same tools produce the same bytes" be true by construction.
 
 Where the tools come from is deliberately one line: each module declares its own ``SPECS`` beside the
 handlers that implement them, and this module only says which modules there are. A tool is one file,
@@ -17,14 +17,14 @@ and a *group* is not a table at all: it is whatever the specs say they travel in
 
 The second thing a catalog answers is what one session may *see* (:meth:`ToolCatalog.view`). A session
 starts with the residents and gains a group by asking for it (§10.4), so the same catalog serves every
-conversation and each of them is handed a view rather than a table of its own. A view also says what is
-missing, which is the index line a model is given: a model that is not told there is more cannot ask
+conversation and each of them is handed a view. A view also says what is missing, which is the index
+line a model is given: a model that is not told there is more cannot ask
 for it, and a model that is told everything exists cannot tell when a call is refused because a group
 was never shown.
 
 One thing about the table is not derived from the tools: which names are resident. A client's offer
 adds to the residents of the sessions it is attached to (§10.8), which a name table written into this
-module could not say, so the set is an input the catalog is handed rather than a constant it holds.
+module could not say, so the set is an input the catalog is handed.
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class ToolCatalog:
         Derived from the tools themselves — there is no second table that could disagree with them:
         the group a tool travels in is the one its own spec declares, and a group nothing declares
         does not exist. Names arrive sorted, so the index line built from this is a function of the
-        set rather than of the order the modules were imported in.
+        set, whatever order the modules were imported in.
         """
         table: dict[str, list[str]] = {}
         for name, spec in self._specs.items():
@@ -186,8 +186,8 @@ class ToolView:
 
     ``disclosed`` is what the session asked for, which is not the same thing as what it can reach: a
     group with a resident member is reachable from the first turn, and its instructions are still not
-    something the prompt carries until somebody asks for the group (§10.4, E64). So the set is kept
-    rather than inferred, and a view is the one place both questions are answered.
+    something the prompt carries until somebody asks for the group (§10.4, E64). So the set is an input
+    the catalog is handed, and a view is the one place both questions are answered.
     """
 
     specs: Mapping[str, ToolSpec]
@@ -204,9 +204,8 @@ class ToolView:
     def asks(self) -> bool:
         """Whether a client is attached, and therefore whether a person can be asked anything.
 
-        Derived from the group table rather than carried beside it: the group a client's tools travel
-        in exists only while it is attached, so its presence *is* the answer, and a second flag could
-        disagree with it.
+        Derived from the group table: the group a client's tools travel in exists only while it is
+        attached, so its presence *is* the answer, and a second flag could disagree with it.
         """
         return any(_is_client(group) for group, _members in self.groups)
 
@@ -238,7 +237,7 @@ class ToolView:
         not of a tool's result: a tool that mentioned the other tools would have to be called first,
         which is the state this line exists to end. The second half is the same argument one step
         further out: with no client attached, the asking tools are not in the table at all, so the line
-        has to say so rather than leave a model to find out by calling one (§10.8).
+        has to say so, and a model does not find out by calling one (§10.8).
         """
         parts: list[str] = []
         if self.missing:

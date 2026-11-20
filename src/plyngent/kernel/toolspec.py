@@ -54,11 +54,11 @@ class Res(Flag):
     DOCUMENT = 1 << 6
     CLIENT = 1 << 7
     #: The tool set itself: what exists, what this session can reach, what it has not been shown. The
-    #: one resource whose subject is the tools rather than the world (§10.4).
+    #: one resource whose subject is the tools themselves (§10.4).
     TOOLS = 1 << 8
-    #: The skills this host can read, and the one root a new one is written under. A resource of its own
-    #: rather than a use of :attr:`PATHS` because a skill is not a path in the workspace: it is reached
-    #: through the store that discovered it, and a tool that could resolve any path would not be saying
+    #: The skills this host can read, and the one root a new one is written under. A resource of its own,
+    #: because a skill is not a path in the workspace: it is reached through the store that discovered it,
+    #: and a tool that could resolve any path would not be saying
     #: that it only touches these.
     SKILLS = 1 << 9
 
@@ -226,8 +226,8 @@ class ExternalArgs:
     The kernel does not add, rename or tighten a field here. A provider's schema is the provider's
     promise about its tool, and rewriting it would make the prefix disagree with what that provider
     validates against — so the only thing asked of an external package is that it be a JSON object
-    with the declared properties. It is a different kind of thing from :class:`ToolArgs` rather than
-    a subclass, because there is no base to inherit: the schema is the whole declaration.
+    with the declared properties. It is a different kind of thing from :class:`ToolArgs`, because there
+    is no base to inherit: the schema is the whole declaration.
     """
 
     schema: Mapping[str, Any]
@@ -249,7 +249,7 @@ class ToolSpec:
 
     ``group`` is the disclosure unit; a remote or client-provided tool uses a prefixed group name
     (``mcp:<server>``, ``client:<id>``) and its own lifetime, which is why the field is a plain
-    string rather than :class:`Group`.
+    string, whatever group name a client chose.
 
     The four approval fields are declarations, not judgements: ``posture`` overrides the derived
     baseline for a tool whose reach is not expressed by ``uses``/``mutates`` (a temporary workspace
@@ -324,8 +324,8 @@ class ToolSpec:
 
         Two declarations mean "this tool touches something in the workspace": a ``roles`` table with a
         path role in it, and a ``holds`` that finds them. Both are the same claim to
-        :attr:`Res.PATHS`, so a declaration carrying either without the flag is refused here rather than
-        turning into a call that reaches a path nothing resolved (R6).
+        :attr:`Res.PATHS`, so a declaration carrying either without the flag is refused here, and no
+        call reaches a path nothing resolved (R6).
         """
         if self.uses & Res.PATHS:
             return
@@ -354,7 +354,7 @@ class ToolSpec:
     def check(self, args: Any) -> None:
         """What the declaration asks of a package beyond its types.
 
-        It lives beside :meth:`decode` rather than in a handler so that every entry into a tool —
+        It lives beside :meth:`decode`, so that every entry into a tool —
         a call from the model, a call from a program, a replayed journal entry — is held to the same
         rule, and so that nothing has to remember the rule at the point where it runs. A rule that is
         about one argument is decided here; a rule two arguments make together is the tool's own
@@ -427,7 +427,7 @@ class ToolSpec:
 
         The second half is the rule this module is built around — a call may be declared heavier than
         the baseline and never lighter — so an escalation that would lighten it is a mistake in the
-        declaration and is refused when the tool is declared rather than when it is called.
+        declaration and is refused when the tool is declared.
         """
         if not isinstance(level, Severity):
             msg = f"{self.name}: {name!r} escalates to what? name a Severity, not {level!r}"
@@ -484,7 +484,7 @@ def _baseline(uses: Res, mutates: Mutation) -> tuple[Posture, Remember | None]:
 def _grade(uses: Res, mutates: Mutation) -> Severity:
     """How heavy a tool's ordinary use is, from its declarations alone.
 
-    A second table rather than a third column of :func:`_baseline`, because the two rows that matter
+    A second table, because the two rows that matter
     fall in different places: ``DESTRUCTIVE`` is heavy without changing the posture (a move is asked
     once per path either way), so it has a row of its own here and none there. Read top to bottom and
     the first match wins, as there.

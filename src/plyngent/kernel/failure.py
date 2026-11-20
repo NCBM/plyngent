@@ -6,7 +6,7 @@ is worth it. It says *what kind of thing* went wrong, and the table in
 acts on. One wording, one answer, wherever the same failure happens.
 
 The set is closed on purpose. A new kind of trouble gets a member here, next to the answer it implies,
-rather than a new string at a raise site — which is how ``retryable: bool`` used to be filled in by
+and not a new string at a raise site — which is how ``retryable: bool`` used to be filled in by
 whoever happened to be writing the handler.
 
 ``of`` is the only errno table in the tree: a tool catches ``OSError`` and asks for its kind, so
@@ -49,7 +49,7 @@ class Failure(StrEnum):
     def of(cls, exc: OSError) -> Failure:
         """The kind of failure an OS error is, the same way wherever it was raised.
 
-        An errno nobody classified is reported as ``BUG`` rather than guessed at: the table is the
+        An errno nobody classified is reported as ``BUG``: the table is the
         whole point, and a silent fallback into "some other error" would put the guessing back at the
         call site.
         """
@@ -75,8 +75,8 @@ def _codes(*names: str) -> frozenset[int]:
     return frozenset(value for name in names if (value := getattr(errno, name, None)) is not None)
 
 
-#: The errno values that mean the same kind of trouble, grouped the way the answers are. Names rather
-#: than numbers, because the numbers differ per platform and some names do not exist on every one.
+#: The errno values that mean the same kind of trouble, grouped the way the answers are. Names, because
+#: the numbers differ per platform and some names do not exist on every one.
 _BY_ERRNO: dict[Failure, frozenset[int]] = {
     Failure.MISSING: _codes("ENOENT", "ENOTDIR"),
     Failure.PERMISSION: _codes("EACCES", "EPERM", "EROFS"),

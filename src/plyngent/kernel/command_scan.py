@@ -6,8 +6,8 @@ interpreter — or the denylisted program — further in.
 
 The second thing here is the other half of that judgement: what this build **could not** answer for
 (:func:`reasons_for`). A command line where the program is a guess, a shell that runs text, a hop to
-another machine — each is a fact about one argv that no denylist can settle, and each is said as data
-rather than as a sentence so that a policy can turn it into a question and a client can show why.
+another machine — each is a fact about one argv that no denylist can settle, and each is said as data,
+so that a policy can turn it into a question and a client can show why.
 
 Pure functions over one argv, so there is nothing to bind and nothing to ask.
 """
@@ -46,7 +46,7 @@ _SELF_REVIEW: frozenset[str] = frozenset({"nohup", "screen", "tmux"})
 
 # ``<launcher> run <program> …``: task runners and package managers that launch
 # a program in their environment. A package-manager script (``npm run build``)
-# names a script rather than a program; the launcher basename is still checked.
+# names a script and not a program; the launcher basename is still checked.
 _RUN_LAUNCHERS: frozenset[str] = frozenset(
     {"conda", "hatch", "mise", "npm", "pdm", "pipenv", "pnpm", "poetry", "uv", "yarn"}
 )
@@ -98,7 +98,7 @@ _INTERPRETERS: frozenset[str] = frozenset(
 _VERSION_SUFFIX = re.compile(r"[0-9][0-9.]*$")
 
 # Privilege escalation: these run with rights the session itself does not have,
-# so a call that reaches one is refused outright rather than put to the person.
+# so a call that reaches one is refused outright.
 ESCALATION_PROGRAMS: frozenset[str] = frozenset({"doas", "pkexec", "run0", "su", "sudo", "systemd-run"})
 # ``FOO=bar`` in front of a program (env/sudo style).
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -295,7 +295,7 @@ _REMOTE_WRAPPERS: dict[str, _Spec] = {
 }
 
 # A shell that runs a command line handed to it as an *option*, per shell: the switch, and whether its
-# value is base64 rather than text (``pwsh -EncodedCommand``). These switches are read before ``getopt``,
+# value is base64 or text (``pwsh -EncodedCommand``). These switches are read before ``getopt``,
 # because ``cmd``'s are spelled with a slash and PowerShell's take the whole rest of the line.
 _SHELL_SWITCHES: dict[str, dict[str, bool]] = {
     "cmd": {"/c": False, "/k": False},
@@ -434,7 +434,7 @@ def unwrap_command(argv: Sequence[str]) -> UnwrappedCommand:
 
     An option the wrapper's spec does not know stops the unwrap at that wrapper
     and is reported in :attr:`UnwrappedCommand.unparsed`: the program behind it
-    is unknown, so the review asks instead of guessing (the wrapper itself is
+    is unknown, so the review asks a person (the wrapper itself is
     still judged, so ``sudo <new flag> rm -rf /`` keeps its ``sudo`` prompt).
     """
     parts = list(argv)
@@ -491,7 +491,7 @@ def _step(name: str, parts: list[str], start: int, *, command_strings: list[Comm
     """Resolve the wrapper *name* at ``parts[start - 1]`` past its own options."""
     spec = _spec_for(name)
     # Two ways there is nothing to unwrap: the name wraps nothing, or it is a shell whose command line was
-    # collected rather than guessed at (`_shell_step`).
+    # collected (`_shell_step`).
     if _shell_step(parts, start, name=name, command_strings=command_strings) or spec is None:
         return _Step()
     index = start
@@ -517,7 +517,7 @@ def _applet_step(parts: list[str], index: int) -> _Step:
     """The applet a multiplexer runs: ``busybox rm -rf /`` runs ``rm``, ``busybox --list`` runs nothing.
 
     A multiplexer has few options of its own and none of them names a program, so a token that starts with
-    ``-`` ends the unwrap rather than being guessed past: the program behind it is the multiplexer itself.
+    ``-`` ends the unwrap: the program behind it is the multiplexer itself.
     """
     if index >= len(parts) or parts[index].startswith("-"):
         return _Step()
