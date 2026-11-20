@@ -72,7 +72,7 @@ class Trajectory(Query, tag="trajectory", frozen=True, kw_only=True):
     carries its parent, so the branches are in the answer and a client does not have to ask for them
     one at a time, and the row nothing continues is where a turn may grow.
 
-    It is about a conversation rather than about one setting, which is why it is the first read with a
+    It is about a conversation, which is why it is the first read with a
     list in it: nothing here is a running total the kernel could have said in a flag.
     """
 
@@ -85,7 +85,7 @@ class Turns(Query, tag="turns", frozen=True, kw_only=True):
     A read, and not something a client can work out for itself: a turn is started by a command and ends
     by an event, so a client that wants to know whether the work it asked for is over has two facts to
     compare and no way to be sure it has seen both. The kernel has one answer to that — the turns it is
-    running — and it is a snapshot rather than a wait: an empty answer means this conversation is idle,
+    running — and it is a snapshot: an empty answer means this conversation is idle,
     and a client that wants to be told when that changes asks again after the next event.
 
     Empty is an answer and not a refusal, the same way an empty forest is: a conversation nothing is
@@ -98,8 +98,8 @@ class Turns(Query, tag="turns", frozen=True, kw_only=True):
 class Skills(Query, tag="skills", frozen=True, kw_only=True):
     """Which skills this host can see, and what is wrong with the ones that are not clean.
 
-    A read rather than a tool, because it is about the *program's* environment rather than about a
-    conversation: the directories were chosen when this kernel started, and a person asking "what does
+    A read, because it is about the *program's* environment: the directories were chosen when this
+    kernel started, and a person asking "what does
     this thing know how to do" is asking about the machine in front of them, not about the turn.
 
     Nothing is session-shaped here, which is why the query carries no name: skills are found once at
@@ -151,7 +151,7 @@ class Forest(Reply, tag="forest", frozen=True, kw_only=True):
 class LiveTurn(Struct, frozen=True, kw_only=True):
     """One turn that is running: which one, what kind, and the entry it is writing after.
 
-    ``kind`` is text rather than an enum, for the reason every closed set kept in a row is: an answer
+    ``kind`` is text, for the reason every closed set kept in a row is: an answer
     written by today's build stays readable when the set grows a member. ``begin_after`` is the entry
     the turn continues, so a client that asks while a turn is live can say where it will go next.
     """
@@ -177,7 +177,7 @@ class SkillRow(Struct, frozen=True, kw_only=True):
     ``root`` is the label the discovery uses (``plyngent-user``, ``claude-project``), because two copies
     of one name are two different directories and a listing that did not say which would be ambiguous.
     ``issues`` is what could not be read as it was written — a declared name that is not one, a missing
-    description, a block that did not parse — carried as data rather than as prose, so the reader says it.
+    description, a block that did not parse — carried as data, so the reader says it.
     """
 
     name: str = ""

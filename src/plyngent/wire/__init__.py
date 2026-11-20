@@ -3,7 +3,7 @@
 Nothing here knows about a terminal, a tool, or a turn's internals; nothing in the kernel's own
 packages is importable from here. That is the whole reason this package exists separately: a client —
 the CLI, a daemon's other end, a test — may import it and nothing else, and a test can assert exactly
-that with a directory walk instead of a review.
+that with a directory walk.
 
 Four kinds of traffic, and the difference between them is what a transport may do with each:
 
@@ -24,7 +24,7 @@ people, and the rule they share is the rule that matters: neither may be dropped
 not shared, which is why they are two pairs of values and not one.
 
 A **query** is the same shape a third time, in the one direction that had none: a client asking the
-kernel to *tell* it something. It belongs on its own lane rather than on the event lane, because the
+kernel to *tell* it something. It belongs on its own lane, because the
 event lane is allowed to coalesce what it carries and a read whose answer was folded into a batch is a
 frontend waiting for an answer that will never come (§5, E134).
 

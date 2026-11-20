@@ -6,7 +6,7 @@ one mark per tree it has been read in, because the numbers are per tree (``Mark`
 
 * **resume.** A client that comes back says how far it had got on the connection that died, and the
   kernel answers with what the host said since — once, and only for a number that is a claim about the
-  past rather than progress in the present (``resume``). Without that word, every ack would be asking
+  past (``resume``). Without that word, every ack would be asking
   to be sent what it is already holding.
 * **liveness.** A client that stops acking while the backlog grows is presumed gone; the link then
   drops the connection, refuses that client's questions and puts the human back to "nobody to ask".
@@ -45,5 +45,5 @@ class Ack(Struct, frozen=True, kw_only=True):
 
     marks: tuple[Mark, ...] = ()
     #: Whether these marks are a claim about a connection that is gone — the first frame of a client that
-    #: came back — rather than how far this one has got. Only the first claim on a connection is answered.
+    #: came back. Only the first claim on a connection is answered.
     resume: bool = False

@@ -8,9 +8,9 @@ are kept apart because a question's answer is a person's words while a call's an
 happened: every reader of an answer asks "did a person say yes" of it, and a fifth kind of question
 would make that question unanswerable.
 
-This is its own lane, not a member of the event stream, and the reason is measurable rather than
-aesthetic: events may be coalesced or dropped when a client falls behind, and a question may not. An
-``Ask`` that disappeared would leave the kernel waiting on an answer nobody can give, and the
+This is its own lane, and the reason is measurable: events may be coalesced or dropped when a client
+falls behind, and a question may not. An ``Ask`` that disappeared would leave the kernel waiting on an
+answer nobody can give, and the
 deadline would turn that into a silent refusal. So the two travel separately, and the transport
 gives this lane a lossless path.
 
@@ -35,7 +35,7 @@ Three more rules the shape is built around:
   inferred from the order of a tuple.
 * **A question names its place.** ``session`` / ``turn`` / ``scope`` are what lets a frontend that
   holds several sessions show the question under the right one, and what lets a disconnect refuse
-  exactly the questions that client was asked — instead of every question in the kernel.
+  exactly the questions that client was asked, and nobody else's.
 * **Nobody to ask is not the same as an unanswered question.** A deadline arriving is one thing and a
   headless run (or a client that went away) is another: the first falls back to the level's answer,
   the second is never a yes. Every answer says which of them it was (:class:`By`), and
@@ -65,7 +65,7 @@ class Severity(StrEnum):
     which nobody's silence is an answer: a program, a live terminal, something that leaves the
     workspace or cannot be undone, and the network reaching where it should not.
 
-    It lives on this side of the wire rather than in the kernel because a question carries it: the
+    It lives on this side of the wire because a question carries it: the
     level is what a client shows, what a policy outsources to an absence, and what a timeout falls
     back to. "No question at all" is not a level — that is what
     :class:`~plyngent.kernel.toolspec.Posture.AUTO` says.
@@ -81,9 +81,9 @@ class Severity(StrEnum):
 SEVERITIES: tuple[Severity, ...] = (Severity.ROUTINE, Severity.CONFIRM, Severity.DANGER)
 
 #: What each level's yes-or-no question answers when the deadline arrives and nobody spoke: the light
-#: question falls back to yes, and the two heavier ones never do. It is a table rather than a condition
-#: because the client shows it ("nobody answers ⇒ …") before the deadline, and the kernel acts on it
-#: after: both read this, so the two cannot say different things.
+#: question falls back to yes, and the two heavier ones never do. It is a table because the client
+#: shows it ("nobody answers ⇒ …") before the deadline and the kernel acts on it after: both read
+#: this, so the two cannot say different things.
 SILENCE: Mapping[Severity, bool] = {
     Severity.ROUTINE: True,
     Severity.CONFIRM: False,
@@ -109,7 +109,7 @@ class By(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Grades:
-    """How long a question of each level waits, as one installable value rather than three arguments.
+    """How long a question of each level waits, as one installable value.
 
     Same move as ``Limits``: three numbers that only ever travel together, decided where the program
     is started and nowhere further in. ``None`` means "the connection's own clock", so ``danger`` says
@@ -117,8 +117,7 @@ class Grades:
     run a program is worth waiting for.
 
     The defaults are the numbers this tree ships with: five seconds is enough to answer "write this
-    file?" and too short to answer anything heavier, so the levels differ by an order of magnitude
-    rather than by a parameter.
+    file?" and too short to answer anything heavier, so the levels sit an order of magnitude apart.
     """
 
     routine: float | None = 5.0
@@ -140,8 +139,8 @@ class AskSite(Struct, frozen=True, kw_only=True):
     """Where a question belongs: the three fields a caller has to look up.
 
     A tool knows its turn, so it names its own place and passes it; the transport only fills in what
-    the human has to read. Keeping it a value rather than three arguments is what lets a policy, a
-    tool and a test double talk about "where this question is" without carrying a `Session` around.
+    the human has to read. As a value, a policy, a tool and a test double can talk about "where this
+    question is" without carrying a `Session` around.
     """
 
     session: str = ""
@@ -163,9 +162,9 @@ class Ask(Struct, frozen=True, kw_only=True, tag_field="ask"):
 
     ``timeout`` is how long this question is worth waiting for, in seconds, and ``None`` is the
     connection's own deadline. A caller that cannot wait the whole of it — a tool that promised to
-    wait one minute, no longer — says so here rather than in a second clock on the side; the
-    connection resolves the two into the one number it acts on before the question is sent, so the
-    kernel and the client are never counting down to different moments.
+    wait one minute, no longer — says so here, and the connection resolves the two into the one number
+    it acts on before the question is sent, so the kernel and the client never count down to different
+    moments and no second clock is kept on the side.
 
     ``severity`` is how heavy the question is, and ``timeout_default`` is what it answers if that
     moment arrives with nobody having spoken. Both are resolved by the connection before the question
@@ -199,7 +198,7 @@ class Confirmation(Ask, tag="confirmation", frozen=True, kw_only=True):
 
     ``default`` is what to put in front of the human (a suggested answer, or the line they were
     typing when this question took the cursor), not what an unanswered question becomes: that is
-    :attr:`Ask.timeout_default`'s business, and it follows the level rather than this field. No
+    :attr:`Ask.timeout_default`'s business, which follows the level. No
     default at all means a blank line is not an answer, so the client asks again.
     """
 
@@ -210,9 +209,8 @@ class Selection(Ask, tag="selection", frozen=True, kw_only=True):
     """Pick from ``options``: one of them, or — with ``multiple`` — any number of them.
 
     ``Picked.value`` is the single pick; ``Picked.values`` is several, in the order the person gave
-    them. One field for each is a decision rather than an envelope: a question that can only be answered
-    once has no list to read, and a list nobody asked for would make every caller ask "which field is
-    the answer".
+    them. One field for each is a decision: a question that can only be answered once has no list to
+    read, and an envelope would make every caller ask "which field is the answer".
 
     ``multiple`` changes what one line means, so it is the *question's* fact and not the answer's: a
     person picking several types several, and the client's own syntax for that is its business.
@@ -237,10 +235,10 @@ class FreeText(Ask, tag="free-text", frozen=True, kw_only=True):
 class Secret(Ask, tag="secret", frozen=True, kw_only=True):
     """A line the client must not echo — a passphrase, a token typed into a session.
 
-    Three rules, and they are why this is a kind of its own rather than a flag on :class:`FreeText`:
+    Three rules, and they are why this is a kind of its own:
     the client reads it without echo, it is never carried into an event, a result or a journal
     (R2.1 D6), and nothing suggests a value for it — so there is no default, and the buffer the human
-    happened to be typing when this question took the cursor is refused rather than offered back.
+    happened to be typing when this question took the cursor is refused.
     """
 
 
@@ -301,7 +299,7 @@ def answer_kind(ask: AnyAsk) -> type[AnyAnswer]:
     """Which answer this question admits.
 
     A connection keeps this beside the question it is waiting on, so an answer of the wrong kind is
-    refused where it arrives instead of being taken for silence half a deadline later.
+    refused where it arrives, and nothing can read it as the silence a deadline counts.
     """
     match ask:
         case Confirmation():
@@ -317,7 +315,7 @@ def as_agreed(answer: AnyAnswer) -> Agreed:
 
     :func:`answer_kind` says a question of one kind is answered in its own kind, so a caller that asked a
     ``Confirmation`` is handed an ``Agreed`` and nothing else — and this is the line that says so once,
-    rather than every caller narrowing the union by hand. An answer of another kind is a channel
+    so no caller narrows the union by hand. An answer of another kind is a channel
     answering something nobody asked, and it reads as nobody at all: the one answer that can never be
     taken for consent.
     """

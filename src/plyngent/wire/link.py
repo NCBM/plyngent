@@ -17,7 +17,7 @@ tells you nothing: every reader of a connection can tick both boxes. The check t
 static type of the value in hand.
 
 What is deliberately *not* here: the read methods (``artifact`` / ``pty`` / ``status``). They belong on
-the link rather than in the command union — a command changes the world, a link method reads it — and
+the link: a command changes the world, a link method reads it.
 :meth:`KernelLink.query` is the lane they travel on, which arrived with the first of them: ``grants``,
 then :meth:`KernelLink.trajectory` (§5 E134). Each still waits for the store behind it.
 """
@@ -101,17 +101,17 @@ class KernelLink(Protocol):
     async def query(self, query: AnyQuery) -> AnyReply:
         """Ask the kernel to tell this client something, and wait for that one answer.
 
-        A read rather than a command: nothing changes, the answer is of the kind the query names, and
+        A read: nothing changes, the answer is of the kind the query names, and
         the number that pairs the two is this connection's own (an ``id`` of ``0`` means "name this one
         for me"). A connection that ended while a query was out answers with what it has — which is
-        nothing, so the wait ends in an error the caller can see rather than in silence.
+        nothing, so the wait ends in an error the caller can see.
         """
         ...
 
     async def trajectory(self, session: str) -> tuple[Entry, ...]:
         """Read one conversation's rows, in the order they were written.
 
-        A method rather than a command, and one that answers a *value*: the entries, with the parent each
+        A method, answering a *value*: the entries, with the parent each
         one continues, so a client that wants the branches has them without a second question. A session
         this kernel is not serving answers nothing, which is the truth about a conversation that was
         never opened (E134).
@@ -121,7 +121,7 @@ class KernelLink(Protocol):
     async def turns(self, session: str) -> tuple[LiveTurn, ...]:
         """Which turns of this conversation are running, oldest first — empty when none is.
 
-        A snapshot rather than a wait, for the reason it is a read at all: the kernel answers what it is
+        A snapshot, for the reason it is a read at all: the kernel answers what it is
         doing now, and a client that wants to be told when that changes asks again after the next event
         (E134). What a turn is *doing* is deliberately absent — a sentence about the middle of a turn goes
         stale between the write and the read, and the address plus the kind is what a reader can act on.

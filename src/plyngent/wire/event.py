@@ -108,7 +108,7 @@ class Refusal(StrEnum):
     NO_SHAPE = "no-shape"
     NOT_AN_OBJECT = "not-an-object"
     #: A turn nobody asked for: ``goal`` is the one kind only this kernel may start, so a client that
-    #: sends one is refused rather than served (§10.4, E146).
+    #: sends one is refused (§10.4, E146).
     NO_GOAL = "no-goal"
     #: The kernel is already running as many turns as it may, across every conversation. Not ``busy``:
     #: that one names a turn of this very session, and this one is a budget for the process (E156).
@@ -120,8 +120,7 @@ class Refusal(StrEnum):
     #: the chain to continue from (E158).
     NOTHING_TO_RETRY = "nothing-to-retry"
     #: A command or a read named a tree this kernel does not serve, and nothing it can do will change
-    #: that: opening a tree is ``Open``'s job, and one command naming another tree says so instead of
-    #: opening it behind the client's back (E154/E157).
+    #: that: opening a tree is ``Open``'s job, so one command naming another tree is refused (E154/E157).
     NO_WORKSPACE = "no-workspace"
     #: The path a client named is not a directory, so there is nothing there to work in.
     NOT_A_WORKSPACE = "not-a-workspace"
@@ -219,12 +218,12 @@ class Noticed(Event, tag="noticed", frozen=True, kw_only=True):
     """The harness told the model something, and where it was written.
 
     A reminder is a row a model reads (:class:`~plyngent.kernel.trail.Notice`), so this event is the
-    durable fact's announcement rather than the fact — but a person still needs to see it, and they need
+    durable fact's announcement — but a person still needs to see it, and they need
     the entry id for the same reason a compaction's is needed: it is a place the conversation continues
     from, and it is what ``/history`` will list.
 
-    ``summary`` is the sentence the writer put in the row for people, passed through rather than composed
-    here: the words that say what a reminder was about belong where it was decided, and this lane only
+    ``summary`` is the sentence the writer put in the row for people, passed through from where it was
+    written: the words that say what a reminder was about belong where it was decided, and this lane only
     ever carries facts. A reminder that no longer holds is announced the same way and says so in its own
     summary.
     """
@@ -237,8 +236,8 @@ class Noticed(Event, tag="noticed", frozen=True, kw_only=True):
 class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
     """A turn was not started.
 
-    ``holder`` names the turn whose state conflicted, so the frontend can say "waiting on turn 7"
-    instead of inventing a message. The kernel does not queue: retrying is the caller's business.
+    invent nothing. The kernel does not queue: retrying is the caller's business.
+
     ``entry`` is the entry the turn was asked to continue, when that is what was wrong with it.
     ``limit`` is how many turns may run at once, and it is filled in only by the refusal that is about
     the kernel's own budget — zero everywhere else, because "no limit was involved" is not a limit.
@@ -255,7 +254,7 @@ class ListedSession(Struct, frozen=True, kw_only=True):
     """One conversation this journal holds, and where it ends.
 
     ``head`` is the id of the entry nothing continues from yet — the place a turn may grow — and it is
-    empty for a conversation nothing has been written in, which is the truth rather than a placeholder. It
+    empty for a conversation nothing has been written in, which is the truth; nothing stands in for it. It
     is the id and not a transcript: a client that wants the conversation says which entry it continues,
     and the kernel answers with the history up to there (D5).
     """
@@ -274,7 +273,7 @@ class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
 class WorkspaceRefused(Event, tag="workspace-refused", frozen=True, kw_only=True):
     """A command named a tree this kernel does not serve, and says which tree and why.
 
-    Four answers rather than one because they are four facts and a client acts differently on each: a
+    Four answers, because they are four facts and a client acts differently on each: a
     name nothing here serves is answered by opening it first, a path that is not a directory will never
     be a tree, a tree nested inside one that is open has to wait for that one to go away, and a kernel at
     its ceiling is one only a restart makes room in (E154/E157).
@@ -293,7 +292,7 @@ class Compacted(Event, tag="compacted", frozen=True, kw_only=True):
 
     ``entry`` is the summary itself, and a frontend needs it: a summary is a place a conversation may
     continue from, so a client that compacted and then kept writing to the entry it was on before would
-    continue beside the compression instead of past it. ``chars`` is how much text now stands in for the
+    continue beside the compression. ``chars`` is how much text now stands in for the
     stretch that went away — the one number that says whether the compaction was worth its cost.
     """
 
@@ -361,7 +360,7 @@ class ExportRefused(Event, tag="export-refused", frozen=True, kw_only=True):
 class ResumeRefused(Event, tag="resume-refused", frozen=True, kw_only=True):
     """A resume did nothing, and why.
 
-    A refusal rather than silence: the command is answered, so a person who typed it learns that the
+    A refusal: the command is answered, so a person who typed it learns that the
     conversation they are looking at is still the one they were reading. What it waits for is a *second*
     store — another journal this session could be pointed at — and this build keeps one journal per
     workspace, so there is nothing for the name to be.
@@ -408,9 +407,9 @@ class RolledBack(Event, tag="rolled-back", frozen=True, kw_only=True):
     """A workspace went back a version, and what that cost.
 
     ``target`` is the version the content was taken *from*, ``revision`` the version the putting-back was
-    recorded as — a rollback is appended like everything else, so the history says what happened rather
-    than rewriting itself. ``restored`` names the paths whose content moved, and it is what a person sees
-    instead of a difference: the difference between two versions is a thing the store can show again, and
+    recorded as — a rollback is appended like everything else, so the history says what happened and
+    nothing is rewritten. ``restored`` names the paths whose content moved, and it is what a person sees:
+    the difference between two versions is a thing the store can show again, and
     this is the receipt for the one act that changed the disk.
     """
 
@@ -424,8 +423,8 @@ class RollbackRefused(Event, tag="rollback-refused", frozen=True, kw_only=True):
     """A rollback did nothing, and why — there is no version, or the disk moved on since.
 
     The second reason is the one worth having: putting a version back over bytes somebody else wrote
-    would be exactly the kind of quiet loss the approval gate exists to prevent, so it is refused by name
-    rather than forced by default. ``path`` and ``version`` are what the refusal is about when it is
+    would be exactly the kind of quiet loss the approval gate exists to prevent, so it is refused by name.
+    ``path`` and ``version`` are what the refusal is about when it is
     about one path, and ``detail`` is the store's own words when the store is what said no.
     """
 
@@ -455,8 +454,7 @@ class GoalSet(Event, tag="goal-set", frozen=True, kw_only=True):
     One line for a person and one setting for the session: ``on`` means the kernel starts the next turn
     itself when a turn ends with work left in the plan, so a conversation is not left waiting for somebody
     to type "go on". What it is *not* is a loop: a goal turn that did not act — no call, nothing to
-    change — ends the chain, because asking a model again for an answer it already gave is insistence
-    rather than progress.
+    change — ends the chain, because asking a model again for an answer it already gave makes no progress.
     """
 
     session: str = ""
@@ -475,8 +473,8 @@ class Routed(Event, tag="routed", frozen=True, kw_only=True):
 
     ``route`` is the name the host resolved — not the name the command carried, which may have been
     empty and meant "whatever the default is". ``epoch`` is the number an attempt records, so "which
-    model answered this request" is answerable later from the history rather than from a terminal that
-    scrolled away.
+    model answered this request" is answerable later from the history, long after the terminal that
+    showed it has scrolled away.
 
     Said twice: when a route is chosen, and when a session is opened — which is what ``opening`` says,
     since the two are different things to a client. The answer to an opening is where the conversation
@@ -534,8 +532,7 @@ class Changed(Event, tag="changed", frozen=True, kw_only=True):
 
     ``patch`` is git's own unified diff between this version and the one before it, which is why it needs
     no wording of ours: ``---``/``+++`` and ``@@`` are what a person already reads. ``truncated`` says the
-    patch was longer than one event should carry and that the rest is in the store under ``revision``
-    rather than lost.
+    patch was longer than one event should carry and that the rest is in the store under ``revision``.
     """
 
     session: str = ""
@@ -549,18 +546,18 @@ class Changed(Event, tag="changed", frozen=True, kw_only=True):
 
 
 class KernelLeaving(Event, tag="kernel-leaving", frozen=True, kw_only=True):
-    """The kernel is going down, so the event stream is about to end on purpose rather than break."""
+    """The kernel is going down, so the event stream is about to end on purpose."""
 
     reason: str = ""
 
 
 class AssistantText(Event, tag="assistant-text", frozen=True, kw_only=True):
-    """A whole thing the model said, as one message rather than a stream of pieces.
+    """A whole thing the model said, as one message with its pieces already joined.
 
-    Deltas have an event of their own (:class:`AssistantDelta`) rather than being a flag on this one,
-    because the two say different things: this is the message the turn stands behind — it is what the
+    Deltas have an event of their own (:class:`AssistantDelta`), because the two say different things:
+    this is the message the turn stands behind — it is what the
     journal wrote and what a report counts — while a fragment is only what had arrived when it arrived.
-    A client that resumed mid-message therefore has one event to wait for rather than a rule about
+    A client that resumed mid-message therefore has one event to wait for, and no rule about
     joining halves, and a route that cannot stream says nothing at all in the second vocabulary.
     """
 
@@ -575,7 +572,7 @@ class AssistantDelta(Event, tag="assistant-delta", frozen=True, kw_only=True):
     The event carries words and nothing else — no index, no "this is the last one", no cursor. Folding
     the pieces is the client's, because the client is the only thing that knows whether it is drawing
     them progressively or not drawing them at all, and because a fragment that never got its ending is
-    a screen problem rather than a conversation one (§0.13, E94).
+    a screen problem (§0.13, E94).
 
     Nothing here is journaled: what the turn stands behind is the :class:`AssistantText` that follows,
     and a log of half-arrived text would be a second history that could disagree with the first.
@@ -589,7 +586,7 @@ class AssistantDelta(Event, tag="assistant-delta", frozen=True, kw_only=True):
 class AssistantThought(Event, tag="assistant-thought", frozen=True, kw_only=True):
     """A fragment of what the model is *thinking*, which is not yet what it is saying.
 
-    Its own event rather than a flag on :class:`AssistantDelta`, because the two are two things a person
+    Its own event, because the two are two things a person
     reads differently and one of them may be read at all while the other is not: a client that draws the
     answer progressively may drop these entirely, and a client that keeps them must not mix them into the
     answer's text. Nothing here is journaled either — the thinking a turn stands behind is a field of the
@@ -609,8 +606,8 @@ class AssistantThought(Event, tag="assistant-thought", frozen=True, kw_only=True
 class ToolCalled(Event, tag="tool-called", frozen=True, kw_only=True):
     """The model asked for a tool, and the call is about to be made.
 
-    ``call`` names this one call within its turn, so an answer is paired with its question by identity
-    rather than by tool name: a turn may call the same tool twice, and two calls may be in flight at
+    ``call`` names this one call within its turn, so an answer is paired with its question by identity:
+    a turn may call the same tool twice, and two calls may be in flight at
     once. ``intention`` is the model's own account of why it is calling, and is empty for a tool that
     does not ask for one; it is shown as the model's words and nothing reads it as permission.
 
@@ -653,8 +650,8 @@ class ToolReturned(Event, tag="tool-returned", frozen=True, kw_only=True):
 class OfferRefused(Event, tag="offer-refused", frozen=True, kw_only=True):
     """One tool a client offered was not taken, and why.
 
-    ``name`` is the tool, and it is empty when the refusal is about the whole offer rather than about
-    one of its tools — a connection that cannot do offers at all refuses every offer it is sent, and
+    ``name`` is the tool, and it is empty when the refusal is about the whole offer — a connection that
+    cannot do offers at all refuses every offer it is sent, and
     says so once.
 
     It is an event and not a reply because a command has no reply (D5): the client learns what came of
@@ -685,7 +682,7 @@ class Batch(Event, tag="batch", frozen=True, kw_only=True):
 class Entry(Struct, frozen=True, kw_only=True):
     """One row of the forest, as ``trajectory()`` hands it back.
 
-    It carries the parent pointer rather than a pre-rendered transcript: a caller that wants a chain
+    It carries the parent pointer: a caller that wants a chain
     walks ``begin_after`` to ``None``, and a caller that wants to draw the shape groups by the same
     field. ``preview`` is for a picker, and it is not the content — the content is pulled by id.
     """

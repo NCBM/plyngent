@@ -1,11 +1,11 @@
 """What a client learns at handshake time, once.
 
 The manifest is the kernel describing itself: which commands exist (so a client can build its parser
-and its completion instead of keeping a second list), which reads exist (so a frontend with buttons
-instead of a line has the same table), what it can do, and the two numbers that make the liveness rule
+and its completion with no second list), which reads exist (so a frontend with buttons has the same
+table), what it can do, and the two numbers that make the liveness rule
 operative. It is read once per connection and kept; nothing in it changes while a connection lives.
 
-``ack_interval`` and ``dead_after`` are negotiated rather than hard-coded on both sides for the same
+``ack_interval`` and ``dead_after`` are negotiated, for the same
 reason the protocol version is: a client that cannot be trusted to ack every 2 seconds is a client,
 not a bug. ``dead_after`` is therefore the kernel's own budget (``k * ack_interval``, with ``k`` at
 least 3), and the kernel alone decides that a silent peer is gone.
@@ -35,7 +35,7 @@ DEFAULT_DEAD_AFTER = 8.0
 
 #: The capability a client looks for before it offers anything: without it the kernel refuses every
 #: ``Offer`` it is sent. A kernel that cannot run a client's tools must not be told about them, so the
-#: answer is in the document a client reads at handshake time rather than in a refusal after the fact.
+#: client learns it from the document it reads at handshake time.
 CLIENT_OFFER = "client-offer"
 
 
@@ -58,7 +58,7 @@ class QuerySpec(Struct, frozen=True, kw_only=True):
     Beside the commands because a frontend with buttons has no line to type a word on: ``/grants`` and a
     button in a window are the same question, and only one of them needs this program's parser (E155).
     What is deliberately absent is which reply comes back: a reply is its own tagged union, so the answer
-    says what it is when it arrives rather than in a table that would have to be kept in step with it.
+    says what it is when it arrives, and no table has to be kept in step with it.
     """
 
     name: str = ""
@@ -69,7 +69,7 @@ class QuerySpec(Struct, frozen=True, kw_only=True):
 class WorkspaceRow(Struct, frozen=True, kw_only=True):
     """One tree this kernel serves: where it is, and the short name a frontend may show for it.
 
-    A row rather than a bare path because a greeting may name more than one tree (E154), and because a
+    A row, because a greeting may name more than one tree (E154), and because a
     frontend that has to pick one needs a word short enough to print beside an address. ``label`` is that
     word and nothing else: it is not an address, nothing resolves it, and a client that needs the tree
     names ``path``.

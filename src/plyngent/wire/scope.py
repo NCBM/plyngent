@@ -5,7 +5,7 @@ the boundary and neither side may own them. The mechanism that acts on a scope â
 prefixes, the work still running under them â€” stays in :mod:`plyngent.kernel.cancel`, because that is
 the kernel's business and nothing outside it asks.
 
-An address is a tuple of segments rather than a node reference for one reason: it can be written down,
+An address is a tuple of segments, for one reason: it can be written down,
 parsed back, and created late. A scope that was born after its parent was cancelled still knows it is
 cancelled, and a message carrying ``"3/r0/tool-1"`` reaches every scope below it without anything having
 been registered in advance.
@@ -22,8 +22,8 @@ class CancelReason(StrEnum):
     """Why a scope stopped.
 
     ``USER`` is a human, ``TIMEOUT`` an approval or a budget that ran out, ``POLICY`` a rule that
-    refused, ``CLIENT_GONE`` a consumer that disconnected (which the boundary treats as a refusal
-    rather than as silence), and ``LEAVING`` the session itself going down under a turn.
+    refused, ``CLIENT_GONE`` a consumer that disconnected (which the boundary treats as a refusal), and
+    ``LEAVING`` the session itself going down under a turn.
     """
 
     USER = "user"

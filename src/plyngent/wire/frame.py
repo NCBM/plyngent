@@ -7,13 +7,13 @@ the length counting the lane and the body together.
 
 The body is the value itself in :mod:`msgspec`'s msgpack, which is how this program writes every other
 value down. What a lane carries is the contract's own union, so the reader decodes *the* union for the
-lane rather than an envelope with a name in it: a command arriving on the event lane is not an event
+lane, with no envelope naming it: a command arriving on the event lane is not an event
 this build has not learned yet, it is a sender that is not this program.
 
-The lane is a byte of its own rather than a field of the body because the two ends have to agree about
+The lane is a byte of its own, because the two ends have to agree about
 *where* a value goes before either can read what it says. A tagged envelope would make the lane depend
 on decoding the body first, which is one more thing to get right twice — in the writer and in a reader
-that might be written in something other than Python — instead of one table, here.
+that might be written in something other than Python — and one table here carries it for both.
 """
 
 from __future__ import annotations
@@ -78,8 +78,8 @@ class Wire(StrEnum):
 #: The width of the length in front, in bytes.
 LENGTH_BYTES = 4
 
-#: The byte that names a lane. Written out rather than numbered from the enum's order: adding a lane
-#: must not quietly change what an old frame means at the other end of a socket.
+#: The byte that names a lane. Written out, so adding a lane cannot quietly change what an old frame
+#: means at the other end of a socket.
 KINDS: dict[Wire, int] = {
     Wire.HELLO: 0,
     Wire.COMMAND: 1,
@@ -174,12 +174,12 @@ def _decode(kind: int, body: bytes) -> object:
 def packed(pending: Sequence[AnyEvent], at_most: int) -> list[AnyEvent]:
     """Group adjacent runs of one lane into messages of at most ``at_most`` items.
 
-    A message that is already a batch is left alone rather than folded into another one, because "how
+    A message that is already a batch is left alone, because "how
     deep is this message" has to have one answer. Kind plays no part: the batch *carries* its items with
     their own ``seq``, so what the other end receives is unchanged apart from how many messages it
     arrived in.
 
-    It is here rather than in either channel because folding is the same operation whichever queue is
+    It is here, because folding is the same operation whichever queue is
     being folded — one that is about to be handed over, or one that has not been written yet.
     """
     packed_: list[AnyEvent] = []

@@ -30,7 +30,7 @@ class Command(Struct, frozen=True, kw_only=True, tag_field="cmd"):
     ``workspace`` names the tree the command is about, empty meaning the one this connection declared as
     its own. A kernel serves more than one tree, so a command that names a session has to say *which*
     tree's session that is — the ids are per tree, and so are the locks, the journal and the version
-    store behind them (E154). One field on the base class rather than one per command: opening is the
+    store behind them (E154). One field on the base class, because opening is the
     only thing that makes a tree exist, and every other command reads the same word the same way.
     """
 
@@ -140,7 +140,7 @@ class Compact(Command, tag="compact", frozen=True, kw_only=True):
     says. ``replaces`` is bookkeeping for the UI and for an audit ("this text stands for X..Y"), and
     the projection never reads it — which is why changing it cannot change what a model sees. The one
     thing it must name is two entries of this conversation: a span nothing could be read back from is
-    refused rather than written down.
+    refused.
 
     ``text`` is the summary itself, typed by whoever sent the command. A summary nobody typed is a
     *request* instead — ``Submit`` with ``kind="compact"`` — because asking a model is a turn and this
@@ -180,8 +180,8 @@ class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
 class Export(Command, tag="export", frozen=True, kw_only=True):
     """Keep a conversation as a document you can read back.
 
-    A projection, so it changes nothing. Where the text lands is the store's answer rather than the
-    caller's: the kernel writes no files of its own, because a path in a command would be a write behind
+    A projection, so it changes nothing. Where the text lands is the store's answer: the kernel writes
+    no files of its own, because a path in a command would be a write behind
     the policy every tool goes through — so the answer is a handle, and the handle is how a person (or a
     tool) reads it back.
     """
@@ -193,7 +193,7 @@ class Rollback(Command, tag="rollback", frozen=True, kw_only=True):
     """Put the workspace back to an earlier version. The putting-back is a version of its own.
 
     A rollback is a write, and it is a write of bytes that were already here — so it comes from the
-    frontend rather than from a tool, and it is one version like any other: the history is appended to,
+    frontend, and it is one version like any other: the history is appended to,
     never rewound, and what it was before the rollback stays in the store for anyone who wants it back.
 
     ``version`` is empty for "the newest one". ``paths`` narrows it to a few of the paths that version
@@ -217,7 +217,7 @@ class Ungrant(Command, tag="ungrant", frozen=True, kw_only=True):
 
     ``path`` is spelled the way the tools spell a path: expanded, and resolved against the workspace
     when it is relative. A path this conversation holds nothing for changes nothing, and the answer says
-    which of the two happened rather than pretending they are one.
+    which of the two happened.
     """
 
     path: str = ""
@@ -243,7 +243,7 @@ class Offer(Command, tag="offer", frozen=True, kw_only=True):
     """Say which tools this client can run.
 
     About the connection and not about a session — the inherited ``session`` is unused, as it is for
-    :class:`ListSessions`. A second ``Offer`` replaces the first rather than adding to it: it is the
+    :class:`ListSessions`. A second ``Offer`` replaces the first: it is the
     same client, and what it can run is whatever it last said, which is also how a client withdraws a
     tool it no longer has.
 

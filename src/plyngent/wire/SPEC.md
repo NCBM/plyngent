@@ -17,7 +17,7 @@ A stream carries bytes, not messages, so a value says where it ends:
 [4 bytes: length, big-endian][1 byte: lane][body]        length counts the lane and the body
 ```
 
-`body` is msgpack. The lane is a byte of its own rather than a field of the body, because the two ends
+`body` is msgpack. The lane is a byte of its own, because the two ends
 have to agree about *where* a value goes before either can read what it says. Lane numbers are fixed
 forever: a new lane is a new number, never a renumbering.
 
@@ -75,7 +75,7 @@ means the caller's default — the tree this connection declared, and (in a kern
 one.
 
 A tree that is not open is opened by `open` and by nothing else. Every other command naming a tree this
-kernel does not serve is refused whole (`no-workspace`) rather than obeyed: a command that opened a tree
+kernel does not serve is refused whole (`no-workspace`): a command that opened a tree
 behind the client's back would start writing a conversation somewhere nobody asked for.
 
 `open` refuses three structures and one path, and none of them is about permission — reaching this socket

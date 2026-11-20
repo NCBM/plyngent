@@ -7,7 +7,7 @@ it has to be able to say so *before* it says anything else — which is why this
 not a command. A command is one word of a union the kernel defines, and a client whose version a kernel
 does not speak has to be able to say so without having sent one.
 
-The tree it names is the other half of the same sentence, and it is a *default* rather than a declaration:
+The tree it names is the other half of the same sentence, and it is a *default*:
 a connection may name none, and every command is free to name its own. Which conversation it starts in is
 still a command — that is a choice a client makes after it has been told what this kernel can do.
 """
@@ -34,5 +34,5 @@ class Bind(Struct, frozen=True, kw_only=True):
     #: kernel that serves one tree answers such a connection with that one (E154).
     #:
     #: It is a choice and not a claim: a kernel is where a tree is resolved, so a name this kernel does not
-    #: serve is answered by the command that named it rather than by refusing the connection.
+    #: serve is answered by the command that named it.
     workspace: str = ""
