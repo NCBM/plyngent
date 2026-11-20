@@ -7,19 +7,20 @@ that answer into the arguments :func:`~plyngent.boot.install` takes, and brings 
 
 **The file is a fact about how this program was started, and it is the only such fact.** Flag beats file,
 and there is no third layer: the environment is where a secret is kept, never a way to override a value
-(§0.11, E70/E76). That is why ``load`` takes the environment as an argument rather than reading it where a
+(§0.11, E70/E76). That is why ``load`` takes the environment as an argument, and nothing reads it where a
 credential happens to be needed — one function reads ``os.environ``, it is this one, and everything past it
 holds values.
 
 **A file that says something this build does not understand is refused, not ignored.** An unknown key is a
 typo the person cannot see the effect of, a dialect this build does not speak is a route nothing can post to,
 and a ``secret_from_env`` naming a variable that is not set is a conversation that would fail at the first
-request instead of at the start. All three are answered here, before a kernel exists, with the file's own
+request, with nothing said at the start. All three are answered here, before a kernel exists, with the file's own
 path in the sentence — a program that will not start is a program that says why.
 
 **Nothing is written back yet.** The parse keeps the document object beside the decoded value
-(``tomlkit.parse`` rather than ``tomllib``) because perfect editing — a ``config set`` that does not reflow
-somebody's comments — is a later step of the same surface; nothing in this module writes (§0.11, E84).
+(``tomlkit.parse``, because ``tomllib`` discards the document) because perfect editing — a ``config set``
+that does not reflow somebody's comments — is a later step of the same surface; nothing in this module
+writes (§0.11, E84).
 """
 
 from __future__ import annotations
@@ -79,7 +80,7 @@ class ConfigError(Exception):
 class PtyFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[pty]``: how much of the host its terminals may take, and nothing else (§0.11, E85).
 
-    Named for the thing the three numbers are about rather than for the idea of a ceiling: everything
+    Named for the thing the three numbers are about, where a "ceiling" would name an idea: everything
     here is a quota on a terminal — how many a host opens, how many one conversation holds, and how much
     of one session's output is kept — and the value they turn into is the one a
     :class:`~plyngent.kernel.pty.registry.PtyRegistry` is given (E150). The last one is a window and not
@@ -98,7 +99,7 @@ class SandboxFile(Struct, forbid_unknown_fields=True, kw_only=True):
     ``path_denylist`` is matched against a resolved path as a substring (``/secrets/``), and nothing
     lifts it — not a grant, not a person saying yes, because it is the line drawn before anybody is
     asked. ``command_denylist`` names programs a command policy has to ask about, and it is **added to**
-    the ones this build ships with rather than replacing them: a file that could take ``sudo`` off that
+    the ones this build ships with, which stay: a file that could take ``sudo`` off that
     list would be a way for a typo to run as root, and the safe direction for a list like this is to get
     longer.
     """
@@ -120,14 +121,14 @@ class TrashFile(Struct, forbid_unknown_fields=True, kw_only=True):
 class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[turn]``: how many turns this program runs at once, and how far one of them may go.
 
-    ``running`` is a number for the *process* rather than for one conversation: four frontends on one
-    kernel is what it is sized for. A fifth turn is refused rather than queued, because a queue would
+    ``running`` is a number for the *process*, and no conversation has one: four frontends on one
+    kernel is what it is sized for. A fifth turn is refused, since a queue would
     make "what is running now" a lie (E156).
 
     ``rounds`` is the other axis: how many times a turn may ask the model before it reaches a wall, and
     ``0`` is "this program never said", the same reading ``Caps.context_window`` gets. ``soft`` says what
     the wall does — ``false`` ends the turn there, and ``true`` asks the person first, once per window,
-    so that a program left alone keeps the ceiling it was given instead of quietly running past it
+    so that a program left alone keeps the ceiling it was given, and never quietly runs past it
     (E150).
     """
 
@@ -137,7 +138,7 @@ class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
-    """``[journal]``: where the conversation is kept, instead of one file per workspace."""
+    """``[journal]``: where the conversation is kept, as one file for the whole workspace."""
 
     path: str = ""
 
@@ -164,7 +165,7 @@ class WebFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
 
 class AgentFile(Struct, forbid_unknown_fields=True, kw_only=True):
-    """``[agent]``: the two prompt sections a program may replace rather than inherit (§0.11, E79).
+    """``[agent]``: the two prompt sections a program may replace, since the rest it inherits (§0.11, E79).
 
     ``None`` is "this file says nothing about it", which is not the same as an empty string: an empty one
     is a program with no persona or no playbook, and that section then is not there at all.
@@ -177,9 +178,9 @@ class AgentFile(Struct, forbid_unknown_fields=True, kw_only=True):
 class RouteWebFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[route.web]``: this endpoint's half of the web tools, when it has one.
 
-    Written as a sub-table rather than three fields in ``[[route]]`` because it answers one question —
-    "what may this endpoint's web half do" — and because a route that says nothing here has no web half at
-    all rather than three defaults that happen to be right.
+    Written as a sub-table because it answers one question — "what may this endpoint's web half do" — and
+    because a route that says nothing here has no web half at all, where three defaults would have to
+    happen to be right.
     """
 
     share: bool = False
@@ -192,7 +193,7 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
     The fields are the route's, with two differences and both are the point of having a file at all: the
     credential arrives as *the name of the variable that holds it*, and ``caps`` is required because a
-    budget is a decision a person makes rather than one this program guesses.
+    budget is a decision a person makes, and this program does not guess it.
 
     ``provider`` is a different axis from ``dialect``: the first says *who* the endpoint is (and so what its
     web half can do), the second how it talks. Empty is a plain compatible endpoint, which is what a
@@ -236,7 +237,7 @@ class Settings:
     tree's own, so a program started with no file is the program it always was: no route and nothing to
     ask, the standard skill directories, one journal per workspace, and the budgets it shipped with.
 
-    ``skill_paths`` is text-to-be-resolved rather than a store, because the standard roots depend on the
+    ``skill_paths`` is text-to-be-resolved, and no store, because the standard roots depend on the
     workspace and the workspace is not known until a kernel is being started — which is what
     :meth:`skills` is for.
     """
@@ -255,7 +256,7 @@ class Settings:
     trash: bool = True
     journal: Path | None = None
     #: The document this value was read from, kept as the parser built it — comments, order and spacing
-    #: included — so a later write-back can edit it instead of reflowing somebody's file (§0.11, E84).
+    #: included — so a later write-back can edit it, and never reflow somebody's file (§0.11, E84).
     #: ``None`` for a program nobody configured. It takes no part in equality: two settings values are the
     #: same when they say the same thing, and a document is how they came to say it.
     document: TOMLDocument | None = field(default=None, compare=False, repr=False)
@@ -289,7 +290,7 @@ def load(path: Path | str | None = None, *, env: Mapping[str, str] | None = None
     ignoring them. ``None`` is the default place, and a default place with no file is simply a program
     somebody never configured.
 
-    ``env`` is where a credential is looked for, as a mapping rather than by reading the process's own, so a
+    ``env`` is where a credential is looked for, as a mapping, and nothing reads the process's own, so a
     test can say what is set without setting it. It is the one place this program reads an environment at
     all, and carrying it as an argument is what makes that checkable (§0.11, E76).
     """
@@ -366,7 +367,7 @@ def _web(declared: WebFile | None, routes: tuple[Route, ...]) -> Web:
 
     Two answers from one table, and they are the same answer: what is written is exactly what the program
     has, and what is not written is every implementation a route installed. A name written here is looked
-    up, so a typo is refused with the names that would have worked rather than quietly installing nothing —
+    up, so a typo is refused with the names that would have worked, and nothing is quietly installed —
     which is what "an engine is in the table only because a person asked for it" has to mean in practice.
     """
     said = WebFile() if declared is None else declared
@@ -380,9 +381,9 @@ def _web(declared: WebFile | None, routes: tuple[Route, ...]) -> Web:
 def _routes(declared: list[RouteFile], environment: Mapping[str, str]) -> tuple[Route, ...]:
     """Every ``[[route]]`` as a route, with the two things a file cannot spell already resolved.
 
-    Two refusals that are about the table rather than about one entry: a name written twice is a session's
+    Two refusals that are about the table, and not about one entry: a name written twice is a session's
     setting that could mean either, and a dialect this build does not speak is an endpoint nothing can post
-    to — both answered here rather than at the first request that would have failed.
+    to — both answered here, before the first request that would have failed.
     """
     seen: set[str] = set()
     routes: list[Route] = []
@@ -512,7 +513,7 @@ async def serve(
 ) -> Daemon:
     """Serve a kernel configured by *settings* at one address (``--serve``).
 
-    The same translation as :func:`install` and the same host, with an address instead of a client: a
+    The same translation as :func:`install` and the same host, with an address, and no client in front: a
     daemon has nobody in front of it, so the only thing this program still decides is where it listens.
     It is handed no tree either — the trees it serves are the ones a client names (E157) — and the one
     place that shows is the project's skills directory, which a program with no tree cannot have: the
