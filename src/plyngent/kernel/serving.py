@@ -54,12 +54,23 @@ from plyngent.kernel.notices import ELIDED, elided, elision_summary
 from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.running import TooManyTurns
 from plyngent.kernel.session import Session
-from plyngent.kernel.trail import BY_PERSON, TURN_ENDED_TAG, Summary, Withheld, kind_of, preview, transcript
+from plyngent.kernel.trail import (
+    BY_PERSON,
+    DELETED_TAG,
+    TURN_ENDED_TAG,
+    Summary,
+    Withheld,
+    kind_of,
+    preview,
+    transcript,
+)
+from plyngent.kernel.trail import Deleted as DeletedRecord
 from plyngent.kernel.turn import TurnEnd, TurnRunner
 from plyngent.wire.command import (
     Cancel,
     Close,
     Compact,
+    Delete,
     Export,
     Goal,
     Inherit,
@@ -67,6 +78,7 @@ from plyngent.wire.command import (
     Offer,
     Open,
     Prune,
+    Rename,
     Resume,
     Retry,
     Rollback,
@@ -77,6 +89,7 @@ from plyngent.wire.command import (
 from plyngent.wire.event import (
     Compacted,
     CompactRefused,
+    Deleted,
     DocumentStored,
     Entry,
     ExportRefused,
@@ -89,6 +102,7 @@ from plyngent.wire.event import (
     Pruned,
     PruneRefused,
     Refusal,
+    Renamed,
     ResumeRefused,
     RollbackRefused,
     RolledBack,
@@ -96,6 +110,7 @@ from plyngent.wire.event import (
     RouteRefused,
     Seeded,
     SeedRefused,
+    SessionRefused,
     SessionsListed,
     TurnKind,
     TurnRefused,
@@ -272,7 +287,7 @@ class Serving:
                 await self._bookkeeping(command)
             case Export(session=session, begin_after=begin_after):
                 await self._export(session, begin_after)
-            case SetRoute() | Ungrant() | Goal():
+            case SetRoute() | Ungrant() | Goal() | Rename() | Delete():
                 await self._setting(command)
             case Resume() | Rollback():
                 await self._past(command)
@@ -416,8 +431,8 @@ class Serving:
             case Close(session=session):
                 await self._close(session)
 
-    async def _setting(self, command: SetRoute | Ungrant | Goal) -> None:
-        """The commands that move one of a session's own settings and touch nothing outside it."""
+    async def _setting(self, command: SetRoute | Ungrant | Goal | Rename | Delete) -> None:
+        """The commands that move or read what a session says about itself, and touch nothing outside it."""
         match command:
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
@@ -425,6 +440,38 @@ class Serving:
                 await self._ungrant(session, path)
             case Goal(session=session, mode=mode):
                 await self._goal(session, mode)
+            case Rename(session=session, name=name):
+                await self._rename(session, name)
+            case Delete(session=session):
+                await self._delete(session)
+
+    async def _rename(self, session: str, name: str) -> None:
+        """Name a conversation, or take its name away with an empty one.
+
+        One refusal, which is the one every command about a session has: a conversation this kernel does
+        not serve. The answer is the name the conversation now *has*, so the same event answers both halves
+        of the word — where it is called and what it is called — the way ``Goal`` does for its switch.
+        """
+        found = self._session(session)
+        if found is None:
+            self._say(SessionRefused(session=session, reason=Refusal.NO_SESSION))
+            return
+        self._say(Renamed(session=session, name=await found.set_name(name.strip())))
+
+    async def _delete(self, session: str) -> None:
+        """Take a conversation out of the list, and leave every row it holds where it is.
+
+        The row goes where the conversation ends, because that is where a reader of its own log finds what
+        was decided about it from the outside. Nothing is un-said, so a turn may still continue from the
+        entry above it: what changed is the set of conversations a listing shows.
+        """
+        found = self._session(session)
+        if found is None:
+            self._say(SessionRefused(session=session, reason=Refusal.NO_SESSION))
+            return
+        head = await found.host.trail.head(session)
+        _ = await found.host.trail.append(session, DeletedRecord(), begin_after=None if head is None else head.id)
+        self._say(Deleted(session=session))
 
     async def _goal(self, session: str, mode: GoalMode | None) -> None:
         """Answer where the switch stands, or move it first.
@@ -1099,9 +1146,21 @@ class Serving:
         if host is None:
             return ()
         held = await host.trail.sessions()
-        listed = [(name, await self._head(host.trail, name)) for name in held]
-        listed.extend((session.session_id, "") for session in self._sessions() if session.session_id not in set(held))
-        return tuple(ListedSession(session=name, head=head) for name, head in listed)
+        listed: list[tuple[str, str, str]] = []
+        for name in held:
+            state = await host.trail.state_of(name)
+            listed.append((name, await self._head(host.trail, name), state.get("name", "")))
+        gone = set(held)
+        for session in self._sessions():
+            if session.session_id in gone:
+                continue
+            # An open conversation the journal does not list is either one nothing was said in yet — which
+            # is "I am here" and belongs in the listing — or one somebody deleted, which does not.
+            rows = await host.trail.entries(session.session_id)
+            if any(kind_of(row.payload) == DELETED_TAG for row in rows):
+                continue
+            listed.append((session.session_id, "", session.name))
+        return tuple(ListedSession(session=name, head=head, name=called) for name, head, called in listed)
 
     @staticmethod
     async def _head(trail: Trail, session: str) -> str:

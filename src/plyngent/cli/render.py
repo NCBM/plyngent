@@ -43,6 +43,7 @@ from plyngent.wire.event import (
     Changed,
     Compacted,
     CompactRefused,
+    Deleted,
     DocumentStored,
     ExportRefused,
     GoalMode,
@@ -55,6 +56,7 @@ from plyngent.wire.event import (
     Pruned,
     PruneRefused,
     Refusal,
+    Renamed,
     ResumeRefused,
     RollbackRefused,
     RolledBack,
@@ -62,6 +64,7 @@ from plyngent.wire.event import (
     RouteRefused,
     Seeded,
     SeedRefused,
+    SessionRefused,
     SessionsListed,
     ToolCalled,
     ToolReturned,
@@ -139,6 +142,8 @@ type _Turned = TurnStarted | TurnFinished | TurnRefused | OfferRefused
 type _Reported = (
     KernelLeaving
     | SessionsListed
+    | Renamed
+    | Deleted
     | WorkspaceRefused
     | Compacted
     | Pruned
@@ -157,6 +162,7 @@ type _Reported = (
     | Noticed
     | GoalSet
     | GoalRefused
+    | SessionRefused
 )
 
 #: What one call left different. Its own reader because it is the one thing on this lane a person reads
@@ -167,7 +173,19 @@ type _Diffed = Changed
 #: What a session is now, said as one line: its summary, its route, what it stopped showing, what it
 #: kept, and what the harness told the model. A document belongs here and not to a turn because the thing
 #: kept may have been kept outside one.
-type _Settled = Compacted | Pruned | DocumentStored | Routed | RolledBack | GrantRevoked | Seeded | Noticed | GoalSet
+type _Settled = (
+    Compacted
+    | Pruned
+    | DocumentStored
+    | Routed
+    | RolledBack
+    | GrantRevoked
+    | Seeded
+    | Noticed
+    | GoalSet
+    | Renamed
+    | Deleted
+)
 
 #: What the kernel would not do, and why. One line each, and the same shape — a word for what was asked
 #: for and the reason it did not happen — which is why they are read apart from what *is* true.
@@ -180,6 +198,7 @@ type _Declined = (
     | RollbackRefused
     | SeedRefused
     | GoalRefused
+    | SessionRefused
     | WorkspaceRefused
 )
 
@@ -767,6 +786,8 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | Seeded()
             | Noticed()
             | GoalSet()
+            | Renamed()
+            | Deleted()
         ):
             return _setting(event)
         case (
@@ -778,6 +799,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | RollbackRefused()
             | SeedRefused()
             | GoalRefused()
+            | SessionRefused()
             | WorkspaceRefused()
         ):
             return _declined(event)
@@ -797,7 +819,7 @@ def _connection(event: KernelLeaving | SessionsListed) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line per kind of news, on purpose
+def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — one line per kind of news, on purpose
     """What one of this session's settings is now: what it was compressed into, what it hides, what it
     kept, which route answers it, what was copied into it, and what the harness told the model.
 
@@ -827,6 +849,11 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911 — one line
             return ((session, Shown(said, "notice")),)
         case Noticed(session=session, entry=entry, summary=summary):
             return ((session, Shown(f"notice {entry} written: {summary}", "notice")),)
+        case Renamed(session=session, name=name):
+            said = f"named {name}" if name else "name cleared"
+            return ((session, Shown(said, "notice")),)
+        case Deleted(session=session):
+            return ((session, Shown("removed from the list, and its rows kept", "notice")),)
         case _ as never:
             assert_never(never)
 
@@ -868,7 +895,7 @@ def _difference(line: str) -> Role:
     return "assistant"
 
 
-def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one word per refusal, on purpose
+def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — one word per refusal, on purpose
     """What the kernel would not do, and why: the same sentence with a different word at the front.
 
     The kernel sent a value and not a sentence (:class:`~plyngent.wire.event.Refusal`), so the words are
@@ -897,6 +924,9 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911 — one wo
         case GoalRefused(session=session, reason=reason):
             said = _why(reason).format(session=session)
             return ((session, Shown(f"goal refused: {said}", "refusal")),)
+        case SessionRefused(session=session, reason=reason):
+            said = _why(reason).format(session=session)
+            return ((session, Shown(f"session refused: {said}", "refusal")),)
         case RollbackRefused(session=session, reason=reason, path=path, version=version, detail=detail):
             said = _why(reason).format(
                 path=path, version=version[:8], detail=f": {detail}" if detail else "", session=session
@@ -1074,8 +1104,14 @@ STYLES: dict[Role, str] = {
 
 
 def _listed(item: ListedSession) -> str:
-    """One session as a person reads it: its name, and where its conversation ends when it has an end."""
-    return f"{item.session} ({item.head})" if item.head else item.session
+    """One session as a person reads it: what it is called, its id, and where its conversation ends.
+
+    The name comes first because it is the part a person chose: a journal of ids alone says nothing about
+    which conversation is the work. A conversation nobody named is its id, which is what it was before
+    names existed.
+    """
+    called = f"{item.name} [{item.session}]" if item.name else item.session
+    return f"{called} ({item.head})" if item.head else called
 
 
 def _suggested(default: str | None) -> str:

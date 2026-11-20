@@ -73,6 +73,11 @@ GOAL = "goal"
 #: after the fact.
 ROUTE = "route"
 
+#: The key the session's own name is written under: what a person called this conversation, read back in
+#: the listing and nowhere else. One value, folded last-write-wins like the rest, so renaming twice
+#: leaves the second name and a cleared name is an empty value.
+NAME = "name"
+
 #: The key the session's own path grants are written under: which paths outside the workspace this
 #: conversation may reach, and how far. A fifth key, and the only one whose subject is the world outside
 #: this conversation — it is written because a person said yes once, and it has to outlive the
@@ -430,6 +435,21 @@ class Session(Component):
             return mode.value, mode
 
         return await self.change(GOAL, mutate)
+
+    @property
+    def name(self) -> str:
+        """What a person called this conversation, or nothing when nobody did."""
+        return self._state.get(NAME, "")
+
+    async def set_name(self, name: str) -> str:
+        """Name this conversation, and answer what it is called now. A name it already has writes nothing."""
+
+        def mutate(before: str | None) -> tuple[str | None, str]:
+            if before == name:
+                return None, name
+            return name, name
+
+        return await self.change(NAME, mutate)
 
     @property
     def todos(self) -> Todos:

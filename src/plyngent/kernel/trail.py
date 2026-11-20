@@ -253,6 +253,20 @@ class TurnEnded(Struct, tag=TURN_ENDED_TAG, frozen=True, kw_only=True):
     kind: str = ""
 
 
+#: The tag one conversation's deletion carries. Spelled here because it is half of the record's identity.
+DELETED_TAG = "deleted"
+
+
+class Deleted(Struct, tag=DELETED_TAG, frozen=True, kw_only=True):
+    """One conversation a person took out of the list, with everything it said still in the file.
+
+    A row and not a removal: **only a session's own chain is append-only**, so what deletion changes is
+    the set of conversations a listing shows — and that is said where the conversation is, so a reader
+    of the journal finds the decision next to what it is about. Nothing is destroyed, which is what
+    makes "it is gone from the list" a fact somebody can check rather than a deletion to be trusted.
+    """
+
+
 #: The tag a kept aside carries. Spelled here because it is half of the record's identity.
 PROMOTED_TAG = "promote"
 
@@ -394,7 +408,18 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
 #: that was never answered, what one call left different, what one person said when they were asked, and
 #: what one request cost.
 type AnyRecord = (
-    AnyMessage | StateChange | Summary | Notice | Withheld | Attempt | Effect | Consent | Usage | TurnEnded | Promoted
+    AnyMessage
+    | StateChange
+    | Summary
+    | Notice
+    | Withheld
+    | Attempt
+    | Effect
+    | Consent
+    | Usage
+    | TurnEnded
+    | Promoted
+    | Deleted
 )
 
 
@@ -418,13 +443,14 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
     the model is told about itself. And a turn's end is the fourth: a model reading "turn 3 ended" as part
     of its conversation would be reading the log. A kept aside is the fifth: it says which rows a person
-    decided to keep, and the rows themselves are what a model reads.
+    decided to keep, and the rows themselves are what a model reads. A deletion is the sixth, and says
+    nothing about what a model is given: the conversation is out of the list and still readable.
     """
     if isinstance(record, Summary):
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
     if isinstance(record, Notice):
         return Note(text=record.text) if record.text else None
-    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded | Promoted):
+    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded | Promoted | Deleted):
         return None
     return record
 

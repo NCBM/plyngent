@@ -67,6 +67,7 @@ from plyngent.kernel.trail import (
     AnyRecord,
     Attempt,
     Consent,
+    Deleted,
     Effect,
     Notice,
     Promoted,
@@ -831,6 +832,7 @@ def test_every_record_arrives_as_who_actually_spoke() -> None:
         Usage,
         TurnEnded,
         Promoted,
+        Deleted,
     ), "a record nobody classified would be a writer nobody asked about"
     kinds = {type(as_message(cls())).__name__ for cls in get_args(AnyMessage.__value__)}
     assert kinds == {"User", "Assistant", "Result", "Note"}, "a message is a message, whichever of the four it is"

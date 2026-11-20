@@ -126,6 +126,20 @@ EXPECTED: dict[str, str] = {
     "Options:\n"
     "  --path TEXT\n"
     "  --session TEXT  the conversation to act on  [default: main]",
+    "rename": "Usage: rename [OPTIONS]\n"
+    "\n"
+    "  Give this conversation a name a person can read, or take its name away with\n"
+    "  an empty one.\n"
+    "\n"
+    "Options:\n"
+    "  --name TEXT\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
+    "delete": "Usage: delete [OPTIONS]\n"
+    "\n"
+    "  Take this conversation out of the list, keeping everything it said.\n"
+    "\n"
+    "Options:\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
 }
 
 

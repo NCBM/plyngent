@@ -66,6 +66,42 @@ async def test_a_closed_conversation_nothing_was_said_in_leaves_the_list(story: 
     assert story.screen() == ("sessions: main, work", "sessions: main")
 
 
+async def test_a_conversation_can_be_named_and_keeps_its_id(story: Story) -> None:
+    """/rename is a setting of the conversation: the listing shows the name beside the id, and clears it."""
+    await story.type("/new --session work")
+    await story.type("/rename --session work --name 'the parser fix'")
+    await story.type("/sessions")
+    await story.type("/rename --session work")
+    await story.type("/sessions")
+
+    assert story.screen() == (
+        "[work] named the parser fix",
+        "sessions: main, the parser fix [work]",
+        "[work] name cleared",
+        "sessions: main, work",
+    ), "the name is what a person reads, and the id it answers to is still there"
+
+
+async def test_a_deleted_conversation_leaves_the_list_and_keeps_its_rows(story: Story) -> None:
+    """Only a session's own chain is append-only, so deleting is a row: the list changes, nothing is lost.
+
+    Opening it by name still works, which is the point of keeping the rows: what was deleted is an entry
+    in a list, not a conversation.
+    """
+    await story.type("/new --session work")
+    await story.type("/delete --session work")
+    await story.type("/sessions")
+    await story.type("/open --session work")
+    await story.type("/close --session work")
+    await story.type("/delete --session nowhere")
+
+    assert story.screen() == (
+        "[work] removed from the list, and its rows kept",
+        "sessions: main",
+        "[nowhere] session refused: no such session here: open one first",
+    ), "the list is what changed, and a conversation this kernel does not serve says so"
+
+
 async def test_a_message_written_in_an_editor_is_sent_like_a_typed_line(story: Story) -> None:
     await story.type("/submit")
     await story.write("a longer thought,\nover two lines")

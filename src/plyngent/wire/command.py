@@ -173,6 +173,30 @@ class Resume(Command, tag="resume", frozen=True, kw_only=True):
     store: str = ""
 
 
+class Rename(Command, tag="rename", frozen=True, kw_only=True):
+    """Give this conversation a name a person can read, or take its name away with an empty one.
+
+    A name is the conversation's own setting, so it is a ``state-change`` row like the route and the
+    plan: one value, folded last-write-wins, and nothing about it is written twice. What it is *for* is
+    the listing — a journal of ``main``, ``s1`` and ``s2`` says nothing about which one is the work — so
+    it travels in :class:`~plyngent.wire.query.ListedSession` and nowhere else.
+    """
+
+    session: str = ""
+    name: str = ""
+
+
+class Delete(Command, tag="delete", frozen=True, kw_only=True):
+    """Take this conversation out of the list, keeping everything it said.
+
+    Only a session's own chain is append-only, so this is a row inside it: the set of conversations a
+    listing shows is a different question from what a conversation contains, and a deletion answers the
+    first one. Nothing is destroyed, so the rows stay readable and a turn may still continue from them.
+    """
+
+    session: str = ""
+
+
 class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
     """List the conversations this journal holds."""
 
@@ -271,4 +295,6 @@ type AnyCommand = (
     | Offer
     | Rollback
     | Ungrant
+    | Rename
+    | Delete
 )

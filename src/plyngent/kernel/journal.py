@@ -44,6 +44,7 @@ from plyngent.kernel.model import MODEL_TAGS, AnyMessage
 from plyngent.kernel.trail import (
     ATTEMPT_TAG,
     CONSENT_TAG,
+    DELETED_TAG,
     EFFECT_TAG,
     NOTICE_TAG,
     PROMOTED_TAG,
@@ -55,6 +56,7 @@ from plyngent.kernel.trail import (
     AnyRecord,
     Attempt,
     Consent,
+    Deleted,
     Effect,
     Entry,
     Notice,
@@ -483,8 +485,16 @@ class SqliteTrail(Trail):
 
         ``MIN(id)``, because a sequence number is per session — every session's first
         entry is number one — so only the row number is comparable across sessions.
+
+        A conversation somebody deleted is not here: the row that says so is in its own chain, and this
+        is the one reader that acts on it. Everything it said is still in the file, which is what makes
+        "gone from the list" a fact about the list.
         """
-        rows = await self._read_all("SELECT session FROM entry GROUP BY session ORDER BY MIN(id)", ())
+        rows = await self._read_all(
+            "SELECT session FROM entry WHERE session NOT IN (SELECT session FROM entry WHERE tag = ?) "
+            "GROUP BY session ORDER BY MIN(id)",
+            (DELETED_TAG,),
+        )
         return tuple(str(session) for (session,) in rows)
 
     @override
@@ -661,6 +671,7 @@ _RECORDS: Mapping[str, type[AnyRecord]] = {
     USAGE_TAG: Usage,
     TURN_ENDED_TAG: TurnEnded,
     PROMOTED_TAG: Promoted,
+    DELETED_TAG: Deleted,
 }
 
 

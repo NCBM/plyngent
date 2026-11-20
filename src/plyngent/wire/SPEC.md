@@ -107,11 +107,15 @@ behind the client's back would start writing a conversation somewhere nobody ask
 | `offer` | say what tools this client can run |
 | `rollback` | put a path back to the version an earlier entry recorded |
 | `ungrant` | take back one path a conversation was allowed to reach |
+| `rename` | name a conversation, or clear its name with an empty one |
+| `delete` | take a conversation out of the list, keeping every row it holds |
 
-`submit.kind` is a `TurnKind` — `chat`, `compact`, `aside`, `goal`, `retry` — and three of the five are not
-a client's to send: `goal` is started by the kernel when an unfinished plan says the work is not done
-(`no-goal`), `aside` is declared and not implemented (`no-aside`), and `retry` is asked for with the command
-of that name (`no-retry`). Each is refused by name, which is a refusal a client can be written against.
+`submit.kind` is a `TurnKind` — `chat`, `compact`, `aside`, `goal`, `retry` — and two of the five are not a
+client's to send: `goal` is started by the kernel when an unfinished plan says the work is not done
+(`no-goal`), and `retry` is asked for with the command of that name (`no-retry`). Each is refused by name,
+which is a refusal a client can be written against. `aside` is a client's to send, and what makes it one is
+that the kernel runs it with the tools that write nothing and leaves its rows out of the model's history
+until a person keeps them.
 
 `retry` asks one more request against the chain as it stands: the tool calls already on it stay where they
 are, with their results, and none of them runs again. `begin_after` names the entry to continue, and an

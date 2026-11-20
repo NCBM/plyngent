@@ -248,16 +248,20 @@ class TurnRefused(Event, tag="turn-refused", frozen=True, kw_only=True):
 
 
 class ListedSession(Struct, frozen=True, kw_only=True):
-    """One conversation this journal holds, and where it ends.
+    """One conversation this journal holds, what it is called, and where it ends.
 
     ``head`` is the id of the entry nothing continues from yet — the place a turn may grow — and it is
     empty for a conversation nothing has been written in, which is the truth; nothing stands in for it. It
     is the id and not a transcript: a client that wants the conversation says which entry it continues,
     and the kernel answers with the history up to there (D5).
+
+    ``name`` is what a person called it, and empty is "nobody named this one": a name is a setting of the
+    conversation (``Rename``), so an unnamed conversation is not a nameless kind of thing.
     """
 
     session: str = ""
     head: str = ""
+    name: str = ""
 
 
 class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
@@ -265,6 +269,31 @@ class SessionsListed(Event, tag="sessions-listed", frozen=True, kw_only=True):
     ``ListSessions``, not a receipt."""
 
     sessions: tuple[ListedSession, ...] = ()
+
+
+class Renamed(Event, tag="renamed", frozen=True, kw_only=True):
+    """What a conversation is called now, after a ``Rename`` — the empty name included."""
+
+    session: str = ""
+    name: str = ""
+
+
+class Deleted(Event, tag="deleted", frozen=True, kw_only=True):
+    """A conversation is out of the list, and everything it said is still in the file."""
+
+    session: str = ""
+
+
+class SessionRefused(Event, tag="session-refused", frozen=True, kw_only=True):
+    """A command about one conversation was not done: this kernel does not serve that one.
+
+    One event for ``Rename`` and ``Delete`` because the fact is one — there is nothing here to rename,
+    and nothing here to take out of a list — and a client that wanted a second sentence would be reading
+    the same absence twice.
+    """
+
+    session: str = ""
+    reason: Refusal = Refusal.NO_SESSION
 
 
 class WorkspaceRefused(Event, tag="workspace-refused", frozen=True, kw_only=True):
@@ -702,6 +731,9 @@ type AnyEvent = (
     | TurnRefused
     | Noticed
     | SessionsListed
+    | Renamed
+    | Deleted
+    | SessionRefused
     | WorkspaceRefused
     | Compacted
     | CompactRefused
