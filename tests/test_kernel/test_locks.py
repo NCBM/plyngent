@@ -1,6 +1,6 @@
 """One lock per path: callers that name the same file take turns, and a read shares it with a read.
 
-These are the only exports of :mod:`plyngent.kernel.locks`, asserted as behaviour rather than as a shape:
+These are the only exports of :mod:`plyngent.kernel.locks`, asserted as behaviour, not as a shape:
 the properties below are what the rest of the kernel is allowed to assume, and they are also what a
 batch's graph has to agree with — the graph decides what may run, this is what holds.
 """

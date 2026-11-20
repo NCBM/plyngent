@@ -3,7 +3,7 @@
 No story can say this. A request's size is a number nothing on the screen or in the journal prints, and
 the one thing it exists for — deciding that a conversation no longer fits — a story sees only through what
 the decision did. So what is asserted here is the estimate itself: which parts of a request count, the two
-places where it is deliberately not a measurement (characters instead of tokens, a picture as a floor), and
+places where it is deliberately not a measurement (characters in place of tokens, a picture as a floor), and
 the correction that turns it into one. That the correction is *applied* is a story's, told where a turn
 decides.
 """

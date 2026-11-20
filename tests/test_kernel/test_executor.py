@@ -9,7 +9,7 @@ The versions a call leaves are the other half, and what a person can see of them
 change is shown, that the model is told nothing, that a read is not a version, that a rollback puts back
 what the last call left. What stays here is what no story can see from outside — which role a path was
 held under, that a refused path does not take its siblings with it, and that a version is taken inside
-the call's own lock rather than after it.
+the call's own lock, not after it.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def test_a_refused_path_does_not_take_the_others_with_it(tmp_path) -> None:
     assert [(item.role, key(item.path)) for item in held] == [(Role.READ, key(tmp_path / "a.txt"))], (
         "the path that resolved is still held: the call will read it before it refuses the other"
     )
-    assert refused, "and the one the workspace will not resolve is reported rather than dropped"
+    assert refused, "and the one the workspace will not resolve is reported, not dropped"
 
 
 # -- the calls an answer lets overlap --------------------------------------------------
@@ -312,7 +312,7 @@ async def test_a_tree_too_big_to_compare_says_so_instead_of_saying_nothing(tmp_p
     """A sweep past the bound keeps no version, and the effect carries the number it gave up at.
 
     No story can see this: the row's words are its kind, and what changed about the call is a number in
-    the bookkeeping rather than a line on the screen. Silence is the one answer that would be wrong — a
+    the bookkeeping, not a line on the screen. Silence is the one answer that would be wrong — a
     row with no version reads as a call that changed nothing, which is exactly what a program that ran
     past the bound did not do.
     """

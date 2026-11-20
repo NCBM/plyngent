@@ -3,7 +3,7 @@
 The catalog has no screen a story can read cheaply: a store that shadows a name is two directories deep. So
 it is asserted here, where the subject is the section as a value (§0.10, E65/E66). The other two are here
 for the same reason: a persona and a playbook are decided by the program that installs a plan, and what
-they compose to is a question about a value rather than about a run (§0.11, E79).
+they compose to is a question about a value, not about a run (§0.11, E79).
 """
 
 from __future__ import annotations

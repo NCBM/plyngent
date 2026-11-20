@@ -3,7 +3,7 @@
 A story has a workspace and a person in front of it. What it cannot have is a machine with no git, a
 pathspec git itself refuses, or a repository that starts above the workspace — and those are the ways the
 answer changes without the tool changing. So they are here, next to the two claims that are about the
-declaration rather than about a call: what the five tools declare, and what they refuse to let a
+declaration, not about a call: what the five tools declare, and what they refuse to let a
 repository's own configuration do.
 """
 
@@ -86,7 +86,7 @@ def _env(root: Path) -> Env:
 
 async def test_a_workspace_that_is_not_a_repository_is_answered_rather_than_refused(tmp_path) -> None:
     """``vcs_kind`` says there is none — most directories are not checkouts — and the other four say why
-    they have nothing to answer, which is a missing thing rather than a refusal (§0.8, E23)."""
+    they have nothing to answer, which is a missing thing, not a refusal (§0.8, E23)."""
     kind = await vcs.vcs_kind(_env(tmp_path), vcs.KindArgs(intention="what is this"))
     status = await vcs.vcs_status(_env(tmp_path), vcs.StatusArgs(intention="what changed"))
 
@@ -150,7 +150,7 @@ async def test_an_unborn_repository_has_no_commits_rather_than_a_failure(tmp_pat
 async def test_an_external_diff_driver_is_never_run(tmp_path) -> None:
     """A repository's own configuration is the one way a read becomes somebody else's program.
 
-    ``diff.external`` is a command git runs *instead of* showing a diff, and it is set per repository, so
+    ``diff.external`` is a command git runs *in place of* showing a diff, and it is set per repository, so
     a model asked to look at what changed could otherwise run anything the repository's author wrote. The
     ``--no-ext-diff`` in every diff argv is what makes that not happen; this fails if it is ever dropped.
     """
@@ -163,7 +163,7 @@ async def test_an_external_diff_driver_is_never_run(tmp_path) -> None:
 
     assert not marker.exists(), "the repository's own program ran on a read"
     assert diff.status is Status.OK
-    assert "-hello" in diff.body[0].value, "and the diff is the bytes rather than whatever a filter said"
+    assert "-hello" in diff.body[0].value, "and the diff is the bytes, not whatever a filter said"
 
 
 def test_the_five_declarations_are_one_read_of_a_program() -> None:

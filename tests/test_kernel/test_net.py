@@ -111,7 +111,7 @@ def test_a_stated_identity_wins_and_a_default_only_fills_the_gap() -> None:
     assert _headers({"User-Agent": "mine"})["User-Agent"] == "mine"
     assert _headers({"User-Agent": "mine"}, user_agent="theirs")["User-Agent"] == "theirs"
     assert _headers(None)["User-Agent"].startswith("plyngent"), (
-        "a call that says nothing still looks like this program rather than like a browser"
+        "a call that says nothing still looks like this program, not like a browser"
     )
 
 
@@ -291,7 +291,7 @@ async def test_a_search_charges_the_account_the_conversation_is_answered_on() ->
 
     A conversation talking to one account searches with that account: the bill stays in one place, and
     nobody — least of all the model — had to name it. What is left is the shared accounts in declaration
-    order, so two routes for one vendor are two tries of one engine rather than two engines.
+    order, so two routes for one vendor are two tries of one engine, not two engines.
     """
     engine = DeepSeek([_account("ds-a", shared=True), _account("ds-b", shared=True), _account("ds-c", token="c")])
 

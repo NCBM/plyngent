@@ -1,14 +1,14 @@
 """The dialects, as pure functions: a request becomes a body, a body becomes a reply.
 
 A codec has no socket and no clock, so what it does is exactly what these tests do — hand it values and
-read the values it answers. That is also why they are here rather than in the story suite: the four
+read the values it answers. That is also why they are here: the four
 faces a story stands outside of are a screen, a request, an answer and a disk, and the *body* between
 the second and the third is the one thing a story cannot see without a server. Every claim below is a
 claim about bytes, and the stories about routes then assert the same bytes arrive at a real server.
 
 Kept to the properties the two dialects must agree about and the places they must not. A dialect's
 whole content is "where does this go in *my* JSON", and a test that repeated the JSON back would pin the
-spelling rather than the rule.
+spelling, not the rule.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _body(codec: Codec, request: Request, *, caps: Caps) -> dict[str, Any]:
     """One request as the JSON a server would receive, read back into something a test can walk.
 
     Through the bytes on purpose: what a dialect promises is a *document*, and the text it becomes is
-    what a server actually gets. Reading it back also keeps the assertions about the wire rather than
+    what a server actually gets. Reading it back also keeps the assertions about the wire, not
     about the implementation of the encoder.
     """
     written = msgspec.json.encode(codec.encode(request, model="m", caps=caps))
@@ -149,8 +149,8 @@ def test_a_run_of_results_is_one_turn_of_the_person_speaking() -> None:
     """Two calls answered are one message in the dialect that takes turns, and two in the one that does not.
 
     This is the merge that only one dialect needs, and it is a property of *that* dialect: a model asked
-    to take turns is told about both results at once, which is also why the fold has to be here rather
-    than in whoever built the conversation.
+    to take turns is told about both results at once, which is also why the fold has to be here, and not
+    in whoever built the conversation.
     """
     request = _request(
         messages=(
@@ -304,7 +304,7 @@ def test_an_answer_that_thought_is_read_as_the_thought_it_was() -> None:
 
     assert chat.thoughts == (Thought(text="hmm"),), "this dialect signs nothing, so nothing is invented"
     assert spoken.thoughts == (Thought(text="hmm", signature="s1"), Thought(sealed="cipher")), (
-        "an unreadable block is kept as what it is rather than dropped for being unreadable"
+        "an unreadable block is kept as what it is, not dropped for being unreadable"
     )
     assert items.thoughts == (Thought(text="hmm"),)
     assert chat.text == spoken.text == items.text == "ok", "and the answer beside it is untouched"

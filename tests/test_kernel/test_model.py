@@ -80,7 +80,7 @@ def test_the_values_a_request_is_made_of_serialize_the_same_way_twice() -> None:
 def test_a_reply_that_ran_out_of_room_says_which_limit_it_hit() -> None:
     """A cut answer is a fact about the *answer*, and it is said in the vocabulary the kernel has.
 
-    The provider's finish reason translated into a closed-set member rather than a string of its own:
+    The provider's finish reason translated into a closed-set member, not a string of its own:
     "it hit the output limit" and "the provider refused the content" then reach a person the way a
     failed call does, and a reader that switches on ``Failure`` never has to parse a sentence.
     """

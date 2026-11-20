@@ -167,7 +167,7 @@ async def test_a_session_that_talked_too_much_keeps_the_newest_of_it(tmp_path) -
     A child that out-writes its reader blocks in ``write(2)`` until somebody reads — for the rest of its
     life, when nobody is watching a terminal. So the broker reads every session on its own, and what a
     read arriving afterwards finds is the *end* of the flood, with the part nobody will ever see said as
-    a number rather than as a hole. Nothing reads while the child talks here, which is the whole point.
+    a number, not as a hole. Nothing reads while the child talks here, which is the whole point.
     """
     assembly = _one_host(tmp_path, session_output_budget=1024)
     host_a = _key(Host, "ws-a")
@@ -187,7 +187,7 @@ async def test_a_session_that_talked_too_much_keeps_the_newest_of_it(tmp_path) -
     assert read.matched is False, "no substring was asked for"
     assert read.data.endswith("MARK\r\n"), "the window kept the newest of it, and the end is the newest"
     assert len(read.data) <= 1024, "and it is the window: nothing older than its size survived"
-    assert read.dropped > 100_000, "what nobody will see is counted rather than lost silently"
+    assert read.dropped > 100_000, "what nobody will see is counted, not lost silently"
     assert read.truncated and not read.alive and read.exit_code == 0, "the child is done, and the read says so"
 
     quiet = await a.pty.read(session.session_id, max_bytes=8, wait_seconds=0.1)

@@ -275,7 +275,7 @@ async def test_a_command_that_ran_out_of_time_still_says_what_it_had_said(tmp_pa
     """The deadline ends the waiting, not the record: what a program said before it hung is the answer.
 
     A kill is what ends a command that never finishes, and it takes whatever had not been read yet with
-    it — so this has to be read while it arrives rather than afterwards. `sh -c 'echo hi; sleep 30'` is
+    it — so this has to be read while it arrives. `sh -c 'echo hi; sleep 30'` is
     the whole case: everything worth knowing is already on the pipe by the time the deadline is reached
     (§2 R6).
     """
@@ -290,10 +290,10 @@ async def test_a_command_that_ran_out_of_time_still_says_what_it_had_said(tmp_pa
 async def test_a_process_that_left_the_group_is_said_and_this_end_of_the_pipes_is_closed(tmp_path) -> None:
     """E161: `killpg` reaches a group, and a program that called `setsid` is not in it.
 
-    Nothing portable can promise to kill that one, so two things happen instead of a lie. The answer says
+    Nothing portable can promise to kill that one, so two things happen, and neither is a lie. The answer says
     it — `escaped=true`, which is what a reader looking at a `timed_out` command needs to know — and this
-    end of the pipes is closed, which releases the fd, ends the wait at once instead of spending the whole
-    grace on an EOF that is never coming, and gives whatever is still writing `EPIPE` the next time it
+    end of the pipes is closed, which releases the fd, ends the wait at once, with no grace spent on an EOF
+    that is never coming, and gives whatever is still writing `EPIPE` the next time it
     says anything.
     """
     if shutil.which("setsid") is None:  # pragma: no cover — the case is util-linux's own program

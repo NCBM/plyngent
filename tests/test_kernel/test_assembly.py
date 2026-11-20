@@ -3,7 +3,7 @@
 A component is declared by the program that *starts* this one, so nothing a person types and nothing a
 model asks can make one appear: the only observer of "it was declared" is the assembly, and the only
 caller of that is a launcher's ``run``. What the stories therefore cannot pin is the seam itself —
-that a declaration handed to the kernel reaches the table instead of being silently dropped — and that
+that a declaration handed to the kernel reaches the table, and is not silently dropped — and that
 is the whole of what E143 asks this file to hold.
 """
 

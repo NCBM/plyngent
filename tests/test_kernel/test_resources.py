@@ -1,6 +1,6 @@
 """A discovery table is a list of roots and two callables: what a kind of resource costs to add.
 
-Every test here invents its own kind. That is the point rather than a convenience: the claim these
+Every test here invents its own kind. That is the point, not a convenience: the claim these
 tests hold is that adding a kind of resource to a kernel is a ``scan`` and a list of roots, and a test
 that used skills to say so would only ever prove something about skills.
 """

@@ -49,7 +49,7 @@ class Sweep(ToolArgs, kw_only=True):
 
 
 class Search(ToolArgs, kw_only=True):
-    """A package whose constraints all have to reach the schema rather than a handler."""
+    """A package whose constraints all have to reach the schema, not a handler."""
 
     query: Annotated[str, msgspec.Meta(min_length=1)]
     format: Literal["markdown", "json"] = "markdown"

@@ -113,7 +113,7 @@ async def test_a_projection_is_cached_and_the_cache_can_be_dropped(tmp_path) -> 
     finally:
         await trail.close()
 
-    assert _projections(path) == 1, "and the answer was kept, rather than computed twice"
+    assert _projections(path) == 1, "and the answer was kept, and not computed twice"
 
     with closing(sqlite3.connect(path)) as db:
         _ = db.execute("DELETE FROM projection")
@@ -288,7 +288,7 @@ async def test_the_log_can_be_read_back_whole_and_the_sessions_it_holds_named(tm
 
     A projection reads one chain and only what a model understands, so neither question is answered by
     ``derive``: what a person asks is what happened here in what order, bookkeeping included, and what
-    else is in this journal at all. Both are answers a *file* has rather than a process, which is why
+    else is in this journal at all. Both are answers a *file* has, not a process, which is why
     they are asserted here — a conversation nobody has opened since is exactly the one somebody is
     looking for.
     """

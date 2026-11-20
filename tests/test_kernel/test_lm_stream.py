@@ -1,7 +1,7 @@
 """The streamed answer: a body that arrives in frames, read into fragments and then into one reply.
 
 A stream is the one thing about a dialect that is not a pure function of one document, so it is here
-with the rest of the dialect's business rather than in a story: what it needs is a *chunk boundary* in
+with the rest of the dialect's business: what it needs is a *chunk boundary* in
 the wrong place, and no server produces one on demand. The framing is shared (`codec.frames`) and what a
 frame means is the dialect's, which is the split these tests are about — a chunk can be cut inside a
 character, and a call arrives in pieces that only make sense once they are joined.

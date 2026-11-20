@@ -36,7 +36,7 @@ async def _connected(budget: int = 1024) -> tuple[SocketChannel, SocketChannel]:
 
 
 async def _next(wire: Wire, channel: SocketChannel) -> object:
-    """The next value this end reads on one lane, failing rather than hanging if it never comes."""
+    """The next value this end reads on one lane, failing if it never comes."""
     return await asyncio.wait_for(anext(channel.read(wire)), 1.0)
 
 

@@ -111,9 +111,9 @@ async def test_a_result_the_kernel_stopped_waiting_for_is_dropped() -> None:
 async def test_a_connection_that_ends_refuses_the_question_that_was_waiting() -> None:
     """The far end going away is not a deadline: nobody can answer it, so the wait ends there and then.
 
-    Over a socket this is the ordinary way a wait ends — the client left — and it is the lane ending
-    rather than the link being closed that says so, which is why the refusal belongs to whoever reads
-    those lanes to the end.
+    Over a socket this is the ordinary way a wait ends — the client left — and it is the lane ending, not
+    the link being closed, that says so, which is why the refusal belongs to whoever reads those lanes to
+    the end.
     """
     channel = InProcChannel()
     link = Link(channel, timeout=30.0)

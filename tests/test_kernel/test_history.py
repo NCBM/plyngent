@@ -1,8 +1,8 @@
 """The store of versions: what a call left, kept so a difference and a way back both exist.
 
 These are mechanism assertions, not stories: a story reaches the store only through a turn, and what is
-being held here — that a version is a patch on the one before it, that a removal is an absence rather
-than a missing line, that the tree the versions are about is never written to — has no second way in.
+being held here — that a version is a patch on the one before it, that a removal is an absence and not
+a missing line, that the tree the versions are about is never written to — has no second way in.
 The store is a real repository because a fake would have to answer every question git answers, and the
 question these tests ask is whether this build asks git the right one.
 """

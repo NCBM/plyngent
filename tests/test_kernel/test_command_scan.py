@@ -240,7 +240,7 @@ def test_a_shell_switch_that_carries_a_command_line_is_collected() -> None:
     encoded = base64.b64encode("dir".encode("utf-16-le")).decode("ascii")
     assert unwrap_command(["pwsh", "-EncodedCommand", encoded]).command_strings[0].text == "dir"
     assert unwrap_command(["pwsh", "-EncodedCommand", "not base64!"]).command_strings[0].text == "not base64!", (
-        "a value that is not base64 is quoted as it stands rather than dropped"
+        "a value that is not base64 is quoted as it stands, not dropped"
     )
 
 
@@ -266,7 +266,7 @@ def test_a_git_subcommand_that_cannot_be_undone_is_a_reason() -> None:
     assert scan.base == "rm"
     assert scan.command == ("rm", "-rf", "/")
 
-    # Its own options name no program, so they end the unwrap rather than being guessed past.
+    # Its own options name no program, so they end the unwrap.
     for argv in (["busybox", "--list"], ["busybox"], ["toybox", "--help"]):
         scan = unwrap_command(argv)
         assert scan.wrappers == (), argv

@@ -75,7 +75,7 @@ _VIEW = ToolCatalog().view(())
 
 
 def _env(root: Path, *, trash_enabled: bool = True) -> Env:
-    """A call's world as the executor builds it, around a host rather than around a turn."""
+    """A call's world as the executor builds it, around a host, not around a turn."""
     host = Host(root, trash_enabled=trash_enabled)
     return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW)
 
@@ -91,7 +91,7 @@ async def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
 
 
 async def test_a_wait_with_nobody_to_ask_still_sleeps(tmp_path: Path) -> None:
-    """A run with no terminal waits rather than asking a no-sink that answers at once.
+    """A run with no terminal waits, and does not ask a no-sink that answers at once.
 
     The bound is declared in the schema, so a call that would wait an hour is one the model can see is
     wrong before it makes it — and the sleep itself is what "waited" means, which a clock has to say.

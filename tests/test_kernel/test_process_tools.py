@@ -4,9 +4,9 @@ Everything else is a story now (:mod:`tests.stories.test_programs`). Three thing
 
 * a ``cwd`` that leaves the workspace is refused with the tools that would lift it — a story cannot
   reach a granted directory, because granting one is the thing it would have to do;
-* a denylisted program with *nobody* to ask is refused rather than run — the story's CLI always has a
+* a denylisted program with *nobody* to ask is refused, not run — the story's CLI always has a
   person on the other end (see the note in ``docs/rewrite-requirements.md`` §0.3);
-* the schema shows a tree rather than a hand-written validator, and the two kinds of input are one
+* the schema shows a tree, not a hand-written validator, and the two kinds of input are one
   tagged union: both are claims about the declaration, so they read the schema itself.
 """
 

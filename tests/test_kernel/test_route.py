@@ -120,7 +120,7 @@ async def test_a_dialect_this_build_does_not_speak_is_a_route_that_cannot_ask(se
 
 
 async def test_a_request_with_no_route_anywhere_is_a_missing_route() -> None:
-    """A kernel handed no routes refuses to ask rather than inventing an endpoint."""
+    """A kernel handed no routes refuses to ask, and invents no endpoint."""
     with pytest.raises(ModelFailed) as told:
         _ = await Posted(Routes()).respond(_request())
 

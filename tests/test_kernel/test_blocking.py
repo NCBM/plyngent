@@ -6,7 +6,7 @@ the only place that is visible is here, where the test can hold the thread open 
 
 The rule being pinned is §0.13's: what a stop ends is the *waiting*, and a call that was mid-flight still
 owes its result to the history. A blocking call therefore registers the thread it started, so
-:meth:`~plyngent.kernel.cancel.CancelToken.settle` waits for the work rather than for the task.
+:meth:`~plyngent.kernel.cancel.CancelToken.settle` waits for the work, not for the task.
 """
 
 from __future__ import annotations

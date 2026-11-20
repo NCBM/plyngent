@@ -2,7 +2,7 @@
 
 The subject here is somebody else's directory. Every test writes one the way another harness would, and
 what is asserted is what this tree makes of it — including the files it cannot fully understand, which
-must arrive as a note beside a usable skill rather than as a skill that is not there.
+must arrive as a note beside a usable skill, not as a skill that is not there.
 """
 
 from __future__ import annotations

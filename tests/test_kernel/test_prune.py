@@ -1,6 +1,6 @@
 """One prune, from the row it writes to what the next request is given.
 
-The claim is that a prune is *placement* rather than deletion: the entry goes where the conversation ends,
+The claim is that a prune is *placement*: the entry goes where the conversation ends,
 a projection walking from there stops handing over what it names, and a branch taken from before it still
 reads the whole stretch. Two of those three are things no story can see — the log is the only place "the
 text is still there" is observable — so they are asserted here, on a journal and nothing else. The last one
