@@ -207,8 +207,8 @@ def render(event: AnyEvent, *, focus: str = DEFAULT_FOCUS, diff: bool = True) ->
     type-check in the half it belongs to, and never goes silently unread.
 
     ``diff`` is whether a change is shown as the difference itself; a frontend told not to show patches
-    still says that a call left something behind, because that is a fact about the workspace rather
-    than about how much of it a screen can hold.
+    still says that a call left something behind, because that is a fact about the workspace, and not
+    about how much of it a screen can hold.
     """
     match event:
         case Batch(items=items):

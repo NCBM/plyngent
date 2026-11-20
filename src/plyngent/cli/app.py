@@ -276,8 +276,8 @@ class App:
         """Say how far the last run of this client got, so the kernel can answer with what was missed.
 
         It goes before anything else, and it is one mark: the kernel answers it once, from the window it
-        keeps, and everything that arrives after it is this connection's own. A mark is dropped rather
-        than sent when the greeting names a different run of the kernel — two counts are not one, and a
+        keeps, and everything that arrives after it is this connection's own. A mark is dropped when the
+        greeting names a different run of the kernel — two counts are not one, and a
         number from another one would be a replay of somebody else's words (§5 B).
         """
         if self.mark is None:
