@@ -231,6 +231,34 @@ async def test_what_ran_before_a_stop_is_partial_and_stays_run(story_with: Scrip
     assert any(line.startswith("execute partial: 1 of 2 commands ran") for line in story.screen()), story.screen()
 
 
+async def test_a_pipe_carries_the_whole_file_and_says_how_much_crossed(story_with: Scripted) -> None:
+    """`cat big.txt | grep -c`: the count is of the whole file, and the body says how many bytes went on.
+
+    The first command's output is three times one body's cap. Read as its own output it would be cut;
+    read as the next program's input it all arrives, so the count the model is handed is of every line.
+    """
+    story = await story_with(
+        calling(
+            "execute",
+            {
+                "steps": [{"argv": ["cat", "big.txt"], "pipe": {"argv": ["grep", "-c", "needle"]}}],
+                "intention": "count the needles in the whole file",
+            },
+        ),
+        text("counted"),
+    )
+    _ = (story.workspace / "big.txt").write_text("needle\n" * 20_000, encoding="utf-8")
+
+    await story.type("count the needles")
+    await story.finished()
+
+    (_, ran) = story.requests()
+    handoff = told(ran)
+    assert "handed=140000 bytes" in handoff, handoff
+    assert "20000" in handoff, "every line of the file reached `grep`, not the first 32 000 characters"
+    assert "execute ok: 2 of 2 commands ran" in story.screen(), story.screen()
+
+
 async def test_a_redirect_that_leaves_the_workspace_is_refused_before_it_runs(story_with: Scripted) -> None:
     story = await story_with(
         calling(

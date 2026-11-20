@@ -175,11 +175,85 @@ async def test_a_pipe_chain_hands_its_output_along(tmp_path) -> None:
     assert (batch.ran[1].depth, batch.ran[1].via) == (1, "pipe")
 
 
+async def test_the_bytes_a_stage_hands_on_are_counted_and_are_not_in_its_body(tmp_path) -> None:
+    """A middle stage's output is the next program's input, so what it is answered with is the count.
+
+    The unit is bytes because a pipe carries bytes: the count is taken before anything decodes (§2 R6).
+    """
+    batch = await _run([Execution(argv=["printf", "abcdefghij"], pipe=Execution(argv=["cat"]))], tmp_path)
+
+    head, tail = batch.ran
+    assert (head.stdout, head.handed) == ("", 10), "the bytes went on, and the number says how many"
+    assert (tail.stdout, tail.handed) == ("abcdefghij", None), "the last command's output is the body"
+
+
+async def test_a_pipe_delivers_all_of_it_and_not_the_part_that_fits_one_body(tmp_path) -> None:
+    batch = await _run(
+        [Execution(argv=["head", "-c", "200000", "/dev/zero"], pipe=Execution(argv=["wc", "-c"]))], tmp_path
+    )
+
+    head, tail = batch.ran
+    assert head.handed == 200_000, "200 000 bytes crossed, which is more than one command's cap"
+    assert tail.stdout.strip() == "200000", "the second program saw every byte the first one wrote"
+    assert batch.truncated is False, "nothing was cut: the bytes were delivered, not printed"
+
+
+async def test_the_budget_counts_what_the_body_holds_and_not_what_crossed(tmp_path) -> None:
+    """A megabyte handed to `wc -c` costs one line of body, so a pipe does not spend the call's budget."""
+    chain = Execution(argv=["head", "-c", "1000000", "/dev/zero"], pipe=Execution(argv=["wc", "-c"]))
+    batch = await _run([chain], tmp_path, budget=1000)
+
+    assert batch.stopped is None
+    assert batch.ran[1].stdout.strip() == "1000000"
+
+
+async def test_a_stage_that_merges_its_streams_hands_both_of_them_on(tmp_path) -> None:
+    """`mix_stderr` and a pipe together mean both streams went into the next program, so the body has neither."""
+    chain = Execution(argv=["sh", "-c", "echo out; echo err >&2"], mix_stderr=True, pipe=Execution(argv=["cat"]))
+    batch = await _run([chain], tmp_path)
+
+    head, tail = batch.ran
+    assert (head.stdout, head.stderr, head.errout) == ("", "", ""), "neither stream is the model's to read"
+    assert head.handed == 8
+    assert tail.stdout == "out\nerr\n", "and both went on, in the order they were written"
+
+
+async def test_a_downstream_program_that_stops_reading_is_a_normal_ending(tmp_path) -> None:
+    """`head -1` says "enough": the writer meets `EPIPE`, which is what a shell does, and the call did not fail.
+
+    `pipefail` still fails the chain, because the stage the signal ended did not exit zero — the same shape
+    a shell gives it.
+    """
+    chain = Execution(argv=["yes"], pipe=Execution(argv=["head", "-1"]))
+
+    simple = await _run([chain], tmp_path)
+    pipefail = await _run([chain], tmp_path, failfast="pipefail")
+
+    assert simple.stopped is None
+    assert simple.ran[-1].stdout == "y\n"
+    assert simple.ran[0].escaped is False, "the group was killed by its own reader, not by a deadline"
+    assert pipefail.halted is True
+
+
 async def test_a_pipe_can_write_to_a_file_instead_of_a_program(tmp_path) -> None:
     batch = await _run([Execution(argv=["echo", "saved"], pipe="out.txt")], tmp_path)
 
     assert batch.stopped is None
     assert (tmp_path / "out.txt").read_text() == "saved\n"
+
+
+async def test_a_redirect_writes_every_byte_of_it_and_not_just_the_start(tmp_path) -> None:
+    """A redirect is how a caller keeps an output too large to read, so the file is not the body's size.
+
+    The bytes go to the file as they arrive and before any decode: `\\377` is not UTF-8, and a redirect
+    that went through a decode would have replaced it (§2 R6).
+    """
+    script = "head -c 40000 /dev/zero; printf '\\377\\377\\377'"
+    batch = await _run([Execution(argv=["sh", "-c", script], pipe="out.bin")], tmp_path)
+
+    written = (tmp_path / "out.bin").read_bytes()
+    assert written == (b"\x00" * 40_000) + (b"\xff" * 3), "every byte, byte for byte"
+    assert batch.truncated is True, "the body is cut at its own cap; the file is what was asked for"
 
 
 async def test_which_command_in_the_chain_decides_depends_on_the_shell_reading(tmp_path) -> None:
@@ -225,6 +299,8 @@ def test_a_tree_is_refused_before_anything_runs() -> None:
         _ = validate([Execution(argv=["a"], pipe=Execution(argv=["b"], stdin=FromText(text="x")))])
     with pytest.raises(ValueError, match="takes no then/else"):
         _ = validate([Execution(argv=["a"], pipe=Execution(argv=["b"], then=[Execution(argv=["c"])]))])
+    with pytest.raises(ValueError, match="one deadline"):
+        _ = validate([Execution(argv=["a"], pipe=Execution(argv=["b"], timeout_secs=5))])
     with pytest.raises(ValueError, match="more than"):
         _ = validate([Execution(argv=["a"])] * (DEFAULT_MAX_NODES + 1))
 

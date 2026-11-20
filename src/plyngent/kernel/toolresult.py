@@ -186,6 +186,10 @@ class ProcessControl(Part, tag="process", frozen=True, kw_only=True):
     stdout: str = ""
     stderr: str = ""
     errout: str = ""
+    #: How many bytes went into the next program of this command's own chain. Those bytes are not in
+    #: ``stdout`` — they were the next program's input — and the count is bytes rather than characters
+    #: because a pipe carries bytes (§2 R6). A command with no pipe hands nothing on, so it says nothing.
+    handed: int | None = None
 
 
 #: A body is a sequence of parts; one part is a body of length one.

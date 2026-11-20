@@ -124,7 +124,8 @@ Running things: `execute` takes an argv list and never a line for a shell to par
 decides whether a person is asked — a shell or an interpreter always is, so name the program you mean.
 An interactive program is a terminal: `open_pty` to start one, `read_pty` and `write_pty` to talk to it,
 `write_pty_keys` for control sequences rather than their bytes, and `ask_into_pty` for a secret, which is
-never echoed back into this conversation.""",
+never echoed back into this conversation. A `pipe` feeds one command's output to the next, so what comes
+back is the count of bytes it handed over: redirect into a file when you want to read them.""",
     Group.NET: _network(frozenset({"client_fetch"}), ()),
     Group.SESSION: """\
 The plan a turn is worked through: `todo_push` opens a group of steps, `todo_update` moves one,

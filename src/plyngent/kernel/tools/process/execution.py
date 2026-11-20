@@ -64,7 +64,10 @@ class ExecuteArgs(ToolArgs, kw_only=True):
         }
 
     A ``pipe`` may also be a file name, which redirects the output there and starts no other
-    command. A continuation runs where its parent ran and inherits its environment and ``failfast``;
+    command. Output that goes into another program is that program's input and not yours to read: the
+    record says how many bytes went past, and redirecting into a file is how to keep them for a later
+    ``read``. A chain has one deadline, owned by the command the pipe is written on. A continuation runs
+    where its parent ran and inherits its environment and ``failfast``;
     the call's ``cwd``, ``env`` and ``failfast`` are the outermost default. ``failfast`` reads as a
     shell does: ``simple`` (the same as ``true``) judges a chain by its last command, ``pipefail`` by
     every stage of it, and ``false`` keeps going after a non-zero exit. None of them keeps going past a
@@ -160,6 +163,7 @@ def _part(ran: Ran, *, workspace: Workspace) -> ProcessControl:
         stdout=ran.stdout,
         stderr=ran.stderr,
         errout=ran.errout,
+        handed=ran.handed,
     )
 
 

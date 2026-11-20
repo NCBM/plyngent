@@ -117,6 +117,13 @@ def _process(part: ProcessControl) -> str:
         lines.append("escaped=true")
     if part.mix_stderr:
         lines.append("mix_stderr=true")
+    if part.handed is not None:
+        # The output went into the next program, so this record has none of it: the count is the whole
+        # of what it can say, and an empty stream section would say nothing (§2 R6).
+        lines.append(f"handed={part.handed} bytes")
+        if part.stderr:
+            lines.extend(("--- stderr ---", visible(part.stderr)))
+        return "\n".join(lines)
     if part.mix_stderr:
         # The two streams were merged before they were read, so there is one of them.
         lines.append("--- output ---")
