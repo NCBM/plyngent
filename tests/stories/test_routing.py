@@ -14,13 +14,15 @@ that was cut short, which reaches the history as a line to the model and not as 
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps
-from plyngent.kernel.lm.route import Route
+from plyngent.kernel.lm.route import ModelEntry, Route
 from plyngent.kernel.model import Assistant, Note, Picture, Reply, Result, Usage, User
-from plyngent.kernel.trail import NOTICE_MARKER, Attempt
+from plyngent.kernel.trail import NOTICE_MARKER, Attempt, StateChange
+from plyngent.wire.command import SetModel
 from tests.stories.driver import Story
 from tests.stories.model import Failing, ScriptedModel, calling, text
 
@@ -298,6 +300,42 @@ async def test_an_attempt_beside_the_chain_does_not_move_where_the_conversation_
 
     assert story.requests()[1].messages[0].text == "a thought", "the second turn continued the chain"
     assert len(story.requests()[1].messages) == 2, "one line and one answer, and no row in between"
+
+
+async def test_a_conversation_tells_the_endpoint_which_of_its_models_it_asks(story_with: Scripted) -> None:
+    """E170: the model is a setting of the conversation, and the request carries the id it names.
+
+    Two models behind one route, the second chosen mid-conversation: the next request asks for it by that
+    id, which is the whole of what the endpoint is told about the choice. Nothing about the route moves.
+    """
+    route = Route(
+        name="local",
+        dialect="messages",
+        base="http://local.invalid/v1",
+        model="small",
+        caps=Caps(max_output=64),
+        models=(
+            ModelEntry(name="small", caps=Caps(max_output=64)),
+            ModelEntry(name="big", caps=Caps(max_output=4096)),
+        ),
+    )
+    story = await story_with(text("hello"), text("and again"), routes=[route], route="local")
+
+    await story.type("a first thought")
+    other = await story.another_client()
+    assert other.submit(SetModel(session=story.session, model="big")), "a second connection moves the setting"
+    await story.settle()
+    await story.type("a second thought")
+
+    assert [request.model for request in story.requests()] == ["small", "big"], (
+        "the route's own model answers until somebody chooses, and then the chosen id is what is asked for"
+    )
+    chosen = [
+        json.loads(entry.payload.value)
+        for entry in await story.host.trail.entries(story.session)
+        if isinstance(entry.payload, StateChange) and entry.payload.key == "model"
+    ]
+    assert chosen == [{"name": "big", "epoch": 1}], "the choice is a setting on the chain, not a turn"
 
 
 async def _read_a_picture(story: Story) -> Result:

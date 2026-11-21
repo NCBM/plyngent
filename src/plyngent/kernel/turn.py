@@ -484,12 +484,13 @@ class TurnRunner:
         shown, left = self._transcript(state, shown, system=system, instruction=instruction, room=room)
         if left:
             system, instruction = ctx.host.prompt.summarize(state.text, dropped=left)
-        asked = ctx.host.routes.resolve(ctx.session.route)
+        asked = ctx.host.routes.asking(ctx.session.route, ctx.session.model)
         request = Request(
             system=system,
             messages=(*shown, User(text=instruction)),
             tools=(),
-            route="" if asked is None else asked.name,
+            route="" if asked is None else asked.route.name,
+            model="" if asked is None else asked.model,
             cache_key=ctx.session.cache_key,
         )
         if room and self._measure(state, request.messages, system=request.system) > room:
@@ -557,7 +558,7 @@ class TurnRunner:
         """
         ctx = state.ctx
         view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
-        asked = ctx.host.routes.resolve(ctx.session.route)
+        asked = ctx.host.routes.asking(ctx.session.route, ctx.session.model)
         system = ctx.host.prompt.compose(view, continuing=self._carrying_on(state))
         tools = view.prompts()
         state, messages = await self._fitted(state, system=system, tools=tools)
@@ -565,7 +566,8 @@ class TurnRunner:
             system=system,
             messages=messages,
             tools=tools,
-            route="" if asked is None else asked.name,
+            route="" if asked is None else asked.route.name,
+            model="" if asked is None else asked.model,
             cache_key=ctx.session.cache_key,
         )
 
@@ -664,7 +666,7 @@ class TurnRunner:
         off mid-sentence. A route whose window cannot even hold its own answer is a route whose numbers do
         not describe it, and nothing is invented from them: it is treated as one that never said a window.
         """
-        asked = state.ctx.host.routes.resolve(state.ctx.session.route)
+        asked = state.ctx.host.routes.asking(state.ctx.session.route, state.ctx.session.model)
         if asked is None or asked.caps.context_window <= 0:
             return 0
         room = asked.caps.context_window - asked.caps.max_output
@@ -779,8 +781,8 @@ class TurnRunner:
         The bytes are fetched here and stay out of the row, which is what keeps "a body never enters
         an entry" true while a model still sees an image (E56).
         """
-        asked = ctx.host.routes.resolve(ctx.session.route)
-        codec = None if asked is None else asked.codec()
+        asked = ctx.host.routes.asking(ctx.session.route, ctx.session.model)
+        codec = None if asked is None else asked.route.codec()
         if asked is None or not asked.caps.pictures or codec is None or not codec.pictures:
             return messages
         seen: list[AnyMessage] = []
@@ -1010,6 +1012,8 @@ class TurnRunner:
                 turn=ctx.turn_id,
                 route="" if route is None else route.name,
                 epoch=ctx.session.route_epoch,
+                model=ctx.session.model,
+                model_epoch=ctx.session.model_epoch,
                 failure=str(unmet.failure),
                 retry=str(OUTCOMES[unmet.failure][1]),
                 says=unmet.says,

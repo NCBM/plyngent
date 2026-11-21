@@ -98,6 +98,7 @@ behind the client's back would start writing a conversation somewhere nobody ask
 | `retry` | ask the model again from the end of the chain, without repeating a call |
 | `cancel` | stop one piece of work, or everything a conversation is doing |
 | `set-route` | point a conversation at another model route, or back at the default |
+| `set-model` | choose which of that route's models answers the conversation |
 | `goal` | read or move the switch that lets the kernel continue a plan on its own |
 | `compact` | write one summary entry standing in for a stretch of the conversation |
 | `prune` | stop showing a set of entries to the model, reversibly |
@@ -165,8 +166,8 @@ do not fan out — a question a turn asks goes back to the connection that start
   `tool-returned`.
 - **The bookkeeping a person asked for**: `sessions-listed`, `compacted`, `compact-refused`, `pruned`,
   `prune-refused`, `export-refused`, `document-stored`, `seeded`, `seed-refused`, `rolled-back`,
-  `rollback-refused`, `grant-revoked`, `goal-set`, `goal-refused`, `routed`, `route-refused`, `changed`,
-  `noticed`, `offer-refused`.
+  `rollback-refused`, `grant-revoked`, `goal-set`, `goal-refused`, `routed`, `route-refused`,
+  `model-set`, `changed`, `noticed`, `offer-refused`.
 - **The connection itself**: `kernel-leaving` (the stream ends after it), `workspace-refused` (a command
   named a tree this kernel does not serve, or one it will not open: `session`, `workspace` as the tree the
   command *meant* — its own name, or this connection's default when it named none — and `reason`), `batch`.

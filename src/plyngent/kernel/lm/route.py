@@ -35,7 +35,7 @@ from msgspec import Struct
 from msgspec.structs import replace
 
 from plyngent.kernel.failure import Failure, Retry
-from plyngent.kernel.lm.caps import Caps
+from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
 from plyngent.kernel.lm.codec import FAILURE_STATUS, refused
 from plyngent.kernel.model import Delta, Model, ModelFailed
 from plyngent.kernel.toolresult import OUTCOMES
@@ -51,11 +51,6 @@ if TYPE_CHECKING:
 #: request legitimately takes minutes, and cutting it off at the length of a web page would break the
 #: requests that matter most. What bounds a caller's patience is the turn's own cancellation, not this.
 DEFAULT_TIMEOUT = 600.0
-
-#: What a session that has no route at all is told about the world: it can see nothing and carries
-#: nothing. Not a refusal — a route that is missing is answered where a route is *named*
-#: (:meth:`Routes.resolve`), and what assembling a prompt needs is only "which of the caps apply".
-NO_ROUTE_CAPS = Caps(max_output=0)
 
 
 class PrefixCache(StrEnum):
@@ -155,6 +150,18 @@ class Route(Struct, frozen=True, kw_only=True):
 
         return codec_named(self.dialect)
 
+    def asking(self, model: str = "") -> Asking:
+        """This endpoint asked for *model*, as the three values one request is built from.
+
+        An id the table does not name keeps the route's own caps and the id it was given: a conversation
+        whose model the file no longer lists still asks for it, on a gateway that may well serve it. That
+        is the fallback this step keeps and the next one takes away (E170).
+        """
+        found = next((one for one in self.models if one.name == model), None)
+        if found is not None:
+            return Asking(route=self, model=model, caps=found.caps)
+        return Asking(route=self, model=model or self.model, caps=self.caps)
+
     def wired(self) -> dict[str, str]:
         """Every header one request carries: the credential, the content type, and anything added."""
         sent = dict(self.headers)
@@ -206,15 +213,32 @@ class Routes:
             return found
         return self.named(self.default) if self.default else None
 
-    def caps(self, name: str) -> Caps:
-        """What the route answering *name* can do, and the quiet answer when nothing answers it.
+    def asking(self, name: str, model: str = "") -> Asking | None:
+        """What a conversation pointed at *name* asks with *model*, or ``None`` when no route answers it.
 
-        Only for assembling a prompt, which needs one bit — whether pixels may travel — and must not fail
-        because a route is missing: refusing a turn is :meth:`resolve`'s caller's business, and it happens
-        before any prompt is built.
+        ``None`` and not a value with empty caps: refusing a turn is :meth:`resolve`'s caller's business,
+        and it happens before a prompt is built, so a caller that has just resolved a route for a turn
+        always has one of these to read.
         """
         found = self.resolve(name)
-        return NO_ROUTE_CAPS if found is None else found.caps
+        return None if found is None else found.asking(model)
+
+
+class Asking(Struct, frozen=True, kw_only=True):
+    """What one request is asked of: the endpoint, the model it names, and what that model can do.
+
+    Three values that are always chosen together — the route and the model are two settings of one
+    conversation, and the caps are one model's entry in that route's table. Reading them apart would let a
+    request carry one route's numbers under another's id, which is the mistake this value makes
+    impossible (E170).
+    """
+
+    #: The endpoint, as the route value a request is posted to.
+    route: Route
+    #: The id the request asks for, which is what the file's model tables are keyed by.
+    model: str
+    #: What that model can do, as the caps anything downstream obeys.
+    caps: Caps
 
 
 class Posted(Model):
@@ -258,11 +282,12 @@ class Posted(Model):
         if codec is None:
             msg = f"route {route.name} names the dialect {route.dialect!r}, which this build does not speak"
             raise ModelFailed(Failure.ARGS, msg)
-        caps = replace(route.caps, stream=route.caps.stream and codec.sse)
+        ask = route.asking(request.model)
+        caps = replace(ask.caps, stream=ask.caps.stream and codec.sse)
         return (
             route,
             codec,
-            msgspec.json.encode(codec.encode(request, model=route.model, caps=caps, cache=route.prefix_cache)),
+            msgspec.json.encode(codec.encode(request, model=ask.model, caps=caps, cache=route.prefix_cache)),
         )
 
     async def _tried(self, route: Route, codec: Codec, body: bytes) -> Reply:
@@ -294,7 +319,9 @@ class Posted(Model):
         be unshown.
         """
         route, codec, body = self._prepared(request)
-        if not route.caps.stream or not codec.sse:
+        # The same value ``_prepared`` folded into the body: whether this request asked for a stream at
+        # all. Read twice rather than threaded through, because the body is bytes by then.
+        if not route.asking(request.model).caps.stream or not codec.sse:
             yield await self._tried(route, codec, body)
             return
         failure: ModelFailed | None = None

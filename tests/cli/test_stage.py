@@ -12,6 +12,7 @@ from plyngent.cli.render import BAR, CORNER, Frame, Painted, Stage, render, work
 from plyngent.wire.event import (
     Batch,
     Changed,
+    ModelSet,
     Routed,
     ToolCalled,
     ToolReturned,
@@ -54,7 +55,7 @@ def _joined(frames: list[Frame]) -> Frame:
 def test_a_turn_starts_with_one_row_saying_where_this_conversation_is() -> None:
     frame = _stage().push(TurnStarted(session=SESSION, turn=1))
 
-    assert _texts(frame) == (f"{SESSION}  {WORKSPACE}  route -",), (
+    assert _texts(frame) == (f"{SESSION}  {WORKSPACE}  route -  model -",), (
         "the session, its workspace, and the route answering it — every field known before the turn"
     )
     assert _lines(frame) == ("turn 1 started (chat)",), "and the kernel's own line is untouched on the other stream"
@@ -63,7 +64,7 @@ def test_a_turn_starts_with_one_row_saying_where_this_conversation_is() -> None:
 def test_the_mode_this_run_answers_questions_in_is_on_the_row() -> None:
     frame = _stage(mode="yolo").push(TurnStarted(session=SESSION, turn=1))
 
-    assert _texts(frame) == (f"{SESSION}  {WORKSPACE}  route -  yolo",), (
+    assert _texts(frame) == (f"{SESSION}  {WORKSPACE}  route -  model -  yolo",), (
         "a person who left a policy on should not have to remember it"
     )
 
@@ -75,7 +76,8 @@ def test_answering_an_opening_is_where_the_client_is_and_not_a_row() -> None:
     started = stage.push(TurnStarted(session=SESSION, turn=1))
 
     assert opening == Frame(), "attaching is not something that happened: it is where this client is"
-    assert _texts(started)[0].endswith("route claude"), "and the row that follows already knows it"
+    where = f"{SESSION}  {WORKSPACE}  route claude"
+    assert _texts(started)[0].startswith(where), "and the row that follows already knows it"
 
 
 def test_a_route_that_changes_gets_a_row_and_keeps_the_kernels_own() -> None:
@@ -85,7 +87,23 @@ def test_a_route_that_changes_gets_a_row_and_keeps_the_kernels_own() -> None:
     frame = stage.push(Routed(session=SESSION, route="local", epoch=1))
 
     assert "route: local (epoch 1)" in _lines(frame), "the kernel's own words, epoch included"
-    assert _texts(frame)[0].endswith("route local"), "and where the conversation is now"
+    assert _texts(frame)[0].startswith(f"{SESSION}  {WORKSPACE}  route local"), "and where the conversation is now"
+
+
+def test_a_model_that_changes_gets_a_row_and_moves_the_status_bar() -> None:
+    """E170: the model is a fact about this conversation, so a change to it is a row like a route's.
+
+    The window travels with it, which is the reason the two are one event: the fullness line is drawn
+    against this model's number, and a client that kept the gateway's would draw the wrong one.
+    """
+    stage = _stage()
+
+    opening = stage.push(ModelSet(session=SESSION, model="small", opening=True, context_window=64))
+    frame = stage.push(ModelSet(session=SESSION, model="big", epoch=1, context_window=4096))
+
+    assert opening == Frame(), "attaching is not something that happened"
+    assert "model: big (epoch 1)" in _lines(frame), "the kernel's own words, epoch included"
+    assert _texts(frame)[0].startswith(f"{SESSION}  {WORKSPACE}  route -  model big"), "and where it is now"
 
 
 def test_a_call_costs_one_row_under_what_came_of_it() -> None:

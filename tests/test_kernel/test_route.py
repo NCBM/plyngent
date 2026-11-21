@@ -18,7 +18,7 @@ import pytest
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps, Route, Routes
-from plyngent.kernel.lm.route import Posted
+from plyngent.kernel.lm.route import ModelEntry, Posted
 from plyngent.kernel.model import ModelFailed, Request, User
 from tests.loopback import Answer, answered
 
@@ -142,7 +142,36 @@ def test_which_route_answers_is_the_sessions_own_or_the_hosts_default() -> None:
     assert table.resolve("") is two
     assert table.resolve("retired") is two
     assert table.named("retired") is None
-    assert table.caps("one").pictures is False
-    assert table.caps("two").pictures is True
-    assert Routes().resolve("") is None
-    assert Routes().caps("") == Caps(max_output=0)
+    asked = table.asking("one")
+    assert asked is not None and asked.route is one and asked.caps.pictures is False
+    nobody = table.asking("")
+    assert nobody is not None and nobody.route is two and nobody.caps.pictures is True
+    assert Routes().asking("") is None
+
+
+def test_a_conversation_asks_for_a_model_and_the_table_answers_with_its_caps() -> None:
+    """E170: an id the route lists brings that model's numbers, and nothing is guessed in between.
+
+    Three answers and one is deliberately lax: a conversation asking for an id the file no longer lists
+    keeps the route's own caps and the id it named, because the endpoint may well still serve it. The next
+    step makes that case a refusal; this one is the fallback that keeps a retired id usable.
+    """
+    route = Route(
+        name="one",
+        dialect="messages",
+        base="http://x",
+        model="fallback",
+        caps=Caps(max_output=8),
+        models=(
+            ModelEntry(name="small", caps=Caps(max_output=64)),
+            ModelEntry(name="big", caps=Caps(max_output=4096)),
+        ),
+    )
+    table = Routes([route], default="one")
+
+    big = table.asking("one", "big")
+    assert big is not None and (big.model, big.caps.max_output) == ("big", 4096)
+    retired = table.asking("one", "retired")
+    assert retired is not None and (retired.model, retired.caps.max_output) == ("retired", 8)
+    silent = table.asking("one")
+    assert silent is not None and silent.model == "fallback", "nobody chose: the route's own model answers"

@@ -210,6 +210,9 @@ class Request(Struct, frozen=True, kw_only=True):
     #: A model reads it to know where to send the request, and everything else — the tool block that
     #: was built, the caps that gated a picture — is already decided by the time it is here.
     route: str = ""
+    #: Which model, as an id of that route's table. Empty is "this conversation never picked one", which
+    #: the route answers with its own fallback until a model is always chosen (E170).
+    model: str = ""
     #: The short stable key a provider's prefix cache is keyed on (§10.5): the session, and the two
     #: counters that say when its prompt moved. Built where the prompt is assembled and not in a codec,
     #: because the numbers are facts about a session and a second place computing them could disagree.

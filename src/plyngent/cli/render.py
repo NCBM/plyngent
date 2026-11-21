@@ -51,6 +51,7 @@ from plyngent.wire.event import (
     GoalSet,
     GrantRevoked,
     KernelLeaving,
+    ModelSet,
     Noticed,
     OfferRefused,
     Pruned,
@@ -149,6 +150,7 @@ type _Reported = (
     | Pruned
     | DocumentStored
     | Routed
+    | ModelSet
     | CompactRefused
     | PruneRefused
     | ExportRefused
@@ -178,6 +180,7 @@ type _Settled = (
     | Pruned
     | DocumentStored
     | Routed
+    | ModelSet
     | RolledBack
     | GrantRevoked
     | Seeded
@@ -494,6 +497,7 @@ class Stage:
     _workspace: str
     _mode: str
     _routes: dict[str, str]
+    _models: dict[str, str]
     _turn: int
     _steps: int
     _calls: int
@@ -519,6 +523,7 @@ class Stage:
         self._workspace = workspace
         self._mode = mode
         self._routes = {}
+        self._models = {}
         self._turn = 0
         self._steps = 0
         self._calls = 0
@@ -542,16 +547,29 @@ class Stage:
             return Frame(said=self._fold.push(event, focus=self._session, width=width))
         if isinstance(event, Routed):
             return self._routed(event, width)
+        if isinstance(event, ModelSet):
+            return self._modeled(event, width)
         return Frame(said=self._said(event, width), told=self._noticed(event))
 
     def _routed(self, event: Routed, width: int) -> Frame:
         """A route, which is either where this conversation *is* or something that happened to it."""
         self._routes[event.session] = event.route
-        if event.session == self._session:
-            self._window = event.context_window
         if event.opening:
             # The answer to attaching is the state this client started in, and a row for it would say a
             # thing nobody did (§5 A, E131).
+            return Frame()
+        return Frame(said=self._fold.push(event, focus=self._session, width=width), told=(self._status(event.session),))
+
+    def _modeled(self, event: ModelSet, width: int) -> Frame:
+        """The model this conversation asks for: where it stands, or what a person just chose.
+
+        The window is read here because it is the model's number, and the line a frontend draws is fuller
+        or emptier as soon as a second model answers the same conversation (E170).
+        """
+        self._models[event.session] = event.model
+        if event.session == self._session:
+            self._window = event.context_window
+        if event.opening:
             return Frame()
         return Frame(said=self._fold.push(event, focus=self._session, width=width), told=(self._status(event.session),))
 
@@ -587,10 +605,12 @@ class Stage:
         return ()
 
     def _status(self, session: str) -> Shown:
-        """One row saying where this conversation is: it, its workspace, its route, and how full."""
+        """One row saying where this conversation is: it, its workspace, its route, its model, and how full."""
         route = self._routes.get(session, "")
+        model = self._models.get(session, "")
         fields = [session] if not self._workspace else [session, self._workspace]
         fields.append(f"route {route or '-'}")
+        fields.append(f"model {model or '-'}")
         if self._mode:
             fields.append(self._mode)
         if self._context:
@@ -781,6 +801,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | Pruned()
             | DocumentStored()
             | Routed()
+            | ModelSet()
             | RolledBack()
             | GrantRevoked()
             | Seeded()
@@ -837,6 +858,8 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — on
             return ((session, Shown(f"document {document} kept ({chars} chars)", "notice")),)
         case Routed(session=session, route=route, epoch=epoch):
             return ((session, Shown(f"route: {route or 'none'} (epoch {epoch})", "notice")),)
+        case ModelSet(session=session, model=model, epoch=epoch):
+            return ((session, Shown(f"model: {model or 'none'} (epoch {epoch})", "notice")),)
         case GoalSet(session=session, mode=mode):
             said = "an unfinished plan keeps this conversation going" if mode is GoalMode.ON else "the plan waits"
             return ((session, Shown(f"goal {mode}: {said}", "notice")),)

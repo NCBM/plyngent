@@ -118,6 +118,21 @@ class SetRoute(Command, tag="set-route", frozen=True, kw_only=True):
     route: str = ""
 
 
+class SetModel(Command, tag="set-model", frozen=True, kw_only=True):
+    """Choose which of the route's models answers this conversation.
+
+    The route says where a request goes and this says which id it asks for there, so the two are separate
+    settings: one gateway is one address and one bill (E170). Like the route, it takes effect at each live
+    turn's next request, so nobody is refused mid-turn and the attempt records the epoch it was asked
+    under.
+
+    Any id is accepted. Which ids a gateway serves is a fact this build cannot check without asking it,
+    and a conversation naming one it does not have is answered by the endpoint itself.
+    """
+
+    model: str = ""
+
+
 class Goal(Command, tag="goal", frozen=True, kw_only=True):
     """Keep a conversation going while its plan is unfinished — or ask where it stands.
 
@@ -286,6 +301,7 @@ type AnyCommand = (
     | Retry
     | Cancel
     | SetRoute
+    | SetModel
     | Goal
     | Compact
     | Prune

@@ -82,6 +82,7 @@ from plyngent.wire.command import (
     Resume,
     Retry,
     Rollback,
+    SetModel,
     SetRoute,
     Submit,
     Ungrant,
@@ -98,6 +99,7 @@ from plyngent.wire.event import (
     GoalSet,
     GrantRevoked,
     ListedSession,
+    ModelSet,
     OfferRefused,
     Pruned,
     PruneRefused,
@@ -287,7 +289,7 @@ class Serving:
                 await self._bookkeeping(command)
             case Export(session=session, begin_after=begin_after):
                 await self._export(session, begin_after)
-            case SetRoute() | Ungrant() | Goal() | Rename() | Delete():
+            case SetRoute() | SetModel() | Ungrant() | Goal() | Rename() | Delete():
                 await self._setting(command)
             case Resume() | Rollback():
                 await self._past(command)
@@ -431,11 +433,13 @@ class Serving:
             case Close(session=session):
                 await self._close(session)
 
-    async def _setting(self, command: SetRoute | Ungrant | Goal | Rename | Delete) -> None:
+    async def _setting(self, command: SetRoute | SetModel | Ungrant | Goal | Rename | Delete) -> None:
         """The commands that move or read what a session says about itself, and touch nothing outside it."""
         match command:
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
+            case SetModel(session=session, model=model):
+                await self._model(session, model)
             case Ungrant(session=session, path=path):
                 await self._ungrant(session, path)
             case Goal(session=session, mode=mode):
@@ -677,7 +681,7 @@ class Serving:
         return True
 
     def _say_route(self, session: str) -> None:
-        """Say which route answers *session*, resolved the way a route change resolves one."""
+        """Say which route answers *session*, and which model it asks of it."""
         found = self._session(session)
         if found is None:
             return
@@ -688,6 +692,19 @@ class Serving:
                 route="" if asked is None else asked.name,
                 epoch=found.route_epoch,
                 opening=True,
+            )
+        )
+        self._say_model(found, opening=True)
+
+    def _say_model(self, found: Session, *, opening: bool = False) -> None:
+        """Say which model *found* asks for, and how much room that model has."""
+        asked = found.host.routes.asking(found.route, found.model)
+        self._say(
+            ModelSet(
+                session=found.session_id,
+                model="" if asked is None else asked.model,
+                epoch=found.model_epoch,
+                opening=opening,
                 context_window=0 if asked is None else asked.caps.context_window,
             )
         )
@@ -807,9 +824,24 @@ class Serving:
                 session=session,
                 route="" if asked is None else asked.name,
                 epoch=epoch,
-                context_window=0 if asked is None else asked.caps.context_window,
             )
         )
+        # A route that moved may not serve the model this conversation was asking for, so what it stands
+        # at now is said again, resolved against the route it moved to.
+        self._say_model(found)
+
+    async def _model(self, session: str, model: str) -> None:
+        """Point one session at a model of its route, or say why nothing moved.
+
+        One refusal: a session this kernel does not serve. Everything else is the endpoint's to answer,
+        because the file lists what a person wanted to name and a gateway may serve more (E170).
+        """
+        found = self._session(session)
+        if found is None:
+            self._say(SessionRefused(session=session, reason=Refusal.NO_SESSION))
+            return
+        _ = await found.set_model(model)
+        self._say_model(found)
 
     async def _compact(
         self,

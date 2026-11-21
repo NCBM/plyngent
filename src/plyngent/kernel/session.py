@@ -73,6 +73,12 @@ GOAL = "goal"
 #: after the fact.
 ROUTE = "route"
 
+#: The key the session's model is written under: which id of its route's table answers, and the epoch
+#: beside it for the same reason the route's has one. A second setting and not a field of the first,
+#: because they move for different reasons: a route is an address and a bill, a model is what answers the
+#: words (E170).
+MODEL = "model"
+
 #: The key the session's own name is written under: what a person called this conversation, read back in
 #: the listing and nowhere else. One value, folded last-write-wins like the rest, so renaming twice
 #: leaves the second name and a cleared name is an empty value.
@@ -376,12 +382,12 @@ class Session(Component):
         Read at the boundary of every request and never remembered by a turn: that is what lets a route
         change take effect at the next request, with nobody refused (R7's ``SetRoute``).
         """
-        return _route(self._state.get(ROUTE))[0]
+        return _chosen(self._state.get(ROUTE))[0]
 
     @property
     def route_epoch(self) -> int:
         """How many times this session's route has changed — the number an attempt records."""
-        return _route(self._state.get(ROUTE))[1]
+        return _chosen(self._state.get(ROUTE))[1]
 
     async def set_route(self, name: str) -> tuple[str, int]:
         """Point this session at *name*, and answer the name and epoch it now stands at.
@@ -395,12 +401,46 @@ class Session(Component):
         """
 
         def mutate(before: str | None) -> tuple[str | None, tuple[str, int]]:
-            current, epoch = _route(before)
+            current, epoch = _chosen(before)
             if current == name:
                 return None, (current, epoch)
             return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
 
         answer = await self.change(ROUTE, mutate)
+        self.calibration = None
+        return answer
+
+    # -- which model this session asks for on that route ---------------------------
+
+    @property
+    def model(self) -> str:
+        """The model this session asks for, or nothing when it never picked one.
+
+        An id of its route's table and not a provider's own word for it: which ids exist is the route's
+        business, and a conversation that names one is saying "that one, there" (E170).
+        """
+        return _chosen(self._state.get(MODEL))[0]
+
+    @property
+    def model_epoch(self) -> int:
+        """How many times this session's model has changed — the number an attempt records."""
+        return _chosen(self._state.get(MODEL))[1]
+
+    async def set_model(self, name: str) -> tuple[str, int]:
+        """Point this session at model *name*, and answer the name and epoch it now stands at.
+
+        The same mechanism as the route and for the same reason: it lands at the next request, so nobody
+        is refused mid-turn. A model that moved counts differently, so a correction measured on the old
+        one is dropped here too.
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, tuple[str, int]]:
+            current, epoch = _chosen(before)
+            if current == name:
+                return None, (current, epoch)
+            return msgspec.json.encode({"name": name, "epoch": epoch + 1}).decode(), (name, epoch + 1)
+
+        answer = await self.change(MODEL, mutate)
         self.calibration = None
         return answer
 
@@ -736,12 +776,15 @@ def _grants_value(held: Mapping[Path, AccessMode]) -> str:
     return msgspec.json.encode({"paths": paths}).decode()
 
 
-def _route(value: str | None) -> tuple[str, int]:
-    """One route setting as the name it chose and the epoch it was written at.
+def _chosen(value: str | None) -> tuple[str, int]:
+    """One setting that names a choice, as the name it chose and the epoch it was written at.
 
-    A value this build cannot read is "never chose", which lands the session on the host's default —
-    the same forgiveness every setting here gets, and the one that matters most: a conversation must not
-    become unopenable because a model was retired.
+    The route and the model are both this: a name somebody picked and a counter beside it, so that an
+    attempt can record which one was in force when it was made.
+
+    A value this build cannot read is "never chose", which lands the session on the host's default — the
+    same forgiveness every setting here gets, and the one that matters most: a conversation must not become
+    unopenable because a model was retired.
     """
     if not value:
         return "", 0

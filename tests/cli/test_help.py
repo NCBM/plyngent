@@ -64,6 +64,13 @@ EXPECTED: dict[str, str] = {
     "Options:\n"
     "  --route TEXT\n"
     "  --session TEXT  the conversation to act on  [default: main]",
+    "set-model": "Usage: set-model [OPTIONS]\n"
+    "\n"
+    "  Choose which of the route's models answers this conversation.\n"
+    "\n"
+    "Options:\n"
+    "  --model TEXT\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
     "goal": "Usage: goal [OPTIONS] [off|on]\n"
     "\n"
     "  Keep a conversation going while its plan is unfinished — or ask where it\n"

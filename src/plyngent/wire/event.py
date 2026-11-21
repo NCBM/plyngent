@@ -516,8 +516,26 @@ class Routed(Event, tag="routed", frozen=True, kw_only=True):
     route: str = ""
     epoch: int = 0
     opening: bool = False
-    #: How many tokens the route's model can hold at once, or zero when that route never said. It travels
-    #: with the route announcement because it is the same fact: which model answers, and what it can take.
+
+
+class ModelSet(Event, tag="model-set", frozen=True, kw_only=True):
+    """This session now asks for *model*, and which epoch that is.
+
+    Said twice for the same two reasons the route is: an opening answers "where is this conversation",
+    and a change is something a person did. ``model`` is the id the session holds, and empty when it never
+    picked one — which is the client's cue to ask, since choosing a default is the frontend's business
+    and never the kernel's (E170/E172).
+
+    ``context_window`` travels here and not with the route, because it is a fact about *this model*: a
+    frontend that drew the fullness line from the gateway's number would draw the wrong one as soon as
+    one gateway served two models.
+    """
+
+    session: str = ""
+    model: str = ""
+    epoch: int = 0
+    opening: bool = False
+    #: How many tokens this model can hold at once, or zero when nobody stated one.
     context_window: int = 0
 
 
@@ -758,6 +776,7 @@ type AnyEvent = (
     | Usage
     | AnswerCut
     | Routed
+    | ModelSet
     | RouteRefused
     | GoalSet
     | GoalRefused

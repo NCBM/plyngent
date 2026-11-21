@@ -178,11 +178,16 @@ class Attempt(Struct, tag=ATTEMPT_TAG, frozen=True, kw_only=True):
     :class:`~plyngent.kernel.failure.Retry`) as text, so a row written by today's build is still readable
     when one of those sets grows a member, and so this record does not drag the kernel's own vocabulary
     into a stored shape it would then have to migrate.
+
+    The model is here beside the route because the route alone stopped answering "which model was asked"
+    once one gateway served several of them (E170).
     """
 
     turn: int = 0
     route: str = ""
     epoch: int = 0
+    model: str = ""
+    model_epoch: int = 0
     failure: str = ""
     retry: str = ""
     says: str = ""
