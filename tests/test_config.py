@@ -23,6 +23,7 @@ from plyngent import config
 from plyngent.__main__ import main
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm.route import Posted, RouteWeb
+from plyngent.kernel.lm.thinking import Budget
 from plyngent.kernel.model import Request, User
 from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
 from plyngent.kernel.pty.registry import (
@@ -145,6 +146,35 @@ def test_a_dialect_this_build_does_not_speak_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(config.ConfigError, match="carrier-pigeon"):
         _ = config.load(path)
+
+
+def test_a_route_that_asks_for_a_shape_its_dialect_lacks_is_refused(tmp_path: Path) -> None:
+    """E168: thinking is a shape a dialect has a word for, checked where the file is read.
+
+    The alternative is a body carrying a field the endpoint never reads, and the only report of it a 400
+    on the first turn — after a key was spent and a conversation was started.
+    """
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.caps]\nmax_output = 64\n\n[route.caps.thinking]\nshape = "effort"\nlevel = "high"\n',
+    )
+
+    with pytest.raises(config.ConfigError, match="no word for"):
+        _ = config.load(path)
+
+
+def test_a_thinking_shape_is_read_into_the_value_the_dialect_writes(tmp_path: Path) -> None:
+    """One shape, one value: what the file says is what the dialect then has a branch for."""
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.caps]\nmax_output = 64\n\n[route.caps.thinking]\nshape = "budget"\ntokens = 8000\n',
+    )
+
+    route = config.load(path).routes.named("one")
+
+    assert route is not None and route.caps.thinking == Budget(tokens=8000)
 
 
 def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp_path: Path) -> None:

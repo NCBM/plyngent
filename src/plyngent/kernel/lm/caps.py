@@ -9,14 +9,14 @@ Three rules, and they are what makes the table worth its lines:
 
 * **A field is here because somebody obeys it.** ``vision`` gates a picture at assembly time,
   ``prefix_cache`` decides which cache mechanism a request carries (§10.5), ``max_output`` becomes the
-  room an answer is given, ``stream`` decides whether a request asks for one, ``parallel_tools`` /
-  ``reasoning`` become flags the dialects write. A cap nobody reads would be a comment with a default
-  value.
+  room an answer is given, ``stream`` decides whether a request asks for one, ``parallel_tools`` becomes
+  a flag the dialects write, and ``thinking`` is the shape a request asks a model to think in. A cap
+  nobody reads would be a comment with a default value.
 * **``max_output`` has no default.** How much room an answer gets is a decision somebody makes, and a
   dialect that must state it (``messages`` does) would otherwise invent one silently.
 * **The defaults are the conservative ones.** A route that was told nothing gets a model that cannot
-  see, cannot think out loud, and is asked for one call at a time — and its author says so where the
-  route is declared, which keeps the discovery from arriving as a truncation.
+  see, is asked to think in no shape at all, and is asked for one call at a time — and its author says
+  so where the route is declared, which keeps the discovery from arriving as a truncation.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ from __future__ import annotations
 from enum import StrEnum
 
 from msgspec import Struct
+
+from plyngent.kernel.lm.thinking import Off, ThinkingSpec
 
 
 class PrefixCache(StrEnum):
@@ -51,11 +53,10 @@ class Caps(Struct, frozen=True, kw_only=True):
     #: Whether one answer may ask for more than one call. False asks the model to take them one at a
     #: time — which costs rounds and buys a gateway that would have refused the batch.
     parallel_tools: bool = False
-    #: Whether this model takes a thinking setting at all, and how many tokens it may spend when it does.
-    #: The pair is deliberate: a dialect that wants a flag reads the first, one that wants a number
-    #: reads the second, and neither has to know the other exists.
-    reasoning: bool = False
-    reasoning_budget: int = 0
+    #: Whether this model is asked to think, and in which of the shapes the wires have for it. The shape
+    #: is the fact a request carries, and which shapes a dialect can write is that dialect's declaration
+    #: (:attr:`plyngent.kernel.lm.codec.Codec.spells`, E168).
+    thinking: ThinkingSpec = Off()
     #: How many tokens an answer may take. Not defaulted: it is a budget somebody picks, and a dialect
     #: that must state it would otherwise pick for them.
     max_output: int

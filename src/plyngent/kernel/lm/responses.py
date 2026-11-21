@@ -12,11 +12,10 @@ Two things it does differently from the other two, both of them this endpoint's 
 * **A picture travels inside a tool's answer** as an ``input_image`` part beside the ``input_text`` one,
   so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.vision``.
 
-A thinking *budget* is not written: this endpoint takes an effort level, which is a different fact from
-the number of tokens a route is willing to spend, and this build only has the number. What an answer
-thinks anyway arrives as a ``reasoning`` item in front of what it said, and that item goes back with the
-round: this endpoint refuses a request that carries a tool round's calls without the reasoning they came
-with.
+Thinking is written as an effort level from a closed set, which is this endpoint's own word for it, and
+not the token count ``messages`` takes (E168). What an answer thinks anyway arrives as a ``reasoning``
+item in front of what it said, and that item goes back with the round: this endpoint refuses a request
+that carries a tool round's calls without the reasoning they came with.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
+from plyngent.kernel.lm.thinking import Effort, Off
 from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 
 if TYPE_CHECKING:
@@ -52,6 +52,7 @@ class Responses(Codec):
     name: str = RESPONSES
     endpoint: str = "/responses"
     pictures: bool = True
+    spells: frozenset[type] = frozenset({Off, Effort})
 
     @override
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
@@ -71,6 +72,8 @@ class Responses(Codec):
             ]
         if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
             body["prompt_cache_key"] = request.cache_key
+        if isinstance(caps.thinking, Effort):
+            body["reasoning"] = {"effort": caps.thinking.level.value}
         return body
 
     @override

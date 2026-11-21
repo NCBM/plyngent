@@ -23,12 +23,18 @@ import pytest
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import (
     DIALECTS,
+    Adaptive,
+    Budget,
     Caps,
     Chat,
     Codec,
+    Effort,
+    Level,
     Messages,
+    Off,
     PrefixCache,
     Responses,
+    Template,
     codec_named,
 )
 from plyngent.kernel.lm.codec import of_status, refused
@@ -225,6 +231,67 @@ def test_a_prefix_key_travels_only_where_the_route_asks_for_one() -> None:
     no_prompt = _request(system="")
     tools_marked = _body(Messages(), no_prompt, caps=_caps(prefix_cache=PrefixCache.BREAKPOINT))
     assert tools_marked["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_thinking_is_written_in_the_shape_the_endpoint_was_told_about() -> None:
+    """E168: one cap, and each wire's own word for it — a budget, a choice, a level, a switch.
+
+    ``Off`` writes nothing, which is the shape and not an omission: a field with an empty value is
+    something the endpoint never asked for and a cached prefix would have to carry.
+    """
+    request = _request()
+
+    assert "thinking" not in _body(Messages(), request, caps=_caps())
+    assert _body(Messages(), request, caps=_caps(thinking=Budget(tokens=8000)))["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 8000,
+    }
+    assert _body(Messages(), request, caps=_caps(thinking=Adaptive()))["thinking"] == {"type": "adaptive"}
+    assert _body(Responses(), request, caps=_caps(thinking=Effort(level=Level.HIGH)))["reasoning"] == {"effort": "high"}
+    assert _body(Chat(), request, caps=_caps(thinking=Effort(level=Level.LOW)))["reasoning"] == {"effort": "low"}
+    assert _body(Chat(), request, caps=_caps(thinking=Template(enabled=False)))["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
+
+
+#: One value of each shape that asks for something, for the rows that declare it.
+SPOKEN: dict[type, object] = {
+    Budget: Budget(tokens=1),
+    Adaptive: Adaptive(),
+    Effort: Effort(level=Level.MEDIUM),
+    Template: Template(enabled=True),
+}
+
+
+def test_each_row_speaks_the_shapes_this_build_has_words_for() -> None:
+    """The matrix is the decision, so it is written down once and asserted whole (E168).
+
+    Two wires take two shapes each for a reason, and neither reason is interchangeable: a token budget is
+    a number one family understands and the other does not, and an effort level is the reverse. A row
+    quietly gaining a shape would be a body field an endpoint refuses on the first turn.
+    """
+    assert {codec.name: codec.spells for codec in DIALECTS} == {
+        "messages": frozenset({Off, Budget, Adaptive}),
+        "chat-completions": frozenset({Off, Effort, Template}),
+        "chat-completions-legacy": frozenset({Off, Template}),
+        "responses": frozenset({Off, Effort}),
+    }
+
+
+def test_a_row_writes_exactly_the_shapes_it_declares() -> None:
+    """The declaration is only worth its line if the writer agrees, in both directions.
+
+    Asked for a shape it declares, a row's body changes; asked for one it does not, the body is the one
+    it writes when nothing is asked at all. That is what keeps the table the *only* thing a route's
+    configuration is checked against.
+    """
+    for codec in DIALECTS:
+        silent = _body(codec, _request(), caps=_caps())
+        for shape, value in SPOKEN.items():
+            spoken = _body(codec, _request(), caps=_caps(thinking=value))
+            assert (spoken != silent) is (shape in codec.spells), (
+                f"{codec.name} and the shape {shape.__name__} disagree about whether it can be said"
+            )
 
 
 def test_the_same_request_is_the_same_bytes_twice() -> None:

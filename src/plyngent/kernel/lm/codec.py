@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, cast
 import msgspec
 
 from plyngent.kernel.failure import Failure
+from plyngent.kernel.lm.thinking import Off
 from plyngent.kernel.model import ModelFailed
 
 if TYPE_CHECKING:
@@ -74,6 +75,12 @@ class Codec(ABC):
     #: dialect says ``False`` cannot claim ``Caps.stream``, and asking one to is answered as an ordinary
     #: request, and the body is not read as if it were a stream — the same two-gate rule a picture has.
     sse: bool = False
+
+    #: Which of :mod:`plyngent.kernel.lm.thinking`'s shapes this dialect can write, as one declaration and
+    #: not three. A route whose model asks to think in a shape its dialect does not name is refused where
+    #: the configuration is read (E168): the alternative is a request body with a field nothing reads, and
+    #: a 400 on the first turn as the only report of it.
+    spells: frozenset[type] = frozenset({Off})
 
     @abstractmethod
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:

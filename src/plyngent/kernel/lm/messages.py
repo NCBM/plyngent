@@ -13,11 +13,11 @@ shape this file:
   which is what lets a route on this dialect honestly claim ``Caps.vision``.
 
 Two more things are this dialect's alone and are read off ``Caps``: ``max_tokens`` is **required** —
-there is no request without it — and a thinking budget is a token count, where ``responses`` carries an
-effort level.
-That budget is the only place in this build that asks a model to think out loud, and what comes back is
-the one thing this dialect refuses to see dropped: the next round carries it, signature and all, because
-a round whose thinking went missing is a round the endpoint will not read (§10.4, E145).
+there is no request without it — and thinking is written either as a token budget or as the model's own
+choice, where ``responses`` carries an effort level and a chat template a switch (E168).
+Asking is one thing and what comes back is another: what an answer thinks is the one thing this dialect
+refuses to see dropped, since the next round carries it, signature and all, because a round whose
+thinking went missing is a round the endpoint will not read (§10.4, E145).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ import msgspec
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema, spelled
+from plyngent.kernel.lm.thinking import Adaptive, Budget, Off
 from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 from plyngent.kernel.toolresult import Status
 
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.lm.caps import Caps
     from plyngent.kernel.lm.codec import Body
+    from plyngent.kernel.lm.thinking import ThinkingSpec
     from plyngent.kernel.model import AnyMessage, Request
 
 #: The word a route names this dialect by.
@@ -57,6 +59,7 @@ class Messages(Codec):
     name: str = MESSAGES
     endpoint: str = "/messages"
     pictures: bool = True
+    spells: frozenset[type] = frozenset({Off, Budget, Adaptive})
 
     @override
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
@@ -71,8 +74,9 @@ class Messages(Codec):
             body["system"] = _system(request.system, caps)
         if request.tools:
             body["tools"] = _tools(request, caps)
-        if caps.reasoning and caps.reasoning_budget:
-            body["thinking"] = {"type": "enabled", "budget_tokens": caps.reasoning_budget}
+        thought = _thinking(caps.thinking)
+        if thought is not None:
+            body["thinking"] = thought
         return body
 
     @override
@@ -98,6 +102,20 @@ class Messages(Codec):
             return payload.decode("utf-8", "replace").strip()
         said = as_dict(document).get("error")
         return said.strip() if isinstance(said, str) else as_text(as_dict(said).get("message"))
+
+
+def _thinking(thinking: ThinkingSpec) -> Body | None:
+    """This dialect's one field for being asked to think: a budget, or the model's own choice.
+
+    ``None`` when the shape is ``Off``, because "nothing to say" and "say nothing" are one thing here: a
+    field carrying an empty value is a shape the endpoint did not ask for, and a prefix somebody caches
+    would have to carry it (§10.5).
+    """
+    if isinstance(thinking, Budget):
+        return {"type": "enabled", "budget_tokens": thinking.tokens}
+    if isinstance(thinking, Adaptive):
+        return {"type": "adaptive"}
+    return None
 
 
 def _messages(history: tuple[AnyMessage, ...]) -> list[Body]:

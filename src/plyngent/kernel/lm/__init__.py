@@ -3,9 +3,10 @@
 Everything a model needs beyond the canonical values lives here, and nothing above this package knows
 it exists: :mod:`plyngent.kernel.turn` asks a :class:`~plyngent.kernel.model.Model` for a reply, and a
 :class:`~plyngent.kernel.lm.route.Posted` turns that question into one HTTP request to the endpoint a
-:class:`~plyngent.kernel.lm.route.Route` names. The three pieces are the whole of it:
+:class:`~plyngent.kernel.lm.route.Route` names. The four pieces are the whole of it:
 
 * :mod:`plyngent.kernel.lm.caps` — one route's model, as the facts anything downstream obeys.
+* :mod:`plyngent.kernel.lm.thinking` — the shapes a request may ask a model to think in.
 * :mod:`plyngent.kernel.lm.codec` — a dialect as two pure functions, plus the one status→kind table.
 * :mod:`plyngent.kernel.lm.route` — a named endpoint, and the model that posts to it.
 
@@ -38,6 +39,13 @@ from plyngent.kernel.lm.route import DEFAULT_TIMEOUT as DEFAULT_TIMEOUT
 from plyngent.kernel.lm.route import Posted as Posted
 from plyngent.kernel.lm.route import Route as Route
 from plyngent.kernel.lm.route import Routes as Routes
+from plyngent.kernel.lm.thinking import Adaptive as Adaptive
+from plyngent.kernel.lm.thinking import Budget as Budget
+from plyngent.kernel.lm.thinking import Effort as Effort
+from plyngent.kernel.lm.thinking import Level as Level
+from plyngent.kernel.lm.thinking import Off as Off
+from plyngent.kernel.lm.thinking import Template as Template
+from plyngent.kernel.lm.thinking import ThinkingSpec as ThinkingSpec
 
 #: The dialects this build speaks, one row each. A route names one by its ``name``, and nothing else in
 #: the tree names a dialect at all.

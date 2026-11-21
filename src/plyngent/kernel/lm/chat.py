@@ -17,11 +17,12 @@ Two things this dialect cannot do, said here so that nobody discovers them later
 * **A picture has no channel.** Its only image slot is inside a *person's* message, and a tool's answer
   is not a person's; putting pixels there would be inventing a speaker. ``pictures`` is therefore
   ``False`` and a route on this dialect is blind however its caps read (see :class:`Codec`).
-* **A thinking budget has no portable spelling.** ``responses`` carries an effort level and
-  ``messages`` carries a token budget; here a vendor invents ``reasoning`` or ``thinking`` and the next
-  one spells it differently. So the flag is not written at all — a route that wants thinking out loud
-  belongs on one of the other two. What thinking *comes back* anyway is read, kept and handed back
-  (``reasoning_content``), because a vendor that produces it refuses the next round without it.
+* **Thinking has two spellings here, and neither is a budget.** An effort level (``reasoning.effort``) is
+  what the newer gateways took from ``responses``, and ``chat_template_kwargs.enable_thinking`` is what a
+  self-hosted server reads before rendering its own template. A token budget has no portable spelling on
+  this wire, so here it is a shape a route cannot ask for (E168). What thinking *comes back* anyway is
+  read, kept and handed back (``reasoning_content``), because a vendor that produces it refuses the next
+  round without it.
 
 **The one thing it does that the others do not yet**: it reads a streamed answer (``sse``). Each frame
 carries a fragment of what the model is saying, and the calls it asks for arrive as fragments keyed by an
@@ -35,6 +36,7 @@ from typing import TYPE_CHECKING, override
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, document, frames, schema
+from plyngent.kernel.lm.thinking import Effort, Off, Template
 from plyngent.kernel.model import (
     Assistant,
     Call,
@@ -55,6 +57,7 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.lm.caps import Caps
     from plyngent.kernel.lm.codec import Body
+    from plyngent.kernel.lm.thinking import ThinkingSpec
     from plyngent.kernel.model import Request
 
 #: The word a route names the newer of the two rows by.
@@ -83,11 +86,18 @@ class Chat(Codec):
     sse: bool = True
     #: The role this row puts a notice's line in, and the one thing the two rows differ by.
     notice: str = ""
+    spells: frozenset[type] = frozenset({Off, Effort, Template})
 
     def __init__(self, *, legacy: bool = False) -> None:
-        """One of the two rows: the newer family by default, the older one on request (E167)."""
+        """One of the two rows: the newer family by default, the older one on request (E167).
+
+        The older family takes the chat template's switch and nothing else, because an effort level is a
+        field the newer gateways invented and an endpoint that only knows the older spelling refuses a
+        field it does not have (E168).
+        """
         self.name = CHAT_LEGACY if legacy else CHAT
         self.notice = "system" if legacy else "developer"
+        self.spells = frozenset({Off, Template}) if legacy else frozenset({Off, Effort, Template})
 
     @override
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
@@ -108,6 +118,9 @@ class Chat(Codec):
             ]
         if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
             body["prompt_cache_key"] = request.cache_key
+        thought = _thinking(caps.thinking, self.spells)
+        if thought is not None:
+            body.update(thought)
         if caps.stream:
             # A streamed answer only carries what it cost when it is asked to: without this the last
             # frame says nothing about tokens, and §10.5's numbers would silently disappear from every
@@ -194,6 +207,24 @@ class _Pending:
         self.id = ""
         self.tool = ""
         self.arguments = []
+
+
+def _thinking(thinking: ThinkingSpec, spells: frozenset[type]) -> Body | None:
+    """This row's one field for being asked to think, and nothing when it has no word for the shape.
+
+    The declaration is read here as well as where the file is read, so that the two answers cannot drift:
+    a shape this row cannot say is not invented into a field the endpoint would refuse, and one it can
+    say is exactly one of the two branches below. An effort level is what the newer gateways took from
+    ``responses``; ``chat_template_kwargs.enable_thinking`` is what a self-hosted server reads before it
+    renders its own template (E168).
+    """
+    if type(thinking) not in spells:
+        return None
+    if isinstance(thinking, Effort):
+        return {"reasoning": {"effort": thinking.level.value}}
+    if isinstance(thinking, Template):
+        return {"chat_template_kwargs": {"enable_thinking": thinking.enabled}}
+    return None
 
 
 def _pending(partial: dict[int, _Pending], fragments: list[Any]) -> None:

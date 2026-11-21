@@ -43,6 +43,7 @@ from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes, RouteWeb
+from plyngent.kernel.lm.thinking import said
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import DEFAULT_COUNT, Web
 from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
@@ -398,8 +399,15 @@ def _routes(declared: list[RouteFile], environment: Mapping[str, str]) -> tuple[
 
 def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
     """One declared route, as the kernel's own value."""
-    if codec_named(one.dialect) is None:
+    codec = codec_named(one.dialect)
+    if codec is None:
         msg = f"route {one.name!r} names the dialect {one.dialect!r}, which this build does not speak"
+        raise ConfigError(msg)
+    if type(one.caps.thinking) not in codec.spells:
+        msg = (
+            f"route {one.name!r} asks its model to think in a shape {one.dialect!r} has no word for; "
+            f"it speaks {said(codec.spells)}"
+        )
         raise ConfigError(msg)
     _check_provider(one)
     route = Route(
