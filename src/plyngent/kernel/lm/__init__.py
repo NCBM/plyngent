@@ -14,14 +14,17 @@ is where the rows are: a new provider is a module implementing :class:`~plyngent
 and one entry in :data:`DIALECTS`, and no other file changes. The test that holds it is a walk of the
 tree looking for a dialect's name *outside* this package — because the day a loop branches on
 ``if provider == …``, the row was not enough and the shape has to be looked at again.
+
+Two rows may be one class filed twice, when two families of one wire differ in a single word (E167): the
+name is still the handle a route carries, and it still says everything the codec needs to know.
 """
 
 from __future__ import annotations
 
 from plyngent.kernel.lm.caps import Caps as Caps
-from plyngent.kernel.lm.caps import NoteRole as NoteRole
 from plyngent.kernel.lm.caps import PrefixCache as PrefixCache
 from plyngent.kernel.lm.chat import CHAT as CHAT
+from plyngent.kernel.lm.chat import CHAT_LEGACY as CHAT_LEGACY
 from plyngent.kernel.lm.chat import Chat as Chat
 
 # Not a type-only import even though only an annotation names it: the package face is what a dialect is
@@ -38,7 +41,7 @@ from plyngent.kernel.lm.route import Routes as Routes
 
 #: The dialects this build speaks, one row each. A route names one by its ``name``, and nothing else in
 #: the tree names a dialect at all.
-DIALECTS: tuple[Codec, ...] = (Messages(), Chat(), Responses())
+DIALECTS: tuple[Codec, ...] = (Messages(), Chat(), Chat(legacy=True), Responses())
 
 
 def codec_named(name: str) -> Codec | None:

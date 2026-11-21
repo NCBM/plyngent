@@ -27,7 +27,6 @@ from plyngent.kernel.lm import (
     Chat,
     Codec,
     Messages,
-    NoteRole,
     PrefixCache,
     Responses,
     codec_named,
@@ -124,17 +123,15 @@ def test_a_notice_is_put_where_each_dialect_has_room_for_it() -> None:
     """E142: the harness speaking takes a role, a developer item, and the person's role — in that order.
 
     Three answers because the three vocabularies differ: a flat list of roles has a word for "instructions
-    below the front" (and a route chooses which word, since one family reserves ``system`` for the front),
-    typed items have ``developer``, and the block dialect has no role for it at all — so there the notice
-    is a block of the person's turn, and the marker in its text is what keeps the two apart.
+    below the front", typed items have ``developer``, and the block dialect has no role for it at all — so
+    there the notice is a block of the person's turn, and the marker in its text is what keeps the two
+    apart.
     """
     note = Note(text=f"{NOTICE_MARKER}\n2 things are still on your list")
     request = _request(messages=(User(text="hi"), note))
 
     chat = _body(Chat(), request, caps=_caps())["messages"]
-    assert chat[2] == {"role": "system", "content": note.text}
-    reserved = _body(Chat(), request, caps=_caps(note_role=NoteRole.DEVELOPER))["messages"]
-    assert reserved[2] == {"role": "developer", "content": note.text}
+    assert chat[2] == {"role": "developer", "content": note.text}
 
     spoken = _body(Messages(), request, caps=_caps())["messages"]
     assert [block["text"] for block in spoken[0]["content"]] == ["hi", note.text], (
@@ -143,6 +140,23 @@ def test_a_notice_is_put_where_each_dialect_has_room_for_it() -> None:
 
     items = _body(Responses(), request, caps=_caps())["input"]
     assert items[1] == {"role": "developer", "content": [{"type": "input_text", "text": note.text}]}
+
+
+def test_the_older_row_puts_a_notice_in_the_role_it_is_named_for() -> None:
+    """E167: the two chat rows differ by one word, and the word is the row's name.
+
+    ``chat-completions`` is the newer family, which reserves ``system`` for the front of the list; the
+    older one reads ``system`` anywhere. Both are the same codec filed twice, so this is a test of the
+    constructor and not of a second spelling of the wire.
+    """
+    note = Note(text=f"{NOTICE_MARKER}\n2 things are still on your list")
+    request = _request(messages=(User(text="hi"), note))
+
+    newer = _body(Chat(), request, caps=_caps())["messages"]
+    older = _body(Chat(legacy=True), request, caps=_caps())["messages"]
+
+    assert newer[2] == {"role": "developer", "content": note.text}
+    assert older[2] == {"role": "system", "content": note.text}
 
 
 def test_a_run_of_results_is_one_turn_of_the_person_speaking() -> None:
@@ -429,9 +443,15 @@ def test_a_route_names_its_dialect_and_a_dialect_it_does_not_have_is_not_a_name(
     """The table is one row per dialect, looked up by the word a route carries."""
     assert codec_named("messages") is not None
     assert codec_named("chat-completions") is not None
+    assert codec_named("chat-completions-legacy") is not None
     assert codec_named("responses") is not None
     assert codec_named("carrier-pigeon") is None
-    assert [codec.name for codec in DIALECTS] == ["messages", "chat-completions", "responses"]
+    assert [codec.name for codec in DIALECTS] == [
+        "messages",
+        "chat-completions",
+        "chat-completions-legacy",
+        "responses",
+    ]
 
 
 def test_a_refused_request_keeps_the_status_kind_and_the_endpoints_words() -> None:

@@ -188,10 +188,12 @@ def test_the_kernel_names_no_dialect() -> None:
 
 
 def test_every_dialect_is_one_row_in_one_module() -> None:
-    """The table is the list: every dialect is filed under its own name, and each lives in its own module.
+    """The table is the list: every dialect is filed under a name of its own, from a module of this package.
 
     A codec that exists and is not filed is a dialect nobody can route to; one filed from somewhere other
-    than this package is a row that a second place could also have written.
+    than this package is a row that a second place could also have written. One module may hold two rows,
+    when two families of one wire differ in a word (E167): they are still filed under two names, and the
+    name is still what a route carries.
     """
     filed = [codec.name for codec in DIALECTS]
 

@@ -1,10 +1,16 @@
 """The chat-completions dialect: one flat list of roles, and the tool calls inside an assistant turn.
 
-The oldest of the three shapes and the one every compatible gateway speaks, which is why it is the
-dialect a local vLLM, a LiteLLM proxy or a vendor's OpenAI-compatible endpoint is reached over. It is
-also the least precise: a conversation is a list of dictionaries keyed by ``role``, a tool call is a
-member of the assistant message that asked for it, and a tool's answer is *another* message, since this
-shape has no blocks — so "which result answers which call" is carried by an id inside the tool message.
+The oldest of the shapes and the one every compatible gateway speaks, which is why it is the dialect a
+local vLLM, a LiteLLM proxy or a vendor's OpenAI-compatible endpoint is reached over. It is also the
+least precise: a conversation is a list of dictionaries keyed by ``role``, a tool call is a member of the
+assistant message that asked for it, and a tool's answer is *another* message, since this shape has no
+blocks — so "which result answers which call" is carried by an id inside the tool message.
+
+**Two rows, one class.** This wire is spoken by two families that differ in one word: the older one reads
+``system`` anywhere in the list, and the newer one reserves it for the front and expects ``developer``
+below. So the same codec is filed twice, once per word, and a route picks the family by the name it gives
+(``chat-completions`` / ``chat-completions-legacy``, E167) — a name cannot say the wrong word about the
+endpoint it was given to, while a configuration key could.
 
 Two things this dialect cannot do, said here so that nobody discovers them later:
 
@@ -47,12 +53,15 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Any
 
-    from plyngent.kernel.lm.caps import Caps, NoteRole
+    from plyngent.kernel.lm.caps import Caps
     from plyngent.kernel.lm.codec import Body
     from plyngent.kernel.model import Request
 
-#: The word a route names this dialect by.
+#: The word a route names the newer of the two rows by.
 CHAT = "chat-completions"
+
+#: The word a route names the older family by, where a notice's line says ``system`` (E167).
+CHAT_LEGACY = "chat-completions-legacy"
 
 #: The word the last frame of a stream carries: the endpoint's own full stop, and no answer.
 DONE = "[DONE]"
@@ -68,9 +77,17 @@ _CUT: dict[str, Failure] = {"length": Failure.LIMIT, "content_filter": Failure.D
 class Chat(Codec):
     """``POST {base}/chat/completions``: messages, tools, and one choice per answer."""
 
+    #: Which of the two rows this instance is: the newer family by default, the older one on request.
     name: str = CHAT
     endpoint: str = "/chat/completions"
     sse: bool = True
+    #: The role this row puts a notice's line in, and the one thing the two rows differ by.
+    notice: str = ""
+
+    def __init__(self, *, legacy: bool = False) -> None:
+        """One of the two rows: the newer family by default, the older one on request (E167)."""
+        self.name = CHAT_LEGACY if legacy else CHAT
+        self.notice = "system" if legacy else "developer"
 
     @override
     def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
@@ -78,7 +95,7 @@ class Chat(Codec):
             "model": model,
             "messages": [
                 *_system(request),
-                *(_message(item, caps.note_role) for item in request.messages),
+                *(_message(item, self.notice) for item in request.messages),
             ],
             "stream": caps.stream,
             "max_tokens": caps.max_output,
@@ -212,15 +229,15 @@ def _system(request: Request) -> list[Body]:
     return [{"role": "system", "content": request.system}] if request.system else []
 
 
-def _message(message: User | Assistant | Result | Note, note_role: NoteRole) -> Body:
+def _message(message: User | Assistant | Result | Note, notice: str) -> Body:
     """One canonical message, in the spelling this dialect has for it.
 
-    A notice takes the role the route names, which is the one place in this dialect a notice differs from
-    a person's line: this vocabulary has no channel for "the harness", only roles, and a role in the middle
+    A notice takes the role this row names, which is the one place in this dialect a notice differs from a
+    person's line: this vocabulary has no channel for "the harness", only roles, and a role in the middle
     of the list is exactly what ``system``/``developer`` are for (§10.4, E142).
     """
     if isinstance(message, Note):
-        return {"role": note_role.value, "content": message.text}
+        return {"role": notice, "content": message.text}
     if isinstance(message, User):
         return {"role": "user", "content": message.text}
     if isinstance(message, Assistant):
