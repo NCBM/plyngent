@@ -23,7 +23,7 @@ name is still the handle a route carries, and it still says everything the codec
 from __future__ import annotations
 
 from plyngent.kernel.lm.caps import Caps as Caps
-from plyngent.kernel.lm.caps import PrefixCache as PrefixCache
+from plyngent.kernel.lm.caps import ToolCalls as ToolCalls
 from plyngent.kernel.lm.chat import CHAT as CHAT
 from plyngent.kernel.lm.chat import CHAT_LEGACY as CHAT_LEGACY
 from plyngent.kernel.lm.chat import Chat as Chat
@@ -37,6 +37,7 @@ from plyngent.kernel.lm.responses import RESPONSES as RESPONSES
 from plyngent.kernel.lm.responses import Responses as Responses
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT as DEFAULT_TIMEOUT
 from plyngent.kernel.lm.route import Posted as Posted
+from plyngent.kernel.lm.route import PrefixCache as PrefixCache
 from plyngent.kernel.lm.route import Route as Route
 from plyngent.kernel.lm.route import Routes as Routes
 from plyngent.kernel.lm.thinking import Adaptive as Adaptive

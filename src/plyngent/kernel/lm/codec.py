@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from plyngent.kernel.lm.caps import Caps
+    from plyngent.kernel.lm.route import PrefixCache
     from plyngent.kernel.model import Delta, Reply, Request
 
 #: One request body: the JSON object a dialect writes, before anybody serializes it.
@@ -68,7 +69,7 @@ class Codec(ABC):
     #: Whether this dialect has a channel for a picture at all. ``messages`` and ``responses`` do;
     #: ``chat`` does not — a tool result there is text, and the only image channel is a person's message,
     #: which is not who a tool's answer came from. A route whose dialect says ``False`` cannot claim
-    #: ``Caps.vision``, and asking one to is answered as blind, with no picture dropped in silence.
+    #: ``Caps.pictures``, and asking one to is answered as blind, with no picture dropped in silence.
     pictures: bool = False
 
     #: Whether this dialect can read an answer that arrives in pieces (server-sent events). A route whose
@@ -83,12 +84,13 @@ class Codec(ABC):
     spells: frozenset[type] = frozenset({Off})
 
     @abstractmethod
-    def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
+    def encode(self, request: Request, *, model: str, caps: Caps, cache: PrefixCache) -> Body:
         """The request body this dialect wants, for this conversation and this model.
 
-        ``caps`` is what the endpoint can do, and it is the only thing besides the conversation that
-        shapes the body: which cache mechanism to carry, how much room to ask for, whether one answer
-        may ask for several calls, whether a thinking setting is understood.
+        ``caps`` is what the model can do and ``cache`` is what this endpoint does about reusing a prefix;
+        between them they are the only thing besides the conversation that shapes the body: how much room
+        to ask for, whether one answer may ask for several calls, whether a thinking setting is
+        understood, and which cache mechanism to carry.
         """
 
     @abstractmethod

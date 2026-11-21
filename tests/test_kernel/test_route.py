@@ -135,14 +135,14 @@ def test_which_route_answers_is_the_sessions_own_or_the_hosts_default() -> None:
     (:meth:`Routes.named`) is what answers a person who asked for a route by name.
     """
     one = Route(name="one", dialect="chat-completions", base="http://one/v1", model="m", caps=_caps())
-    two = Route(name="two", dialect="messages", base="http://two/v1", model="m", caps=_caps(vision=True))
+    two = Route(name="two", dialect="messages", base="http://two/v1", model="m", caps=_caps(pictures=True))
     table = Routes([one, two], default="two")
 
     assert table.resolve("one") is one
     assert table.resolve("") is two
     assert table.resolve("retired") is two
     assert table.named("retired") is None
-    assert table.caps("one").vision is False
-    assert table.caps("two").vision is True
+    assert table.caps("one").pictures is False
+    assert table.caps("two").pictures is True
     assert Routes().resolve("") is None
     assert Routes().caps("") == Caps(max_output=0)

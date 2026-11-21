@@ -7,16 +7,19 @@ needs to know something about the endpoint it is writing for is handed one of th
 
 Three rules, and they are what makes the table worth its lines:
 
-* **A field is here because somebody obeys it.** ``vision`` gates a picture at assembly time,
-  ``prefix_cache`` decides which cache mechanism a request carries (§10.5), ``max_output`` becomes the
-  room an answer is given, ``stream`` decides whether a request asks for one, ``parallel_tools`` becomes
-  a flag the dialects write, and ``thinking`` is the shape a request asks a model to think in. A cap
-  nobody reads would be a comment with a default value.
+* **A field is here because somebody obeys it.** ``pictures`` gates a picture at assembly time,
+  ``max_output`` becomes the room an answer is given, ``stream`` decides whether a request asks for one,
+  ``tools`` decides how many calls one answer may ask for, and ``thinking`` is the shape a request asks
+  a model to think in. A cap nobody reads would be a comment with a default value.
 * **``max_output`` has no default.** How much room an answer gets is a decision somebody makes, and a
   dialect that must state it (``messages`` does) would otherwise invent one silently.
 * **The defaults are the conservative ones.** A route that was told nothing gets a model that cannot
   see, is asked to think in no shape at all, and is asked for one call at a time — and its author says
   so where the route is declared, which keeps the discovery from arriving as a truncation.
+
+**What is *not* here is the model's either.** How a prompt is cached is a fact about the endpoint, not
+about the model behind it: the same model behind a second gateway caches differently, so that mechanism
+is the route's (:attr:`plyngent.kernel.lm.route.Route.prefix_cache`, E169).
 """
 
 from __future__ import annotations
@@ -28,31 +31,30 @@ from msgspec import Struct
 from plyngent.kernel.lm.thinking import Off, ThinkingSpec
 
 
-class PrefixCache(StrEnum):
-    """How this route is told to reuse the front of a prompt, in the three mechanisms there are.
+class ToolCalls(StrEnum):
+    """How many calls one answer may ask for.
 
-    The distinction is not cosmetic: it decides *which field a request carries*, and a provider handed
-    a mechanism it does not implement either ignores it (a miss nobody accounts for) or refuses the
-    request. §10.5 spells out why each one fails the way it does.
+    Two words and not a number: what an endpoint does with a batch is a fact about whether it takes one
+    at all, and "at most three" is a limit this build would have to enforce rather than a thing the wire
+    says. A third word has a place to go here the day somebody needs it.
     """
 
-    #: Nothing is said: the gateway's own implicit behaviour, or none at all.
-    NONE = "none"
-    #: A short stable key names the prefix (``prompt_cache_key``); the provider hashes what follows.
-    IMPLICIT = "implicit"
-    #: A marker inside the request says "everything before this never moves" (``cache_control``).
-    BREAKPOINT = "breakpoint"
+    #: One call per answer: the model is asked to take them one at a time, which costs rounds.
+    ONE = "one"
+    #: One answer may ask for several, and the turn runs them together.
+    PARALLEL = "parallel"
 
 
 class Caps(Struct, frozen=True, kw_only=True):
     """One route's model, as the things anything downstream has to know about it."""
 
     #: Whether a picture reaches the model at all. False is "send the words, not the pixels", which is
-    #: what a tool's handle already says in prose.
-    vision: bool = False
-    #: Whether one answer may ask for more than one call. False asks the model to take them one at a
-    #: time — which costs rounds and buys a gateway that would have refused the batch.
-    parallel_tools: bool = False
+    #: what a tool's handle already says in prose. The dialect's own ``pictures`` is the second gate: both
+    #: have to be open, and the route's is a claim about the model.
+    pictures: bool = False
+    #: How many calls one answer may ask for. ``ONE`` asks the model to take them one at a time — which
+    #: costs rounds and buys a gateway that would have refused the batch.
+    tools: ToolCalls = ToolCalls.ONE
     #: Whether this model is asked to think, and in which of the shapes the wires have for it. The shape
     #: is the fact a request carries, and which shapes a dialect can write is that dialect's declaration
     #: (:attr:`plyngent.kernel.lm.codec.Codec.spells`, E168).
@@ -65,8 +67,6 @@ class Caps(Struct, frozen=True, kw_only=True):
     #: file might not, and a denominator nobody stated must not read as a small one. Nothing a request
     #: carries depends on it: it is the number a frontend divides by when it says how full the context is.
     context_window: int = 0
-    #: Which cache mechanism this route's requests carry.
-    prefix_cache: PrefixCache = PrefixCache.NONE
     #: Whether an answer may arrive in pieces. It is one bit and not two: a fragment of an *argument* is
     #: not a thing anything here acts on, so a route that streams its tool arguments into one answer is
     #: just a route that streams. False is "ask and wait", which is what a dialect that cannot read a

@@ -10,7 +10,7 @@ Two things it does differently from the other two, both of them this endpoint's 
 * **The prompt that is not the conversation is a field** (``instructions``) of its own, with no leading
   message, so a cached prefix starts at it and the tools follow.
 * **A picture travels inside a tool's answer** as an ``input_image`` part beside the ``input_text`` one,
-  so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.vision``.
+  so ``pictures`` is ``True`` and a route on this dialect may honestly claim ``Caps.pictures``.
 
 Thinking is written as an effort level from a closed set, which is this endpoint's own word for it, and
 not the token count ``messages`` takes (E168). What an answer thinks anyway arrives as a ``reasoning``
@@ -24,8 +24,9 @@ import base64
 from typing import TYPE_CHECKING, override
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.lm.caps import PrefixCache
+from plyngent.kernel.lm.caps import ToolCalls
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema
+from plyngent.kernel.lm.route import PrefixCache
 from plyngent.kernel.lm.thinking import Effort, Off
 from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 
@@ -55,14 +56,14 @@ class Responses(Codec):
     spells: frozenset[type] = frozenset({Off, Effort})
 
     @override
-    def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
+    def encode(self, request: Request, *, model: str, caps: Caps, cache: PrefixCache) -> Body:
         body: Body = {
             "model": model,
             "input": [item for message in request.messages for item in _items(message)],
             # Not one this dialect can read yet (``sse`` is False), so it never asks for one.
             "stream": False,
             "max_output_tokens": caps.max_output,
-            "parallel_tool_calls": caps.parallel_tools,
+            "parallel_tool_calls": caps.tools is ToolCalls.PARALLEL,
         }
         if request.system:
             body["instructions"] = request.system
@@ -70,7 +71,7 @@ class Responses(Codec):
             body["tools"] = [
                 {"type": "function", "name": tool.name, "parameters": schema(tool.schema)} for tool in request.tools
             ]
-        if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
+        if cache is PrefixCache.IMPLICIT and request.cache_key:
             body["prompt_cache_key"] = request.cache_key
         if isinstance(caps.thinking, Effort):
             body["reasoning"] = {"effort": caps.thinking.level.value}

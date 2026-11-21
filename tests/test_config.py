@@ -22,6 +22,7 @@ from platformdirs import user_data_path
 from plyngent import config
 from plyngent.__main__ import main
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
+from plyngent.kernel.lm import ToolCalls
 from plyngent.kernel.lm.route import Posted, RouteWeb
 from plyngent.kernel.lm.thinking import Budget
 from plyngent.kernel.model import Request, User
@@ -112,7 +113,7 @@ def test_a_route_without_its_output_ceiling_is_refused(tmp_path: Path) -> None:
     """``caps.max_output`` has no default anywhere: how much room an answer gets is somebody's decision."""
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { vision = true }\n',
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { pictures = true }\n',
     )
 
     with pytest.raises(config.ConfigError, match="max_output"):
@@ -175,6 +176,25 @@ def test_a_thinking_shape_is_read_into_the_value_the_dialect_writes(tmp_path: Pa
     route = config.load(path).routes.named("one")
 
     assert route is not None and route.caps.thinking == Budget(tokens=8000)
+
+
+def test_a_cap_a_dialect_obeys_is_spelled_as_the_model_is_asked(tmp_path: Path) -> None:
+    """``pictures`` and ``tools`` are the model's two, and a route that states them is read as it meant.
+
+    Both are words and not bits because the second has more than two answers to have one day: "one call
+    at a time" and "a batch" are today's, and a limit that is a number is a different fact.
+    """
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
+        'caps = { max_output = 8, pictures = true, tools = "parallel" }\n',
+    )
+
+    route = config.load(path).routes.named("one")
+
+    assert route is not None
+    assert route.caps.pictures is True
+    assert route.caps.tools is ToolCalls.PARALLEL
 
 
 def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp_path: Path) -> None:

@@ -31,14 +31,14 @@ if TYPE_CHECKING:
     type Scripted = Callable[..., Awaitable[Story]]
 
 
-def _route(name: str, dialect: str = "messages", *, vision: bool = False) -> Route:
+def _route(name: str, dialect: str = "messages", *, pictures: bool = False) -> Route:
     """One endpoint a story can name, with nothing behind it: the scripted model answers, not this."""
     return Route(
         name=name,
         dialect=dialect,
         base=f"http://{name}.invalid/v1",
         model="m",
-        caps=Caps(max_output=64, vision=vision),
+        caps=Caps(max_output=64, pictures=pictures),
     )
 
 
@@ -346,7 +346,7 @@ async def test_a_route_that_can_see_is_given_the_bytes(story_with: Scripted) -> 
     story = await story_with(
         calling("read", {"path": "pic.png"}),
         text("what is it?"),
-        routes=[_route("seeing", vision=True)],
+        routes=[_route("seeing", pictures=True)],
         route="seeing",
     )
 
@@ -358,7 +358,7 @@ async def test_a_route_that_can_see_is_given_the_bytes(story_with: Scripted) -> 
     text_only = await story_with(
         calling("read", {"path": "pic.png"}),
         text("what is it?"),
-        routes=[_route("chatty", dialect="chat-completions", vision=True)],
+        routes=[_route("chatty", dialect="chat-completions", pictures=True)],
         route="chatty",
     )
     unwired = await _read_a_picture(text_only)

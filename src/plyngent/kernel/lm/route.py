@@ -26,6 +26,7 @@ with no exception raised into a task nobody awaits.
 from __future__ import annotations
 
 import asyncio
+from enum import StrEnum
 from typing import TYPE_CHECKING, cast, override
 
 import msgspec
@@ -55,6 +56,24 @@ DEFAULT_TIMEOUT = 600.0
 #: nothing. Not a refusal — a route that is missing is answered where a route is *named*
 #: (:meth:`Routes.resolve`), and what assembling a prompt needs is only "which of the caps apply".
 NO_ROUTE_CAPS = Caps(max_output=0)
+
+
+class PrefixCache(StrEnum):
+    """How this endpoint is told to reuse the front of a prompt, in the three mechanisms there are.
+
+    The distinction is not cosmetic: it decides *which field a request carries*, and an endpoint handed a
+    mechanism it does not implement either ignores it (a miss nobody accounts for) or refuses the request.
+    §10.5 spells out why each one fails the way it does. It lives on the route and not on the model
+    (E169): the same model behind a second gateway caches differently, and what a request carries is a
+    fact about the endpoint it is sent to.
+    """
+
+    #: Nothing is said: the gateway's own implicit behaviour, or none at all.
+    NONE = "none"
+    #: A short stable key names the prefix (``prompt_cache_key``); the provider hashes what follows.
+    IMPLICIT = "implicit"
+    #: A marker inside the request says "everything before this never moves" (``cache_control``).
+    BREAKPOINT = "breakpoint"
 
 
 class RouteWeb(Struct, frozen=True, kw_only=True):
@@ -93,6 +112,9 @@ class Route(Struct, frozen=True, kw_only=True):
     model: str = ""
     secret: str = ""
     caps: Caps
+    #: How this endpoint is told to reuse the front of a prompt. The route's and not the model's: what a
+    #: request carries is a fact about the endpoint it is sent to (E169).
+    prefix_cache: PrefixCache = PrefixCache.NONE
     #: The header the credential travels in, spelled per route because it is the one thing no compatible
     #: gateway agrees about: a bearer token, an ``x-api-key``, a vendor's own.
     auth: tuple[str, str] = ("Authorization", "Bearer {secret}")
@@ -222,7 +244,11 @@ class Posted(Model):
             msg = f"route {route.name} names the dialect {route.dialect!r}, which this build does not speak"
             raise ModelFailed(Failure.ARGS, msg)
         caps = replace(route.caps, stream=route.caps.stream and codec.sse)
-        return route, codec, msgspec.json.encode(codec.encode(request, model=route.model, caps=caps))
+        return (
+            route,
+            codec,
+            msgspec.json.encode(codec.encode(request, model=route.model, caps=caps, cache=route.prefix_cache)),
+        )
 
     async def _tried(self, route: Route, codec: Codec, body: bytes) -> Reply:
         """One attempt, and another while the kind of trouble is one the world can fix.

@@ -770,7 +770,7 @@ class TurnRunner:
     async def _seen(self, ctx: TurnCtx, messages: tuple[AnyMessage, ...]) -> tuple[AnyMessage, ...]:
         """The conversation as this route can read it: a picture travels only where both sides can take it.
 
-        Two gates, and both are needed. The *route's* ``vision`` says what the model on the other end can
+        Two gates, and both are needed. The *model's* ``pictures`` says what the model on the other end can
         read; the *dialect's* ``pictures`` says whether the wire has a channel for one at all — a
         text-only dialect answers a tool with text, and putting pixels in a person's message would be
         inventing a speaker. Where either says no, the handle stays in the words and nothing is fetched:
@@ -781,7 +781,7 @@ class TurnRunner:
         """
         asked = ctx.host.routes.resolve(ctx.session.route)
         codec = None if asked is None else asked.codec()
-        if asked is None or not asked.caps.vision or codec is None or not codec.pictures:
+        if asked is None or not asked.caps.pictures or codec is None or not codec.pictures:
             return messages
         seen: list[AnyMessage] = []
         for message in messages:

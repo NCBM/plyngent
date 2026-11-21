@@ -34,8 +34,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, override
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.lm.caps import PrefixCache
+from plyngent.kernel.lm.caps import ToolCalls
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, document, frames, schema
+from plyngent.kernel.lm.route import PrefixCache
 from plyngent.kernel.lm.thinking import Effort, Off, Template
 from plyngent.kernel.model import (
     Assistant,
@@ -100,7 +101,7 @@ class Chat(Codec):
         self.spells = frozenset({Off, Template}) if legacy else frozenset({Off, Effort, Template})
 
     @override
-    def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
+    def encode(self, request: Request, *, model: str, caps: Caps, cache: PrefixCache) -> Body:
         body: Body = {
             "model": model,
             "messages": [
@@ -109,14 +110,14 @@ class Chat(Codec):
             ],
             "stream": caps.stream,
             "max_tokens": caps.max_output,
-            "parallel_tool_calls": caps.parallel_tools,
+            "parallel_tool_calls": caps.tools is ToolCalls.PARALLEL,
         }
         if request.tools:
             body["tools"] = [
                 {"type": "function", "function": {"name": tool.name, "parameters": schema(tool.schema)}}
                 for tool in request.tools
             ]
-        if caps.prefix_cache is PrefixCache.IMPLICIT and request.cache_key:
+        if cache is PrefixCache.IMPLICIT and request.cache_key:
             body["prompt_cache_key"] = request.cache_key
         thought = _thinking(caps.thinking, self.spells)
         if thought is not None:

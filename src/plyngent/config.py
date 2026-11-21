@@ -42,7 +42,7 @@ from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
-from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, Route, Routes, RouteWeb
+from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, PrefixCache, Route, Routes, RouteWeb
 from plyngent.kernel.lm.thinking import said
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import DEFAULT_COUNT, Web
@@ -208,6 +208,8 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     secret_from_env: str = ""
     auth: tuple[str, str] | None = None
     caps: Caps
+    #: How this endpoint is told to reuse the front of a prompt, which the model does not decide (E169).
+    prefix_cache: PrefixCache = PrefixCache.NONE
     attempts: tuple[float, ...] = ()
     timeout: float = DEFAULT_TIMEOUT
     headers: dict[str, str] | None = None
@@ -417,6 +419,7 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
         model=one.model,
         secret=_secret(one, environment),
         caps=one.caps,
+        prefix_cache=one.prefix_cache,
         attempts=one.attempts,
         timeout=one.timeout,
         headers=tuple(one.headers.items()) if one.headers else (),

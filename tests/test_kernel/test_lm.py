@@ -35,6 +35,7 @@ from plyngent.kernel.lm import (
     PrefixCache,
     Responses,
     Template,
+    ToolCalls,
     codec_named,
 )
 from plyngent.kernel.lm.codec import of_status, refused
@@ -82,18 +83,18 @@ def _request(*, messages: tuple[User | Assistant | Result, ...] = CONVERSATION, 
 
 
 def _caps(**given: object) -> Caps:
-    """The conservative route: no vision, one call per answer, a stated ceiling."""
+    """The conservative route: no pictures, one call per answer, a stated ceiling."""
     return Caps(max_output=1024, **given)  # type: ignore[arg-type]
 
 
-def _body(codec: Codec, request: Request, *, caps: Caps) -> dict[str, Any]:
+def _body(codec: Codec, request: Request, *, caps: Caps, cache: PrefixCache = PrefixCache.NONE) -> dict[str, Any]:
     """One request as the JSON a server would receive, read back into something a test can walk.
 
     Through the bytes on purpose: what a dialect promises is a *document*, and the text it becomes is
     what a server actually gets. Reading it back also keeps the assertions about the wire, not
     about the implementation of the encoder.
     """
-    written = msgspec.json.encode(codec.encode(request, model="m", caps=caps))
+    written = msgspec.json.encode(codec.encode(request, model="m", caps=caps, cache=cache))
     return cast("dict[str, Any]", msgspec.json.decode(written))
 
 
@@ -218,8 +219,8 @@ def test_a_prefix_key_travels_only_where_the_route_asks_for_one() -> None:
     request = _request()
 
     silent = _body(Messages(), request, caps=_caps())
-    marked = _body(Messages(), request, caps=_caps(prefix_cache=PrefixCache.BREAKPOINT))
-    keyed = _body(Chat(), request, caps=_caps(prefix_cache=PrefixCache.IMPLICIT))
+    marked = _body(Messages(), request, caps=_caps(), cache=PrefixCache.BREAKPOINT)
+    keyed = _body(Chat(), request, caps=_caps(), cache=PrefixCache.IMPLICIT)
 
     assert silent["system"] == "you may not reach: net"
     assert marked["system"] == [
@@ -229,7 +230,7 @@ def test_a_prefix_key_travels_only_where_the_route_asks_for_one() -> None:
     assert "prompt_cache_key" not in _body(Chat(), request, caps=_caps())
 
     no_prompt = _request(system="")
-    tools_marked = _body(Messages(), no_prompt, caps=_caps(prefix_cache=PrefixCache.BREAKPOINT))
+    tools_marked = _body(Messages(), no_prompt, caps=_caps(), cache=PrefixCache.BREAKPOINT)
     assert tools_marked["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
@@ -294,6 +295,15 @@ def test_a_row_writes_exactly_the_shapes_it_declares() -> None:
             )
 
 
+def test_one_answer_is_told_how_many_calls_it_may_ask_for() -> None:
+    """The cap is a word and the wire is a flag: ``ONE`` asks for one call, ``PARALLEL`` for a batch."""
+    one = _body(Chat(), _request(), caps=_caps())
+    many = _body(Chat(), _request(), caps=_caps(tools=ToolCalls.PARALLEL))
+
+    assert one["parallel_tool_calls"] is False
+    assert many["parallel_tool_calls"] is True
+
+
 def test_the_same_request_is_the_same_bytes_twice() -> None:
     """A cached prefix is worth what the determinism of what precedes it is (§10.5).
 
@@ -301,8 +311,8 @@ def test_the_same_request_is_the_same_bytes_twice() -> None:
     where it can be seen: at the two functions that produce the bytes.
     """
     for codec in DIALECTS:
-        once = msgspec.json.encode(codec.encode(_request(), model="m", caps=_caps()))
-        twice = msgspec.json.encode(codec.encode(_request(), model="m", caps=_caps()))
+        once = msgspec.json.encode(codec.encode(_request(), model="m", caps=_caps(), cache=PrefixCache.NONE))
+        twice = msgspec.json.encode(codec.encode(_request(), model="m", caps=_caps(), cache=PrefixCache.NONE))
         assert once == twice, f"{codec.name} wrote two different bodies for one request"
 
 
@@ -441,7 +451,7 @@ def test_the_cached_share_is_read_in_whichever_spelling_the_endpoint_reports() -
 def test_a_picture_has_a_channel_only_where_a_dialect_has_one() -> None:
     """Pixels travel as bytes on the dialect that can carry them, and are not invented on the one that cannot.
 
-    This is why :attr:`plyngent.kernel.lm.codec.Codec.pictures` exists: a route's ``vision`` cap says what
+    This is why :attr:`plyngent.kernel.lm.codec.Codec.pictures` exists: a route's ``pictures`` cap says what
     its *model* can read, and this says what its *dialect* can carry, and a route needs both.
     """
     picture = Picture(media="image/png", data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
@@ -452,7 +462,7 @@ def test_a_picture_has_a_channel_only_where_a_dialect_has_one() -> None:
         )
     )
 
-    spoken = _body(Messages(), request, caps=_caps(vision=True))["messages"]
+    spoken = _body(Messages(), request, caps=_caps(pictures=True))["messages"]
     blocks = spoken[1]["content"][0]["content"]
     assert blocks[0] == {"type": "text", "text": "kept as d1"}
     assert blocks[1]["type"] == "image"
@@ -471,7 +481,7 @@ def test_another_dialect_is_one_more_file_and_one_more_row() -> None:
     and a call addressed by ``call_id``.
     """
     request = _request()
-    body = _body(Responses(), request, caps=_caps(prefix_cache=PrefixCache.IMPLICIT))
+    body = _body(Responses(), request, caps=_caps(), cache=PrefixCache.IMPLICIT)
 
     assert body["instructions"] == SYSTEM
     assert body["model"] == "m"

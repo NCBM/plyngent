@@ -10,7 +10,7 @@ shape this file:
   "what counts as one turn" is the dialect's opinion.
 * **A picture has a channel, and it is inside a tool's answer.** So ``pictures`` is ``True``: a result
   whose pixels were fetched carries them here as an ``image`` block beside the text, base64-encoded,
-  which is what lets a route on this dialect honestly claim ``Caps.vision``.
+  which is what lets a route on this dialect honestly claim ``Caps.pictures``.
 
 Two more things are this dialect's alone and are read off ``Caps``: ``max_tokens`` is **required** —
 there is no request without it — and thinking is written either as a token budget or as the model's own
@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING, override
 import msgspec
 
 from plyngent.kernel.failure import Failure
-from plyngent.kernel.lm.caps import PrefixCache
 from plyngent.kernel.lm.codec import Codec, as_dict, as_int, as_list, as_text, decoded, schema, spelled
+from plyngent.kernel.lm.route import PrefixCache
 from plyngent.kernel.lm.thinking import Adaptive, Budget, Off
 from plyngent.kernel.model import Assistant, Call, ModelFailed, Note, Reply, Result, Thought, Usage, User
 from plyngent.kernel.toolresult import Status
@@ -62,7 +62,7 @@ class Messages(Codec):
     spells: frozenset[type] = frozenset({Off, Budget, Adaptive})
 
     @override
-    def encode(self, request: Request, *, model: str, caps: Caps) -> Body:
+    def encode(self, request: Request, *, model: str, caps: Caps, cache: PrefixCache) -> Body:
         body: Body = {
             "model": model,
             "messages": _messages(request.messages),
@@ -71,9 +71,9 @@ class Messages(Codec):
             "stream": False,
         }
         if request.system:
-            body["system"] = _system(request.system, caps)
+            body["system"] = _system(request.system, cache)
         if request.tools:
-            body["tools"] = _tools(request, caps)
+            body["tools"] = _tools(request, cache)
         thought = _thinking(caps.thinking)
         if thought is not None:
             body["thinking"] = thought
@@ -205,22 +205,22 @@ def _told(message: Result) -> str | list[Body]:
     return blocks
 
 
-def _system(prompt: str, caps: Caps) -> str | list[Body]:
+def _system(prompt: str, cache: PrefixCache) -> str | list[Body]:
     """The prompt that is not the conversation, in the shape the cache mechanism wants.
 
     A plain string unless a breakpoint is asked for: a marker has to sit *on* a block, and the place
     after the system prompt is the place §10.5 says it belongs — everything before it (the tools, this
     prompt) never moves, and everything after it is the conversation, which does.
     """
-    if caps.prefix_cache is not PrefixCache.BREAKPOINT:
+    if cache is not PrefixCache.BREAKPOINT:
         return prompt
     return [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
 
 
-def _tools(request: Request, caps: Caps) -> list[Body]:
+def _tools(request: Request, cache: PrefixCache) -> list[Body]:
     """The tool block, with the breakpoint on its last entry when there is no system prompt to hold it."""
     built: list[Body] = [{"name": tool.name, "input_schema": schema(tool.schema)} for tool in request.tools]
-    if caps.prefix_cache is PrefixCache.BREAKPOINT and not request.system and built:
+    if cache is PrefixCache.BREAKPOINT and not request.system and built:
         built[-1]["cache_control"] = {"type": "ephemeral"}
     return built
 

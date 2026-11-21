@@ -29,7 +29,7 @@ from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.journal import _decode, _encode
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
-from plyngent.kernel.lm.route import Route, RouteWeb
+from plyngent.kernel.lm.route import PrefixCache, Route, RouteWeb
 from plyngent.kernel.model import AnyMessage, Note, Request, User
 from plyngent.kernel.net.web import Engine, Engines, Hit, Page
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
@@ -215,7 +215,7 @@ def test_a_dialect_that_reads_a_stream_is_the_one_that_asks_for_one() -> None:
     document = Request(messages=(User(text="hi"),))
 
     for codec in DIALECTS:
-        body = codec.encode(document, model="m", caps=Caps(max_output=1, stream=True))
+        body = codec.encode(document, model="m", caps=Caps(max_output=1, stream=True), cache=PrefixCache.NONE)
 
         assert body["stream"] is codec.sse, f"{codec.name} and the body it writes disagree about streaming"
 
