@@ -134,6 +134,7 @@ else is inherited, and `approvals` has to be said explicitly.
 | word | answer | what it asks |
 |---|---|---|
 | `grants` | `grant-table` | which paths outside the workspace a conversation may reach, and how far on each |
+| `models` | `model-table` | which models the route answering a conversation offers, and which one it asks for |
 | `trajectory` | `forest` | every row of a conversation, in the order it was written |
 | `skills` | `skill-table` | which skills this kernel can see, and what was wrong with the rest |
 | `turns` | `live-turns` | which turns of a conversation are running, right now |

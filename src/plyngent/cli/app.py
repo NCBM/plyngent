@@ -591,16 +591,19 @@ class App:
         never falls through to nothing here.
         """
         match intent:
-            case Reads(query=query):
-                return await self._read(query)
+            case Reads(query=query, brief=brief):
+                return await self._read(query, brief=brief)
             case Travels(entry=entry):
                 return await self._travel(entry)
             case Help(text=text) | Wrong(text=text):
                 await self._screen.tell(notice(text))
                 return None
 
-    async def _read(self, query: AnyQuery) -> int | None:
+    async def _read(self, query: AnyQuery, *, brief: bool = False) -> int | None:
         """Put one question to the kernel and print the answer.
+
+        ``brief`` is how much of it to print, and it is this client's own choice: ``/model`` and
+        ``/model list`` ask the same question, and one of them wants a sentence (E171).
 
         The answer is this client's own row, and no event carries it, because it is not something the
         kernel said to everybody: it is what one client asked for, so it goes where this client's own
@@ -617,7 +620,7 @@ class App:
         except Unanswered:
             return GONE
         found = unfinished(answer, await self._live(query)) if isinstance(answer, Forest) else ()
-        for row in (*held(answer), *found):
+        for row in (*held(answer, brief=brief), *found):
             await self._screen.tell(notice(row))
         return None
 

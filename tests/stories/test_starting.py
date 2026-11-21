@@ -28,7 +28,10 @@ async def test_the_listing_is_the_kernels_own_table(story: Story) -> None:
     assert listing[-1] == "anything else you type is a message"
     for word in ("/open", "/close", "/cancel", "/list-sessions", "/submit"):
         assert any(line.strip().startswith(word) for line in listing), word
-    assert "the same commands, shorter: /new = /open, /sessions = /list-sessions, /model = /set-route" in listing
+    assert "the same commands, shorter: /new = /open, /sessions = /list-sessions" in listing
+    assert any(line.strip().startswith("/model [list | use <id>]") for line in listing), (
+        "and the word that chooses a model is not an alias of anything"
+    )
 
 
 async def test_one_command_can_describe_itself(story: Story) -> None:

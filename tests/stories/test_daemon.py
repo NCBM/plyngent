@@ -102,9 +102,13 @@ async def test_what_a_kernel_is_says_which_directory_it_works_in(daemon, tmp_pat
         )
         assert client.manifest.workspaces[0].label == "workspace", "and a short name to show for it"
         assert [spec.name for spec in client.manifest.commands], "and the commands it will accept"
-        assert [spec.name for spec in client.manifest.queries] == ["grants", "trajectory", "skills", "turns"], (
-            "and the reads it will answer, so a frontend with buttons needs no second table"
-        )
+        assert [spec.name for spec in client.manifest.queries] == [
+            "grants",
+            "models",
+            "trajectory",
+            "skills",
+            "turns",
+        ], "and the reads it will answer, so a frontend with buttons needs no second table"
     finally:
         client.close()
         await client.finished()

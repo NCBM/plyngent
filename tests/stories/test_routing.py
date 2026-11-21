@@ -157,7 +157,7 @@ async def test_a_session_is_asked_by_the_route_it_names(story_with: Scripted) ->
     story = await story_with(text("first"), text("second"), routes=[_route("one"), _route("two")], route="one")
 
     await story.type("a thought")
-    await story.type("/model --route two")
+    await story.type("/set-route --route two")
     await story.type("another thought")
 
     assert story.requests()[0].route == "one", "a session that never chose asks the host's default"
@@ -174,7 +174,7 @@ async def test_a_route_that_does_not_exist_is_refused_and_nothing_moves(story_wi
     story = await story_with(text("first"), text("second"), routes=[_route("one")], route="one")
 
     await story.type("a thought")
-    await story.type("/model --route nowhere")
+    await story.type("/set-route --route nowhere")
     await story.type("another thought")
 
     assert "route refused: no route named 'nowhere' here" in story.screen()
@@ -213,7 +213,7 @@ async def test_the_route_a_session_chose_outlives_a_restart(tmp_path: Path) -> N
     first = await Story.start(root, model=ScriptedModel([text("first")]), routes=routes, route="one", journal=journal)
     try:
         await first.type("a thought")
-        await first.type("/model --route two")
+        await first.type("/set-route --route two")
     finally:
         await first.close()
 
@@ -261,7 +261,7 @@ async def test_a_failed_attempt_is_a_row_a_restart_can_read(tmp_path: Path) -> N
     )
     try:
         await first.type("a thought")
-        await first.type("/model --route two")
+        await first.type("/set-route --route two")
     finally:
         await first.close()
 
@@ -336,6 +336,40 @@ async def test_a_conversation_tells_the_endpoint_which_of_its_models_it_asks(sto
     assert chosen == [{"name": "small", "epoch": 1}, {"name": "big", "epoch": 2}], (
         "the choice is a setting on the chain, not a turn"
     )
+
+
+async def test_the_model_word_says_what_answers_and_what_could(story_with: Scripted) -> None:
+    """E171: one word, one sentence and one table — and the table is the kernel's answer, not the client's.
+
+    ``/model`` is what this conversation asks for, ``/model list`` is every id its route offers with the
+    one it is asking for marked, and ``/model use`` moves it, which the next request carries.
+    """
+    route = Route(
+        name="local",
+        dialect="messages",
+        base="http://local.invalid/v1",
+        models=(
+            ModelEntry(name="small", caps=Caps(max_output=64)),
+            ModelEntry(name="big", caps=Caps(max_output=4096)),
+        ),
+    )
+    story = await story_with(text("hello"), text("and again"), routes=[route], route="local")
+
+    await story.type("/model")
+    assert story.notices()[-1] == "local: small", "the one sentence the word is for"
+
+    before = len(story.notices())
+    await story.type("/model list")
+    assert story.notices()[before:] == (
+        "local: small",
+        "  small  answers up to 64  (this conversation)",
+        "  big  answers up to 4096",
+    ), "every id the route offers, and which of them is this conversation's"
+
+    await story.type("/model use big")
+    await story.type("a thought")
+
+    assert story.requests()[-1].model == "big", "and the next request asks for it"
 
 
 async def _read_a_picture(story: Story) -> Result:

@@ -64,6 +64,18 @@ class Grants(Query, tag="grants", frozen=True, kw_only=True):
     session: str = ""
 
 
+class Models(Query, tag="models", frozen=True, kw_only=True):
+    """Which models the route answering this conversation offers, and which of them it asks for.
+
+    A read and not the session's own settings: the ids come from the route's table, which is the file's,
+    so a client that printed what it remembered would be right about the choice and guessing about the
+    table (E170/E171). The answer is the whole table; whether to draw a line or a list of it is the
+    client's business, which is why nothing here says which.
+    """
+
+    session: str = ""
+
+
 class Trajectory(Query, tag="trajectory", frozen=True, kw_only=True):
     """Every row of one conversation, in the order it was written.
 
@@ -215,5 +227,26 @@ class SkillTable(Reply, tag="skill-table", frozen=True, kw_only=True):
     absent: tuple[MissingRoot, ...] = ()
 
 
-type AnyQuery = Grants | Trajectory | Skills | Turns
-type AnyReply = GrantTable | Forest | SkillTable | LiveTurns
+class ModelRow(Struct, frozen=True, kw_only=True):
+    """One model a route offers: the id a conversation name it by, and the room an answer gets."""
+
+    name: str = ""
+    max_output: int = 0
+    context_window: int = 0
+
+
+class ModelTable(Reply, tag="model-table", frozen=True, kw_only=True):
+    """The answer to :class:`Models`: the route, the id this conversation asks for, and every id it offers.
+
+    ``route`` empty is "no route answers this conversation"; ``current`` empty is one that has not chosen,
+    which the kernel never fills in on its own (E170). ``current`` is the setting and not a row, so a
+    conversation pointed at an id the file no longer lists still says which one it is asking for.
+    """
+
+    route: str = ""
+    current: str = ""
+    models: tuple[ModelRow, ...] = ()
+
+
+type AnyQuery = Grants | Models | Trajectory | Skills | Turns
+type AnyReply = GrantTable | ModelTable | Forest | SkillTable | LiveTurns

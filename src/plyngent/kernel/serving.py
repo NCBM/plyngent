@@ -125,6 +125,9 @@ from plyngent.wire.query import (
     LiveTurn,
     LiveTurns,
     MissingRoot,
+    ModelRow,
+    Models,
+    ModelTable,
     Reached,
     ShadowedSkill,
     SkillRow,
@@ -317,6 +320,8 @@ class Serving:
                     )
                 )
                 return GrantTable(id=query.id, reached=held)
+            case Models(session=session):
+                return self._models(query.id, session)
             case Trajectory(session=session):
                 entries = await self._trajectory(session)
                 return Forest(id=query.id, entries=entries, unfinished=_unfinished(entries))
@@ -335,6 +340,8 @@ class Serving:
         match query:
             case Grants():
                 return GrantTable(id=query.id)
+            case Models():
+                return ModelTable(id=query.id)
             case Trajectory():
                 return Forest(id=query.id)
             case Skills():
@@ -388,6 +395,28 @@ class Serving:
             id=number,
             turns=tuple(
                 LiveTurn(turn=turn.turn_id, kind=str(turn.kind), begin_after=turn.begin_after) for turn in found.turns()
+            ),
+        )
+
+    def _models(self, number: int, session: str) -> ModelTable:
+        """Which models the route answering *session* offers, and which one it is asked for.
+
+        Read off the route table and the session's setting every time, because both move: a route may be
+        changed and a model chosen, and a client that was told once would print what used to be true. A
+        conversation this kernel does not serve answers with the empty table, for the same reason a grant
+        table does not: it is a conversation nobody opened.
+        """
+        found = self._session(session)
+        route = None if found is None else found.host.routes.resolve(found.route)
+        if found is None or route is None:
+            return ModelTable(id=number)
+        return ModelTable(
+            id=number,
+            route=route.name,
+            current=found.model,
+            models=tuple(
+                ModelRow(name=one.name, max_output=one.caps.max_output, context_window=one.caps.context_window)
+                for one in route.models
             ),
         )
 

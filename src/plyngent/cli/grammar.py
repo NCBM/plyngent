@@ -39,9 +39,9 @@ import click
 import msgspec
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
-from plyngent.wire.command import AnyCommand, Command, Submit
+from plyngent.wire.command import AnyCommand, Command, SetModel, Submit
 from plyngent.wire.event import TurnKind
-from plyngent.wire.query import AnyQuery, Grants, Query, Skills, Trajectory, Turns
+from plyngent.wire.query import AnyQuery, Grants, Models, Query, Skills, Trajectory, Turns
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -54,7 +54,18 @@ if TYPE_CHECKING:
 #: The words a person reaches for first, and the tags they mean. Every alias must name a tag that
 #: exists, and every tag must be reachable — by itself, through an alias, or by being withheld with a
 #: reason; ``tests/test_structure.py`` holds those rules together.
-ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions", "model": "set-route"}
+ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions"}
+
+#: The word that says which model answers, in three shapes: what this conversation asks for, every id its
+#: route offers, and a new choice (E171). One word because they are one question, and no alias for it,
+#: since ``/set-route`` is the *route's* word and stays reachable by its own name.
+MODELS = "model"
+
+#: The three shapes, as the listing spells them.
+MODEL_USAGE = "[list | use <id>]"
+
+#: What that word is for, in the words a person reads.
+MODEL_NOTE = "Say which model answers this conversation, list the ones the route offers, or choose another."
 
 #: The words that *read*, and ask for nothing to be done: each names one query, and none is in the manifest.
 #: A manifest lists what a client may ask the kernel to **do**; these ask it to say something and travel
@@ -225,9 +236,13 @@ class Reads:
 
     It is not a ``Runs``: a command changes the world and its outcome arrives as an event, while a read
     asks for a value and gets it back on the lane that promised one (§5, E134).
+
+    ``brief`` is how much of the answer to print, and it is this client's business: ``/model`` asks for
+    the same table ``/model list`` does and says one line of it (E171).
     """
 
     query: AnyQuery
+    brief: bool = False
 
 
 @dataclass(frozen=True)
@@ -294,6 +309,8 @@ def word_help(catalog: Catalog, word: str) -> str:
         return f"{SLASH}{word} {_read_usage(kind)}\n\n  {_read_summary(kind)}"
     if word == TRAVELLED:
         return f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}\n\n  {TRAVEL_NOTE}"
+    if word == MODELS:
+        return f"{SLASH}{MODELS} {MODEL_USAGE}\n\n  {MODEL_NOTE}"
     if word == ASIDE:
         return f"{SLASH}{ASIDE} {ASIDE_USAGE}\n\n  {ASIDE_NOTE}"
     return f"no command {SLASH}{word} here"
@@ -307,6 +324,7 @@ def help_text(catalog: Catalog) -> str:
     ]
     spelled.extend((f"{SLASH}{word} {_read_usage(kind)}".rstrip(), _read_summary(kind)) for word, kind in READS.items())
     spelled.append((f"{SLASH}{TRAVELLED} {TRAVEL_USAGE}", TRAVEL_NOTE))
+    spelled.append((f"{SLASH}{MODELS} {MODEL_USAGE}", MODEL_NOTE))
     spelled.append((f"{SLASH}{ASIDE} {ASIDE_USAGE}", ASIDE_NOTE))
     width = max((len(usage) for usage, _ in spelled), default=0) + 2
     lines = ["commands you can type:", *(f"  {usage:<{width}}{summary}" for usage, summary in spelled)]
@@ -321,7 +339,7 @@ def help_text(catalog: Catalog) -> str:
     return "\n".join(lines)
 
 
-def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
+def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:  # noqa: PLR0911 — one word per shape
     """A line that begins with the slash: a word, then the arguments it was given."""
     said, _, rest = text.partition(" ")
     if not said or said == HELP:
@@ -329,6 +347,8 @@ def _slash(text: str, catalog: Catalog, *, session: str) -> Intent:
     reading = READS.get(said)
     if reading is not None:
         return _reading(said, reading, rest, catalog=catalog, session=session)
+    if said == MODELS:
+        return _modelling(rest, catalog=catalog, session=session)
     if said == TRAVELLED:
         return _travelling(rest, catalog=catalog)
     if said == ASIDE:
@@ -350,10 +370,35 @@ def _asking_help(said: str, rest: str, catalog: Catalog) -> Intent:
     if said and asked:
         # The example is the word they asked about when this client has it, so the sentence points at the
         # line that would actually answer them.
-        known = catalog.word(asked) is not None or asked in READS or asked in (TRAVELLED, ASIDE)
+        known = catalog.word(asked) is not None or asked in READS or asked in (TRAVELLED, ASIDE, MODELS)
         example = asked if known else "open"
         return Wrong(text=f"{SLASH}{HELP} takes no argument; a word describes itself, as {SLASH}{example} --help")
     return Help(text=help_text(catalog))
+
+
+def _modelling(rest: str, *, catalog: Catalog, session: str) -> Intent:
+    """The model word, in its three shapes: the choice, the route's table, and a choice made.
+
+    Nothing is decided here that the kernel could decide: ``use`` sends the command the wire already has,
+    and the two reads ask the same question — what this client prints of the answer is its own business
+    (E171). No interactive picker: ``use`` with no id is a line that forgot its value, and a frontend that
+    opened a menu would be a second way to answer a question the kernel asks on its own lane.
+    """
+    try:
+        parts = shlex.split(rest)
+    except ValueError as exc:
+        return Wrong(text=f"{SLASH}{MODELS}: {exc}")
+    match parts:
+        case ["--help"] | ["-h"]:
+            return Help(text=word_help(catalog, MODELS))
+        case []:
+            return Reads(query=Models(session=session), brief=True)
+        case ["list"]:
+            return Reads(query=Models(session=session))
+        case ["use", model] if model:
+            return Runs(command=SetModel(session=session, model=model))
+        case _:
+            return Wrong(text=f"{SLASH}{MODELS} takes {MODEL_USAGE} and nothing else")
 
 
 def _reading(word: str, kind: type[AnyQuery], rest: str, *, catalog: Catalog, session: str) -> Intent:
@@ -757,7 +802,7 @@ class SlashCompleter(Completer):
     def _words(self, head: str, text: str) -> Iterator[Completion]:
         """Every word this client has that starts with what has been typed so far."""
         word = head[len(SLASH) :]
-        for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, TRAVELLED, ASIDE}):
+        for candidate in sorted({*self._catalog.aliases, *self._catalog.offers, *READS, MODELS, TRAVELLED, ASIDE}):
             if candidate.startswith(word):
                 yield Completion(
                     f"{SLASH}{candidate}", start_position=-len(text), display_meta=self._summary(candidate)
@@ -771,5 +816,7 @@ class SlashCompleter(Completer):
             return TRAVEL_NOTE
         if candidate == ASIDE:
             return ASIDE_NOTE
+        if candidate == MODELS:
+            return MODEL_NOTE
         tag = self._catalog.word(candidate)
         return "" if tag is None else self._catalog.offers[tag].summary

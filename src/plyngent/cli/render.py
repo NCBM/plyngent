@@ -82,6 +82,8 @@ from plyngent.wire.query import (
     LiveTurn,
     LiveTurns,
     MissingRoot,
+    ModelRow,
+    ModelTable,
     ShadowedSkill,
     SkillRow,
     SkillTable,
@@ -699,7 +701,7 @@ def _turned(event: _Turned) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def held(answer: AnyReply) -> tuple[str, ...]:
+def held(answer: AnyReply, *, brief: bool = False) -> tuple[str, ...]:  # noqa: PLR0911 — one kind of answer, on purpose
     """What one read's answer says, as the lines this client prints for it.
 
     A row per path with the permission on it, because that is what a person has to be able to check
@@ -710,12 +712,18 @@ def held(answer: AnyReply) -> tuple[str, ...]:
     what it says as fits on one. Nothing is drawn as a tree — a list of parents is a shape nobody can see
     in a terminal — so the rows are read in the order they were written, which is the one order that
     needs no picture.
+
+    ``brief`` prints the first line of the answer and nothing else, for the words that ask a question and
+    want one sentence of it (``/model``, E171). It is the client's decision and not the kernel's: the
+    answer is the same value either way.
     """
     match answer:
         case GrantTable(reached=reached):
             if not reached:
                 return ("nothing outside this workspace is allowed",)
             return tuple(f"{one.path}: {one.mode}" for one in reached)
+        case ModelTable(route=route, current=current, models=models):
+            return _model_table(route, current, models, brief=brief)
         case Forest(entries=entries):
             if not entries:
                 return ("this conversation has nothing in it yet",)
@@ -728,6 +736,34 @@ def held(answer: AnyReply) -> tuple[str, ...]:
             return _live(turns)
         case _ as never:
             assert_never(never)
+
+
+def _model_table(route: str, current: str, models: tuple[ModelRow, ...], *, brief: bool) -> tuple[str, ...]:
+    """Which model answers a conversation, and — when the whole table is asked for — the ones it may.
+
+    The first line is the same in both shapes, because that is the one sentence ``/model`` is: which
+    route, and which of its ids this conversation asks for. An empty ``current`` is a conversation that
+    has chosen nothing, which is a state a person can be in — the kernel never fills it in (E170).
+    """
+    if not route:
+        return ("no route answers this conversation",)
+    said = f"{route}: {current or 'no model chosen'}"
+    if brief:
+        return (said,)
+    if not models:
+        return (said, "and it offers none")
+    return (said, *(f"  {one.name}{_room(one)}{_mine(one, current)}" for one in models))
+
+
+def _room(one: ModelRow) -> str:
+    """How much room one model's answers get, and how much it holds when that was stated."""
+    hold = f", holds {one.context_window}" if one.context_window else ""
+    return f"  answers up to {one.max_output}{hold}"
+
+
+def _mine(one: ModelRow, current: str) -> str:
+    """Whether this row is the one the conversation asks for."""
+    return "  (this conversation)" if one.name == current and current else ""
 
 
 def unfinished(forest: Forest, live: tuple[LiveTurn, ...]) -> tuple[str, ...]:

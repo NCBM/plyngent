@@ -26,10 +26,10 @@ from plyngent.cli.grammar import (
     help_text,
     word_help,
 )
-from plyngent.wire.command import Goal, Rollback, SetRoute, Submit
+from plyngent.wire.command import Goal, Rollback, SetModel, SetRoute, Submit
 from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
-from plyngent.wire.query import Grants, Skills, Trajectory
+from plyngent.wire.query import Grants, Models, Skills, Trajectory
 
 
 def _catalog() -> Catalog:
@@ -38,24 +38,47 @@ def _catalog() -> Catalog:
 
 
 def test_a_quoted_argument_is_one_argument() -> None:
-    intent = decode('/model --route "a b"', _catalog(), session="main")
+    intent = decode('/set-route --route "a b"', _catalog(), session="main")
 
     assert intent == Runs(command=SetRoute(session="main", route="a b")), "a value with a space in it is one value"
 
 
 def test_an_unclosed_quote_is_a_sentence_rather_than_a_crash() -> None:
-    intent = decode('/model --route "a b', _catalog(), session="main")
+    intent = decode('/set-route --route "a b', _catalog(), session="main")
 
     assert isinstance(intent, Wrong), "the person is still typing; the line is answered, not thrown"
     assert "quotation" in intent.text
 
 
 def test_an_empty_argument_is_still_an_argument() -> None:
-    intent = decode('/model --route ""', _catalog(), session="main")
+    intent = decode('/set-route --route ""', _catalog(), session="main")
 
     assert intent == Runs(command=SetRoute(session="main", route="")), (
         "a value the person wrote as empty is empty, not a missing option"
     )
+
+
+def test_the_model_word_has_three_shapes_and_one_of_them_sends_a_command() -> None:
+    """E171: ``/model`` says what answers, ``/model list`` says what could, and ``/model use`` chooses.
+
+    The first two are the same question asked twice and printed differently, and ``use`` is the command
+    the wire already had — no second spelling of it, and no menu: the kernel asks on its own lane when a
+    conversation has not chosen, so a picker here would be a second way to answer the same question.
+    """
+    catalog = _catalog()
+
+    assert decode("/model", catalog, session="main") == Reads(query=Models(session="main"), brief=True)
+    assert decode("/model list", catalog, session="main") == Reads(query=Models(session="main"))
+    assert decode("/model use big", catalog, session="main") == Runs(command=SetModel(session="main", model="big"))
+    assert isinstance(decode("/model use", catalog, session="main"), Wrong), "a line that forgot its value"
+    assert isinstance(decode("/model list everything", catalog, session="main"), Wrong)
+
+
+def test_the_route_word_is_reachable_by_its_own_name() -> None:
+    """``/set-route`` is not hidden behind the model word: two settings, two words (E170)."""
+    intent = decode("/set-route --route local", _catalog(), session="main")
+
+    assert intent == Runs(command=SetRoute(session="main", route="local"))
 
 
 def test_a_word_whose_argument_is_one_of_two_words_takes_it_bare() -> None:
