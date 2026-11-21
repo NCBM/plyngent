@@ -38,6 +38,7 @@ from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
 from plyngent.cli.policy import Policy
+from plyngent.cli.profile import default_path as profile_path
 from plyngent.cli.render import workspace_label
 from plyngent.wire.bind import Bind
 
@@ -419,6 +420,12 @@ async def _talk(
         markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         diff=not no_diff,
         mark=mark_path(session, address=address, workspace=str(workspace)),
+        profile=profile_path(),
+        choosing=True,
+        # A pipe has nobody to ask, and ``-p`` asked for one message and no questions: both are a run
+        # that must not wait for an answer, so the model it asks for is the one it remembers or none at
+        # all (E172).
+        interactive=not _plain(sys.stdin) and once is None,
         once=once,
     )
     return await app.run()

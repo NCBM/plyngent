@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent.cli.profile import Profile, read, write
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps
 from plyngent.kernel.lm.route import ModelEntry, Route
@@ -370,6 +371,106 @@ async def test_the_model_word_says_what_answers_and_what_could(story_with: Scrip
     await story.type("a thought")
 
     assert story.requests()[-1].model == "big", "and the next request asks for it"
+
+
+async def test_a_client_asks_for_the_model_its_profile_remembers(tmp_path: Path) -> None:
+    """E172: the choice lives in the client's own memory, and the kernel is told with one command.
+
+    A run that has chosen before says the same id again without asking, which is the whole of what the
+    profile is for — and the request is what proves it reached the kernel.
+    """
+    route = Route(
+        name="local",
+        dialect="messages",
+        base="http://local.invalid/v1",
+        models=(
+            ModelEntry(name="small", caps=Caps(max_output=64)),
+            ModelEntry(name="big", caps=Caps(max_output=4096)),
+        ),
+    )
+    profile = tmp_path / "profile.toml"
+    write(profile, Profile(route="local", model="big"))
+
+    story = await Story.start(
+        tmp_path / "ws",
+        model=ScriptedModel([text("hello")]),
+        routes=[route],
+        route="local",
+        journal=tmp_path / "journal.db",
+        profile=profile,
+        choosing=True,
+        interactive=False,
+    )
+
+    await story.type("a thought")
+
+    assert story.requests()[-1].model == "big", "the remembered id is what the endpoint is asked for"
+    assert not story.editor.asked, "and nothing was asked, because the profile answered"
+
+
+async def test_a_client_with_nobody_to_ask_lists_the_models_it_could_have_meant(tmp_path: Path) -> None:
+    """E172: a pipe is not a person, so the run says which ids there are and lets the turn refuse.
+
+    The kernel's own refusal is what a turn with no model gets; this line exists so the person who reads
+    the output knows what to type next, and so a script fails instead of waiting.
+    """
+    route = Route(
+        name="local",
+        dialect="messages",
+        base="http://local.invalid/v1",
+        models=(ModelEntry(name="small", caps=Caps(max_output=64)),),
+    )
+
+    story = await Story.start(
+        tmp_path / "ws",
+        model=ScriptedModel([text("hello")]),
+        routes=[route],
+        route="local",
+        journal=tmp_path / "journal.db",
+        profile=tmp_path / "profile.toml",
+        choosing=True,
+        interactive=False,
+    )
+
+    await story.type("a thought")
+
+    assert story.notices() == ("no model chosen for local: say /model use <id>, and it offers small",)
+    assert "no model to ask" in story.screen()[-1], "and the turn is the kernel's own refusal"
+
+
+async def test_a_client_with_no_memory_asks_which_model_to_ask_for(tmp_path: Path) -> None:
+    """E172: with nothing remembered and a person in front of it, the run asks — and writes the answer down.
+
+    The question is the same shape every other one in this client is (a ``Selection``), so a terminal asks
+    it the one way it asks anything, and the next run does not have to ask at all.
+    """
+    route = Route(
+        name="local",
+        dialect="messages",
+        base="http://local.invalid/v1",
+        models=(
+            ModelEntry(name="small", caps=Caps(max_output=64)),
+            ModelEntry(name="big", caps=Caps(max_output=4096)),
+        ),
+    )
+    profile = tmp_path / "profile.toml"
+
+    story = await Story.start(
+        tmp_path / "ws",
+        model=ScriptedModel([text("hello")]),
+        routes=[route],
+        route="local",
+        journal=tmp_path / "journal.db",
+        profile=profile,
+        choosing=True,
+    )
+
+    await story.answer("big")
+    await story.type("a thought")
+
+    assert [question.prompt for question in story.editor.asked] == ["which model should local answer with"]
+    assert story.requests()[-1].model == "big"
+    assert read(profile) == Profile(route="local", model="big"), "and the next run says it without asking"
 
 
 async def _read_a_picture(story: Story) -> Result:

@@ -174,6 +174,9 @@ class Story:
         policy: Policy | None = None,
         markdown: bool = False,
         mark: Path | None = None,
+        profile: Path | None = None,
+        choosing: bool = False,
+        interactive: bool = True,
         once: str | None = None,
         leaving: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
@@ -202,6 +205,9 @@ class Story:
             policy=policy,
             markdown=markdown,
             mark=mark,
+            profile=profile,
+            choosing=choosing,
+            interactive=interactive,
             once=once,
         )
         self._running = asyncio.create_task(self.app.run())
@@ -218,6 +224,9 @@ class Story:
         routes: Iterable[Route] | None = None,
         route: str = "",
         model_id: str = "",
+        choosing: bool = False,
+        profile: Path | None = None,
+        interactive: bool = True,
         engines: Engines | None = None,
         skills: Skills | None = None,
         prompt: PromptPlan | None = None,
@@ -341,10 +350,13 @@ class Story:
             policy=policy,
             markdown=markdown,
             mark=mark,
+            profile=profile,
+            choosing=choosing,
+            interactive=interactive,
             once=once,
         )
         await story.settle()
-        chosen = model_id or _first_offered(story, route)
+        chosen = model_id or ("" if choosing else _first_offered(story, route))
         if chosen:
             # After the open, because a setting belongs to a conversation: the client attaches, then says
             # which of the route's models it asks for (E170/E172).

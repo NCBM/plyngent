@@ -52,14 +52,17 @@ from plyngent.cli.grammar import Catalog, Composes, Help, Reads, Runs, Travels, 
 from plyngent.cli.line import Cancelled, EndOfInput, Preempted, Typed
 from plyngent.cli.offers import TERMINAL, ClientTools, dispatch
 from plyngent.cli.policy import Policy, Tally
+from plyngent.cli.profile import Profile
+from plyngent.cli.profile import read as read_profile
+from plyngent.cli.profile import write as write_profile
 from plyngent.cli.render import Stage, held, notice, unfinished
 from plyngent.cli.screen import Screen
-from plyngent.wire.ask import unanswered
-from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Retry, Submit
-from plyngent.wire.event import Compacted, Pruned, SessionsListed, TurnFinished, TurnKind
+from plyngent.wire.ask import Picked, Selection, unanswered
+from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Retry, SetModel, Submit
+from plyngent.wire.event import Compacted, ModelSet, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
 from plyngent.wire.flow import Mark as TreeMark
-from plyngent.wire.query import AnyQuery, Forest, LiveTurn, Trajectory, Unanswered
+from plyngent.wire.query import AnyQuery, Forest, LiveTurn, Models, ModelTable, Trajectory, Unanswered
 from plyngent.wire.scope import CancelReason
 
 if TYPE_CHECKING:
@@ -122,6 +125,9 @@ class App:
     session: str
     workspace: str
     mark: Path | None
+    profile: Path | None
+    choosing: bool
+    interactive: bool
     _seen: int
     editor: LineEditor
     catalog: Catalog
@@ -154,6 +160,9 @@ class App:
         markdown: bool = False,
         diff: bool = True,
         mark: Path | None = None,
+        profile: Path | None = None,
+        choosing: bool = False,
+        interactive: bool = True,
         once: str | None = None,
     ) -> None:
         self.client = client
@@ -167,6 +176,15 @@ class App:
         # (§5 B).
         self.mark = mark
         self._seen = 0
+        # Where this client remembers the model it last chose, and whether choosing one is its job at all.
+        # A frontend that was told which model to ask for (a story, a script) leaves this alone: the
+        # kernel refuses a turn until somebody chooses, and who does the choosing is the frontend's
+        # business (E172).
+        self.profile = profile
+        self.choosing = choosing
+        # Whether there is a person in front of this run to ask. A pipe is nobody, and a program that
+        # waits for an answer nobody types is worse than one that says what it could have meant.
+        self.interactive = interactive
         # What this client answers by itself, and the count of what it has (§0.15, E114). Both are the
         # frontend's own: the kernel asks and is answered, and never learns which of the two answered.
         self.policy = Policy() if policy is None else policy
@@ -343,6 +361,10 @@ class App:
         async for event in self.client.events():
             self._seen = max(self._seen, event.seq)
             self._stirred.set()
+            if isinstance(event, ModelSet) and event.opening:
+                # A conversation that attached without a model has nothing no ask: choosing one is this
+                # frontend's job when it was given one (§E172).
+                _ = await self._choosing(event)
             if not self._swallowed(event):
                 await self._drawn(event)
                 if isinstance(event, TurnFinished) and event.ends_at is not None:
@@ -636,6 +658,69 @@ class App:
             return await self.client.turns(query.session)
         except Unanswered:
             return ()
+
+    async def _choosing(self, event: ModelSet) -> int | None:
+        """Choose a model for the conversation that just attached without one (E172).
+
+        Three ways, in this order: the pair this frontend remembers, when it is the same route and that
+        id is still offered; a person, when there is one in front of the run; and the list of ids it could
+        have meant, when there is nobody to ask. A program that waited for an answer nobody was typing
+        would hang a script, and saying what the choices are is the only useful thing left.
+
+        The kernel chooses nothing (:class:`~plyngent.wire.event.Refusal.NO_MODEL` is what a turn is
+        refused with until somebody does), so this is where a default would have to live — and it lives
+        here, in the frontend, rather than in a route that then could not say what it offers.
+        """
+        if not self.choosing or event.session != self.session or event.model:
+            return None
+        table = await self._offered()
+        if table is None or not table.models:
+            return None
+        names = [one.name for one in table.models]
+        remembered = read_profile(self.profile) if self.profile is not None else Profile()
+        if remembered.route == table.route and remembered.model in names:
+            self._picked(table.route, remembered.model)
+            return None
+        if not self.interactive:
+            said = f"no model chosen for {table.route}: say /model use <id>, and it offers {', '.join(names)}"
+            await self._screen.tell(notice(said))
+            self._failed = True
+            return None
+        chosen = await self._asked(table)
+        if chosen:
+            self._picked(table.route, chosen)
+        return None
+
+    async def _offered(self) -> ModelTable | None:
+        """The models this conversation's route offers, or nothing when the question went unanswered."""
+        try:
+            answer = await self.client.query(Models(session=self.session))
+        except Unanswered:
+            return None
+        return answer if isinstance(answer, ModelTable) else None
+
+    async def _asked(self, table: ModelTable) -> str:
+        """Ask a person which of these ids to ask for, through the one cursor this client has.
+
+        A ``Selection`` and a question lane value, because that is the shape a choice already has here:
+        the editor knows how to put it in front of somebody, and a second way of asking would be a second
+        terminal to keep.
+        """
+        question = Selection(
+            session=self.session,
+            prompt=f"which model should {table.route} answer with",
+            options=tuple(one.name for one in table.models),
+            default=table.models[0].name,
+        )
+        answer = await self.editor.ask(question)
+        return answer.value or "" if isinstance(answer, Picked) else ""
+
+    def _picked(self, route: str, model: str) -> None:
+        """Say which id this conversation asks for, and remember the pair for the next run."""
+        if not self.client.submit(SetModel(session=self.session, model=model)):
+            return
+        if self.profile is not None:
+            write_profile(self.profile, Profile(route=route, model=model))
 
     async def _travel(self, entry: str) -> int | None:
         """Stand somewhere else in this conversation: what the next message will continue.
