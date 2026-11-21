@@ -77,6 +77,7 @@ from plyngent.wire.command import (
     ListSessions,
     Offer,
     Open,
+    PersistModels,
     Prune,
     Rename,
     Resume,
@@ -101,6 +102,9 @@ from plyngent.wire.event import (
     ListedSession,
     ModelSet,
     OfferRefused,
+    Persisted,
+    PersistProblem,
+    PersistRefused,
     Pruned,
     PruneRefused,
     Refusal,
@@ -292,7 +296,7 @@ class Serving:
                 await self._bookkeeping(command)
             case Export(session=session, begin_after=begin_after):
                 await self._export(session, begin_after)
-            case SetRoute() | SetModel() | Ungrant() | Goal() | Rename() | Delete():
+            case SetRoute() | SetModel() | PersistModels() | Ungrant() | Goal() | Rename() | Delete():
                 await self._setting(command)
             case Resume() | Rollback():
                 await self._past(command)
@@ -462,13 +466,15 @@ class Serving:
             case Close(session=session):
                 await self._close(session)
 
-    async def _setting(self, command: SetRoute | SetModel | Ungrant | Goal | Rename | Delete) -> None:
+    async def _setting(self, command: SetRoute | SetModel | PersistModels | Ungrant | Goal | Rename | Delete) -> None:
         """The commands that move or read what a session says about itself, and touch nothing outside it."""
         match command:
             case SetRoute(session=session, route=route):
                 await self._route(session, route)
             case SetModel(session=session, model=model):
                 await self._model(session, model)
+            case PersistModels(session=session):
+                await self._persisting(session)
             case Ungrant(session=session, path=path):
                 await self._ungrant(session, path)
             case Goal(session=session, mode=mode):
@@ -858,6 +864,29 @@ class Serving:
         # A route that moved may not serve the model this conversation was asking for, so what it stands
         # at now is said again, resolved against the route it moved to.
         self._say_model(found)
+
+    async def _persisting(self, session: str) -> None:
+        """Write this conversation's route back into the file, or say why the file was left alone (E173).
+
+        The kernel writes the file it was started from, wherever that file is: a client connected over a
+        socket asks here and the write happens on the machine serving it, which is the only machine where
+        the answer means anything. Every refusal is the writer's own — this method decides nothing about
+        what a file may contain, and a route that cannot be resolved is one the file does not declare.
+        """
+        found = self._session(session)
+        if found is None:
+            self._say(SessionRefused(session=session, reason=Refusal.NO_SESSION))
+            return
+        route = found.host.routes.resolve(found.route)
+        if found.host.writing is None or route is None:
+            name = "" if route is None else route.name
+            self._say(PersistRefused(session=session, route=name, problem=PersistProblem.NO_FILE))
+            return
+        written = found.host.writing.write_models(route.name, route.models)
+        if written.problem is not None:
+            self._say(PersistRefused(session=session, route=route.name, problem=written.problem))
+            return
+        self._say(Persisted(session=session, route=route.name, path=written.path))
 
     async def _model(self, session: str, model: str) -> None:
         """Point one session at a model of its route, or say why nothing moved.

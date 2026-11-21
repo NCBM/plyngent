@@ -133,6 +133,16 @@ class SetModel(Command, tag="set-model", frozen=True, kw_only=True):
     model: str = ""
 
 
+class PersistModels(Command, tag="persist-models", frozen=True, kw_only=True):
+    """Write this conversation's route, and the models it offers, back into the file.
+
+    A command and not a flag on a read (E173), because it changes a file: a read changes nothing, and one
+    that did would be a question with a side effect. ``--persist`` after ``/model list`` is this command.
+    """
+
+    session: str = ""
+
+
 class Goal(Command, tag="goal", frozen=True, kw_only=True):
     """Keep a conversation going while its plan is unfinished — or ask where it stands.
 
@@ -302,6 +312,7 @@ type AnyCommand = (
     | Cancel
     | SetRoute
     | SetModel
+    | PersistModels
     | Goal
     | Compact
     | Prune

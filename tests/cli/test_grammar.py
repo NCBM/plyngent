@@ -26,7 +26,7 @@ from plyngent.cli.grammar import (
     help_text,
     word_help,
 )
-from plyngent.wire.command import Goal, Rollback, SetModel, SetRoute, Submit
+from plyngent.wire.command import Goal, PersistModels, Rollback, SetModel, SetRoute, Submit
 from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
 from plyngent.wire.query import Grants, Models, Skills, Trajectory
@@ -70,6 +70,9 @@ def test_the_model_word_has_three_shapes_and_one_of_them_sends_a_command() -> No
     assert decode("/model", catalog, session="main") == Reads(query=Models(session="main"), brief=True)
     assert decode("/model list", catalog, session="main") == Reads(query=Models(session="main"))
     assert decode("/model use big", catalog, session="main") == Runs(command=SetModel(session="main", model="big"))
+    assert decode("/model list --persist", catalog, session="main") == Runs(command=PersistModels(session="main")), (
+        "the one shape that writes, and it is a command"
+    )
     assert isinstance(decode("/model use", catalog, session="main"), Wrong), "a line that forgot its value"
     assert isinstance(decode("/model list everything", catalog, session="main"), Wrong)
 

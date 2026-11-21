@@ -8,7 +8,7 @@ turns into a claim (E90).
 
 from __future__ import annotations
 
-from plyngent.cli.render import _REFUSALS, Shown, notice, question, render, unfinished
+from plyngent.cli.render import _PERSIST_SENTENCES, _REFUSALS, Shown, notice, question, render, unfinished
 from plyngent.wire.ask import Confirmation, Severity
 from plyngent.wire.event import (
     AssistantText,
@@ -16,6 +16,7 @@ from plyngent.wire.event import (
     CompactRefused,
     Entry,
     Noticed,
+    PersistProblem,
     Pruned,
     PruneRefused,
     Refusal,
@@ -101,6 +102,11 @@ def test_every_refusal_has_a_sentence_and_every_sentence_a_refusal() -> None:
     """A kind the renderer has no words for is a refusal a person reads as a crash, and the reverse is
     a sentence nobody can reach — so the two sets are held equal."""
     assert set(_REFUSALS) == set(Refusal)
+
+
+def test_every_reason_a_write_back_did_nothing_has_one_sentence() -> None:
+    """E173: the same rule for the four ways a file was left alone, held the same way."""
+    assert set(_PERSIST_SENTENCES) == set(PersistProblem)
 
 
 def test_a_batch_is_read_the_way_its_items_would_have_been() -> None:

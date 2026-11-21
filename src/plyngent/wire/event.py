@@ -476,6 +476,52 @@ class GrantRevoked(Event, tag="grant-revoked", frozen=True, kw_only=True):
     revoked: bool = False
 
 
+class PersistProblem(StrEnum):
+    """Why a write-back did not happen, as the closed set a client switches on (E173).
+
+    Each one is a different thing to do about it: a program started without a file has nowhere to write
+    and no way to acquire one; a file somebody edited is one to read again before writing; a route the
+    file does not declare is a name to check; and a file that would not read back is this build's own
+    failure, which the person can report and cannot repair by hand.
+    """
+
+    #: This program was started without a configuration file, so there is nothing to write back into.
+    NO_FILE = "no-file"
+    #: The file's text is not the text this process read: somebody edited it, and their edit wins.
+    STALE = "stale"
+    #: The file declares no route of that name, so there is no table to write.
+    NOT_IN_FILE = "not-in-file"
+    #: The write would have produced a file this build cannot read back, so it was not made.
+    INVALID = "invalid"
+    #: The machine refused: no permission, no space, or a rename that did not happen.
+    REFUSED = "refused"
+
+
+class Persisted(Event, tag="persisted", frozen=True, kw_only=True):
+    """A route's models were written back into the file this program was started from (E173).
+
+    ``path`` is the file, said whole, because a person asking for a write-back is asking about a file on
+    some machine: the one the kernel runs on, which for a frontend that connected over a socket is not
+    the one in front of them.
+    """
+
+    session: str = ""
+    route: str = ""
+    path: str = ""
+
+
+class PersistRefused(Event, tag="persist-refused", frozen=True, kw_only=True):
+    """A write-back that did not happen, and which of the closed set of reasons it was (E173).
+
+    The sentence is the client's: ``problem`` is a value, and the words for each one are written where
+    everything else a person reads is written.
+    """
+
+    session: str = ""
+    route: str = ""
+    problem: PersistProblem = PersistProblem.NO_FILE
+
+
 class GoalSet(Event, tag="goal-set", frozen=True, kw_only=True):
     """Whether an unfinished plan keeps this conversation going, and what it is now (E146).
 
@@ -779,6 +825,8 @@ type AnyEvent = (
     | AnswerCut
     | Routed
     | ModelSet
+    | Persisted
+    | PersistRefused
     | RouteRefused
     | GoalSet
     | GoalRefused

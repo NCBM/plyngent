@@ -35,6 +35,7 @@ from plyngent.kernel.skills import Skills  # noqa: TC001
 from plyngent.kernel.trail import Notice
 from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import Workspace, WorkspaceConfig
+from plyngent.kernel.writing import Persisting  # noqa: TC001 — a component's field annotation is resolved here
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +116,11 @@ class Host(Component):
     # kernel is assembled, because what exists is decided there (§10.1, E26) — a call that would have kept
     # a version writes none, and the call does not fail.
     history: History | None
+    # The one door into the file this program was started from, or ``None`` when it was started without
+    # one. A value and not a component: writing is not a lifecycle, and what it may write is one method
+    # (E173). Whoever assembled the host put it here, so a client at the far end of a socket writes the
+    # file on the machine the kernel runs on.
+    writing: Persisting | None
 
     def __init__(
         self,
@@ -130,6 +136,7 @@ class Host(Component):
         rounds: int = DEFAULT_ROUNDS,
         soft: bool = False,
         workspace_config: WorkspaceConfig | None = None,
+        writing: Persisting | None = None,
     ) -> None:
         super().__init__()
         self.workspace = Workspace(root, workspace_config)
@@ -145,6 +152,7 @@ class Host(Component):
         self.engines = Engines() if engines is None else engines
         self.prompt = PromptPlan() if prompt is None else prompt
         self.history = history
+        self.writing = writing
 
     @override
     async def unload(self) -> None:

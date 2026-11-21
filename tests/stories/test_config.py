@@ -82,6 +82,32 @@ async def test_the_file_names_the_route_a_session_asks(tmp_path: Path, transport
         await story.close()
 
 
+async def test_a_write_back_reaches_the_file_the_kernel_was_started_from(tmp_path: Path, transport: str) -> None:
+    """E173: ``/model list --persist`` writes on the machine the kernel runs on, and says which file.
+
+    The client asked, the kernel wrote, and the file is the one the program was started with: a frontend
+    at the far end of a socket could not have done this itself, which is why the door is the kernel's.
+    """
+    settings = _settings(tmp_path, 'default_route = "one"\n' + ROUTES)
+
+    story = await Story.start(
+        tmp_path / "workspace",
+        transport=transport,
+        model=ScriptedModel([text("answered")]),
+        config=settings,
+    )
+    try:
+        await story.type("/model list --persist")
+        await story.settle()
+
+        assert any("written back to" in line for line in story.screen()), story.screen()
+        assert '[route.models."m"]' in (tmp_path / "config.toml").read_text(encoding="utf-8"), (
+            "the table is there in the file, not only in the kernel"
+        )
+    finally:
+        await story.close()
+
+
 async def test_the_persona_and_the_directives_are_the_file_s_own_words(tmp_path: Path, transport: str) -> None:
     """The first and the third section, said by the file, in the place the plan puts them.
 

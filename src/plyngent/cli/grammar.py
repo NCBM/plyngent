@@ -39,7 +39,7 @@ import click
 import msgspec
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
-from plyngent.wire.command import AnyCommand, Command, SetModel, Submit
+from plyngent.wire.command import AnyCommand, Command, PersistModels, SetModel, Submit
 from plyngent.wire.event import TurnKind
 from plyngent.wire.query import AnyQuery, Grants, Models, Query, Skills, Trajectory, Turns
 
@@ -62,7 +62,7 @@ ALIASES: dict[str, str] = {"new": "open", "sessions": "list-sessions"}
 MODELS = "model"
 
 #: The three shapes, as the listing spells them.
-MODEL_USAGE = "[list | use <id>]"
+MODEL_USAGE = "[list [--persist] | use <id>]"
 
 #: What that word is for, in the words a person reads.
 MODEL_NOTE = "Say which model answers this conversation, list the ones the route offers, or choose another."
@@ -376,7 +376,7 @@ def _asking_help(said: str, rest: str, catalog: Catalog) -> Intent:
     return Help(text=help_text(catalog))
 
 
-def _modelling(rest: str, *, catalog: Catalog, session: str) -> Intent:
+def _modelling(rest: str, *, catalog: Catalog, session: str) -> Intent:  # noqa: PLR0911 — one shape per line
     """The model word, in its three shapes: the choice, the route's table, and a choice made.
 
     Nothing is decided here that the kernel could decide: ``use`` sends the command the wire already has,
@@ -395,6 +395,10 @@ def _modelling(rest: str, *, catalog: Catalog, session: str) -> Intent:
             return Reads(query=Models(session=session), brief=True)
         case ["list"]:
             return Reads(query=Models(session=session))
+        case ["list", "--persist"]:
+            # The one shape of this word that writes: ``--persist`` is a command, because a read that
+            # changed a file would be a question with a side effect (E173).
+            return Runs(command=PersistModels(session=session))
         case ["use", model] if model:
             return Runs(command=SetModel(session=session, model=model))
         case _:

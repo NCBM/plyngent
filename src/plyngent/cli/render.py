@@ -54,6 +54,9 @@ from plyngent.wire.event import (
     ModelSet,
     Noticed,
     OfferRefused,
+    Persisted,
+    PersistProblem,
+    PersistRefused,
     Pruned,
     PruneRefused,
     Refusal,
@@ -153,6 +156,8 @@ type _Reported = (
     | DocumentStored
     | Routed
     | ModelSet
+    | Persisted
+    | PersistRefused
     | CompactRefused
     | PruneRefused
     | ExportRefused
@@ -183,6 +188,8 @@ type _Settled = (
     | DocumentStored
     | Routed
     | ModelSet
+    | Persisted
+    | PersistRefused
     | RolledBack
     | GrantRevoked
     | Seeded
@@ -838,6 +845,8 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             | DocumentStored()
             | Routed()
             | ModelSet()
+            | Persisted()
+            | PersistRefused()
             | RolledBack()
             | GrantRevoked()
             | Seeded()
@@ -896,6 +905,10 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — on
             return ((session, Shown(f"route: {route or 'none'} (epoch {epoch})", "notice")),)
         case ModelSet(session=session, model=model, epoch=epoch):
             return ((session, Shown(f"model: {model or 'none'} (epoch {epoch})", "notice")),)
+        case Persisted(session=session, route=route, path=path):
+            return ((session, Shown(f"{route} written back to {path}", "notice")),)
+        case PersistRefused(session=session, problem=problem):
+            return ((session, Shown(f"nothing was written: {_PERSIST_SENTENCES[problem]}", "refusal")),)
         case GoalSet(session=session, mode=mode):
             said = "an unfinished plan keeps this conversation going" if mode is GoalMode.ON else "the plan waits"
             return ((session, Shown(f"goal {mode}: {said}", "notice")),)
@@ -996,6 +1009,18 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — 
             return ((session, Shown(f"workspace refused: {said}", "refusal")),)
         case _ as never:
             assert_never(never)
+
+
+#: What each reason a write-back did nothing says, in the words a person reads. One entry per member of
+#: :class:`~plyngent.wire.event.PersistProblem` — a test holds the two sets equal — because a reason with
+#: no sentence is a write-back that failed in silence, and a sentence with no reason is one nobody sends.
+_PERSIST_SENTENCES: Mapping[PersistProblem, str] = {
+    PersistProblem.NO_FILE: "this program was started without a file, so there is nothing to write back",
+    PersistProblem.STALE: "the file changed since this program read it",
+    PersistProblem.NOT_IN_FILE: "the file declares no route of that name",
+    PersistProblem.INVALID: "what was written would not read back as a configuration, so it was not written",
+    PersistProblem.REFUSED: "the file could not be written",
+}
 
 
 #: What each refusal says, in the words a person reads.

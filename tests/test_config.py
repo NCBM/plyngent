@@ -36,6 +36,7 @@ from plyngent.kernel.pty.registry import (
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
 from plyngent.kernel.turn import DEFAULT_ROUNDS
+from plyngent.wire.event import PersistProblem
 from tests.loopback import answered
 
 if TYPE_CHECKING:
@@ -243,6 +244,95 @@ def test_a_model_asking_for_a_shape_its_dialect_lacks_is_refused_by_name(tmp_pat
 
     with pytest.raises(config.ConfigError, match="model 'thinker' of route 'one'"):
         _ = config.load(path)
+
+
+def test_a_write_back_leaves_the_file_as_the_kernel_reads_it(tmp_path: Path) -> None:
+    """E173: one method, four gates, and a file that says what the kernel holds and nothing more.
+
+    The table written is the one the kernel is serving, a key that only restates a default stays out of
+    it, and ``default_route`` is not written at all: a write-back that also chose which route answers
+    would be making a decision nobody asked for.
+    """
+    path = _written(
+        tmp_path,
+        'default_route = "local"\n\n[[route]]\nname = "local"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.models."small"]\nmax_output = 64\n',
+    )
+    settings = config.load(path)
+    route = settings.routes.named("local")
+    assert route is not None
+
+    written = config.Writer(settings.source, settings.text).write_models(route.name, route.models)
+
+    assert written.problem is None and Path(written.path) == path
+    text = path.read_text(encoding="utf-8")
+    assert "route.models.small" in text and "max_output = 64" in text
+    assert "pictures" not in text, "a key that restates a default is not a choice somebody made"
+    assert text.count("default_route") == 1, "and the default route is not written again or moved"
+    assert config.load(path).routes.named("local") == route, "and what was written reads back unchanged"
+
+
+def test_a_file_somebody_edited_is_not_overwritten(tmp_path: Path) -> None:
+    """The gate that costs the most to get wrong: an edit made after this process read the file wins."""
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "local"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.models."small"]\nmax_output = 64\n',
+    )
+    settings = config.load(path)
+    route = settings.routes.named("local")
+    assert route is not None
+    _ = path.write_text(path.read_text(encoding="utf-8") + "\n# mine\n", encoding="utf-8")
+
+    written = config.Writer(settings.source, settings.text).write_models(route.name, route.models)
+
+    assert written.problem is PersistProblem.STALE
+    assert path.read_text(encoding="utf-8").endswith("# mine\n"), "and the other person's edit is still there"
+
+
+def test_a_route_the_file_does_not_declare_has_no_table_to_write(tmp_path: Path) -> None:
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "local"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.models."small"]\nmax_output = 64\n',
+    )
+    settings = config.load(path)
+
+    written = config.Writer(settings.source, settings.text).write_models("elsewhere", ())
+
+    assert written.problem is PersistProblem.NOT_IN_FILE
+
+
+def test_a_write_that_would_not_read_back_is_not_made(tmp_path: Path, monkeypatch) -> None:
+    """The last gate before the rename: a document this build cannot read again never reaches the disk."""
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "local"\ndialect = "messages"\nbase = "http://x"\n'
+        '\n[route.models."small"]\nmax_output = 64\n',
+    )
+    settings = config.load(path)
+    route = settings.routes.named("local")
+    assert route is not None
+
+    def refuse(text: str, where: Path) -> tuple[config.ConfigFile, object]:
+        msg = f"{where}: what was written does not read"
+        raise config.ConfigError(msg)
+
+    monkeypatch.setattr(config, "_decoded", refuse)
+    before = path.read_text(encoding="utf-8")
+
+    written = config.Writer(settings.source, settings.text).write_models(route.name, route.models)
+
+    assert written.problem is PersistProblem.INVALID
+    assert path.read_text(encoding="utf-8") == before, "and nothing was replaced"
+
+
+def test_the_only_thing_a_configuration_may_be_asked_to_write_is_a_route_s_models() -> None:
+    """The surface is one method, which is what makes ``[sandbox]``, ``[plugins]`` and ``[journal].path``
+    unreachable: no caller can name a key at all (E173)."""
+    asked = {name for name in dir(config.Writer) if not name.startswith("_")}
+
+    assert asked == {"write_models"}, "a second writer is a decision somebody has to make here"
 
 
 def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp_path: Path) -> None:

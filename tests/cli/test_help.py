@@ -71,6 +71,13 @@ EXPECTED: dict[str, str] = {
     "Options:\n"
     "  --model TEXT\n"
     "  --session TEXT  the conversation to act on  [default: main]",
+    "persist-models": "Usage: persist-models [OPTIONS]\n"
+    "\n"
+    "  Write this conversation's route, and the models it offers, back into the\n"
+    "  file.\n"
+    "\n"
+    "Options:\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
     "goal": "Usage: goal [OPTIONS] [off|on]\n"
     "\n"
     "  Keep a conversation going while its plan is unfinished — or ask where it\n"

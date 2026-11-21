@@ -26,22 +26,24 @@ writes (§0.11, E84).
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import msgspec
 import tomlkit
 from msgspec import Struct
 from platformdirs import user_data_path
 from tomlkit.exceptions import ParseError
+from tomlkit.items import Table
 
 from plyngent.boot import engines_for
 from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm import codec_named
-from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
+from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, ModelEntry, PrefixCache, Route, Routes, RouteWeb
 from plyngent.kernel.lm.thinking import said
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
@@ -60,6 +62,8 @@ from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
 from plyngent.kernel.turn import DEFAULT_ROUNDS
 from plyngent.kernel.workspace import WorkspaceConfig
+from plyngent.kernel.writing import Written
+from plyngent.wire.event import PersistProblem
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -269,6 +273,12 @@ class Settings:
     #: ``None`` for a program nobody configured. It takes no part in equality: two settings values are the
     #: same when they say the same thing, and a document is how they came to say it.
     document: TOMLDocument | None = field(default=None, compare=False, repr=False)
+    #: Where that document was read from, and the text it was read as. The pair is what a write-back
+    #: compares against: a file somebody edited since this process read it is not one to overwrite, and
+    #: the text is the only way to notice (a file's mtime is a guess, and its content is not). Both take
+    #: no part in equality, for the document's reason.
+    source: Path | None = field(default=None, compare=False, repr=False)
+    text: str = field(default="", compare=False, repr=False)
 
     def skills(self, workspace: Path | str | None = None) -> Skills:
         """The roots a new skill is written into and read from, in the order they are looked in.
@@ -316,7 +326,142 @@ def load(path: Path | str | None = None, *, env: Mapping[str, str] | None = None
         msg = f"{chosen} cannot be read: {exc}"
         raise ConfigError(msg) from exc
     parsed, document = _decoded(text, chosen)
-    return _settings(parsed, document, chosen, environment)
+    return _settings(parsed, document, chosen, environment, text=text)
+
+
+class Writer:
+    """The file this program was started from, as the one thing the kernel may write into (E173).
+
+    Built from :func:`load`'s answer and handed to the kernel by :func:`install` or :func:`serve` — never
+    by a frontend — so a client that connected over a socket writes the file on the machine the kernel
+    runs on, which is the only file that decides anything.
+
+    **One method is the surface.** A general setter could reach ``[sandbox]`` (the line drawn before a
+    person was asked), ``[plugins]`` (a list only a person adds to) and ``[journal].path`` (which this
+    process has already read and would go on honouring while writing somewhere else). No shape here can
+    name a key, so none of the three can be reached, and a second edit is a decision somebody makes here.
+    """
+
+    path: Path
+    _text: str
+
+    def __init__(self, path: Path, text: str) -> None:
+        self.path = path
+        self._text = text
+
+    def write_models(self, route: str, models: tuple[ModelEntry, ...]) -> Written:
+        """Write *models* as *route*'s table, or answer why the file was left exactly as it was.
+
+        Four gates, in this order, because each is cheaper than the next and a later one would be working
+        on a file that is already wrong: the text is the one this process read (``STALE``), the route is
+        one the file declares (``NOT_IN_FILE``), the result reads back as a configuration (``INVALID``),
+        and the write is a rename (``REFUSED``).
+        """
+        try:
+            current = self.path.read_text(encoding="utf-8")
+        except OSError:
+            return Written(problem=PersistProblem.REFUSED)
+        if current != self._text:
+            return Written(problem=PersistProblem.STALE)
+        document = tomlkit.parse(current)
+        declared = _declared(document, route)
+        if declared is None:
+            return Written(problem=PersistProblem.NOT_IN_FILE)
+        declared["models"] = _models_table(models)
+        written = tomlkit.dumps(document)
+        try:
+            _ = _decoded(written, self.path)
+        except ConfigError:
+            return Written(problem=PersistProblem.INVALID)
+        if not _replaced(self.path, written):
+            return Written(problem=PersistProblem.REFUSED)
+        self._text = written
+        return Written(path=str(self.path))
+
+
+def _declared(document: TOMLDocument, route: str) -> Table | None:
+    """The ``[[route]]`` element the file declares under *route*, or ``None`` when it declares none."""
+    # A document is somebody else's tree of tables, and its types belong to ``tomlkit``: what is read here
+    # is a shape, and what is answered is the element the caller may then edit.
+    holder: Any = document
+    declared = holder.get("route")
+    if not isinstance(declared, list):
+        return None
+    for one in cast("list[object]", declared):
+        if not isinstance(one, Table):
+            continue
+        row: Any = one
+        if row.get("name") == route:
+            return one
+    return None
+
+
+def _models_table(models: tuple[ModelEntry, ...]) -> Table:
+    """One route's models as the file spells them: a table per id, and inside it the keys that speak."""
+    table = tomlkit.table()
+    for one in models:
+        entry = tomlkit.table()
+        _put(entry, _said_caps(one.caps))
+        table[one.name] = entry
+    return table
+
+
+def _said_caps(caps: Caps) -> dict[str, object]:
+    """One model's caps as the keys a file needs: what it must state, and what its default does not say.
+
+    A default is what a program does when nobody spoke, so writing it back would say "somebody chose
+    this" about a line they never wrote — and a table that restated every default would be longer than
+    the one it replaced, for saying the same thing. A field with no default is the other half: a file
+    that left it out is a file this build refuses, so it is always written.
+    """
+    stated = {one.name for one in msgspec.structs.fields(Caps) if one.default is msgspec.NODEFAULT}
+    plain = msgspec.structs.asdict(Caps(max_output=caps.max_output))
+    said = msgspec.structs.asdict(caps)
+    return {name: value for name, value in said.items() if name in stated or value != plain[name]}
+
+
+def _put(entry: Table, said: Mapping[str, object]) -> None:
+    """Fill one table: the plain keys first, then the ones that become tables of their own.
+
+    TOML has no way back from a sub-table to its parent, so a key written after one would land inside it.
+    What turns into a table is what the wire keeps as a struct — a thinking shape and nothing else today.
+    """
+    nested: dict[str, dict[str, object]] = {
+        name: cast("dict[str, object]", value) for name, value in said.items() if isinstance(value, dict)
+    }
+    for name, value in said.items():
+        if name not in nested:
+            entry[name] = _built(value)
+    for name, value in nested.items():
+        inner = tomlkit.table()
+        _put(inner, cast("Mapping[str, object]", msgspec.to_builtins(value)))
+        entry[name] = inner
+
+
+def _built(value: object) -> object:
+    """One value as this file writes it: a closed set is its word, and nothing else is a struct."""
+    return msgspec.to_builtins(value)
+
+
+def _replaced(path: Path, text: str) -> bool:
+    """Write *text* over *path* whole: a temporary file beside it, flushed, then renamed over it.
+
+    The rename is the only step a reader can rely on — the file somebody opens is the old one or the new
+    one, and never half of each — and the flush before it is what makes "written" true if the machine
+    loses power in between. A failure here leaves the original untouched and the temporary gone.
+    """
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            _ = handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _ = temporary.replace(path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def _decoded(text: str, path: Path) -> tuple[ConfigFile, TOMLDocument]:
@@ -339,7 +484,9 @@ def _decoded(text: str, path: Path) -> tuple[ConfigFile, TOMLDocument]:
         raise ConfigError(msg) from exc
 
 
-def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environment: Mapping[str, str]) -> Settings:
+def _settings(
+    parsed: ConfigFile, document: TOMLDocument, path: Path, environment: Mapping[str, str], *, text: str
+) -> Settings:
     """One decoded file as the values a kernel is started with, refusing what cannot be one."""
     routes = _routes(parsed.route, environment)
     skills = parsed.skills or SkillsFile()
@@ -368,6 +515,8 @@ def _settings(parsed: ConfigFile, document: TOMLDocument, path: Path, environmen
         trash=(parsed.trash or TrashFile()).enabled,
         journal=_resolved(parsed.journal.path, path) if parsed.journal is not None and parsed.journal.path else None,
         document=document,
+        source=path,
+        text=text,
     )
 
 
@@ -584,4 +733,7 @@ def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, 
         "soft": settings.soft,
         "sandbox": settings.sandbox,
         "trash": settings.trash,
+        # The one door back into the file this value was read from, and ``None`` for a program nobody
+        # configured — which is what a write-back answers with when it is asked for one (E173).
+        "writing": None if settings.source is None else Writer(settings.source, settings.text),
     }

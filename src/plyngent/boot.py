@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.skills import Skills
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.kernel.workspace import WorkspaceConfig
+    from plyngent.kernel.writing import Persisting
     from plyngent.wire.link import KernelLink
 
 #: The host's qualifier when a program does not name one. It is part of every session's address
@@ -145,6 +146,7 @@ class _Defaults(NamedTuple):
     soft: bool
     sandbox: WorkspaceConfig | None
     trash: bool
+    writing: Persisting | None
     versions: bool
 
 
@@ -276,6 +278,7 @@ class _Kernel:
                         "soft": self.defaults.soft,
                         "workspace_config": self.defaults.sandbox,
                         "trash_enabled": self.defaults.trash,
+                        "writing": self.defaults.writing,
                     },
                 ),
             ]
@@ -548,6 +551,7 @@ async def install(
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
+    writing: Persisting | None = None,
     components: Iterable[Declaration] = (),
 ) -> Installed:
     """Bring up one workspace and one connection, serving in the background.
@@ -657,6 +661,7 @@ async def install(
         sandbox=sandbox,
         trash=trash,
         versions=versions,
+        writing=writing,
         deadline=deadline,
         grades=grades,
         components=components,
@@ -801,6 +806,7 @@ async def serve(
     deadline: float | None = None,
     grades: Grades | None = None,
     versions: bool = True,
+    writing: Persisting | None = None,
     components: Iterable[Declaration] = (),
 ) -> Daemon:
     """Serve every client that reaches one address, over the trees it is given.
@@ -834,6 +840,7 @@ async def serve(
         sandbox=sandbox,
         trash=trash,
         versions=versions,
+        writing=writing,
         deadline=deadline,
         grades=grades,
         components=components,
@@ -902,6 +909,7 @@ async def _assembled(
     sandbox: WorkspaceConfig | None,
     trash: bool,
     versions: bool,
+    writing: Persisting | None,
     deadline: float | None,
     grades: Grades | None,
     components: Iterable[Declaration] = (),
@@ -953,6 +961,7 @@ async def _assembled(
             sandbox=sandbox,
             trash=trash,
             versions=versions,
+            writing=writing,
         ),
         patience=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         graded=Grades() if grades is None else grades,
