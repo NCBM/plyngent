@@ -93,6 +93,18 @@ class RouteWeb(Struct, frozen=True, kw_only=True):
     timeout: float | None = None
 
 
+class ModelEntry(Struct, frozen=True, kw_only=True):
+    """One model an endpoint answers for: the id a conversation names it by, and what that model can do.
+
+    A tuple on the route and not a mapping, because a file's order is something a person wrote down (the
+    order the list should be read in) and a mapping keeps no order worth promising. Several models behind
+    one gateway is the ordinary case, and what one of them can do is nobody else's fact (E170).
+    """
+
+    name: str
+    caps: Caps
+
+
 class Route(Struct, frozen=True, kw_only=True):
     """One endpoint of one model: where it is, what it answers in, and what it can do.
 
@@ -112,6 +124,9 @@ class Route(Struct, frozen=True, kw_only=True):
     model: str = ""
     secret: str = ""
     caps: Caps
+    #: The models this endpoint offers, in the order the file listed them. Empty is "the route states one
+    #: model's caps and no ids", which is what a file written before models had ids looks like (E170).
+    models: tuple[ModelEntry, ...] = ()
     #: How this endpoint is told to reuse the front of a prompt. The route's and not the model's: what a
     #: request carries is a fact about the endpoint it is sent to (E169).
     prefix_cache: PrefixCache = PrefixCache.NONE

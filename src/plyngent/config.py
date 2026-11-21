@@ -42,7 +42,7 @@ from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps  # noqa: TC001 — a `Struct` field's annotation is resolved where it is declared
-from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, PrefixCache, Route, Routes, RouteWeb
+from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, ModelEntry, PrefixCache, Route, Routes, RouteWeb
 from plyngent.kernel.lm.thinking import said
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import DEFAULT_COUNT, Web
@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from tomlkit.toml_document import TOMLDocument
 
     from plyngent.boot import Daemon, Installed
+    from plyngent.kernel.lm.codec import Codec
     from plyngent.kernel.model import Model
 
 #: What the file is called under the user's data directory — the same root the journals live in.
@@ -196,6 +197,10 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     credential arrives as *the name of the variable that holds it*, and ``caps`` is required because a
     budget is a decision a person makes, and this program does not guess it.
 
+    ``models`` is the ids this endpoint answers for, each with its own caps: one gateway serves several
+    models, and what one of them can do is nobody else's fact (E170). The route's own ``caps`` stay as the
+    fallback for a conversation that has not picked one, until a model is always chosen (S4).
+
     ``provider`` is a different axis from ``dialect``: the first says *who* the endpoint is (and so what its
     web half can do), the second how it talks. Empty is a plain compatible endpoint, which is what a
     third-party lookalike is — it needs no provider to be configured.
@@ -208,6 +213,8 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     secret_from_env: str = ""
     auth: tuple[str, str] | None = None
     caps: Caps
+    #: ``[route.models."<id>"]``: the models this endpoint offers, each as its own caps.
+    models: dict[str, Caps] = msgspec.field(default_factory=dict)
     #: How this endpoint is told to reuse the front of a prompt, which the model does not decide (E169).
     prefix_cache: PrefixCache = PrefixCache.NONE
     attempts: tuple[float, ...] = ()
@@ -405,12 +412,11 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
     if codec is None:
         msg = f"route {one.name!r} names the dialect {one.dialect!r}, which this build does not speak"
         raise ConfigError(msg)
-    if type(one.caps.thinking) not in codec.spells:
-        msg = (
-            f"route {one.name!r} asks its model to think in a shape {one.dialect!r} has no word for; "
-            f"it speaks {said(codec.spells)}"
-        )
-        raise ConfigError(msg)
+    _spells(codec, one.caps, route=one.name)
+    models: list[ModelEntry] = []
+    for name, caps in one.models.items():
+        _spells(codec, caps, route=one.name, model=name)
+        models.append(ModelEntry(name=name, caps=caps))
     _check_provider(one)
     route = Route(
         name=one.name,
@@ -419,6 +425,7 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
         model=one.model,
         secret=_secret(one, environment),
         caps=one.caps,
+        models=tuple(models),
         prefix_cache=one.prefix_cache,
         attempts=one.attempts,
         timeout=one.timeout,
@@ -427,6 +434,19 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
         web=None if one.web is None else RouteWeb(share=one.web.share, count=one.web.count, timeout=one.web.timeout),
     )
     return route if one.auth is None else msgspec.structs.replace(route, auth=one.auth)
+
+
+def _spells(codec: Codec, caps: Caps, *, route: str, model: str = "") -> None:
+    """Refuse a thinking shape this dialect has no word for, before a turn is spent finding out (E168).
+
+    Checked for the route's own fallback caps and for every model it offers, because each of them is what
+    a request may be built from.
+    """
+    if type(caps.thinking) in codec.spells:
+        return
+    where = f"route {route!r}" if not model else f"model {model!r} of route {route!r}"
+    msg = f"{where} asks to think in a shape {codec.name!r} has no word for; it speaks {said(codec.spells)}"
+    raise ConfigError(msg)
 
 
 def _check_provider(one: RouteFile) -> None:

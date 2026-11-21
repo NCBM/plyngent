@@ -197,6 +197,41 @@ def test_a_cap_a_dialect_obeys_is_spelled_as_the_model_is_asked(tmp_path: Path) 
     assert route.caps.tools is ToolCalls.PARALLEL
 
 
+def test_a_route_offers_its_models_as_a_table_of_their_own(tmp_path: Path) -> None:
+    """E170: one gateway, several models, and what each of them can do is its own fact.
+
+    The order is the file's, because that is the order the list will be read in. The route's own ``caps``
+    stay beside them as the fallback for a conversation that has not picked a model yet.
+    """
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { max_output = 8 }\n'
+        '\n[route.models."small"]\nmax_output = 64\n'
+        '\n[route.models."big"]\nmax_output = 4096\npictures = true\n',
+    )
+
+    route = config.load(path).routes.named("one")
+
+    assert route is not None
+    assert [(one.name, one.caps.max_output, one.caps.pictures) for one in route.models] == [
+        ("small", 64, False),
+        ("big", 4096, True),
+    ]
+    assert route.caps.max_output == 8, "the route keeps the fallback it was written with"
+
+
+def test_a_model_asking_for_a_shape_its_dialect_lacks_is_refused_by_name(tmp_path: Path) -> None:
+    """Every model gets the check the route's own caps get, and the sentence says which one (E168)."""
+    path = _written(
+        tmp_path,
+        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\ncaps = { max_output = 8 }\n'
+        '\n[route.models."thinker"]\nmax_output = 64\n\n[route.models."thinker".thinking]\nshape = "template"\n',
+    )
+
+    with pytest.raises(config.ConfigError, match="model 'thinker' of route 'one'"):
+        _ = config.load(path)
+
+
 def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp_path: Path) -> None:
     """One file is one profile, and a profile whose key is missing is not one to fall back from (§0.11, E78)."""
     path = _written(tmp_path, ROUTE.format(base="http://x") + 'secret_from_env = "NOT_SET_ANYWHERE"\n')
