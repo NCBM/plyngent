@@ -5,7 +5,7 @@ it exists: :mod:`plyngent.kernel.turn` asks a :class:`~plyngent.kernel.model.Mod
 :class:`~plyngent.kernel.lm.route.Posted` turns that question into one HTTP request to the endpoint a
 :class:`~plyngent.kernel.lm.route.Route` names. The four pieces are the whole of it:
 
-* :mod:`plyngent.kernel.lm.caps` — one route's model, as the facts anything downstream obeys.
+* :mod:`plyngent.kernel.lm.caps` — one model's facts, as the values anything downstream obeys.
 * :mod:`plyngent.kernel.lm.thinking` — the shapes a request may ask a model to think in.
 * :mod:`plyngent.kernel.lm.codec` — a dialect as two pure functions, plus the one status→kind table.
 * :mod:`plyngent.kernel.lm.route` — a named endpoint, and the model that posts to it.

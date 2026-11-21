@@ -101,7 +101,7 @@ class ModelEntry(Struct, frozen=True, kw_only=True):
 
 
 class Route(Struct, frozen=True, kw_only=True):
-    """One endpoint of one model: where it is, what it answers in, and what it can do.
+    """One endpoint, the models it answers for, and what each of them can do.
 
     ``secret`` is the credential, and it is a value here; nothing is read from the environment:
     what a program is allowed to talk to is a fact about how it was started, and a route that went
@@ -109,6 +109,11 @@ class Route(Struct, frozen=True, kw_only=True):
     this field — configuration resolves it, and a route holds only what it will send (§0.11, E71/E77).
     ``attempts`` is the delays between tries — empty is "one try", and the tuple is what a story sets to
     a hundredth of a second so a story about a retry costs no clock.
+
+    There is no model of the route's own: a route is where a request goes, and *which* model it asks for
+    there is the conversation's setting (E170). What the route holds per model is the caps — the room an
+    answer gets, what can be said to it, whether it reads pictures — because those are the model's facts
+    and two models behind one gateway share none of them.
     """
 
     name: str = ""
@@ -116,11 +121,9 @@ class Route(Struct, frozen=True, kw_only=True):
     dialect: str = ""
     #: Where the endpoint lives, without the path: ``https://host/v1`` and the dialect adds its own.
     base: str = ""
-    model: str = ""
     secret: str = ""
-    caps: Caps
-    #: The models this endpoint offers, in the order the file listed them. Empty is "the route states one
-    #: model's caps and no ids", which is what a file written before models had ids looks like (E170).
+    #: The models this endpoint offers, in the order the file listed them. Never empty in a value a
+    #: request is built from: a route that names no model is an endpoint this build cannot ask (E170).
     models: tuple[ModelEntry, ...] = ()
     #: How this endpoint is told to reuse the front of a prompt. The route's and not the model's: what a
     #: request carries is a fact about the endpoint it is sent to (E169).
@@ -150,17 +153,16 @@ class Route(Struct, frozen=True, kw_only=True):
 
         return codec_named(self.dialect)
 
-    def asking(self, model: str = "") -> Asking:
+    def asking(self, model: str) -> Asking | None:
         """This endpoint asked for *model*, as the three values one request is built from.
 
-        An id the table does not name keeps the route's own caps and the id it was given: a conversation
-        whose model the file no longer lists still asks for it, on a gateway that may well serve it. That
-        is the fallback this step keeps and the next one takes away (E170).
+        ``None`` when this route does not offer that id, which is the refusal E170 asks for: a
+        conversation that never chose a model, or chose one the file no longer lists, has nothing for a
+        request to name. No fallback stands in its place — the route holds no caps of its own, because
+        they would be the caps of no model in particular.
         """
         found = next((one for one in self.models if one.name == model), None)
-        if found is not None:
-            return Asking(route=self, model=model, caps=found.caps)
-        return Asking(route=self, model=model or self.model, caps=self.caps)
+        return None if found is None else Asking(route=self, model=model, caps=found.caps)
 
     def wired(self) -> dict[str, str]:
         """Every header one request carries: the credential, the content type, and anything added."""
@@ -283,6 +285,9 @@ class Posted(Model):
             msg = f"route {route.name} names the dialect {route.dialect!r}, which this build does not speak"
             raise ModelFailed(Failure.ARGS, msg)
         ask = route.asking(request.model)
+        if ask is None:
+            msg = f"route {route.name} offers no model {request.model!r}, so there is nothing to ask"
+            raise ModelFailed(Failure.MISSING, msg)
         caps = replace(ask.caps, stream=ask.caps.stream and codec.sse)
         return (
             route,
@@ -321,7 +326,8 @@ class Posted(Model):
         route, codec, body = self._prepared(request)
         # The same value ``_prepared`` folded into the body: whether this request asked for a stream at
         # all. Read twice rather than threaded through, because the body is bytes by then.
-        if not route.asking(request.model).caps.stream or not codec.sse:
+        ask = route.asking(request.model)
+        if ask is None or not ask.caps.stream or not codec.sse:
             yield await self._tried(route, codec, body)
             return
         failure: ModelFailed | None = None

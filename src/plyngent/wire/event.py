@@ -71,6 +71,8 @@ class Refusal(StrEnum):
     """
 
     NO_SESSION = "no-session"
+    #: Nothing to ask: no model is installed at all, or this conversation has not chosen one of the models
+    #: its route offers. One word, because a client's next move is the same either way (E170).
     NO_MODEL = "no-model"
     BUSY = "busy"
     NO_HOST = "no-host"

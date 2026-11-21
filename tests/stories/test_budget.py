@@ -17,7 +17,7 @@ import re
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.lm.caps import Caps
-from plyngent.kernel.lm.route import Route
+from plyngent.kernel.lm.route import ModelEntry, Route
 from plyngent.kernel.model import Note, Reply, User
 from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import NOTICE_MARKER
@@ -63,8 +63,7 @@ def _route(name: str, *, window: int) -> Route:
         name=name,
         dialect="messages",
         base=f"http://{name}.invalid/v1",
-        model="m",
-        caps=Caps(max_output=64, context_window=window),
+        models=(ModelEntry(name="m", caps=Caps(max_output=64, context_window=window)),),
     )
 
 

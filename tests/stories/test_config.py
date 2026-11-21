@@ -37,15 +37,17 @@ ROUTES = """
 name = "one"
 dialect = "chat-completions"
 base = "http://one.invalid/v1"
-model = "m"
-caps = { max_output = 64 }
+
+[route.models."m"]
+max_output = 64
 
 [[route]]
 name = "two"
 dialect = "messages"
 base = "http://two.invalid/v1"
-model = "m"
-caps = { max_output = 64 }
+
+[route.models."m"]
+max_output = 64
 """
 
 
@@ -177,9 +179,10 @@ default_route = "ds"
 name = "ds"
 dialect = "chat-completions"
 base = "https://vendor.invalid"
-model = "m"
-caps = { max_output = 64 }
 provider = "deepseek"
+
+[route.models."m"]
+max_output = 64
 
 [route.web]
 share = true

@@ -194,12 +194,13 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[[route]]``: one endpoint, spelled the way :class:`~plyngent.kernel.lm.route.Route` is.
 
     The fields are the route's, with two differences and both are the point of having a file at all: the
-    credential arrives as *the name of the variable that holds it*, and ``caps`` is required because a
+    credential arrives as *the name of the variable that holds it*, and ``models`` is required because a
     budget is a decision a person makes, and this program does not guess it.
 
-    ``models`` is the ids this endpoint answers for, each with its own caps: one gateway serves several
-    models, and what one of them can do is nobody else's fact (E170). The route's own ``caps`` stay as the
-    fallback for a conversation that has not picked one, until a model is always chosen (S4).
+    ``[route.models."<id>"]`` is one model this endpoint answers for, each with its own caps: one gateway
+    serves several ids, what one of them can do is nobody else's fact, and *which* of them answers a
+    conversation is that conversation's setting (E170). A route that names none is refused, because an
+    endpoint nothing can be asked of is not a route.
 
     ``provider`` is a different axis from ``dialect``: the first says *who* the endpoint is (and so what its
     web half can do), the second how it talks. Empty is a plain compatible endpoint, which is what a
@@ -209,10 +210,8 @@ class RouteFile(Struct, forbid_unknown_fields=True, kw_only=True):
     name: str
     dialect: str
     base: str
-    model: str = ""
     secret_from_env: str = ""
     auth: tuple[str, str] | None = None
-    caps: Caps
     #: ``[route.models."<id>"]``: the models this endpoint offers, each as its own caps.
     models: dict[str, Caps] = msgspec.field(default_factory=dict)
     #: How this endpoint is told to reuse the front of a prompt, which the model does not decide (E169).
@@ -324,7 +323,7 @@ def _decoded(text: str, path: Path) -> tuple[ConfigFile, TOMLDocument]:
     """The file as a whole value, with the document it was read out of — or the first thing it cannot be.
 
     The parse and the decode are two steps on purpose: ``tomlkit`` gives the line and the column a person
-    can go to, and ``msgspec`` gives the path inside the document (``$.route[1].caps.max_output``) that a
+    can go to, and ``msgspec`` gives the path inside the document (``$.route[1].models.m.max_output``) that a
     missing or mistyped value is at. Both halves are kept: one answers what the file says, the other is what
     a write-back would edit.
     """
@@ -412,7 +411,9 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
     if codec is None:
         msg = f"route {one.name!r} names the dialect {one.dialect!r}, which this build does not speak"
         raise ConfigError(msg)
-    _spells(codec, one.caps, route=one.name)
+    if not one.models:
+        msg = f'route {one.name!r} names no model, so there is nothing to ask it for; add a [route.models."<id>"]'
+        raise ConfigError(msg)
     models: list[ModelEntry] = []
     for name, caps in one.models.items():
         _spells(codec, caps, route=one.name, model=name)
@@ -422,9 +423,7 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
         name=one.name,
         dialect=one.dialect,
         base=one.base,
-        model=one.model,
         secret=_secret(one, environment),
-        caps=one.caps,
         models=tuple(models),
         prefix_cache=one.prefix_cache,
         attempts=one.attempts,
@@ -439,8 +438,7 @@ def _route(one: RouteFile, environment: Mapping[str, str]) -> Route:
 def _spells(codec: Codec, caps: Caps, *, route: str, model: str = "") -> None:
     """Refuse a thinking shape this dialect has no word for, before a turn is spent finding out (E168).
 
-    Checked for the route's own fallback caps and for every model it offers, because each of them is what
-    a request may be built from.
+    Checked for every model a route offers, because each of them is what a request may be built from.
     """
     if type(caps.thinking) in codec.spells:
         return

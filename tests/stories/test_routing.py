@@ -39,8 +39,7 @@ def _route(name: str, dialect: str = "messages", *, pictures: bool = False) -> R
         name=name,
         dialect=dialect,
         base=f"http://{name}.invalid/v1",
-        model="m",
-        caps=Caps(max_output=64, pictures=pictures),
+        models=(ModelEntry(name="m", caps=Caps(max_output=64, pictures=pictures)),),
     )
 
 
@@ -305,15 +304,14 @@ async def test_an_attempt_beside_the_chain_does_not_move_where_the_conversation_
 async def test_a_conversation_tells_the_endpoint_which_of_its_models_it_asks(story_with: Scripted) -> None:
     """E170: the model is a setting of the conversation, and the request carries the id it names.
 
-    Two models behind one route, the second chosen mid-conversation: the next request asks for it by that
-    id, which is the whole of what the endpoint is told about the choice. Nothing about the route moves.
+    Two models behind one route, and another chosen mid-conversation: the next request asks for that id,
+    which is the whole of what the endpoint is told about the choice, and the choice itself is one more
+    row on the chain. Nothing about the route moves.
     """
     route = Route(
         name="local",
         dialect="messages",
         base="http://local.invalid/v1",
-        model="small",
-        caps=Caps(max_output=64),
         models=(
             ModelEntry(name="small", caps=Caps(max_output=64)),
             ModelEntry(name="big", caps=Caps(max_output=4096)),
@@ -328,14 +326,16 @@ async def test_a_conversation_tells_the_endpoint_which_of_its_models_it_asks(sto
     await story.type("a second thought")
 
     assert [request.model for request in story.requests()] == ["small", "big"], (
-        "the route's own model answers until somebody chooses, and then the chosen id is what is asked for"
+        "the id the client chose first, and then the one it moved to"
     )
     chosen = [
         json.loads(entry.payload.value)
         for entry in await story.host.trail.entries(story.session)
         if isinstance(entry.payload, StateChange) and entry.payload.key == "model"
     ]
-    assert chosen == [{"name": "big", "epoch": 1}], "the choice is a setting on the chain, not a turn"
+    assert chosen == [{"name": "small", "epoch": 1}, {"name": "big", "epoch": 2}], (
+        "the choice is a setting on the chain, not a turn"
+    )
 
 
 async def _read_a_picture(story: Story) -> Result:

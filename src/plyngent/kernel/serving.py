@@ -1049,6 +1049,14 @@ class Serving:
         if not found.host.model.installed:
             self._say(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
             return
+        route = found.host.routes.resolve(found.route)
+        if route is not None and route.asking(found.model) is None:
+            # Nothing to ask: this conversation never chose a model of its route, or the file no longer
+            # lists the one it chose. Refused before a turn begins, so no prompt is built for a request
+            # that has no id to carry (E170). A tree with no route at all is a different absence, and it
+            # is answered where the request is built.
+            self._say(TurnRefused(session=session, reason=Refusal.NO_MODEL, holder=0))
+            return
         live = found.turns()
         if live:
             self._say(TurnRefused(session=session, reason=Refusal.BUSY, holder=live[0].turn_id))

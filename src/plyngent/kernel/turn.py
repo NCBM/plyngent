@@ -484,13 +484,14 @@ class TurnRunner:
         shown, left = self._transcript(state, shown, system=system, instruction=instruction, room=room)
         if left:
             system, instruction = ctx.host.prompt.summarize(state.text, dropped=left)
-        asked = ctx.host.routes.asking(ctx.session.route, ctx.session.model)
+        route = ctx.host.routes.resolve(ctx.session.route)
+        ask = None if route is None else route.asking(ctx.session.model)
         request = Request(
             system=system,
             messages=(*shown, User(text=instruction)),
             tools=(),
-            route="" if asked is None else asked.route.name,
-            model="" if asked is None else asked.model,
+            route="" if route is None else route.name,
+            model="" if ask is None else ask.model,
             cache_key=ctx.session.cache_key,
         )
         if room and self._measure(state, request.messages, system=request.system) > room:
@@ -558,7 +559,8 @@ class TurnRunner:
         """
         ctx = state.ctx
         view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
-        asked = ctx.host.routes.asking(ctx.session.route, ctx.session.model)
+        route = ctx.host.routes.resolve(ctx.session.route)
+        ask = None if route is None else route.asking(ctx.session.model)
         system = ctx.host.prompt.compose(view, continuing=self._carrying_on(state))
         tools = view.prompts()
         state, messages = await self._fitted(state, system=system, tools=tools)
@@ -566,8 +568,8 @@ class TurnRunner:
             system=system,
             messages=messages,
             tools=tools,
-            route="" if asked is None else asked.route.name,
-            model="" if asked is None else asked.model,
+            route="" if route is None else route.name,
+            model="" if ask is None else ask.model,
             cache_key=ctx.session.cache_key,
         )
 

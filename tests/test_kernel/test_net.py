@@ -15,7 +15,7 @@ import pytest
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm.caps import Caps
-from plyngent.kernel.lm.route import Route, RouteWeb
+from plyngent.kernel.lm.route import ModelEntry, Route, RouteWeb
 from plyngent.kernel.net import client, deepseek
 from plyngent.kernel.net.bing import parse_rss
 from plyngent.kernel.net.client import Fix, Stopped, _next_hop
@@ -341,11 +341,16 @@ def test_an_account_takes_its_numbers_from_the_route_that_made_it() -> None:
         dialect="chat",
         base="https://vendor.example/",
         secret="A",
-        caps=Caps(max_output=1),
+        models=(ModelEntry(name="m", caps=Caps(max_output=1)),),
         provider="deepseek",
         web=RouteWeb(share=True, count=3, timeout=5.0),
     )
-    plain = Route(name="ds-b", dialect="chat", base="https://vendor.example", caps=Caps(max_output=1))
+    plain = Route(
+        name="ds-b",
+        dialect="chat",
+        base="https://vendor.example",
+        models=(ModelEntry(name="m", caps=Caps(max_output=1)),),
+    )
 
     assert deepseek.engine([plain]) is None, "a route that names no provider installs no engine"
     made = deepseek.engine([sharing], count=10, timeout=30.0)

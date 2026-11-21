@@ -25,7 +25,7 @@ from tests.loopback import Answer, answered
 
 def _request(route: str = "") -> Request:
     """One request, naming the route a session's setting would name."""
-    return Request(messages=(User(text="hi"),), route=route, cache_key="main:0:0")
+    return Request(messages=(User(text="hi"),), route=route, model="m", cache_key="main:0:0")
 
 
 def _caps(**given: object) -> Caps:
@@ -39,7 +39,13 @@ def _answered(body: dict[str, object], *, say: str = "hello") -> Answer:
 
 def _route(base: str, **given: object) -> Route:
     """One route to a test server, with the ceiling and the dialect a chat-completions body needs."""
-    return Route(name="local", dialect="chat-completions", base=base, model="m", caps=_caps(), **given)  # type: ignore[arg-type]
+    return Route(
+        name="local",
+        dialect="chat-completions",
+        base=base,
+        models=(ModelEntry(name="m", caps=_caps()),),
+        **given,  # type: ignore[arg-type]
+    )
 
 
 async def test_a_route_posts_the_dialects_body_to_the_dialects_path(serve) -> None:
@@ -110,7 +116,12 @@ async def test_a_dialect_this_build_does_not_speak_is_a_route_that_cannot_ask(se
     ``ARGS`` and not ``MISSING``: the route exists and was found; what it says it answers in is a word
     this build has no row for, which is a fact about how the program was started.
     """
-    route = Route(name="odd", dialect="carrier-pigeon", base="http://127.0.0.1:1", model="m", caps=_caps())
+    route = Route(
+        name="odd",
+        dialect="carrier-pigeon",
+        base="http://127.0.0.1:1",
+        models=(ModelEntry(name="m", caps=_caps()),),
+    )
 
     with pytest.raises(ModelFailed) as told:
         _ = await Posted(Routes([route], default="odd")).respond(_request())
@@ -134,34 +145,41 @@ def test_which_route_answers_is_the_sessions_own_or_the_hosts_default() -> None:
     conversation must not become unusable — so it falls back to the default, and the strict lookup
     (:meth:`Routes.named`) is what answers a person who asked for a route by name.
     """
-    one = Route(name="one", dialect="chat-completions", base="http://one/v1", model="m", caps=_caps())
-    two = Route(name="two", dialect="messages", base="http://two/v1", model="m", caps=_caps(pictures=True))
+    one = Route(
+        name="one",
+        dialect="chat-completions",
+        base="http://one/v1",
+        models=(ModelEntry(name="m", caps=_caps()),),
+    )
+    two = Route(
+        name="two",
+        dialect="messages",
+        base="http://two/v1",
+        models=(ModelEntry(name="m", caps=_caps(pictures=True)),),
+    )
     table = Routes([one, two], default="two")
 
     assert table.resolve("one") is one
     assert table.resolve("") is two
     assert table.resolve("retired") is two
     assert table.named("retired") is None
-    asked = table.asking("one")
+    asked = table.asking("one", "m")
     assert asked is not None and asked.route is one and asked.caps.pictures is False
-    nobody = table.asking("")
+    nobody = table.asking("", "m")
     assert nobody is not None and nobody.route is two and nobody.caps.pictures is True
-    assert Routes().asking("") is None
+    assert Routes().asking("", "m") is None
 
 
-def test_a_conversation_asks_for_a_model_and_the_table_answers_with_its_caps() -> None:
-    """E170: an id the route lists brings that model's numbers, and nothing is guessed in between.
+def test_a_conversation_asks_for_a_model_and_the_route_answers_with_its_caps() -> None:
+    """E170: an id the route lists brings that model's numbers, and an id it does not is nothing to ask.
 
-    Three answers and one is deliberately lax: a conversation asking for an id the file no longer lists
-    keeps the route's own caps and the id it named, because the endpoint may well still serve it. The next
-    step makes that case a refusal; this one is the fallback that keeps a retired id usable.
+    ``None`` and not a quieter answer: a conversation that never chose a model, or chose one the file no
+    longer lists, has no request to make — the route holds no caps of its own to fall back on.
     """
     route = Route(
         name="one",
         dialect="messages",
         base="http://x",
-        model="fallback",
-        caps=Caps(max_output=8),
         models=(
             ModelEntry(name="small", caps=Caps(max_output=64)),
             ModelEntry(name="big", caps=Caps(max_output=4096)),
@@ -171,7 +189,5 @@ def test_a_conversation_asks_for_a_model_and_the_table_answers_with_its_caps() -
 
     big = table.asking("one", "big")
     assert big is not None and (big.model, big.caps.max_output) == ("big", 4096)
-    retired = table.asking("one", "retired")
-    assert retired is not None and (retired.model, retired.caps.max_output) == ("retired", 8)
-    silent = table.asking("one")
-    assert silent is not None and silent.model == "fallback", "nobody chose: the route's own model answers"
+    assert table.asking("one", "retired") is None, "an id the file does not list is nothing to ask"
+    assert table.asking("one", "") is None, "and so is never having chosen one"

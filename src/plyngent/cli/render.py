@@ -969,7 +969,7 @@ def _declined(event: _Declined) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — 
 #: carry no braces at all, so a formatting call leaves them alone.
 _REFUSALS: Mapping[Refusal, str] = {
     Refusal.NO_SESSION: "no such session here: open one first",
-    Refusal.NO_MODEL: "this kernel has no model installed, so it cannot run a turn",
+    Refusal.NO_MODEL: "this conversation has no model to ask: none is installed, or none was chosen",
     Refusal.BUSY: "a turn is already running in this session",
     Refusal.NO_HOST: "this kernel's host is not up, so there is nowhere to write a conversation",
     Refusal.NO_SUCH_ENTRY: "no entry {entry!r} in session {session}: an entry can only continue one that exists",

@@ -54,7 +54,7 @@ async def test_a_pipe_is_a_session_from_a_command_to_the_end_of_its_input(tmp_pa
 
             _ = feed.write("look at the README\n")
             _ = feed.flush()
-            await _until(out, "turn refused: this kernel has no model installed")
+            await _until(out, "turn refused: this conversation has no model to ask")
 
             feed.close()
             code = await running

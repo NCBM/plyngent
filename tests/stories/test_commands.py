@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+#: What the kernel says when there is no model to ask: nothing installed, or nothing chosen.
+NOTHING_TO_ASK = "turn refused: this conversation has no model to ask: none is installed, or none was chosen"
+
 if TYPE_CHECKING:
     from tests.stories.driver import Story
 
@@ -11,9 +14,7 @@ if TYPE_CHECKING:
 async def test_a_typed_line_is_refused_when_no_model_is_installed(story: Story) -> None:
     await story.type("look at the README")
 
-    assert story.screen() == ("turn refused: this kernel has no model installed, so it cannot run a turn",), (
-        "there is nothing to ask, and the kernel says so in its own words"
-    )
+    assert story.screen() == (NOTHING_TO_ASK,), "there is nothing to ask, and the kernel says so in its own words"
 
 
 async def test_the_sessions_are_listed_with_the_one_in_focus(story: Story) -> None:
@@ -106,7 +107,7 @@ async def test_a_message_written_in_an_editor_is_sent_like_a_typed_line(story: S
     await story.type("/submit")
     await story.write("a longer thought,\nover two lines")
 
-    assert story.screen() == ("turn refused: this kernel has no model installed, so it cannot run a turn",)
+    assert story.screen() == (NOTHING_TO_ASK,)
 
 
 async def test_submit_will_not_take_its_text_on_the_line(story: Story) -> None:

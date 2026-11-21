@@ -15,7 +15,7 @@ import re
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.lm import Caps
-from plyngent.kernel.lm.route import Route
+from plyngent.kernel.lm.route import ModelEntry, Route
 from plyngent.kernel.model import Reply
 from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import Usage as Spent
@@ -38,16 +38,16 @@ def _route(name: str, *, window: int = 0) -> Route:
         name=name,
         dialect="messages",
         base=f"http://{name}.invalid/v1",
-        model="m",
-        caps=Caps(max_output=64, context_window=window),
+        models=(ModelEntry(name="m", caps=Caps(max_output=64, context_window=window)),),
     )
 
 
 async def test_a_turn_says_where_the_conversation_is(story_with: Scripted) -> None:
     """Once where it begins and once where it ends, and both say the route this session is on.
 
-    The route is the half a person cannot see anywhere else: ``/model`` is a command they may have typed
-    in a different session, hours ago, and which model is answering is not a fact the conversation says.
+    The route is the half a person cannot see anywhere else: ``/set-route`` is a command they may have typed
+    in a different session, hours ago, and which route is answering is not a fact the conversation says.
+    The first of the three rows is the model this client chose when it attached (E170).
     """
     story = await story_with(text("hello"), routes=(_route("claude"),), route="claude")
 
@@ -55,7 +55,7 @@ async def test_a_turn_says_where_the_conversation_is(story_with: Scripted) -> No
     await story.finished()
 
     said = [line for line in story.notices() if line.startswith("main")]
-    assert len(said) == 2, "one where the turn began, one where it ended"
+    assert len(said) == 3, "the model chosen at attach, and then one where the turn began and one where it ended"
     assert all("route claude" in line for line in said)
     assert all("workspace0" in line for line in said), "and the directory the work happens in"
 

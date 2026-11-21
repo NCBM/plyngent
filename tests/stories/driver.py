@@ -41,7 +41,7 @@ from plyngent.cli.render import question as question_line
 from plyngent.cli.render import workspace_label
 from plyngent.kernel.host import Host
 from plyngent.kernel.session import Session
-from plyngent.wire.command import Offer
+from plyngent.wire.command import Offer, SetModel
 from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
@@ -217,6 +217,7 @@ class Story:
         config: Settings | None = None,
         routes: Iterable[Route] | None = None,
         route: str = "",
+        model_id: str = "",
         engines: Engines | None = None,
         skills: Skills | None = None,
         prompt: PromptPlan | None = None,
@@ -286,6 +287,10 @@ class Story:
 
         ``once`` is the one message a run sends in place of reading lines (``-p``), and ``None`` is the
         ordinary run: a story about a script's shape says what it would say here (E159).
+
+        ``model_id`` is the id this client asks its route for, and it is the client's choice — the kernel
+        chooses nothing (E170). Empty is "the first id that route offers", which is what a story not about
+        choosing says; a story about choosing passes the id it means.
         """
         root.mkdir(parents=True, exist_ok=True)
         settled: dict[str, bool] = {
@@ -339,6 +344,12 @@ class Story:
             once=once,
         )
         await story.settle()
+        chosen = model_id or _first_offered(story, route)
+        if chosen:
+            # After the open, because a setting belongs to a conversation: the client attaches, then says
+            # which of the route's models it asks for (E170/E172).
+            _ = kernel.client.submit(SetModel(session=session, model=chosen))
+            await story.settle()
         return story
 
     @classmethod
@@ -349,6 +360,7 @@ class Story:
         kernel: Daemon | None = None,
         session: str = SESSION,
         model: Model | None = None,
+        model_id: str = "",
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
         markdown: bool = False,
@@ -367,6 +379,10 @@ class Story:
 
         ``mark`` is where this client remembers how far it had read, and ``None`` is a client that
         remembers nothing: a story about a reconnect names a file, the way a program names its own.
+
+        ``model_id`` is the id this client asks for, sent the moment it attaches: a client that has not
+        chosen one is a conversation the kernel refuses to ask anything for (E170), and nothing here can
+        read the kernel's table to guess — a client of a daemon does not have one.
         """
         story = cls(
             client,
@@ -379,6 +395,8 @@ class Story:
             mark=mark,
             leaving=partial(_client_leaves, client),
         )
+        if model_id:
+            _ = client.submit(SetModel(session=session, model=model_id))
         await story.settle()
         return story
 
@@ -642,6 +660,16 @@ class Story:
 def _drawn(text: str) -> tuple[str, ...]:
     """Captured output as the lines a person read, with the trailing blank dropped."""
     return tuple(text.splitlines())
+
+
+def _first_offered(story: Story, route: str) -> str:
+    """The id the route this story speaks on offers first, or nothing when no route answers it.
+
+    Read off the table the kernel was brought up with, because it is what a client would have been
+    shown: a story not about choosing a model asks for the first one that is there (E170).
+    """
+    found = story.host.routes.resolve(route)
+    return found.models[0].name if found is not None and found.models else ""
 
 
 async def _client_leaves(client: KernelLink) -> None:

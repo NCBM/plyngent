@@ -51,7 +51,7 @@ def test_a_turn_that_ended_is_bookkeeping_and_one_that_failed_is_a_refusal() -> 
 
 def test_a_refusal_and_an_asking_cost_are_not_bookkeeping() -> None:
     assert render(TurnRefused(reason=Refusal.NO_MODEL)) == (
-        Shown("turn refused: this kernel has no model installed, so it cannot run a turn", "refusal"),
+        Shown("turn refused: this conversation has no model to ask: none is installed, or none was chosen", "refusal"),
     )
     assert render(CompactRefused(reason=Refusal.NOTHING_TO_KEEP)) == (
         Shown("compact refused: a summary with no text compresses nothing", "refusal"),

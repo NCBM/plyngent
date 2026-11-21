@@ -44,7 +44,8 @@ if TYPE_CHECKING:
     from tests.loopback import Site
 
 #: One route to the loopback server this module is handed, spelled the way a file spells one. The base is a
-#: placeholder because the port is only known once a server exists.
+#: placeholder because the port is only known once a server exists, and ``rest`` is where a test puts the
+#: route's own keys: the model table goes last, because everything after a sub-table belongs to it.
 ROUTE = """
 default_route = "local"
 
@@ -52,8 +53,9 @@ default_route = "local"
 name = "local"
 dialect = "chat-completions"
 base = "{base}"
-model = "m"
-caps = {{ max_output = 64 }}
+{rest}
+[route.models."m"]
+max_output = 64
 """
 
 
@@ -113,7 +115,9 @@ def test_a_route_without_its_output_ceiling_is_refused(tmp_path: Path) -> None:
     """``caps.max_output`` has no default anywhere: how much room an answer gets is somebody's decision."""
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { pictures = true }\n',
+        # The route's own keys first and the model's table last: everything after a sub-table is its own.
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\n'
+        '\n[route.models."m"]\npictures = true\n',
     )
 
     with pytest.raises(config.ConfigError, match="max_output"):
@@ -128,21 +132,23 @@ def test_a_route_that_never_states_its_window_is_a_route_without_a_denominator(t
     """
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { max_output = 8 }\n',
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\n'
+        '\n[route.models."m"]\nmax_output = 8\n',
     )
 
     settings = config.load(path)
     route = settings.routes.named("one")
 
     assert route is not None, "the file named it, so the table has it"
-    assert route.caps.context_window == 0, "zero is 'this route never said'"
+    assert route.models[0].caps.context_window == 0, "zero is 'this model never said'"
 
 
 def test_a_dialect_this_build_does_not_speak_is_refused(tmp_path: Path) -> None:
     """A route naming a dialect nobody implemented is an endpoint nothing can post to, said at the start."""
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "carrier-pigeon"\nbase = "http://x"\ncaps = { max_output = 8 }\n',
+        '[[route]]\nname = "one"\ndialect = "carrier-pigeon"\nbase = "http://x"\n'
+        '\n[route.models."m"]\nmax_output = 8\n',
     )
 
     with pytest.raises(config.ConfigError, match="carrier-pigeon"):
@@ -158,7 +164,7 @@ def test_a_route_that_asks_for_a_shape_its_dialect_lacks_is_refused(tmp_path: Pa
     path = _written(
         tmp_path,
         '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
-        '\n[route.caps]\nmax_output = 64\n\n[route.caps.thinking]\nshape = "effort"\nlevel = "high"\n',
+        '\n[route.models."m"]\nmax_output = 64\n\n[route.models."m".thinking]\nshape = "effort"\nlevel = "high"\n',
     )
 
     with pytest.raises(config.ConfigError, match="no word for"):
@@ -170,12 +176,12 @@ def test_a_thinking_shape_is_read_into_the_value_the_dialect_writes(tmp_path: Pa
     path = _written(
         tmp_path,
         '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
-        '\n[route.caps]\nmax_output = 64\n\n[route.caps.thinking]\nshape = "budget"\ntokens = 8000\n',
+        '\n[route.models."m"]\nmax_output = 64\n\n[route.models."m".thinking]\nshape = "budget"\ntokens = 8000\n',
     )
 
     route = config.load(path).routes.named("one")
 
-    assert route is not None and route.caps.thinking == Budget(tokens=8000)
+    assert route is not None and route.models[0].caps.thinking == Budget(tokens=8000)
 
 
 def test_a_cap_a_dialect_obeys_is_spelled_as_the_model_is_asked(tmp_path: Path) -> None:
@@ -187,25 +193,25 @@ def test_a_cap_a_dialect_obeys_is_spelled_as_the_model_is_asked(tmp_path: Path) 
     path = _written(
         tmp_path,
         '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n'
-        'caps = { max_output = 8, pictures = true, tools = "parallel" }\n',
+        '\n[route.models."m"]\nmax_output = 8\npictures = true\ntools = "parallel"\n',
     )
 
     route = config.load(path).routes.named("one")
 
     assert route is not None
-    assert route.caps.pictures is True
-    assert route.caps.tools is ToolCalls.PARALLEL
+    assert route.models[0].caps.pictures is True
+    assert route.models[0].caps.tools is ToolCalls.PARALLEL
 
 
 def test_a_route_offers_its_models_as_a_table_of_their_own(tmp_path: Path) -> None:
     """E170: one gateway, several models, and what each of them can do is its own fact.
 
-    The order is the file's, because that is the order the list will be read in. The route's own ``caps``
-    stay beside them as the fallback for a conversation that has not picked a model yet.
+    The order is the file's, because that is the order the list will be read in, and one model's numbers
+    never stand for another's.
     """
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { max_output = 8 }\n'
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\n'
         '\n[route.models."small"]\nmax_output = 64\n'
         '\n[route.models."big"]\nmax_output = 4096\npictures = true\n',
     )
@@ -217,14 +223,21 @@ def test_a_route_offers_its_models_as_a_table_of_their_own(tmp_path: Path) -> No
         ("small", 64, False),
         ("big", 4096, True),
     ]
-    assert route.caps.max_output == 8, "the route keeps the fallback it was written with"
+
+
+def test_a_route_that_names_no_model_is_refused(tmp_path: Path) -> None:
+    """E170: a route is the models it offers, so one that offers none is an endpoint nothing can ask."""
+    path = _written(tmp_path, '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n')
+
+    with pytest.raises(config.ConfigError, match="names no model"):
+        _ = config.load(path)
 
 
 def test_a_model_asking_for_a_shape_its_dialect_lacks_is_refused_by_name(tmp_path: Path) -> None:
     """Every model gets the check the route's own caps get, and the sentence says which one (E168)."""
     path = _written(
         tmp_path,
-        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\ncaps = { max_output = 8 }\n'
+        '[[route]]\nname = "one"\ndialect = "messages"\nbase = "http://x"\n\n[route.models."m"]\nmax_output = 8\n'
         '\n[route.models."thinker"]\nmax_output = 64\n\n[route.models."thinker".thinking]\nshape = "template"\n',
     )
 
@@ -234,7 +247,7 @@ def test_a_model_asking_for_a_shape_its_dialect_lacks_is_refused_by_name(tmp_pat
 
 def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp_path: Path) -> None:
     """One file is one profile, and a profile whose key is missing is not one to fall back from (§0.11, E78)."""
-    path = _written(tmp_path, ROUTE.format(base="http://x") + 'secret_from_env = "NOT_SET_ANYWHERE"\n')
+    path = _written(tmp_path, ROUTE.format(base="http://x", rest='secret_from_env = "NOT_SET_ANYWHERE"\n'))
 
     with pytest.raises(config.ConfigError, match="NOT_SET_ANYWHERE"):
         _ = config.load(path, env={})
@@ -246,7 +259,10 @@ def test_a_credential_named_but_not_set_is_refused_and_the_variable_is_named(tmp
 
 def test_two_routes_with_one_name_are_refused(tmp_path: Path) -> None:
     """A name written twice is a session's setting that could mean either, so neither is offered."""
-    twice = '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\ncaps = { max_output = 8 }\n'
+    twice = (
+        '[[route]]\nname = "one"\ndialect = "chat-completions"\nbase = "http://x"\n'
+        '\n[route.models."m"]\nmax_output = 8\n'
+    )
 
     with pytest.raises(config.ConfigError, match="two routes are named 'one'"):
         _ = config.load(_written(tmp_path, twice + twice))
@@ -260,8 +276,10 @@ def test_a_route_may_say_which_implementation_serves_its_web_half(tmp_path: Path
     """
     path = _written(
         tmp_path,
-        ROUTE.format(base="http://x")
-        + 'provider = "deepseek"\n\n[route.web]\nshare = true\ncount = 3\ntimeout = 5.0\n',
+        ROUTE.format(
+            base="http://x",
+            rest='provider = "deepseek"\n\n[route.web]\nshare = true\ncount = 3\ntimeout = 5.0\n',
+        ),
     )
 
     route = config.load(path).routes.named("local")
@@ -272,7 +290,7 @@ def test_a_route_may_say_which_implementation_serves_its_web_half(tmp_path: Path
 
 def test_a_provider_this_build_does_not_have_is_refused_and_the_ones_it_has_are_named(tmp_path: Path) -> None:
     """A typo in the one field that decides what a channel can do is refused where a person can see it."""
-    path = _written(tmp_path, ROUTE.format(base="http://x") + 'provider = "deepske"\n')
+    path = _written(tmp_path, ROUTE.format(base="http://x", rest='provider = "deepske"\n'))
 
     with pytest.raises(config.ConfigError, match="does not have") as refused:
         _ = config.load(path)
@@ -282,7 +300,7 @@ def test_a_provider_this_build_does_not_have_is_refused_and_the_ones_it_has_are_
 
 def test_an_engine_no_route_can_be_configured_with_is_refused(tmp_path: Path) -> None:
     """An engine with no endpoint is named in ``[web].engines``: a route naming it has nothing to give it."""
-    path = _written(tmp_path, ROUTE.format(base="http://x") + 'provider = "bing"\n')
+    path = _written(tmp_path, ROUTE.format(base="http://x", rest='provider = "bing"\n'))
 
     with pytest.raises(config.ConfigError, match=r"\[web\]\.engines"):
         _ = config.load(path)
@@ -292,8 +310,9 @@ def test_a_provider_and_a_dialect_that_do_not_pair_are_refused(tmp_path: Path) -
     """The pair is the implementation's to declare: it knows which wire format it answers in."""
     path = _written(
         tmp_path,
-        ROUTE.format(base="http://x").replace('dialect = "chat-completions"', 'dialect = "messages"')
-        + 'provider = "deepseek"\n',
+        ROUTE.format(base="http://x", rest='provider = "deepseek"\n').replace(
+            'dialect = "chat-completions"', 'dialect = "messages"'
+        ),
     )
 
     with pytest.raises(config.ConfigError, match="answers in"):
@@ -304,7 +323,7 @@ def test_a_route_that_names_no_provider_may_speak_any_dialect_this_build_knows(t
     """A third-party lookalike needs no provider, and restricting it to one dialect would refuse it."""
     path = _written(
         tmp_path,
-        ROUTE.format(base="http://x").replace('dialect = "chat-completions"', 'dialect = "messages"'),
+        ROUTE.format(base="http://x", rest="").replace('dialect = "chat-completions"', 'dialect = "messages"'),
     )
 
     route = config.load(path).routes.named("local")
@@ -320,8 +339,10 @@ default_route = "ds-a"
 name = "ds-a"
 dialect = "chat-completions"
 base = "https://vendor.example"
-caps = { max_output = 64 }
 provider = "deepseek"
+
+[route.models."m"]
+max_output = 64
 
 [route.web]
 share = true
@@ -330,8 +351,10 @@ share = true
 name = "ds-b"
 dialect = "chat-completions"
 base = "https://vendor.example"
-caps = { max_output = 64 }
 provider = "deepseek"
+
+[route.models."m"]
+max_output = 64
 
 [route.web]
 share = true
@@ -366,8 +389,10 @@ def test_with_no_web_table_a_program_has_the_engines_its_routes_install(tmp_path
 name = "ds"
 dialect = "chat-completions"
 base = "https://vendor.example"
-caps = { max_output = 64 }
 provider = "deepseek"
+
+[route.models."m"]
+max_output = 64
 """
 
     settings = config.load(_written(tmp_path, body))
@@ -377,7 +402,7 @@ provider = "deepseek"
 
 
 def test_a_program_whose_routes_name_no_provider_has_no_engine_at_all(tmp_path: Path) -> None:
-    assert config.load(_written(tmp_path, ROUTE.format(base="http://x"))).web.names() == ()
+    assert config.load(_written(tmp_path, ROUTE.format(base="http://x", rest=""))).web.names() == ()
 
 
 def test_an_engine_the_web_table_names_but_this_build_lacks_is_refused(tmp_path: Path) -> None:
@@ -406,11 +431,14 @@ async def test_the_credential_named_in_the_file_is_the_header_the_route_sends(tm
     base = site.says(answered({}))
     path = _written(
         tmp_path,
-        ROUTE.format(base=f"{base}/v1") + 'secret_from_env = "PLYNGENT_TEST_KEY"\nauth = ["x-api-key", "{secret}"]\n',
+        ROUTE.format(
+            base=f"{base}/v1",
+            rest='secret_from_env = "PLYNGENT_TEST_KEY"\nauth = ["x-api-key", "{secret}"]\n',
+        ),
     )
 
     settings = config.load(path, env={"PLYNGENT_TEST_KEY": "s3cr3t"})
-    reply = await Posted(settings.routes).respond(Request(messages=(User(text="hi"),), cache_key="main:0:0"))
+    reply = await Posted(settings.routes).respond(Request(messages=(User(text="hi"),), model="m", cache_key="main:0:0"))
 
     assert reply.text == "hello"
     assert site.asked == ["/v1/chat/completions"], "the dialect's path under the route's base"

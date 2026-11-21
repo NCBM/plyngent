@@ -29,7 +29,7 @@ from plyngent.kernel.failure import Failure, Retry
 from plyngent.kernel.journal import _decode, _encode
 from plyngent.kernel.listing import Filter
 from plyngent.kernel.lm import DIALECTS, Caps, codec_named
-from plyngent.kernel.lm.route import PrefixCache, Route, RouteWeb
+from plyngent.kernel.lm.route import ModelEntry, PrefixCache, Route, RouteWeb
 from plyngent.kernel.model import AnyMessage, Note, Request, User
 from plyngent.kernel.net.web import Engine, Engines, Hit, Page
 from plyngent.kernel.prompt import GROUP_PLAYBOOK, PromptPlan
@@ -659,12 +659,17 @@ def test_a_route_installs_the_web_engine_it_names() -> None:
     engine has. ``share`` is not consulted here: whether a tool exists and whose key pays for a search are
     two questions, and this is the first one.
     """
-    plain = Route(name="local", dialect="chat-completions", base="http://127.0.0.1:1", caps=Caps(max_output=64))
+    plain = Route(
+        name="local",
+        dialect="chat-completions",
+        base="http://127.0.0.1:1",
+        models=(ModelEntry(name="m", caps=Caps(max_output=64)),),
+    )
     named = Route(
         name="ds-a",
         dialect="chat-completions",
         base="https://vendor.example",
-        caps=Caps(max_output=64),
+        models=(ModelEntry(name="m", caps=Caps(max_output=64)),),
         provider="deepseek",
         web=RouteWeb(share=True),
     )
