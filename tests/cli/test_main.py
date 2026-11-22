@@ -15,10 +15,11 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from plyngent.__main__ import _address, _editor, _markdown, _tree_of, main
+from plyngent.__main__ import _address, _brought, _editor, _markdown, _tree_of, main
 from plyngent.boot import endpoint_for
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
+from plyngent.kernel.providing import ToolSet
 from plyngent.wire.manifest import WorkspaceRow
 
 
@@ -156,3 +157,69 @@ def test_a_daemon_cannot_be_told_which_tree_to_work_in() -> None:
 
     assert result.exit_code == 2
     assert "--serve opens no tree" in result.output
+
+
+def test_a_plugin_named_where_there_is_no_kernel_is_a_usage_error() -> None:
+    """``--connect`` has no kernel of its own, so a plugin there is a mistake and not a silent nothing."""
+    result = CliRunner().invoke(main, ["--connect", "somewhere.sock", "--plugin", "acme"])
+
+    assert result.exit_code == 2
+    assert "--connect brings no kernel of its own" in result.output
+
+
+def test_a_plugin_that_is_not_installed_is_a_mistake_in_what_was_typed() -> None:
+    """A name nobody installed is exit code 2, with the names this program does have in the sentence."""
+    with pytest.raises(click.UsageError, match="no plugin named 'nowhere' is installed"):
+        _ = _brought(("nowhere",), ())
+
+
+def test_a_plugin_file_brings_the_declarations_its_enable_answers(tmp_path: Path) -> None:
+    """One file is one module, and ``enable`` is the name its declarations are answered under."""
+    written = tmp_path / "mine.py"
+    _ = written.write_text(
+        "from composat import Declaration\n"
+        "from plyngent.kernel.providing import ToolSet\n"
+        "def enable():\n"
+        "    return (Declaration(ToolSet, instance='acme', kwargs={'providers': ()}),)\n",
+        encoding="utf-8",
+    )
+
+    brought = _brought((), (str(written),))
+
+    assert [one.instance for one in brought] == ["acme"]
+    assert brought[0].component_class is ToolSet
+
+
+def test_a_plugin_file_may_say_which_name_answers(tmp_path: Path) -> None:
+    """``PATH:NAME`` is the escape from one convention: a module may already have a function by another."""
+    written = tmp_path / "mine.py"
+    _ = written.write_text("def bring():\n    return ()\n", encoding="utf-8")
+
+    assert _brought((), (f"{written}:bring",)) == ()
+
+
+def test_a_plugin_file_that_raises_is_a_broken_install_and_not_a_usage_error(tmp_path: Path) -> None:
+    """A file that will not load is exit code 1: the path was right, and what is in it was not."""
+    written = tmp_path / "mine.py"
+    _ = written.write_text("raise RuntimeError('no')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["--plugin-file", str(written), "-p", "hi"])
+
+    assert result.exit_code == 1
+    assert "raised while it was being loaded" in result.output
+
+
+def test_a_plugin_file_that_is_not_there_is_a_mistake_in_what_was_typed(tmp_path: Path) -> None:
+    with pytest.raises(click.UsageError, match="is not a file"):
+        _ = _brought((), (str(tmp_path / "nothing.py"),))
+
+
+def test_a_plugin_that_answers_something_else_is_a_broken_install(tmp_path: Path) -> None:
+    """The shape is one shape — declarations — so anything else is a second contract for one word."""
+    written = tmp_path / "mine.py"
+    _ = written.write_text("def enable():\n    return 42\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["--plugin-file", str(written), "-p", "hi"])
+
+    assert result.exit_code == 1
+    assert "a plugin answers a tuple of declarations" in result.output

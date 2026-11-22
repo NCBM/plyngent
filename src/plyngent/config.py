@@ -38,6 +38,7 @@ from platformdirs import user_data_path
 from tomlkit.exceptions import ParseError
 from tomlkit.items import Table
 
+from plyngent import plugins
 from plyngent.boot import engines_for
 from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
@@ -156,6 +157,18 @@ class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
     checkpoint_rows: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_CHECKPOINT_ROWS
 
 
+class PluginsFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[plugins]``: which installed plugins this program starts with.
+
+    ``enable`` is a list of entry-point names of the group :data:`plyngent.plugins.PLUGIN_GROUP`, and it is
+    a list a **person** writes: there is one writer in this program and it cannot reach this table, so no
+    command and no model can add to it. What a name buys is the declarations that plugin brings — the same
+    value a launcher passes, with the same reach (E174).
+    """
+
+    enable: tuple[str, ...] = ()
+
+
 class SkillsFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[skills]``: extra roots to look in, and whether the standard three are still read (§0.11, E81)."""
 
@@ -246,6 +259,7 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     sandbox: SandboxFile | None = None
     trash: TrashFile | None = None
     journal: JournalFile | None = None
+    plugins: PluginsFile | None = None
     web: WebFile | None = None
 
 
@@ -275,6 +289,10 @@ class Settings:
     sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     trash: bool = True
     journal: Path | None = None
+    #: The installed plugins this program starts with, in the order the file lists them. Names and not
+    #: declarations: what a name brings is a fact about this machine, so it is resolved where the kernel
+    #: is brought up and not where the file is read (E174).
+    plugins: tuple[str, ...] = ()
     #: How many rows one conversation may gather before its fold is kept beside the log: the cadence
     #: ``[journal] checkpoint_rows`` sets, and the number a program nobody configured ships with (E177).
     checkpoint_rows: int = DEFAULT_CHECKPOINT_ROWS
@@ -526,6 +544,7 @@ def _settings(
         trash=(parsed.trash or TrashFile()).enabled,
         journal=_resolved(journal.path, path) if journal.path else None,
         checkpoint_rows=journal.checkpoint_rows,
+        plugins=(parsed.plugins or PluginsFile()).enable,
         document=document,
         source=path,
         text=text,
@@ -688,12 +707,16 @@ async def install(
     a frontend reaches it is the frontend's business — but it is here so that a story about a file still
     runs over every transport the kernel can open. ``components`` is the same kind of extra: not something
     a file may say, and how a launcher adds a component of its own (E143).
+
+    ``[plugins] enable`` is added to ``components`` here and not in :func:`load`, because a name is only a
+    name until something is brought up: the list is a fact about this machine, and a frontend that reads a
+    file to connect somewhere else has nothing to build (E174).
     """
     return await install_kernel(
         root,
         transport=transport,
         model=model,
-        components=components,
+        components=(*components, *_plugin_declarations(settings)),
         **_from_the_file(root=root, settings=settings),
     )
 
@@ -708,14 +731,28 @@ async def serve(
     It is handed no tree either — the trees it serves are the ones a client names (E157) — and the one
     place that shows is the project's skills directory, which a program with no tree cannot have: the
     roots are the file's own plus the person's, and nothing is guessed in its place. ``components`` means
-    what it means there: a launcher's own, declared beside this process's.
+    what it means there: a launcher's own, declared beside this process's, and the file's plugins after
+    them.
     """
     return await serve_kernel(
         endpoint=endpoint,
         model=model,
-        components=components,
+        components=(*components, *_plugin_declarations(settings)),
         **_from_the_file(root=None, settings=settings),
     )
+
+
+def _plugin_declarations(settings: Settings) -> tuple[Declaration, ...]:
+    """What ``[plugins] enable`` names, or the sentence that says why the file cannot be run with.
+
+    Both failures are the file's: a name that is not installed and a distribution that will not load are
+    things a person wrote down and this machine cannot honour, which is exit code 1 and not the command
+    line's 2 — there is no flag here to have mistyped (E174).
+    """
+    try:
+        return plugins.installed(settings.plugins)
+    except (plugins.UnknownPluginError, plugins.BrokenPluginError) as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, Any]:

@@ -553,6 +553,22 @@ def test_paths_in_the_file_are_taken_against_the_file(tmp_path: Path) -> None:
     assert settings.journal == tmp_path / "history.db"
 
 
+def test_the_plugins_a_file_enables_are_names_the_program_resolves(tmp_path: Path) -> None:
+    """``[plugins] enable`` is a list of entry-point names, and a name is the whole of what a file says.
+
+    What the name brings is a fact about this machine, so it is resolved where a kernel is brought up and
+    never here: a frontend that reads a file to reach somebody else's kernel builds nothing (E174).
+    """
+    chosen = config.load(_written(tmp_path, '[plugins]\nenable = ["acme", "mcp"]\n', "plugins.toml"))
+
+    assert chosen.plugins == ("acme", "mcp")
+    assert config.load(_written(tmp_path, "", "plain.toml")).plugins == (), "a program nobody configured has none"
+    with pytest.raises(config.ConfigError, match="no plugin named 'nowhere' is installed"):
+        _ = config._plugin_declarations(
+            config.load(_written(tmp_path, '[plugins]\nenable = ["nowhere"]\n', "bad.toml"))
+        )
+
+
 def test_the_checkpoint_cadence_is_a_number_the_program_may_set(tmp_path: Path) -> None:
     """``[journal] checkpoint_rows`` is how many rows a conversation gathers before its fold is kept (E177).
 

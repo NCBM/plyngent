@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 import click
 
-from plyngent import boot, config
+from plyngent import boot, config, plugins
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
@@ -124,12 +124,28 @@ _NOTHING = "nothing"
     is_flag=True,
     help="and answer the heaviest questions with a yes too; implies --away",
 )
+@click.option(
+    "--plugin",
+    "plugins_named",
+    multiple=True,
+    metavar="NAME",
+    help="start with this installed plugin; repeatable, and it is not remembered between runs",
+)
+@click.option(
+    "--plugin-file",
+    "plugin_files",
+    multiple=True,
+    metavar="PATH[:NAME]",
+    help="start with the declarations this file's `enable` answers; repeatable, and not remembered",
+)
 def main(
     session: str,
     workspace: Path | None,
     config_path: Path | None,
     serve_at: Path | str | None,
     connect_at: Path | str | None,
+    plugins_named: tuple[str, ...],
+    plugin_files: tuple[str, ...],
     *,
     no_colour: bool,
     no_diff: bool,
@@ -152,6 +168,12 @@ def main(
         # directory" is not something it can be told at this end of the connection (E154, E157).
         msg = "--serve opens no tree: the trees it serves are the ones a client names with --workspace"
         raise click.UsageError(msg)
+    if connect_at is not None and (plugins_named or plugin_files):
+        # A plugin is a component of the kernel, and this shape has no kernel: the one at the far end was
+        # started with whatever it was started with, and nothing here can add to it (E174).
+        msg = "--connect brings no kernel of its own: a plugin goes in where the kernel is started"
+        raise click.UsageError(msg)
+    components = _brought(plugins_named, plugin_files)
     # A signal is the stop a keyboard's Ctrl+C is, and ``App.run`` turns it into one — so reaching this
     # is a host or a loop that would not be told, where the signal is the process's own business and what
     # is left to do is an exit code and no traceback (§0.13, E97).
@@ -169,15 +191,39 @@ def main(
                 once=once,
                 serve_at=serve_at,
                 connect_at=connect_at,
+                components=components,
             )
         )
     except config.ConfigError as exc:
         # A file this program will not run with is a sentence and an exit code (§0.11, E72) — said here
         # because saying it is the command line's job and not the program's.
         raise click.ClickException(str(exc)) from exc
+    except plugins.BrokenPluginError as exc:
+        # An installed plugin that will not load is the same kind of answer: a program somebody installed
+        # badly is a sentence and exit code 1, not a traceback (E174).
+        raise click.ClickException(str(exc)) from exc
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
     sys.exit(code)
+
+
+def _brought(named: tuple[str, ...], files: tuple[str, ...]) -> tuple[Declaration, ...]:
+    """The declarations this run's flags name, in the order they were written.
+
+    A name that is not installed and a path that is not a file are answered as usage errors: they are
+    mistakes in what somebody typed at this prompt, which is what exit code 2 is for. Nothing installed is
+    a plugin at all until a *person* names it here or in the file's ``[plugins]`` (E174).
+    """
+    brought: list[Declaration] = []
+    try:
+        brought.extend(plugins.installed(named))
+        for one in files:
+            brought.extend(plugins.from_file(one))
+    except plugins.UnknownPluginError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except plugins.BrokenPluginError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return tuple(brought)
 
 
 async def run(
