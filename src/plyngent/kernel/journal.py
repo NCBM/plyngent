@@ -337,7 +337,7 @@ class SqliteTrail(Trail):
             return
         try:
             for session in sorted(self._since):
-                _ = await self._snapshot(session)
+                _ = await self.snapshot(session)
         finally:
             self._db = None
             await db.close()
@@ -410,7 +410,7 @@ class SqliteTrail(Trail):
             raise ValueError(_no_such_entry(begin_after, session))
         self._since[session] = self._since.get(session, 0) + 1
         if self._since[session] >= self._checkpoint_rows or isinstance(payload, Withheld):
-            _ = await self._snapshot(session)
+            _ = await self.snapshot(session)
             self._since[session] = 0
         return Entry(
             id=f"e{row[0]}",
@@ -652,7 +652,8 @@ class SqliteTrail(Trail):
         )
         await self._run(db, _TRIM_CHECKPOINTS, (session, session))
 
-    async def _snapshot(self, session: str) -> Snapshot:
+    @override
+    async def snapshot(self, session: str) -> Snapshot:
         """Fold this conversation and keep the fold, with no append able to interleave.
 
         The whole thing is one turn of the lock, because that is what makes the recorded row the row the
@@ -813,6 +814,11 @@ class Journal(Component, Trail):
     async def put(self, session: str, snapshot: Snapshot) -> None:
         """Keep one more snapshot of this session beside its log."""
         await self._backend.put(session, snapshot)
+
+    @override
+    async def snapshot(self, session: str) -> Snapshot:
+        """Fold this session now and keep the fold, as the backend folds it."""
+        return await self._backend.snapshot(session)
 
 
 def _row_of(entry_id: str) -> int | None:

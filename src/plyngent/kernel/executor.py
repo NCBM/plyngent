@@ -68,12 +68,13 @@ from plyngent.wire.ask import By, Confirmation, as_agreed
 from plyngent.wire.event import Changed, DocumentStored, ToolCalled, ToolReturned, TurnKind
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
     from plyngent.kernel.cancel import Scope
-    from plyngent.kernel.catalog import ToolCatalog, ToolView
+    from plyngent.kernel.catalog import ToolCatalog, ToolTable, ToolView
     from plyngent.kernel.model import Call
+    from plyngent.kernel.providing import Brought
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.toolresult import Part
     from plyngent.kernel.toolspec import ToolSpec
@@ -167,10 +168,17 @@ class ToolExecutor:
     business and not this object's: one call is the unit here, and it is the unit every caller has.
     """
 
-    _catalog: ToolCatalog
+    _table: ToolTable
+    _materialise: Callable[[str], Awaitable[Brought]] | None
 
-    def __init__(self, catalog: ToolCatalog) -> None:
-        self._catalog = catalog
+    def __init__(
+        self,
+        table: ToolTable,
+        *,
+        materialise: Callable[[str], Awaitable[Brought]] | None = None,
+    ) -> None:
+        self._table = table
+        self._materialise = materialise
 
     async def batch(self, ctx: TurnCtx, calls: Sequence[tuple[str, Call]]) -> tuple[ToolResult, ...]:
         """Run one answer's calls as far in parallel as the paths they hold allow.
@@ -187,8 +195,8 @@ class ToolExecutor:
         which group that tool is in — naming it here is this layer's job, because it is the only one
         that holds both the registry and the session.
         """
-        view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
-        nodes = _prepared(ctx, self._catalog, view, calls)
+        view = self._table.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
+        nodes = _prepared(ctx, self._table.catalog, view, calls)
         _ordered(nodes)
         await self._run(ctx, nodes, view)
         answered: list[ToolResult] = []
@@ -226,7 +234,7 @@ class ToolExecutor:
             ToolCalled(session=session, turn=turn, call=node.call, tool=node.name, intention=_why(node.args)),
         )
         result = node.refusal if node.refusal is not None else await self._ran(ctx, node, view)
-        result = _reachable(result, self._catalog, view)
+        result = _reachable(result, self._table.catalog, view)
         self._emit(
             ctx,
             ToolReturned(
@@ -289,7 +297,7 @@ class ToolExecutor:
         if turned_down is not None:
             return turned_down
         reads, writes = _locks(node.held)
-        env = Env(ctx, spec.uses, node.call, tool=spec.name, tools=view)
+        env = Env(ctx, spec.uses, node.call, tool=spec.name, tools=view, materialise=self._materialise)
         try:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.

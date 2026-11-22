@@ -28,7 +28,7 @@ installs one today.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from msgspec.structs import replace as replaced
 
@@ -80,7 +80,7 @@ from plyngent.wire.event import (
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from plyngent.kernel.catalog import ToolCatalog
+    from plyngent.kernel.catalog import ToolTable
     from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.model import AnyMessage, ToolDecl
     from plyngent.kernel.notices import Pending
@@ -184,16 +184,38 @@ class TurnEnd:
     reason: str = ""
 
 
+class Giving(Protocol):
+    """What one tree gives a round: the table to use, and the one thing a turn waits for first.
+
+    The table is a *call* and not a value, because a round has to read it at its own top: a group
+    materialised during a round arrives in the next one, and a runner that held the table it was built
+    with would be holding what the turn started with (E175).
+
+    ``ready`` is the recovery this conversation was opened with. Awaiting it at the first round's head is
+    what makes "the groups it asked for in an earlier process are in the first request" a structural
+    fact: no extra round trip, and no call that has to discover they were missing (E176).
+    """
+
+    def table(self) -> tuple[ToolTable, ToolExecutor]:
+        """The table this round is asked and answered with, and the executor that runs it."""
+        ...
+
+    async def ready(self, session: str) -> None:
+        """Wait until what *session* asked for in an earlier process is back, or has failed to come."""
+        ...
+
+
 class TurnRunner:
     """One turn, from the person's line to the last entry it wrote.
 
-    Built per turn and thrown away: it holds the two things a turn needs from the session it belongs to
-    (the tools it may reach, and the executor that runs them) plus a counter for naming calls, and
-    nothing that outlives the turn.
+    Built per turn and thrown away: it holds what the tree it belongs to gives a round (the tools it may
+    reach, the executor that runs them, and the recovery it waits for once) plus a counter for naming
+    calls, and nothing that outlives the turn.
     """
 
     _ctx: TurnCtx
-    _catalog: ToolCatalog
+    _giving: Giving
+    _table: ToolTable
     _executor: ToolExecutor
     _calls: int
     #: How many rounds this turn has run, and how many it may before the wall — ``None`` for a turn with
@@ -204,10 +226,10 @@ class TurnRunner:
     #: Whether this round's thinking has already been said in pieces, so dispatch does not say it twice.
     _thought_said: bool
 
-    def __init__(self, ctx: TurnCtx, *, catalog: ToolCatalog, executor: ToolExecutor) -> None:
+    def __init__(self, ctx: TurnCtx, *, giving: Giving) -> None:
         self._ctx = ctx
-        self._catalog = catalog
-        self._executor = executor
+        self._giving = giving
+        self._table, self._executor = giving.table()
         self._calls = 0
         self._ran = 0
         self._allowed = ctx.host.rounds or None
@@ -242,6 +264,7 @@ class TurnRunner:
                 while True:
                     await self._walled(state)
                     self._terminals_gone(state)
+                    await self._recovered()
                     state = await self._told(state)
                     state, request = await self.assemble(state)
                     reply = await self.call(state, request)
@@ -394,13 +417,23 @@ class TurnRunner:
         if gone:
             state.ctx.session.notices.say(TERMINALS, lost_terminals(gone), summary=lost_terminals_summary(gone))
 
+    async def _recovered(self) -> None:
+        """Wait for what this conversation asked for in an earlier process, once at the round's head.
+
+        A turn's first request is the whole reason this is here: the groups come back *before* the request
+        is assembled, so a conversation that asked for them yesterday asks nothing today. Later rounds
+        find the work finished and pay an await on a done task.
+
+        Guarded by this round's scope like every other wait, so a turn stopped while the tools are still
+        coming up ends there; the recovery itself was started by the tree, and another turn of another
+        connection will find what it brought.
+        """
+        _ = await self._ctx.scope("tools").guard(self._giving.ready(self._ctx.session.session_id))
+
     async def _told(self, state: TurnState) -> TurnState:
         """Say the lines this session owes the model, at a boundary where nothing is being asked.
 
         Two boundaries and one rule. The top of every round, before the request is assembled, so that the
-        model reads on *this* turn's next request what this turn just changed — a plan updated by a call
-        is what the next round is for. And the settle, before the end row, so ``turn-ended`` stays the
-        last line of a turn while the projection still ends with the reminder.
         model reads on *this* turn's next request what this turn just changed — a plan updated by a call
         is what the next round is for. And the settle, before the end row, so ``turn-ended`` stays the
         last line of a turn while the projection still ends with the reminder.
@@ -558,7 +591,8 @@ class TurnRunner:
         longer what it was handed.
         """
         ctx = state.ctx
-        view = self._catalog.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
+        self._table, self._executor = self._giving.table()
+        view = self._table.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
         route = ctx.host.routes.resolve(ctx.session.route)
         ask = None if route is None else route.asking(ctx.session.model)
         system = ctx.host.prompt.compose(view, continuing=self._carrying_on(state))

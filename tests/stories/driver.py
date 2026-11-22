@@ -242,6 +242,7 @@ class Story:
         markdown: bool = False,
         mark: Path | None = None,
         once: str | None = None,
+        components: Iterable[Declaration] = (),
     ) -> Story:
         """Bring up a kernel in ``root`` and put a person in front of it.
 
@@ -268,6 +269,10 @@ class Story:
         ``tools`` is what this client offers the kernel, and ``TERMINAL`` is the ordinary case: the two
         ways a person can be asked. A story about a client's *own* tool passes a bigger value, because
         implementing one is what makes it a tool somebody can call — a story cannot pretend that part.
+
+        ``components`` is what a launcher brings: declarations handed to :func:`plyngent.boot.install` and
+        declared beside this process's own. A story about a group of tools that does not exist until it is
+        asked for passes a ``ToolSet`` here, because that is the same door a plugin uses (E174, E175).
 
         ``pty`` is how much of the host its terminals may take, handed through to ``boot.install``:
         ``None`` is the numbers this tree ships with, and a story about running out of room says the
@@ -321,7 +326,7 @@ class Story:
             msg = f"a settings value decides {also} as well; say it in the file, or pass no settings"
             raise TypeError(msg)
         kernel = (
-            await configured.install(root, config, model=model, transport=transport)
+            await configured.install(root, config, model=model, transport=transport, components=components)
             if config is not None
             else await install(
                 root,
@@ -339,6 +344,7 @@ class Story:
                 soft=soft,
                 deadline=deadline,
                 grades=grades,
+                components=components,
             )
         )
         story = cls(

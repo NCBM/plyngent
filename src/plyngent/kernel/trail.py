@@ -713,3 +713,11 @@ class Trail(ABC):
         same row are one fold, and the newer one is the one that knows more. Keeping a few and not one
         is for a person comparing them; nothing here reads more than the newest.
         """
+
+    @abstractmethod
+    async def snapshot(self, session: str) -> Snapshot:
+        """Fold this session now, keep the fold, and answer what it reached.
+
+        For the moments a writer knows the conversation's state moved and no row was written for it — a
+        tool set that grew, most of all: the next process reads its recovery basis out of this (E176).
+        """

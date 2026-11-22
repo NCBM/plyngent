@@ -22,7 +22,7 @@ from plyngent.kernel.client import NO_CLIENT
 from plyngent.kernel.toolspec import Res
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Awaitable, Callable, Mapping
     from pathlib import Path
 
     from plyngent.kernel.cancel import Scope
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.documents import Documents
     from plyngent.kernel.net.policy import NetPolicy
     from plyngent.kernel.net.web import Engines
+    from plyngent.kernel.providing import Brought
     from plyngent.kernel.pty.policy import PtyPolicy
     from plyngent.kernel.pty.registry import PtyRegistry
     from plyngent.kernel.reads import Reads
@@ -60,9 +61,18 @@ class Env:
     the call would be a second way to reach the same resources that no declaration is checked against.
     """
 
-    __slots__ = ("_call", "_ctx", "_tool", "_tools", "_uses")
+    __slots__ = ("_call", "_ctx", "_materialise", "_tool", "_tools", "_uses")
 
-    def __init__(self, ctx: TurnCtx, uses: Res, call: str, *, tool: str, tools: ToolView) -> None:
+    def __init__(
+        self,
+        ctx: TurnCtx,
+        uses: Res,
+        call: str,
+        *,
+        tool: str,
+        tools: ToolView,
+        materialise: Callable[[str], Awaitable[Brought]] | None = None,
+    ) -> None:
         self._ctx = ctx
         self._uses = uses
         #: This call's segment of the turn's address — ``tool-1`` in ``3/r0/tool-1/proc-0``.
@@ -73,6 +83,10 @@ class Env:
         #: What this session can reach, as the round it runs in saw it. Handed in, because the answer
         #: belongs to one round's request and nothing here may ask twice.
         self._tools = tools
+        #: The one way to ask this process for a group that is not up yet. Handed in, because the table
+        #: is the process's and the view is this round's: what a call may ask *for* is not what it may
+        #: reach (§10.4).
+        self._materialise = materialise
 
     # -- the address, which is not a resource --------------------------------------
 
@@ -197,6 +211,20 @@ class Env:
         """
         self._granted(Res.TOOLS, "tools")
         return self._tools
+
+    async def materialise(self, group: str) -> Brought:
+        """Ask this process to bring one group up, and answer the tools that arrived.
+
+        The same resource as :attr:`tools`, because it is the same fact seen from the other side: what a
+        session may reach is the view, and what it may ask *for* is the table the view was built from.
+        Only ``tool_require`` may ask, and a group that is already up costs nothing — the table dedups
+        the work, so two calls of one round that ask for one group open it once (E175).
+        """
+        self._granted(Res.TOOLS, "materialise")
+        if self._materialise is None:
+            msg = "materialise is not reachable from an environment built without a process table for it"
+            raise AttributeError(msg)
+        return await self._materialise(group)
 
     @property
     def engines(self) -> Engines:

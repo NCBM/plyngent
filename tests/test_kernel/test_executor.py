@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from plyngent.kernel.cancel import CancelToken
-from plyngent.kernel.catalog import ToolCatalog
+from plyngent.kernel.catalog import ToolCatalog, ToolTable
 from plyngent.kernel.env import Env
 from plyngent.kernel.events import NoSink
 from plyngent.kernel.executor import ToolExecutor, _paths
@@ -193,7 +193,7 @@ async def test_two_calls_that_read_different_files_are_in_their_handlers_togethe
         await asyncio.wait_for(mine.wait(), timeout=1.0)
         return ToolResult.ok("second")
 
-    executor = ToolExecutor(ToolCatalog([_holding("first", first), _holding("second", second)]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([_holding("first", first), _holding("second", second)])))
 
     results = await executor.batch(
         _ctx(tmp_path), [_asked("tool-1", "first", "a.txt"), _asked("tool-2", "second", "b.txt")]
@@ -217,7 +217,7 @@ async def test_an_answer_is_written_in_the_order_the_model_asked(tmp_path) -> No
         done.set()
         return ToolResult.ok("quick")
 
-    executor = ToolExecutor(ToolCatalog([_holding("slow", slow), _holding("quick", quick)]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([_holding("slow", slow), _holding("quick", quick)])))
 
     results = await executor.batch(
         _ctx(tmp_path), [_asked("tool-1", "slow", "a.txt"), _asked("tool-2", "quick", "b.txt")]
@@ -244,7 +244,7 @@ async def test_a_read_waits_for_a_write_the_answer_asked_for_first(tmp_path) -> 
         name="write", group=Group.FS, args=_PathArgs, run=write, uses=Res.PATHS, roles={"path": Role.WRITE}
     )
     reading = ToolSpec(name="read", group=Group.FS, args=_PathArgs, run=read, uses=Res.PATHS, roles={"path": Role.READ})
-    executor = ToolExecutor(ToolCatalog([writing, reading]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([writing, reading])))
 
     results = await executor.batch(
         _ctx(tmp_path), [_asked("tool-1", "write", "notes.txt"), _asked("tool-2", "read", "notes.txt")]
@@ -271,7 +271,7 @@ async def test_what_a_write_left_is_kept_as_one_version(tmp_path) -> None:
 
     spec = ToolSpec(name="write", group=Group.FS, args=_PathArgs, run=write, uses=Res.PATHS, roles={"path": Role.WRITE})
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
-    executor = ToolExecutor(ToolCatalog([spec]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [_asked("tool-1", "write", "notes.txt")])
 
@@ -299,7 +299,7 @@ async def test_a_program_that_cannot_say_what_it_wrote_is_swept(tmp_path) -> Non
         posture=Posture.AUTO,
     )
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
-    executor = ToolExecutor(ToolCatalog([spec]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
     asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "build"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])
@@ -336,7 +336,7 @@ async def test_a_tree_too_big_to_compare_says_so_instead_of_saying_nothing(tmp_p
     )
     monkeypatch.setattr("plyngent.kernel.executor.SWEEP_PATHS", 1)
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
-    executor = ToolExecutor(ToolCatalog([spec]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
     asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "run"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])
@@ -363,7 +363,7 @@ async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None
         posture=Posture.AUTO,
     )
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
-    executor = ToolExecutor(ToolCatalog([spec]))
+    executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
     asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "list"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])

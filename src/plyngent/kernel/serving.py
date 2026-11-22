@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, assert_never
 from composat import Declaration
 from msgspec.structs import replace
 
-from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog
+from plyngent.kernel.catalog import BUILTIN, RESIDENT, ToolCatalog, ToolTable
 from plyngent.kernel.client import ClientOffers, Offers, specs_from
 from plyngent.kernel.documents import MAX_TEXT_CHARS
 from plyngent.kernel.events import HumanChannel
@@ -50,8 +50,18 @@ from plyngent.kernel.executor import ToolExecutor
 from plyngent.kernel.history import Unreadable, Unwilling
 from plyngent.kernel.host import Host
 from plyngent.kernel.link import LinkHuman
-from plyngent.kernel.notices import ELIDED, elided, elision_summary
+from plyngent.kernel.notices import (
+    ABSENT,
+    ELIDED,
+    EMPTY,
+    PROVIDERS,
+    UNAVAILABLE,
+    elided,
+    elision_summary,
+    providers,
+)
 from plyngent.kernel.paths import display, normalize
+from plyngent.kernel.providing import Tools
 from plyngent.kernel.running import TooManyTurns
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import (
@@ -191,9 +201,13 @@ class Serving:
     _client_id: str | None
     _detached: bool
     _specs: tuple[ToolSpec, ...]
-    _catalog: ToolCatalog
-    _executor: ToolExecutor
+    _attached: tuple[ToolSpec, ...]
+    _resident: frozenset[str]
+    _epoch: int
+    _made: tuple[ToolTable, ToolExecutor] | None
+    _made_key: tuple[int, int] | None
     _turns: set[asyncio.Task[None]]
+    _recovering: dict[str, asyncio.Task[None]]
 
     def __init__(
         self,
@@ -217,14 +231,17 @@ class Serving:
         self._watching = False
         self._client_id = None
         self._detached = False
-        # What this kernel serves whether or not a client is attached: its own tools, plus whatever was
-        # installed for them (§0.9, E26). One table for every session it serves — which of them a
-        # session may reach is its own answer (:meth:`ToolCatalog.view`), so what is shared is the
-        # registry and not a block.
+        # What this kernel serves whether or not a client is attached: its own tools. What a client
+        # offers arrives beside them, and what a provider has brought is the process's — the three are
+        # joined into one table per round, which is what `table` builds (E175).
         self._specs = specs
-        self._catalog = ToolCatalog(specs)
-        self._executor = ToolExecutor(self._catalog)
+        self._attached = ()
+        self._resident = frozenset()
+        self._epoch = 0
+        self._made = None
+        self._made_key = None
         self._turns = set()
+        self._recovering = {}
 
     # -- the audience --------------------------------------------------------------
 
@@ -253,6 +270,8 @@ class Serving:
         if self._detached:
             return
         self._detached = True
+        for session in tuple(self._recovering):
+            self._forget_recovery(session)
         if self._watching:
             channel = self._channel()
             if channel is not None:
@@ -659,6 +678,9 @@ class Serving:
         declared = self.assembly.keys()
         if declaration.key not in declared:
             _ = await self.assembly.admit(declaration)
+            # A conversation that is being admitted may have asked for groups in an earlier process; the
+            # bringing back starts here so the first round finds it done (E176).
+            self._begin_recovery(session)
         if seed_from is not None and inherit is Inherit.APPROVALS:
             self._carry_approvals(session, seed_from[0])
         self._say_route(session)
@@ -753,6 +775,7 @@ class Serving:
         """
         declaration = self._declaration(session)
         declared = self.assembly.keys()
+        self._forget_recovery(session)
         if declaration.key not in declared:
             return
         found = self._session(session)
@@ -806,14 +829,127 @@ class Serving:
         await self._notice()
 
     def _retable(self, attached: tuple[ToolSpec, ...], resident: frozenset[str]) -> None:
-        """Rebuild the table and the executor around what this kernel now serves.
+        """Take what this client now serves, and let the next round build the table around it.
 
-        A new catalog, because a turn in flight holds the old value:
-        replacing it is what makes "a call runs with the tools the round was asked with" true for the
-        rounds already running, without anything having to check.
+        A new table and a new executor, made lazily on the round that reads it: a turn in flight keeps
+        the table it was asked with, so "a call runs with the tools the round was asked with" is true for
+        the rounds already running, without anything having to check (E175).
         """
-        self._catalog = ToolCatalog((*self._specs, *attached), resident=(*RESIDENT, *resident))
-        self._executor = ToolExecutor(self._catalog)
+        self._attached = attached
+        self._resident = resident
+        self._epoch += 1
+        self._made = None
+        self._made_key = None
+
+    # -- what a round is given -----------------------------------------------------
+
+    def table(self) -> tuple[ToolTable, ToolExecutor]:
+        """The table this round is asked with: the program's tools, what a provider brought, and what a
+        client offers.
+
+        Rebuilt when either side moved — the process's set (a group materialised) or this connection's
+        (an offer, a withdrawal) — and kept otherwise, because a table is what a round reads once and two
+        rounds of one tool set must be the same bytes. The materialising handed to the executor is the
+        process's own: a group a round asks for is brought up once for everybody (E175).
+        """
+        tools = self._tools()
+        grew = 0 if tools is None else tools.version
+        key = (grew, self._epoch)
+        if self._made is None or self._made_key != key:
+            base = self._specs if tools is None else tools.specs()
+            available = () if tools is None else tools.available()
+            catalog = ToolCatalog((*base, *self._attached), resident=(*RESIDENT, *self._resident))
+            table = ToolTable(catalog=catalog, available=available)
+            self._made = (table, ToolExecutor(table, materialise=None if tools is None else tools.materialise))
+            self._made_key = key
+        return self._made
+
+    def _tools(self) -> Tools | None:
+        """The process's tool table, or ``None`` for an assembly that has none — a hand-built one.
+
+        Read from the assembly and not held, because it is the process's and not this tree's: two
+        connections to one kernel ask one table for a group, and that is the point of it being a
+        component of the process (E175).
+        """
+        found = self.assembly.instance(Declaration(Tools).key)
+        return found if isinstance(found, Tools) else None
+
+    # -- bringing back what a conversation asked for -------------------------------
+
+    async def ready(self, session: str) -> None:
+        """Wait until *session*'s groups are back, or until they have failed to come.
+
+        Shielded, because the wait is a turn's convenience and the work is the tree's: a turn stopped
+        while its tools are still coming up stops waiting, and the groups arrive for whatever asks next.
+        """
+        pending = self._recovering.get(session)
+        if pending is not None:
+            _ = await asyncio.gather(asyncio.shield(pending), return_exceptions=True)
+
+    def _begin_recovery(self, session: str) -> None:
+        """Start bringing back what this conversation asked for, without waiting for it.
+
+        Started when the session is opened and not before the turn: ``Open`` has to answer now, and a
+        session nobody talks to should not hold a connection open. What waits for it is the first round
+        (:meth:`ready`), so the first request of a reopened conversation already has the tools it had
+        (E176).
+        """
+        self._recovering[session] = asyncio.create_task(self._recover(session))
+
+    def _forget_recovery(self, session: str) -> None:
+        """Stop bringing back a conversation's groups: it closed, or this connection left.
+
+        What it costs is one group arriving for nobody — the materialising is the process's and is not
+        cancelled with the wait — which is cheaper than a task per closed conversation.
+        """
+        pending = self._recovering.pop(session, None)
+        if pending is not None:
+            _ = pending.cancel()
+
+    async def _recover(self, session: str) -> None:
+        """Bring back every group this conversation asked for, in parallel, and say what did not come.
+
+        The range is two sets and their difference: what the conversation asked for, against what this
+        program can still bring up. A group on the wrong side of that is a group the program no longer
+        has, which is a failure worth saying — silence would leave a model calling a name that will never
+        answer again.
+
+        Neither answer here refuses ``Open`` or fails a turn: the groups that came are in the table, and
+        the ones that did not are one notice for the model to read. A recovery that raised would be a
+        task nobody awaits, so nothing in it is allowed out (E176).
+        """
+        try:
+            await self._brought_back(session)
+        except Exception:  # noqa: BLE001 — a background task that raised would print where nobody reads
+            return
+
+    async def _brought_back(self, session: str) -> None:
+        """The work :meth:`_recover` does, in a body that may raise."""
+        tools = self._tools()
+        found = self._session(session)
+        if tools is None or found is None:
+            return
+        available = {group for group, _summary in tools.available()}
+        known = available | {group for group, _members in self.table()[0].catalog.groups()}
+        failed: list[tuple[str, str]] = [(group, ABSENT) for group in sorted(found.disclosed - known)]
+        wanted = sorted(found.disclosed & available)
+        answers = await asyncio.gather(*(tools.materialise(group) for group in wanted), return_exceptions=True)
+        brought = False
+        for group, answer in zip(wanted, answers, strict=True):
+            if isinstance(answer, BaseException):
+                failed.append((group, UNAVAILABLE))
+            elif not answer.specs:
+                failed.append((group, EMPTY))
+            else:
+                brought = True
+        if brought:
+            # The block this conversation is asked with moved, and the fold is what the next process
+            # reads its groups out of (E175, E177).
+            _ = await found.notice_tools()
+            _ = await found.host.trail.snapshot(session)
+        if failed:
+            text, summary = providers(failed)
+            found.notices.say(PROVIDERS, text, summary=summary)
 
     async def _notice(self) -> None:
         """Tell every session this kernel serves that its tool set moved — once, not once per tool.
@@ -1155,7 +1291,7 @@ class Serving:
         is one more turn, with its own address, its own cost and its own end row (§10.4, E146).
         """
         while True:
-            runner = TurnRunner(turned, catalog=self._catalog, executor=self._executor)
+            runner = TurnRunner(turned, giving=self)
             try:
                 end = await runner.run(text)
             except Exception:  # noqa: BLE001 — a turn's failure is reported as an event, not as a traceback

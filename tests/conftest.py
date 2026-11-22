@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
     from pathlib import Path
 
+    from composat import Declaration
+
     from plyngent.cli.offers import ClientTools
     from plyngent.cli.policy import Policy
     from plyngent.config import Settings
@@ -141,6 +143,7 @@ async def story_with(tmp_path, transport):
         markdown: bool = False,
         mark: Path | None = None,
         once: str | None = None,
+        components: Iterable[Declaration] = (),
     ) -> Story:
         root = tmp_path / f"workspace{len(started)}"
         journal = tmp_path / f"journal{len(started)}.db"
@@ -172,6 +175,7 @@ async def story_with(tmp_path, transport):
             markdown=markdown,
             mark=mark,
             once=once,
+            components=components,
         )
         started.append(story)
         return story

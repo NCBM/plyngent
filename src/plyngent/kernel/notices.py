@@ -55,7 +55,12 @@ ELIDED = "elided"
 #: it should do next (E151).
 TERMINALS = "terminals"
 
-DECLARED: tuple[str, ...] = (ELIDED, TERMINALS, PLAN, LIMIT)
+#: The tool providers' writer: the groups this conversation asked for did not all come back. After the
+#: terminals, because a terminal is a thing the model was holding and a group is a thing it may ask for
+#: again — and before the plan, because it changes which calls it may make (E176).
+PROVIDERS = "providers"
+
+DECLARED: tuple[str, ...] = (ELIDED, TERMINALS, PROVIDERS, PLAN, LIMIT)
 
 
 def marked(text: str) -> str:
@@ -125,6 +130,56 @@ def lost_terminals(gone: int) -> str:
 def lost_terminals_summary(gone: int) -> str:
     """The one line a person reads about the same act."""
     return f"{counted(gone, 'terminal session')} lost when the terminal broker was replaced"
+
+
+#: The three ways a group a conversation asked for did not come back, spelled as the words the sentence
+#: uses and as the keys a caller passes (E176).
+#:
+#: ``UNAVAILABLE`` is the world's fault and may pass: the server was down, the connection timed out. The
+#: other two are final — the program does not have that group any more, or the thing behind it answered
+#: with none of the tools it used to, which is a group that is gone however alive its provider is.
+UNAVAILABLE = "unavailable"
+ABSENT = "absent"
+EMPTY = "empty"
+
+
+def providers(failed: Sequence[tuple[str, str]]) -> tuple[str, str]:
+    """What a model is told about the groups it asked for in an earlier process and did not get (E176).
+
+    One sentence for several groups, because the fact is one fact — "this conversation is not what it
+    was" — and three paragraphs of it would read like three unrelated accidents. Each group is named with
+    what became of it, and the one that may still be there says so *and* says what makes it final: a model
+    that is not told the criterion will keep asking, and a model that is told "gone" for something that
+    comes back in a minute will stop working.
+
+    The answer is the body and the line a person reads: the row is a notice like any other, written at the
+    next boundary where nothing is in flight.
+    """
+    said: list[str] = [
+        "Some of the tool groups you asked for earlier in this conversation did not come back when this "
+        "program restarted.",
+    ]
+    summary: list[str] = []
+    for group, problem in failed:
+        if problem == ABSENT:
+            said.append(
+                f"- {group}: this program does not have it any more. Do not call its tools; somebody has to "
+                "install it again, and it will not come back on its own."
+            )
+            summary.append(f"{group} is gone")
+        elif problem == EMPTY:
+            said.append(
+                f"- {group}: it came up, and brought none of the tools it used to. Treat it as gone and do "
+                "not call them."
+            )
+            summary.append(f"{group} came up empty")
+        else:
+            said.append(
+                f"- {group}: it could not be reached this time. Ask for it again if you need it — and if it "
+                "fails a second time, it is not coming back and you should stop asking."
+            )
+            summary.append(f"{group} could not be reached")
+    return "\n".join(said), "; ".join(summary)
 
 
 def stopping(terminals: int, scratch: int) -> tuple[str, str]:

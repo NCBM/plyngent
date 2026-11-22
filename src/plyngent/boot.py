@@ -17,7 +17,7 @@ import asyncio
 import contextlib
 import secrets
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from composat import Assembly, ComponentKey, ComponentRegistry, Declaration, ServiceNotUpError
 from composat.std.root import ancestors, answering_from_the_root
@@ -41,6 +41,7 @@ from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import Engine, Engines, Web
 from plyngent.kernel.prompt import PromptPlan
+from plyngent.kernel.providing import Tools, ToolSet
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.running import DEFAULT_RUNNING
@@ -951,11 +952,18 @@ async def _assembled(
     # *client* offers is not here: that arrives over the connection and is added to this set (§10.8). A
     # tool table is a fact about the program, so one answer serves every tree it serves.
     specs = (*BUILTIN, *net_specs(web_engines), *skill_specs(skills))
+    # What a launcher brought, as the values it declared. A tool set is value-shaped — its whole content
+    # is the providers — so reading one out of its declaration here builds an equal value and not a
+    # second instance of anything with a lifetime (E175).
+    given = tuple(components)
+    sets = tuple(cast("ToolSet", one.build()) for one in given if one.component_class is ToolSet)
     # One broker for the whole process: it is the root-qualified component, and it is the only thing here
     # that a host reaches for across the qualifier axis (§9.4). A tree shares it, and no tree owns one.
     # What a launcher brought is declared beside it, and a declaration that reaches for something nothing
     # declared is the registry's refusal to make — order here is dependency order, not declaration order.
-    _ = registry.declare_all([Declaration(PtyBroker), *components])
+    # The tool table is the process's too, and it is declared with everything anybody brought: which
+    # groups can be asked for is a fact about the program and not about a tree (E175).
+    _ = registry.declare_all([Declaration(PtyBroker), *given, Declaration(Tools, kwargs={"base": specs, "sets": sets})])
     rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     assembly = Assembly(registry, up=up, rule=rule)
     kernel = _Kernel(
@@ -979,6 +987,14 @@ async def _assembled(
         patience=DEFAULT_ASK_TIMEOUT_SECONDS if deadline is None else deadline,
         graded=Grades() if grades is None else grades,
     )
+    # The process-level parts, before any tree: which tools this program can give is not a fact about a
+    # tree, and a group brought up for one conversation is up for all of them (E175).
+    started = await assembly.start(
+        Declaration(Tools).key, *(one.key for one in given if one.component_class is ToolSet)
+    )
+    if not started.ok:
+        msg = f"the tools of this process did not come up: {started.failed}"
+        raise RuntimeError(msg)
     if root is not None:
         _ = await kernel.open(root)
     return kernel

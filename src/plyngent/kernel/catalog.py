@@ -161,7 +161,13 @@ class ToolCatalog:
         spec = self._specs.get(name)
         return None if spec is None else _group_of(spec)
 
-    def view(self, disclosed: Collection[str], *, reading: bool = False) -> ToolView:
+    def view(
+        self,
+        disclosed: Collection[str],
+        *,
+        reading: bool = False,
+        available: Collection[tuple[str, str]] = (),
+    ) -> ToolView:
         """What one session may see: the residents, plus whatever groups it has been shown.
 
         A view is a value and not a second catalog: it is built from the same specs, says what is
@@ -178,7 +184,12 @@ class ToolCatalog:
         }
         if reading:
             visible = {name: spec for name, spec in visible.items() if spec.mutates == Mutation.NONE}
-        return ToolView(specs=visible, groups=self.groups(), disclosed=frozenset(disclosed))
+        return ToolView(
+            specs=visible,
+            groups=self.groups(),
+            disclosed=frozenset(disclosed),
+            available=tuple(available),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +211,10 @@ class ToolView:
     specs: Mapping[str, ToolSpec]
     groups: tuple[tuple[str, tuple[str, ...]], ...] = ()
     disclosed: frozenset[str] = frozenset()
+    #: The groups a provider could bring up, each with the phrase its provider promises. Not in
+    #: ``groups``, because a name there means "tools that exist and this session has not been shown";
+    #: these are tools that do not exist yet (E175).
+    available: tuple[tuple[str, str], ...] = ()
 
     def __len__(self) -> int:
         return len(self.specs)
@@ -245,6 +260,12 @@ class ToolView:
         which is the state this line exists to end. The second half is the same argument one step
         further out: with no client attached, the asking tools are not in the table at all, so the line
         has to say so, and a model does not find out by calling one (§10.8).
+
+        The groups come in two columns and never in both. A group of the program's own is *missing*: its
+        tools exist and this session has not been shown them, so the line can count what arriving would
+        buy. A provider's group is *available*: nothing of it exists until it is asked for, so a count
+        would be a number nobody knows, and what the line says instead is the one phrase the provider
+        could promise (E175).
         """
         parts: list[str] = []
         if self.missing:
@@ -254,9 +275,30 @@ class ToolView:
                 f"{len(self.missing)} more {plural(len(self.missing), 'group')} "
                 f"({hidden} {plural(hidden, 'tool')}): {groups} — use tool_require(group=…) to add one"
             )
+        if self.available:
+            brought = ", ".join(f"{group} ({summary})" for group, summary in self.available)
+            parts.append(f"{len(self.available)} {plural(len(self.available), 'group')} can be brought in: {brought}")
         if not self.asks:
             parts.append(NOBODY)
         return "\n".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTable:
+    """One round's table: the catalog a session is shown, and the groups that could still come up.
+
+    A value, so that the block a request carries and the view a call is refused against are built from
+    the same two things. A round reads it once, at the top: a group materialised during the round arrives
+    in the next one, which is what makes "the tool block does not change inside a round" true even when
+    the set it is built from does (E175).
+    """
+
+    catalog: ToolCatalog
+    available: tuple[tuple[str, str], ...] = ()
+
+    def view(self, disclosed: Collection[str], *, reading: bool = False) -> ToolView:
+        """What one session may reach, and the groups it could still ask for."""
+        return self.catalog.view(disclosed, reading=reading, available=self.available)
 
 
 def _declared(specs: Mapping[str, ToolSpec]) -> tuple[ToolDecl, ...]:
