@@ -61,7 +61,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from msgspec import Struct
+from msgspec import Struct, field
 
 # Not a type-only import: ``type AnyRecord`` evaluates its members at runtime, and a lazily-undefined
 # name would make a row that carries a message undecodable.
@@ -558,13 +558,46 @@ class Shape:
     roots: tuple[str, ...] = ()
 
 
+#: The tag a snapshot carries in a journal's own table, so a stored row says what it is.
+SNAPSHOT_TAG = "snapshot"
+
+
+class Snapshot(Struct, tag=SNAPSHOT_TAG, frozen=True, kw_only=True):
+    """One session's state as of a row: its two folds, so opening it again starts near the end.
+
+    A snapshot is **not an entry**: it is in a table of its own, nothing continues from it, it moves no
+    id and no cursor, and deleting every one of them changes no answer — only how long the answer took
+    (E177). What it holds is therefore only what is *derivable* from the log: the settings folded per
+    key, the forest, and the row the fold reached.
+
+    ``seq`` is where the fold stops: rows later than it are the ones a fold has to add. ``projector``
+    and the version the journal stores beside this value say which build computed it, so a snapshot a
+    later build cannot vouch for is skipped and the fold starts from the root instead.
+
+    The forest is kept as its two tuples, which is what :class:`Shape` is, so a reader that wants the
+    value does not have to know how this is written down.
+    """
+
+    seq: int = 0
+    projector: int = 0
+    settings: dict[str, str] = field(default_factory=dict)
+    heads: tuple[str, ...] = ()
+    roots: tuple[str, ...] = ()
+
+    @property
+    def shape(self) -> Shape:
+        """The forest, as :meth:`Trail.shape` answers it."""
+        return Shape(heads=self.heads, roots=self.roots)
+
+
 class Trail(ABC):
     """The journal, as everything that appends to it or projects it sees it.
 
-    Seven business methods, the two reads that answer "what is in this journal", and the pair of hooks
-    that open and close a backend: the lifecycle is the component's which holds it, and a second backend
-    (a database file, with a projection cache beside it) implements this and is installed there. Nothing
-    outside allocates a number, and nothing outside reads a row without going through an id it was given.
+    Seven business methods, the reads that answer what is in this journal, the pair that keep a
+    session's snapshot beside it, and the two hooks that open and close a backend: the lifecycle is the
+    component's which holds it, and a second backend (a database file, with a projection cache beside
+    it) implements this and is installed there. Nothing outside allocates a number, and nothing outside
+    reads a row without going through an id it was given.
     """
 
     @abstractmethod
@@ -662,3 +695,21 @@ class Trail(ABC):
     @abstractmethod
     async def next_turn(self, session: str) -> int:
         """The next turn id for this session, allocated here so a stored log can resume it."""
+
+    @abstractmethod
+    async def latest(self, session: str) -> Snapshot | None:
+        """The newest snapshot of this session this build can vouch for, or ``None``.
+
+        ``None`` is the ordinary answer for a session that has never been folded into one and for one
+        whose newest is of a shape or a projector this build does not know: a snapshot is an
+        accelerator, and an accelerator nobody can read is the same as none.
+        """
+
+    @abstractmethod
+    async def put(self, session: str, snapshot: Snapshot) -> None:
+        """Keep one more snapshot of this session, and let go of the oldest ones beyond a handful.
+
+        A snapshot with the same ``seq`` as one already kept replaces it: two folds that reached the
+        same row are one fold, and the newer one is the one that knows more. Keeping a few and not one
+        is for a person comparing them; nothing here reads more than the newest.
+        """

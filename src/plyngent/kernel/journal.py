@@ -15,9 +15,10 @@ re-runnable steps is how the schema gets to this build's version, and WAL is why
 read what the first is writing. ``":memory:"`` is the other answer: SQLite's own in-memory database, the
 same rows and the same migrations and no file at all — a conversation nobody meant to keep.
 
-The file holds three things: the log, a counter per session so turn ids resume where the last process
-left them, and a cache of the projections that were read out of the log. The cache is disposable — its
-rows are answers that can be computed again, and nothing depends on their being there.
+The file holds four things: the log, a counter per session so turn ids resume where the last process
+left them, a cache of the projections that were read out of the log, and the snapshots a fold of that
+log is kept in. Both of the last two are disposable — their rows are answers that can be computed
+again, and nothing depends on their being there.
 
 The log itself is a protocol (:mod:`plyngent.kernel.trail`) with more than one implementation, and a
 component's field can only be annotated with one contract. This is that contract: the host declares
@@ -62,6 +63,7 @@ from plyngent.kernel.trail import (
     Notice,
     Promoted,
     Shape,
+    Snapshot,
     StateChange,
     Summary,
     Trail,
@@ -147,9 +149,33 @@ CREATE TABLE IF NOT EXISTS projection (
 );
 """
 
+#: Schema version 2: one table for a session's snapshots, beside the log they are derived from.
+#:
+#: A snapshot is not an entry and is not in the chain: nothing continues from it, it moves no id and no
+#: cursor, and dropping the whole table changes no answer (E177). The primary key is ``(session, seq)``
+#: because a fold that reached a row is one fold — a second snapshot of the same row replaces it.
+_SCHEMA_2 = """
+CREATE TABLE IF NOT EXISTS checkpoint (
+    session TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (session, seq)
+);
+"""
+
 #: The schema versions, in order. Step *n* is the answer to "how does the log look at version *n*", and
 #: the list is append-only: a change to a released step is a new step.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_1,)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2)
+
+#: Which snapshot shape this build writes. It is stored in every checkpoint row, so raising it makes
+#: every stored snapshot unreachable at once — the same invalidation story as :data:`PROJECTOR`, and the
+#: reason a snapshot is safe to keep in a file a later build opens (E177).
+CHECKPOINTS = 1
+
+#: How many snapshots of one session are kept. Nothing reads more than the newest; the rest are there
+#: for a person comparing what a fold reached, and one is the number a bug would be found with (E177).
+KEEP_CHECKPOINTS = 3
 
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
@@ -221,6 +247,17 @@ WITH RECURSIVE chain(id, parent, tag, payload, turn, depth) AS (
       FROM entry e JOIN chain c ON e.id = c.parent
 )
 SELECT id, tag, payload, turn FROM chain ORDER BY depth DESC
+"""
+
+#: One snapshot, written in place of one that reached the same row.
+_PUT_CHECKPOINT = "INSERT OR REPLACE INTO checkpoint (session, seq, version, payload) VALUES (?, ?, ?, ?)"
+
+#: What one session keeps of them: the newest few by the row they reached, and the older ones dropped.
+#: A snapshot is derived, so dropping one loses a shortcut and nothing else (E177).
+_TRIM_CHECKPOINTS = f"""
+DELETE FROM checkpoint
+ WHERE session = ?
+   AND seq NOT IN (SELECT seq FROM checkpoint WHERE session = ? ORDER BY seq DESC LIMIT {KEEP_CHECKPOINTS})
 """
 
 
@@ -511,6 +548,38 @@ class SqliteTrail(Trail):
         )
         return 1 if row is None else int(row[0])
 
+    # -- the snapshot beside the log ------------------------------------------------
+
+    @override
+    async def latest(self, session: str) -> Snapshot | None:
+        """The newest snapshot of this session this build wrote and can read, or ``None``.
+
+        Two questions, asked in one query and one decode: the version the row was written with has to be
+        this build's, and the projector recorded inside it has to be this build's. Either failing is
+        "there is no snapshot here" — the fold then starts from the root, which is slower and the same
+        answer (E177).
+        """
+        row = await self._read(
+            "SELECT payload FROM checkpoint WHERE session = ? AND version = ? ORDER BY seq DESC LIMIT 1",
+            (session, CHECKPOINTS),
+        )
+        if row is None:
+            return None
+        try:
+            snapshot = msgspec.json.decode(str(row[0]), type=Snapshot)
+        except msgspec.DecodeError:
+            return None
+        return None if snapshot.projector != PROJECTOR else snapshot
+
+    @override
+    async def put(self, session: str, snapshot: Snapshot) -> None:
+        """Keep this snapshot, and let the oldest ones of this session go beyond the handful kept."""
+        _ = await self._execute(
+            _PUT_CHECKPOINT,
+            (session, snapshot.seq, CHECKPOINTS, msgspec.json.encode(snapshot).decode()),
+        )
+        _ = await self._execute(_TRIM_CHECKPOINTS, (session, session))
+
     # -- the connection ------------------------------------------------------------
 
     def _connection(self) -> aiosqlite.Connection:
@@ -634,6 +703,16 @@ class Journal(Component, Trail):
     async def next_turn(self, session: str) -> int:
         """The next turn id for this session, allocated by the backend so a stored log can resume it."""
         return await self._backend.next_turn(session)
+
+    @override
+    async def latest(self, session: str) -> Snapshot | None:
+        """The newest snapshot of this session this build can vouch for, or ``None``."""
+        return await self._backend.latest(session)
+
+    @override
+    async def put(self, session: str, snapshot: Snapshot) -> None:
+        """Keep one more snapshot of this session beside its log."""
+        await self._backend.put(session, snapshot)
 
 
 def _row_of(entry_id: str) -> int | None:

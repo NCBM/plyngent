@@ -6,7 +6,8 @@ not here. What is left is what no story can make: the name of the file, which is
 second open; a migration step interrupted between the schema and the version that records it; a
 projection, which is only visible as rows beside the entries; a head that bookkeeping does not move; a
 summary's `replaces`, which the projection never reads; an effect's row, whose whole content is the
-paths and the version it names; and a notice, which is a message only while it has words.
+paths and the version it names; a notice, which is a message only while it has words; and a snapshot,
+which is a table of its own beside the log and nothing a conversation continues from (E177).
 """
 
 from __future__ import annotations
@@ -16,9 +17,27 @@ from contextlib import closing
 
 from platformdirs import user_data_path
 
-from plyngent.kernel.journal import MEMORY_JOURNAL, MIGRATIONS, SqliteTrail, journal_path
+from plyngent.kernel.journal import (
+    CHECKPOINTS,
+    KEEP_CHECKPOINTS,
+    MEMORY_JOURNAL,
+    MIGRATIONS,
+    PROJECTOR,
+    SqliteTrail,
+    journal_path,
+)
 from plyngent.kernel.model import Assistant, Call, Note, Result, User
-from plyngent.kernel.trail import NOTICE_MARKER, Effect, Notice, StateChange, Summary, as_message, preview
+from plyngent.kernel.trail import (
+    NOTICE_MARKER,
+    Effect,
+    Notice,
+    Shape,
+    Snapshot,
+    StateChange,
+    Summary,
+    as_message,
+    preview,
+)
 
 
 async def test_a_workspace_names_its_journal_and_creates_nothing(tmp_path) -> None:
@@ -319,6 +338,94 @@ async def test_the_log_can_be_read_back_whole_and_the_sessions_it_holds_named(tm
         await again.close()
 
 
+async def test_a_snapshot_is_kept_beside_the_log_and_answers_both_folds() -> None:
+    """A snapshot is a table of its own: nothing continues from it, and it says where a fold stopped.
+
+    It is the only reason it exists — reopening a conversation that has grown to hundreds of rows does not
+    have to fold them again — so what it holds is exactly what a fold holds, and nothing that is not
+    derivable: settings, the forest, and the row it reached (E177).
+    """
+    trail = SqliteTrail(MEMORY_JOURNAL)
+    await trail.open()
+    try:
+        said = await trail.append("main", User(text="hello"))
+        asked = await trail.append("main", Assistant(text="hi"), begin_after=said.id)
+        assert await trail.head("main") is not None and await trail.latest("main") is None, (
+            "a conversation that was never folded has no snapshot, and is not the less a conversation"
+        )
+
+        snapshot = Snapshot(
+            seq=asked.seq,
+            projector=PROJECTOR,
+            settings={"disclosure": '{"groups": ["fs"], "toolset_epoch": 1}'},
+            heads=(asked.id,),
+            roots=(said.id,),
+        )
+        await trail.put("main", snapshot)
+
+        kept = await trail.latest("main")
+        assert kept is not None
+        assert kept.seq == asked.seq, "the row the fold reached"
+        assert kept.settings == snapshot.settings
+        assert kept.shape == Shape(heads=(asked.id,), roots=(said.id,)), "the forest, as the fold answers it"
+        assert await trail.latest("other") is None, "and one conversation's snapshot is not another's"
+        assert await trail.head("main") is not None, "nothing about the log moved: a snapshot is not an entry"
+    finally:
+        await trail.close()
+
+
+async def test_only_the_newest_snapshots_of_a_conversation_are_kept(tmp_path) -> None:
+    """Three, and the newest wins: a fold that reached a row is one fold, and the rows behind it are old news."""
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        for seq in range(1, 6):
+            await trail.put("main", Snapshot(seq=seq, projector=PROJECTOR))
+        await trail.put("main", Snapshot(seq=5, projector=PROJECTOR, heads=("e5",)))
+
+        latest = await trail.latest("main")
+        assert latest is not None and latest.heads == ("e5",), "a fold of the same row replaces the one before it"
+        assert _snapshots(path) == KEEP_CHECKPOINTS, "and the oldest ones go, because nothing reads them"
+    finally:
+        await trail.close()
+
+
+async def test_a_snapshot_this_build_cannot_vouch_for_is_not_read(tmp_path) -> None:
+    """Two answers a later build must not trust, and one payload nobody could: all three are "no snapshot".
+
+    A snapshot is an accelerator, so the only honest answer to one that was written under other rules is
+    the fold from the root — which is slower and the same (E177).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        await trail.put("main", Snapshot(seq=1, projector=PROJECTOR + 1))
+        assert await trail.latest("main") is None, "a fold made by another projector is not this build's fold"
+        await trail.put("main", Snapshot(seq=2, projector=PROJECTOR))
+        assert await trail.latest("main") is not None, "the one this build wrote is readable"
+    finally:
+        await trail.close()
+
+    with closing(sqlite3.connect(path)) as db:
+        _ = db.execute("DELETE FROM checkpoint WHERE seq = 1")
+        _ = db.execute("UPDATE checkpoint SET version = ?", (CHECKPOINTS + 1,))
+        db.commit()
+    assert await _readable(path) is None, "a row written by a build with another shape is skipped"
+
+    with closing(sqlite3.connect(path)) as db:
+        _ = db.execute("DELETE FROM checkpoint WHERE seq = 2")
+        _ = db.execute("UPDATE checkpoint SET version = ?", (CHECKPOINTS + 1,))
+        db.commit()
+    assert await _readable(path) is None, "a row written by a build with another shape is skipped"
+
+    with closing(sqlite3.connect(path)) as db:
+        _ = db.execute("UPDATE checkpoint SET version = ?, payload = ?", (CHECKPOINTS, "not a snapshot"))
+        db.commit()
+    assert await _readable(path) is None, "and so is one whose payload decodes to nothing"
+
+
 def _version(path) -> int:
     """How many migration steps this file has been through, read the way another process would."""
     with closing(sqlite3.connect(path)) as db:
@@ -341,3 +448,21 @@ def _projections(path) -> int:
         row = db.execute("SELECT COUNT(*) FROM projection").fetchone()
     assert row is not None
     return int(row[0])
+
+
+def _snapshots(path) -> int:
+    """How many snapshots of any conversation this file keeps."""
+    with closing(sqlite3.connect(path)) as db:
+        row = db.execute("SELECT COUNT(*) FROM checkpoint").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+async def _readable(path) -> Snapshot | None:
+    """What a journal opened over *path* answers as this conversation's newest snapshot."""
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        return await trail.latest("main")
+    finally:
+        await trail.close()
