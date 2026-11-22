@@ -42,6 +42,7 @@ from plyngent.boot import engines_for
 from plyngent.boot import install as install_kernel
 from plyngent.boot import serve as serve_kernel
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
+from plyngent.kernel.journal import DEFAULT_CHECKPOINT_ROWS
 from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, ModelEntry, PrefixCache, Route, Routes, RouteWeb
@@ -144,9 +145,15 @@ class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
-    """``[journal]``: where the conversation is kept, as one file for the whole workspace."""
+    """``[journal]``: where the conversation is kept, as one file for the whole workspace.
+
+    ``checkpoint_rows`` is how many rows one conversation may gather before the fold of it is written
+    beside the log. It is a cadence and not a limit: a smaller number makes opening a long conversation
+    cheaper and writes more often, and ``64`` is what a program nobody configured gets (E177).
+    """
 
     path: str = ""
+    checkpoint_rows: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_CHECKPOINT_ROWS
 
 
 class SkillsFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -268,6 +275,9 @@ class Settings:
     sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     trash: bool = True
     journal: Path | None = None
+    #: How many rows one conversation may gather before its fold is kept beside the log: the cadence
+    #: ``[journal] checkpoint_rows`` sets, and the number a program nobody configured ships with (E177).
+    checkpoint_rows: int = DEFAULT_CHECKPOINT_ROWS
     #: The document this value was read from, kept as the parser built it — comments, order and spacing
     #: included — so a later write-back can edit it, and never reflow somebody's file (§0.11, E84).
     #: ``None`` for a program nobody configured. It takes no part in equality: two settings values are the
@@ -493,6 +503,7 @@ def _settings(
     pty = parsed.pty or PtyFile()
     turn = parsed.turn or TurnFile()
     sandbox = parsed.sandbox or SandboxFile()
+    journal = parsed.journal or JournalFile()
     return Settings(
         routes=Routes(routes, default=parsed.default_route),
         web=_web(parsed.web, routes),
@@ -513,7 +524,8 @@ def _settings(
             command_denylist=DEFAULT_COMMAND_DENYLIST | frozenset(sandbox.command_denylist),
         ),
         trash=(parsed.trash or TrashFile()).enabled,
-        journal=_resolved(parsed.journal.path, path) if parsed.journal is not None and parsed.journal.path else None,
+        journal=_resolved(journal.path, path) if journal.path else None,
+        checkpoint_rows=journal.checkpoint_rows,
         document=document,
         source=path,
         text=text,
@@ -727,6 +739,7 @@ def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, 
         "skills": skills,
         "prompt": plan,
         "journal": settings.journal,
+        "checkpoint_rows": settings.checkpoint_rows,
         "pty": settings.pty,
         "running": settings.running,
         "rounds": settings.rounds,

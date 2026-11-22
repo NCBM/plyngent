@@ -140,6 +140,9 @@ class _Defaults(NamedTuple):
 
     qualifier: str
     journal: Path | str | None
+    #: How many rows one conversation may gather before its fold is kept, or ``None`` for this tree's
+    #: own number (E177).
+    checkpoint_rows: int | None
     pty: Limits | None
     running: int | None
     rounds: int | None
@@ -261,7 +264,11 @@ class _Kernel:
                 Declaration(HumanChannel, instance=qualifier),
                 Declaration(Offers, instance=qualifier),
                 Declaration(ModelChannel, instance=qualifier, args=(self.share.asked,)),
-                Declaration(Journal, instance=qualifier, args=(SqliteTrail(kept),)),
+                Declaration(
+                    Journal,
+                    instance=qualifier,
+                    args=(SqliteTrail(kept, checkpoint_rows=self.defaults.checkpoint_rows),),
+                ),
                 Declaration(Documents, instance=qualifier, args=(documents_path(kept),)),
                 Declaration(
                     Host,
@@ -542,6 +549,7 @@ async def install(
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
+    checkpoint_rows: int | None = None,
     pty: Limits | None = None,
     running: int | None = None,
     rounds: int | None = None,
@@ -654,6 +662,7 @@ async def install(
         skills=skills,
         prompt=prompt,
         journal=journal,
+        checkpoint_rows=checkpoint_rows,
         pty=pty,
         running=running,
         rounds=rounds,
@@ -797,6 +806,7 @@ async def serve(
     skills: Skills | None = None,
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
+    checkpoint_rows: int | None = None,
     pty: Limits | None = None,
     running: int | None = None,
     rounds: int | None = None,
@@ -833,6 +843,7 @@ async def serve(
         skills=skills,
         prompt=prompt,
         journal=journal,
+        checkpoint_rows=checkpoint_rows,
         pty=pty,
         running=running,
         rounds=rounds,
@@ -902,6 +913,7 @@ async def _assembled(
     skills: Skills | None,
     prompt: PromptPlan | None,
     journal: Path | str | None,
+    checkpoint_rows: int | None,
     pty: Limits | None,
     running: int | None,
     rounds: int | None,
@@ -954,6 +966,7 @@ async def _assembled(
         _Defaults(
             qualifier=host,
             journal=journal,
+            checkpoint_rows=checkpoint_rows,
             pty=pty,
             running=running,
             rounds=rounds,

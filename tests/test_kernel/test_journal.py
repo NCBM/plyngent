@@ -28,6 +28,7 @@ from plyngent.kernel.journal import (
 )
 from plyngent.kernel.model import Assistant, Call, Note, Result, User
 from plyngent.kernel.trail import (
+    BY_PERSON,
     NOTICE_MARKER,
     Effect,
     Notice,
@@ -35,6 +36,7 @@ from plyngent.kernel.trail import (
     Snapshot,
     StateChange,
     Summary,
+    Withheld,
     as_message,
     preview,
 )
@@ -522,6 +524,66 @@ async def test_a_snapshot_of_the_newest_row_needs_no_rows_after_it(tmp_path) -> 
         assert await _folded(trail) == whole, "there is nothing after the fold"
     finally:
         await trail.close()
+
+
+async def test_a_conversation_gathers_a_fold_every_few_rows(tmp_path) -> None:
+    """The cadence is what keeps a long conversation cheap to open, and it is a number the program sets.
+
+    Three rows is what this journal was told, so the third append writes the fold of all three, and the
+    snapshot answers the same two folds a walk from the root would (E177).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path, checkpoint_rows=3)
+    await trail.open()
+    try:
+        said = await trail.append("main", User(text="one"))
+        _ = await trail.append("main", StateChange(key="name", value=NAME))
+        assert await trail.latest("main") is None, "two rows are not a cadence"
+
+        asked = await trail.append("main", Assistant(text="two"), begin_after=said.id)
+        written = await trail.latest("main")
+        assert written is not None and written.seq == asked.seq, "the third row is where the fold is taken"
+        assert dict(written.settings) == {"name": NAME}, "the setting that was written before it is in the fold"
+        assert written.shape == Shape(heads=("e2", asked.id), roots=(said.id, "e2")), (
+            "and the forest a walk from the root would have answered"
+        )
+    finally:
+        await trail.close()
+
+
+async def test_a_prune_writes_a_fold_at_once(tmp_path) -> None:
+    """A prune is the other boundary: what a model is shown just changed, and the next open should not
+    walk back over what it no longer shows (E177).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path, checkpoint_rows=1000)
+    await trail.open()
+    try:
+        said = await trail.append("main", User(text="one"))
+        _ = await trail.append("main", Withheld(targets=(said.id,), reason="a person said so", by=BY_PERSON))
+
+        written = await trail.latest("main")
+        assert written is not None and written.seq == 2, "the prune's own row is the row the fold reached"
+    finally:
+        await trail.close()
+
+
+async def test_closing_the_journal_keeps_what_this_process_wrote(tmp_path) -> None:
+    """A conversation nobody finished still gets its fold, because closing is the last moment it is open.
+
+    What it saves is the walk a later process would otherwise do over rows this one already had in hand.
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path, checkpoint_rows=1000)
+    await trail.open()
+    said = await trail.append("main", User(text="one"))
+    _ = await trail.append("main", StateChange(key="route", value=ROUTE))
+    await trail.close()
+
+    written = await _readable(path)
+    assert written is not None and written.seq == 2, "the fold of the two rows this process wrote"
+    assert written.settings == {"route": ROUTE}
+    assert written.shape == Shape(heads=(said.id, "e2"), roots=(said.id, "e2"))
 
 
 async def _folded_of(path) -> tuple[dict[str, str], Shape]:

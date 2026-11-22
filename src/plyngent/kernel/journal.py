@@ -177,6 +177,11 @@ CHECKPOINTS = 1
 #: for a person comparing what a fold reached, and one is the number a bug would be found with (E177).
 KEEP_CHECKPOINTS = 3
 
+#: How many rows one conversation may gather before its fold is kept, when the program was not told.
+#: A number rather than "every row", because the write is not free and the fold it saves is a walk that
+#: has to happen anyway; ``[journal] checkpoint_rows`` is where a program says otherwise (E177).
+DEFAULT_CHECKPOINT_ROWS = 64
+
 #: Which projection this build computes. It is part of every cache key, so raising it makes every stored
 #: projection unreachable at once — which is the whole invalidation story, because the cache is
 #: rebuildable and may therefore be dropped and rebuilt. It moved to 2 when an aside's rows stopped
@@ -278,11 +283,18 @@ class SqliteTrail(Trail):
     _path: Path
     _db: aiosqlite.Connection | None
     _lock: asyncio.Lock
+    _checkpoint_rows: int
+    _since: dict[str, int]
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, checkpoint_rows: int | None = None) -> None:
         self._path = Path(path)
         self._db = None
         self._lock = asyncio.Lock()
+        #: How many rows one conversation may gather before its fold is kept, and how many each has
+        #: gathered since the last one. The count is this process's — a reopened conversation folds once
+        #: when it is opened and then counts from there (E177).
+        self._checkpoint_rows = DEFAULT_CHECKPOINT_ROWS if checkpoint_rows is None else checkpoint_rows
+        self._since = {}
 
     # -- the file ------------------------------------------------------------------
 
@@ -313,9 +325,21 @@ class SqliteTrail(Trail):
 
     @override
     async def close(self) -> None:
-        """Give the file back; a journal already closed answers this by doing nothing."""
-        db, self._db = self._db, None
-        if db is not None:
+        """Keep the fold of every conversation this process wrote to, then give the file back.
+
+        Closing is the last boundary where the log is still open, so it is where a conversation that
+        nobody finished is folded: the rows since its last snapshot are the ones this process appended,
+        which is the cheapest fold there is (E177). A journal already closed answers this by doing
+        nothing, and a fold that fails still closes the file.
+        """
+        db = self._db
+        if db is None:
+            return
+        try:
+            for session in sorted(self._since):
+                _ = await self._snapshot(session)
+        finally:
+            self._db = None
             await db.close()
 
     @property
@@ -384,6 +408,10 @@ class SqliteTrail(Trail):
             # parent this session does not have.
             assert begin_after is not None
             raise ValueError(_no_such_entry(begin_after, session))
+        self._since[session] = self._since.get(session, 0) + 1
+        if self._since[session] >= self._checkpoint_rows or isinstance(payload, Withheld):
+            _ = await self._snapshot(session)
+            self._since[session] = 0
         return Entry(
             id=f"e{row[0]}",
             session=session,
@@ -489,8 +517,14 @@ class SqliteTrail(Trail):
         reader has to know that a key was written twice. What a setting *means* is the writer's
         business: this answers text, and a caller that wants a value parses it.
         """
-        snapshot = await self.latest(session)
-        rows = await self._read_all(
+        async with self._lock:
+            return await self._folded_state(self._connection(), session)
+
+    async def _folded_state(self, db: aiosqlite.Connection, session: str) -> dict[str, str]:
+        """The settings fold, on a connection the caller already holds."""
+        snapshot = await self._latest(db, session)
+        rows = await self._all(
+            db,
             "SELECT payload FROM entry WHERE session = ? AND tag = ? AND seq > ? ORDER BY seq",
             (session, STATE_CHANGE_TAG, 0 if snapshot is None else snapshot.seq),
         )
@@ -508,10 +542,16 @@ class SqliteTrail(Trail):
         is a head, and the entry it continues stops being one — so the fold is a walk over the new rows
         and never a walk over the whole session (E177).
         """
-        snapshot = await self.latest(session)
+        async with self._lock:
+            return await self._folded_shape(self._connection(), session)
+
+    async def _folded_shape(self, db: aiosqlite.Connection, session: str) -> Shape:
+        """The forest fold, on a connection the caller already holds."""
+        snapshot = await self._latest(db, session)
         heads: list[str] = [] if snapshot is None else list(snapshot.heads)
         roots: list[str] = [] if snapshot is None else list(snapshot.roots)
-        rows = await self._read_all(
+        rows = await self._all(
+            db,
             "SELECT id, parent FROM entry WHERE session = ? AND seq > ? ORDER BY seq",
             (session, 0 if snapshot is None else snapshot.seq),
         )
@@ -581,7 +621,13 @@ class SqliteTrail(Trail):
         "there is no snapshot here" — the fold then starts from the root, which is slower and the same
         answer (E177).
         """
-        row = await self._read(
+        async with self._lock:
+            return await self._latest(self._connection(), session)
+
+    async def _latest(self, db: aiosqlite.Connection, session: str) -> Snapshot | None:
+        """The newest readable snapshot, on a connection the caller already holds."""
+        row = await self._one(
+            db,
             "SELECT payload FROM checkpoint WHERE session = ? AND version = ? ORDER BY seq DESC LIMIT 1",
             (session, CHECKPOINTS),
         )
@@ -596,11 +642,38 @@ class SqliteTrail(Trail):
     @override
     async def put(self, session: str, snapshot: Snapshot) -> None:
         """Keep this snapshot, and let the oldest ones of this session go beyond the handful kept."""
-        _ = await self._execute(
-            _PUT_CHECKPOINT,
-            (session, snapshot.seq, CHECKPOINTS, msgspec.json.encode(snapshot).decode()),
+        async with self._lock:
+            await self._keep(self._connection(), session, snapshot)
+
+    async def _keep(self, db: aiosqlite.Connection, session: str, snapshot: Snapshot) -> None:
+        """Write one snapshot and trim the row, on a connection the caller already holds."""
+        await self._run(
+            db, _PUT_CHECKPOINT, (session, snapshot.seq, CHECKPOINTS, msgspec.json.encode(snapshot).decode())
         )
-        _ = await self._execute(_TRIM_CHECKPOINTS, (session, session))
+        await self._run(db, _TRIM_CHECKPOINTS, (session, session))
+
+    async def _snapshot(self, session: str) -> Snapshot:
+        """Fold this conversation and keep the fold, with no append able to interleave.
+
+        The whole thing is one turn of the lock, because that is what makes the recorded row the row the
+        fold reached: a row appended between the fold and the write would be in the fold and before the
+        ``seq``, and the next fold would apply it twice — which settings survive and a forest does not.
+        """
+        async with self._lock:
+            db = self._connection()
+            settings = await self._folded_state(db, session)
+            shape = await self._folded_shape(db, session)
+            top = await self._one(db, "SELECT MAX(seq) FROM entry WHERE session = ?", (session,))
+            snapshot = Snapshot(
+                seq=0 if top is None or top[0] is None else int(top[0]),
+                projector=PROJECTOR,
+                settings=settings,
+                heads=shape.heads,
+                roots=shape.roots,
+            )
+            if snapshot.seq:
+                await self._keep(db, session, snapshot)
+            return snapshot
 
     # -- the connection ------------------------------------------------------------
 
@@ -622,6 +695,11 @@ class SqliteTrail(Trail):
         """One row of a query on a connection the caller already holds, or ``None``."""
         rows = await self._all(db, sql, params)
         return rows[0] if rows else None
+
+    @staticmethod
+    async def _run(db: aiosqlite.Connection, sql: str, params: _Params) -> None:
+        """Run one statement whose rows nobody wants, on a connection the caller already holds."""
+        _ = await db.execute(sql, params)
 
     async def _read(self, sql: str, params: _Params) -> tuple[Any, ...] | None:
         """One row of a query, under the lock that keeps this connection's statements in order."""

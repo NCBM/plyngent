@@ -22,6 +22,7 @@ from platformdirs import user_data_path
 from plyngent import config
 from plyngent.__main__ import main
 from plyngent.kernel.command import DEFAULT_COMMAND_DENYLIST
+from plyngent.kernel.journal import DEFAULT_CHECKPOINT_ROWS
 from plyngent.kernel.lm import ToolCalls
 from plyngent.kernel.lm.route import Posted, RouteWeb
 from plyngent.kernel.lm.thinking import Budget
@@ -550,6 +551,21 @@ def test_paths_in_the_file_are_taken_against_the_file(tmp_path: Path) -> None:
 
     assert settings.skill_paths == (tmp_path / "mine", Path("~/theirs").expanduser())
     assert settings.journal == tmp_path / "history.db"
+
+
+def test_the_checkpoint_cadence_is_a_number_the_program_may_set(tmp_path: Path) -> None:
+    """``[journal] checkpoint_rows`` is how many rows a conversation gathers before its fold is kept (E177).
+
+    A cadence and not a limit: a smaller number writes the snapshot more often, and a number a fold could
+    never be taken at — zero, or less — is refused where the file is read.
+    """
+    chosen = config.load(_written(tmp_path, "[journal]\ncheckpoint_rows = 8\n", "eight.toml"))
+    assert chosen.checkpoint_rows == 8
+    assert config.load(_written(tmp_path, "", "plain.toml")).checkpoint_rows == DEFAULT_CHECKPOINT_ROWS, (
+        "a program nobody configured writes a fold every sixty-four rows"
+    )
+    with pytest.raises(config.ConfigError):
+        _ = config.load(_written(tmp_path, "[journal]\ncheckpoint_rows = 0\n", "zero.toml"))
 
 
 def test_the_configured_skill_roots_come_first_and_the_standard_three_still_follow(tmp_path: Path) -> None:
