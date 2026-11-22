@@ -22,6 +22,8 @@ choose it could answer somebody else's question.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from msgspec import Struct
 
 from plyngent.wire.event import Entry  # noqa: TC001 — a `Struct` field's annotation is resolved here
@@ -119,10 +121,59 @@ class Skills(Query, tag="skills", frozen=True, kw_only=True):
     """
 
 
+class Plugins(Query, tag="plugins", frozen=True, kw_only=True):
+    """What this program was started with, as the plugins it was told about.
+
+    The one read that is **not about a tree** (E178): a plugin is a component of the process, so two
+    connections to one kernel are told the same thing, and a frontend that has opened no tree at all can
+    ask it. That is why it is answered by the connection and not by a tree's serving — a tree nobody
+    opened would otherwise answer "no plugins", which would be a lie about the program.
+    """
+
+
 class Reply(Struct, frozen=True, kw_only=True, tag_field="reply"):
     """What the kernel answers one query with: the same number, back on the lane a client is waiting on."""
 
     id: int = 0
+
+
+class PluginState(StrEnum):
+    """What became of one plugin's groups, in the three answers there are.
+
+    ``ABSENT`` is a plugin this program was declared with and nothing of which has been asked for: its
+    tools do not exist yet, because that is what a provider is. ``RECOVERING`` is one that is being
+    brought up now — asked for, and not answered yet. ``UP`` is one whose tools are in the table.
+    """
+
+    ABSENT = "absent"
+    RECOVERING = "recovering"
+    UP = "up"
+
+
+class PluginRow(Struct, frozen=True, kw_only=True):
+    """One plugin this program was given: what it is called, where it came from, and what it brought.
+
+    ``brought`` is the key its tool set was declared under, in the assembly's own spelling — the one
+    answer to "which component is this plugin", and the name a person would use to find it again.
+    ``groups`` are the tool groups its providers give, de-duplicated, because two providers of one plugin
+    may bring one group's worth of tools each (:meth:`plyngent.kernel.providing.Tools.available`).
+    """
+
+    name: str = ""
+    origin: str = ""
+    brought: str = ""
+    state: PluginState = PluginState.ABSENT
+    groups: tuple[str, ...] = ()
+
+
+class PluginTable(Reply, tag="plugin-table", frozen=True, kw_only=True):
+    """The answer to :class:`Plugins`: one row per plugin, in the order they were declared.
+
+    Empty is an answer and not a refusal: a program started with no plugin is the ordinary program, and
+    saying "none" is how a person learns that nothing was added to it.
+    """
+
+    plugins: tuple[PluginRow, ...] = ()
 
 
 class Reached(Struct, frozen=True, kw_only=True):
@@ -248,5 +299,11 @@ class ModelTable(Reply, tag="model-table", frozen=True, kw_only=True):
     models: tuple[ModelRow, ...] = ()
 
 
-type AnyQuery = Grants | Models | Trajectory | Skills | Turns
-type AnyReply = GrantTable | ModelTable | Forest | SkillTable | LiveTurns
+#: The reads that are about one tree, and therefore answered by that tree's serving.
+#:
+#: The alias exists so that "this read is not about a tree" is a fact the type checker holds: a match over
+#: :data:`TreeQuery` is exhaustive over these five, and :class:`~plyngent.kernel.serving.Serving` takes
+#: this and not :data:`AnyQuery` (E178).
+type TreeQuery = Grants | Models | Trajectory | Skills | Turns
+type AnyQuery = TreeQuery | Plugins
+type AnyReply = GrantTable | ModelTable | Forest | SkillTable | LiveTurns | PluginTable

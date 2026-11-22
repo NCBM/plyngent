@@ -28,19 +28,29 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from composat import ComponentIdentity, Declaration
+
+from plyngent.kernel.providing import Tools, ToolSet
 from plyngent.kernel.serving import Serving
 from plyngent.wire.command import Open
 from plyngent.wire.event import KernelLeaving, Refusal, WorkspaceRefused
 from plyngent.wire.manifest import PROTOCOL_VERSION
+from plyngent.wire.query import PluginRow, Plugins, PluginState, PluginTable
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from composat import Assembly
 
+    from plyngent.kernel.providing import ToolProvider
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.wire.bind import Bind
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyQuery, AnyReply
+
+#: Who a tool set is, so the one read that lists plugins can find them without a second table (E178).
+_TOOL_SET = ComponentIdentity.of(ToolSet)
 
 
 class TreeRef(NamedTuple):
@@ -199,11 +209,48 @@ class Connection:
             _ = self.link.replied(await self._answered(query))
 
     async def _answered(self, query: AnyQuery) -> AnyReply:
-        """Give one read to the tree it names; a tree nothing opened answers the empty value of its kind."""
+        """Give one read the answer it asks for.
+
+        ``Plugins`` is the one read that is not about a tree (E178): a plugin is a component of the
+        process, so it is answered here, where the process's assembly is — handing it to a tree's serving
+        would make a tree nobody opened answer "no plugins", which would be a lie about this program.
+        Everything else goes to the tree it names, and a tree nothing opened answers the empty value of
+        its kind.
+        """
+        if isinstance(query, Plugins):
+            return self._plugins(query)
         found = await self._tree(query.workspace)
         if isinstance(found, Refusal):
             return Serving.nothing(query)
         return await found.answered(query)
+
+    def _plugins(self, query: Plugins) -> PluginTable:
+        """What this program was started with, read out of the assembly as it stands.
+
+        Derived and not cached: ``up`` is the assembly's own answer at this moment, and the groups are the
+        providers' own lists, so there is no second table to keep in step with a plugin that was declared
+        after this connection was made (E178).
+        """
+        tools = self.assembly.instance(Declaration(Tools).key)
+        grown = tools if isinstance(tools, Tools) else None
+        rows: list[PluginRow] = []
+        declared = self.assembly.keys()
+        for key in declared:
+            if key.identity != _TOOL_SET:
+                continue
+            found = self.assembly.instance(key)
+            declared = found if isinstance(found, ToolSet) else None
+            providers = () if declared is None else declared.providers
+            rows.append(
+                PluginRow(
+                    name=key.instance,
+                    origin="" if declared is None else declared.origin,
+                    brought=str(key),
+                    state=_state_of(providers, grown),
+                    groups=tuple(dict.fromkeys(one.group for one in providers)),
+                )
+            )
+        return PluginTable(id=query.id, plugins=tuple(rows))
 
     async def _tree(self, given: str, *, opening: bool = False) -> Serving | Refusal:
         """The serving for the tree ``given`` names, or the reason there is none.
@@ -242,6 +289,24 @@ class Connection:
         serving.begin()
         self._servings[looked.path] = serving
         return serving
+
+
+def _state_of(providers: Sequence[ToolProvider], tools: Tools | None) -> PluginState:
+    """What became of one plugin's groups, in the three words there are.
+
+    ``up`` is "any of its tools are in the table", not "all of them": a plugin that has arrived can be
+    asked for its other groups, and a read that said "absent" about it would be telling a person to
+    reinstall something that is working. ``recovering`` is the one state in between — asked for, not
+    answered yet — and it is why the read exists at all: without it, "not yet" and "never" look alike.
+    """
+    groups = {one.group for one in providers}
+    if not groups:
+        return PluginState.UP
+    if tools is None:
+        return PluginState.ABSENT
+    if any(up for group, up in tools.states() if group in groups):
+        return PluginState.UP
+    return PluginState.RECOVERING if groups & tools.recovering() else PluginState.ABSENT
 
 
 def _named(where: str) -> str:

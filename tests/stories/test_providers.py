@@ -312,6 +312,34 @@ async def test_a_name_the_program_already_has_is_refused_and_both_sources_are_na
     assert "beta" in _index(story.requests()[-1]), "a refusal does not take the group away"
 
 
+async def test_plugins_says_which_plugins_are_here_and_whether_they_are_up(story_with: Scripted) -> None:
+    """The one read that is not about a tree: what this program was started with, and what of it is here.
+
+    A group nothing has asked for is not "missing" — it does not exist yet — so the read has a third word
+    for it, and that word is the whole reason the read exists: without it "not yet" and "never" look the
+    same (E178).
+    """
+    provider = ScriptedProvider()
+    story = await story_with(
+        calling("tool_require", {"group": "acme"}),
+        text("brought it"),
+        components=_a_provider(provider),
+    )
+
+    assert not any(line.startswith("acme") for line in story.notices()), "nothing has been read yet"
+    await story.type("/plugins")
+    await story.settle()
+    assert any(line.startswith("acme [absent] declared here") for line in story.notices()), story.notices()
+
+    await story.type("use the account")
+    await story.finished()
+    await story.type("/plugins")
+    await story.settle()
+
+    lines = [line for line in story.notices() if line.startswith("acme")]
+    assert lines[-1].startswith("acme [up]"), lines
+
+
 async def test_a_group_the_program_no_longer_has_is_said_and_not_only_missing(tmp_path: Path) -> None:
     """A conversation that asked for a group nobody brings any more is told, once, and told it is final.
 

@@ -116,13 +116,20 @@ class ToolSet(Component):
     A value-shaped component: its whole content is the providers, it has no lifecycle of its own, and it
     is declared under the plugin's name so that "/plugins" can say who brought which group without a
     second table (E174, E178).
+
+    ``origin`` is where the loader found it — a distribution's name, or the path of a file — and it is
+    written by whoever resolved the name and not by the plugin: a plugin cannot know which of its copies
+    is the installed one, and a read that guessed would be a read about nothing. It is empty for a tool
+    set a launcher declared directly, which is the one case where there is no name to report.
     """
 
     providers: tuple[ToolProvider, ...]
+    origin: str
 
-    def __init__(self, providers: Iterable[ToolProvider] = ()) -> None:
+    def __init__(self, providers: Iterable[ToolProvider] = (), *, origin: str = "") -> None:
         super().__init__()
         self.providers = tuple(providers)
+        self.origin = origin
 
 
 class Tools(Component):
@@ -190,6 +197,14 @@ class Tools(Component):
     def available(self) -> tuple[tuple[str, str], ...]:
         """The groups that can still be brought up, with the phrase the index line prints for each."""
         return tuple((one.group, one.summary) for one in self.providers() if one.group not in self._materialised)
+
+    def states(self) -> tuple[tuple[str, bool], ...]:
+        """Every provider's group and whether its tools are in the table — what "/plugins" reports."""
+        return tuple((one.group, one.group in self._materialised) for one in self.providers())
+
+    def recovering(self) -> frozenset[str]:
+        """The groups being brought up right now, which is neither absent nor up."""
+        return frozenset(self._in_flight)
 
     # -- asking for one ------------------------------------------------------------
 

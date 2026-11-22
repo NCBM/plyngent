@@ -41,7 +41,7 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, PersistModels, SetModel, Submit
 from plyngent.wire.event import TurnKind
-from plyngent.wire.query import AnyQuery, Grants, Models, Query, Skills, Trajectory, Turns
+from plyngent.wire.query import AnyQuery, Grants, Models, Plugins, Query, Skills, Trajectory, Turns
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -78,6 +78,7 @@ MODEL_NOTE = "Say which model answers this conversation, list the ones the route
 READS: dict[str, type[AnyQuery]] = {
     "grants": Grants,
     "history": Trajectory,
+    "plugins": Plugins,
     "running": Turns,
     "skills": Skills,
 }
@@ -136,7 +137,7 @@ def _scoped(kind: type[Query]) -> bool:
     One word asks the other question: the skills are found when the program starts and every conversation
     sees the same table, so ``/skills`` has no name to take and no session to resolve.
     """
-    return kind is not Skills
+    return kind not in (Skills, Plugins)
 
 
 def _asks_about(kind: type[AnyQuery], session: str) -> AnyQuery:
@@ -154,6 +155,7 @@ _ASKS: dict[type[AnyQuery], Callable[[str], AnyQuery]] = {
     Trajectory: lambda session: Trajectory(session=session),
     Turns: lambda session: Turns(session=session),
     Skills: lambda _session: Skills(),
+    Plugins: lambda _session: Plugins(),
 }
 
 

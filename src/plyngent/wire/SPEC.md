@@ -139,6 +139,7 @@ else is inherited, and `approvals` has to be said explicitly.
 | `trajectory` | `forest` | every row of a conversation, in the order it was written |
 | `skills` | `skill-table` | which skills this kernel can see, and what was wrong with the rest |
 | `turns` | `live-turns` | which turns of a conversation are running, right now |
+| `plugins` | `plugin-table` | which plugins this program was started with, and whether each is up |
 
 A read is a question and one answer, and it is on its own lane because the event lane is allowed to fold
 what it carries: a folded answer is a frontend waiting forever. `id` is the connection's number: a client

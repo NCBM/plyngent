@@ -163,7 +163,7 @@ if TYPE_CHECKING:
     from plyngent.wire.command import AnyCommand, OfferedTool
     from plyngent.wire.event import AnyEvent
     from plyngent.wire.link import KernelSide
-    from plyngent.wire.query import AnyQuery, AnyReply
+    from plyngent.wire.query import AnyReply, TreeQuery
 
 
 #: The turn kinds this kernel starts and a client may not: each is named by its own command, and a
@@ -324,7 +324,7 @@ class Serving:
                 # nowhere to resume from": a new command must be a decision at this match, not silence.
                 assert_never(never)
 
-    async def answered(self, query: AnyQuery) -> AnyReply:
+    async def answered(self, query: TreeQuery) -> AnyReply:
         """What one read is told.
 
         A read is never refused with an event: its answer is the same kind as the question. The one case
@@ -354,7 +354,7 @@ class Serving:
                 return self._live(query.id, session)
 
     @staticmethod
-    def nothing(query: AnyQuery) -> AnyReply:
+    def nothing(query: TreeQuery) -> AnyReply:
         """The empty answer of a read's own kind: what a tree nothing has opened is told.
 
         Not a refusal, because a read has no lane to refuse on — and not a lie either: a tree this kernel

@@ -332,7 +332,9 @@ def test_every_read_is_a_row_a_frontend_can_offer() -> None:
     and a client that chose it could answer somebody else's question (E155).
     """
     specs = wire.query_specs()
-    assert {spec.name for spec in specs} == {"grants", "models", "trajectory", "skills", "turns"}, "the five reads"
+    assert {spec.name for spec in specs} == {"grants", "models", "plugins", "trajectory", "skills", "turns"}, (
+        "the six reads, one of which is not about a tree"
+    )
     assert all(spec.summary for spec in specs), "a read with no summary is one a frontend cannot offer"
     assert all('"id"' not in spec.args for spec in specs), "the reply's number is the link's, not a client's"
 

@@ -108,6 +108,7 @@ async def test_what_a_kernel_is_says_which_directory_it_works_in(daemon, tmp_pat
             "trajectory",
             "skills",
             "turns",
+            "plugins",
         ], "and the reads it will answer, so a frontend with buttons needs no second table"
     finally:
         client.close()

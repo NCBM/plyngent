@@ -14,17 +14,13 @@ least 3), and the kernel alone decides that a silent peer is gone.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import Any, cast, get_args
 
 import msgspec
 from msgspec import Struct
 
-from plyngent.wire.command import AnyCommand
-from plyngent.wire.query import AnyQuery
-
-if TYPE_CHECKING:
-    from plyngent.wire.command import Command
-    from plyngent.wire.query import Query
+from plyngent.wire.command import AnyCommand, Command
+from plyngent.wire.query import AnyQuery, Query
 
 #: Bumped whenever a wire type changes shape. A client whose major differs is refused, not adapted.
 PROTOCOL_VERSION = 1
@@ -115,7 +111,7 @@ def command_specs() -> tuple[CommandSpec, ...]:
     docstring. A command added to the union appears here without anybody remembering to add it, and a
     command whose help nobody wrote fails the test that every spec has a summary.
     """
-    return tuple(_spec(cls) for cls in get_args(AnyCommand.__value__))
+    return tuple(_spec(cast("type[Command]", cls)) for cls in _kinds(AnyCommand))
 
 
 def query_specs() -> tuple[QuerySpec, ...]:
@@ -126,7 +122,23 @@ def query_specs() -> tuple[QuerySpec, ...]:
     it is dropped from the schema a client is handed. A table that told a frontend to choose one would be
     telling it how to answer somebody else's question (:mod:`plyngent.wire.query`).
     """
-    return tuple(_read(cls) for cls in get_args(AnyQuery.__value__))
+    return tuple(_read(cast("type[Query]", cls)) for cls in _kinds(AnyQuery))
+
+
+def _kinds(union: object) -> tuple[type[object], ...]:
+    """Every kind a union is made of, with a named alias inside it spelled out.
+
+    A union is one flat thing to a type checker and a tree to a reader: ``AnyQuery`` is ``TreeQuery |
+    Plugins`` here, and the six kinds are what a table is made of — so this walks the aliases rather than
+    trusting ``get_args`` to have flattened them (E178).
+    """
+    kinds: list[type[object]] = []
+    for one in get_args(getattr(union, "__value__", union)):
+        if isinstance(one, type) and issubclass(one, (Command, Query)):
+            kinds.append(one)
+        else:
+            kinds.extend(_kinds(cast("object", one)))
+    return tuple(kinds)
 
 
 def _spec(cls: type[Command]) -> CommandSpec:

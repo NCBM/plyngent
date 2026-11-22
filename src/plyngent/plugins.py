@@ -30,11 +30,14 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import sys
+from dataclasses import replace
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from composat import Declaration
+
+from plyngent.kernel.providing import ToolSet
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -111,7 +114,7 @@ def from_file(spec: str) -> tuple[Declaration, ...]:
     if factory is None:
         msg = f"{path} has no {attribute or DEFAULT_FACTORY!r} to call"
         raise BrokenPluginError(msg)
-    return _declarations(factory, str(path))
+    return _annotated(_declarations(factory, str(path)), str(path))
 
 
 def _brought(one: object, name: str) -> tuple[Declaration, ...]:
@@ -125,7 +128,19 @@ def _brought(one: object, name: str) -> tuple[Declaration, ...]:
     except Exception as exc:
         msg = f"the plugin {name!r} raised while it was being loaded: {exc}"
         raise BrokenPluginError(msg) from exc
-    return _declarations(loaded, f"the plugin {name!r}")
+    return _annotated(_declarations(loaded, f"the plugin {name!r}"), _distribution(one))
+
+
+def _annotated(brought: tuple[Declaration, ...], origin: str) -> tuple[Declaration, ...]:
+    """The declarations one plugin brought, with its tool sets saying where they came from.
+
+    Only a tool set is annotated, because a tool set is what "/plugins" reads: the loader is the one thing
+    that knows which copy of a plugin answered, and a plugin cannot know it about itself (E178).
+    """
+    return tuple(
+        replace(one, kwargs={**one.kwargs, "origin": origin}) if one.component_class is ToolSet else one
+        for one in brought
+    )
 
 
 def _declarations(factory: object, where: str) -> tuple[Declaration, ...]:

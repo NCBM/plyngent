@@ -87,6 +87,8 @@ from plyngent.wire.query import (
     MissingRoot,
     ModelRow,
     ModelTable,
+    PluginRow,
+    PluginTable,
     ShadowedSkill,
     SkillRow,
     SkillTable,
@@ -741,6 +743,8 @@ def held(answer: AnyReply, *, brief: bool = False) -> tuple[str, ...]:  # noqa: 
             return _skill_table(skills, shadowed, absent)
         case LiveTurns(turns=turns):
             return _live(turns)
+        case PluginTable(plugins=plugins):
+            return _plugin_table(plugins)
         case _ as never:
             assert_never(never)
 
@@ -826,6 +830,25 @@ def _skill_table(
     if absent:
         rows.append("roots without a directory: " + ", ".join(f"{root.path} ({root.label})" for root in absent))
     return tuple(rows)
+
+
+def _plugin_table(plugins: tuple[PluginRow, ...]) -> tuple[str, ...]:
+    """The plugins this program was started with: what each is, where it came from, and whether it is up.
+
+    One line per plugin, because that is the whole question a person asks of it — is the thing I installed
+    running — and the groups after it, because "up" about a plugin whose second group is still missing is
+    a sentence that needs the rest to be true.
+
+    "The state word is the wire's": a plugin that has not been asked for says so, which is the ordinary
+    state of one whose tools are only made when a conversation wants them (E175, E178).
+    """
+    if not plugins:
+        return ("no plugins: this program was started with none",)
+    return tuple(
+        f"{row.name} [{row.state}] {row.origin or 'declared here'} — groups: "
+        + (", ".join(row.groups) if row.groups else "none")
+        for row in plugins
+    )
 
 
 def _reported(event: _Reported) -> tuple[_Row, ...]:
