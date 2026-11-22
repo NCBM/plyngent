@@ -10,9 +10,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent.cli.offers import ClientTools
 from plyngent.kernel.model import Call, Reply, Result
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text
+
+#: A client that can run nothing. An offer moves every conversation's tool set when it arrives, and a
+#: story about the number a journal left behind wants it to be nobody else's.
+SILENT = ClientTools(offer=(), handlers={})
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -179,3 +184,68 @@ async def test_a_group_a_conversation_asked_for_is_still_shown_after_a_restart(t
         assert "file\tnotes.txt" in _told_of(last)
     finally:
         await second.close()
+
+
+async def test_a_conversation_picked_out_of_the_journal_starts_a_tool_set_of_its_own(tmp_path, transport: str) -> None:
+    """A conversation this process has just read back is one it has shown nothing to yet.
+
+    The block the last process sent is not the block this one will send — the groups are the same and the
+    way they are worded is not this process's to know — so the number a provider cache keys on moves as
+    soon as the conversation is opened, and no request claims a prefix nobody has seen here (E176).
+    """
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+
+    first = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("first")]), journal=journal, tools=SILENT
+    )
+    try:
+        await first.type("a thought")
+        await first.finished()
+        left = first.toolset_epoch
+    finally:
+        await first.close()
+
+    second = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("second")]), journal=journal, tools=SILENT
+    )
+    try:
+        await second.type("another thought")
+
+        assert second.toolset_epoch == left + 1, "the journal's number is where this process starts counting"
+        assert second.requests()[0].cache_key == f"main:{left + 1}:0", (
+            "and the first request of the new process names a prefix of its own"
+        )
+    finally:
+        await second.close()
+
+
+async def test_a_conversation_the_journal_never_held_is_not_counted_against_it(tmp_path, transport: str) -> None:
+    """The bump is about one conversation coming back, and one with nothing written about it starts at zero.
+
+    A process that opens a conversation the journal has never seen has nothing to distrust: the block it
+    sends is the block it built, and the number says so (E176).
+    """
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+
+    first = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("first")]), journal=journal, tools=SILENT
+    )
+    try:
+        await first.type("a thought")
+        await first.finished()
+        assert first.toolset_epoch == 0, "nothing has changed its tool set yet"
+    finally:
+        await first.close()
+
+    later = await Story.start(
+        root, transport=transport, model=ScriptedModel([text("later")]), journal=journal, session="other", tools=SILENT
+    )
+    try:
+        await later.type("a thought of my own")
+
+        assert later.toolset_epoch == 0, "the other conversation left it nothing to count"
+        assert later.requests()[0].cache_key == "other:0:0"
+    finally:
+        await later.close()

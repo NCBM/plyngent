@@ -659,6 +659,7 @@ class Session(Component):
     # -- lifecycle -----------------------------------------------------------------
 
     @override
+    @override
     async def load(self) -> None:
         """Read back what this session already knows about itself, before its first turn.
 
@@ -667,10 +668,21 @@ class Session(Component):
         set has changed, and what its plan was. The fold is the journal's — the last value written per
         key — so this is one read.
 
+        A conversation picked out of the journal is handed a tool set of its own: what this process will
+        offer is not the block the last one sent, and a number that claimed otherwise would make a
+        provider answer a prefix we changed with a cache entry about a prefix it no longer has (E176).
+        "Picked out of the journal" is anything written about this conversation — a setting or a line
+        somebody said — and the count moves here and is written with the next setting that does, so a
+        process that opens a conversation and asks nothing leaves no row behind.
+
         A stored value this build cannot read is skipped, and skipping it is each decoder's job: a
         conversation that cannot be opened at all is worse than one that forgot a setting.
         """
-        self._state.update(await self.host.trail.state_of(self.session_id))
+        stored = await self.host.trail.state_of(self.session_id)
+        self._state.update(stored)
+        if stored or await self.host.trail.head(self.session_id) is not None:
+            shown, epoch = _disclosure(self._state.get(DISCLOSURE))
+            self._state[DISCLOSURE] = _disclosure_value(shown, epoch + 1)
 
     @override
     async def drain(self) -> None:
