@@ -480,15 +480,21 @@ class SqliteTrail(Trail):
         it: a conversation that disclosed a group has disclosed it, and a
         branch that grew from before the disclosure is still part of that conversation.
 
+        The fold starts at the newest snapshot this build can read and takes the rows after it, so a
+        conversation with hundreds of settings behind it costs what has been written since the last
+        fold rather than everything ever written (E177). With no snapshot to start from, that is every
+        state row — the same answer, and slower.
+
         The fold is a dict built in arrival order, so a later entry overwrites an earlier one and no
         reader has to know that a key was written twice. What a setting *means* is the writer's
         business: this answers text, and a caller that wants a value parses it.
         """
+        snapshot = await self.latest(session)
         rows = await self._read_all(
-            "SELECT payload FROM entry WHERE session = ? AND tag = ? ORDER BY seq",
-            (session, STATE_CHANGE_TAG),
+            "SELECT payload FROM entry WHERE session = ? AND tag = ? AND seq > ? ORDER BY seq",
+            (session, STATE_CHANGE_TAG, 0 if snapshot is None else snapshot.seq),
         )
-        folded: dict[str, str] = {}
+        folded: dict[str, str] = {} if snapshot is None else dict(snapshot.settings)
         for (payload,) in rows:
             record = msgspec.json.decode(str(payload), type=StateChange)
             folded[record.key] = record.value
@@ -496,13 +502,29 @@ class SqliteTrail(Trail):
 
     @override
     async def shape(self, session: str) -> Shape:
-        """Heads and roots, both in arrival order so two reads of an unchanged log agree."""
-        rows = await self._read_all("SELECT id, parent FROM entry WHERE session = ? ORDER BY seq", (session,))
-        continued = {parent for _, parent in rows if parent is not None}
-        return Shape(
-            heads=tuple(f"e{row}" for row, _parent in rows if row not in continued),
-            roots=tuple(f"e{row}" for row, parent in rows if parent is None),
+        """Heads and roots, both in arrival order so two reads of an unchanged log agree.
+
+        Read the way the settings are: the snapshot's forest, then the rows after it. A row that arrives
+        is a head, and the entry it continues stops being one — so the fold is a walk over the new rows
+        and never a walk over the whole session (E177).
+        """
+        snapshot = await self.latest(session)
+        heads: list[str] = [] if snapshot is None else list(snapshot.heads)
+        roots: list[str] = [] if snapshot is None else list(snapshot.roots)
+        rows = await self._read_all(
+            "SELECT id, parent FROM entry WHERE session = ? AND seq > ? ORDER BY seq",
+            (session, 0 if snapshot is None else snapshot.seq),
         )
+        headless = set(heads)
+        for row, parent in rows:
+            if parent is not None and f"e{parent}" in headless:
+                headless.discard(f"e{parent}")
+                heads.remove(f"e{parent}")
+            heads.append(f"e{row}")
+            headless.add(f"e{row}")
+            if parent is None:
+                roots.append(f"e{row}")
+        return Shape(heads=tuple(heads), roots=tuple(roots))
 
     @override
     async def entries(self, session: str) -> tuple[Entry, ...]:

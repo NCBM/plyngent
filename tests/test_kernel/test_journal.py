@@ -415,15 +415,123 @@ async def test_a_snapshot_this_build_cannot_vouch_for_is_not_read(tmp_path) -> N
     assert await _readable(path) is None, "a row written by a build with another shape is skipped"
 
     with closing(sqlite3.connect(path)) as db:
-        _ = db.execute("DELETE FROM checkpoint WHERE seq = 2")
-        _ = db.execute("UPDATE checkpoint SET version = ?", (CHECKPOINTS + 1,))
-        db.commit()
-    assert await _readable(path) is None, "a row written by a build with another shape is skipped"
-
-    with closing(sqlite3.connect(path)) as db:
         _ = db.execute("UPDATE checkpoint SET version = ?, payload = ?", (CHECKPOINTS, "not a snapshot"))
         db.commit()
     assert await _readable(path) is None, "and so is one whose payload decodes to nothing"
+
+
+#: The settings a conversation wrote before the snapshot, and after it: a fold of the whole log is the
+#: first one overwritten by the second.
+ROUTE = '{"name": "one", "epoch": 1}'
+NAME = "kept"
+
+
+async def _part_way(trail: SqliteTrail) -> Snapshot:
+    """Three rows, and the snapshot a fold of them would keep — hand-written, as a fold would."""
+    said = await trail.append("main", User(text="hello"))
+    route = await trail.append("main", StateChange(key="route", value=ROUTE))
+    asked = await trail.append("main", Assistant(text="hi"), begin_after=said.id)
+    return Snapshot(
+        seq=asked.seq,
+        projector=PROJECTOR,
+        settings={"route": ROUTE},
+        heads=(route.id, asked.id),
+        roots=(said.id, route.id),
+    )
+
+
+async def _the_rest(trail: SqliteTrail) -> None:
+    """Two more settings after the fold, so the snapshot is behind the log it belongs to."""
+    _ = await trail.append("main", StateChange(key="name", value=NAME))
+    _ = await trail.append("main", User(text="and another thing"))
+
+
+async def _folded(trail: SqliteTrail) -> tuple[dict[str, str], Shape]:
+    """The two folds of one conversation, as one value to compare."""
+    return dict(await trail.state_of("main")), await trail.shape("main")
+
+
+async def test_a_fold_starts_at_a_snapshot_and_takes_the_rows_after_it() -> None:
+    """The invariant a snapshot rests on: folding from it answers what folding from the root answers.
+
+    Every row is a setting or a head, so a snapshot that lost one — or a fold that started at the wrong
+    place — would answer with a smaller conversation, and the comparison would show it (E177).
+    """
+    trail = SqliteTrail(MEMORY_JOURNAL)
+    await trail.open()
+    try:
+        snapshot = await _part_way(trail)
+        await _the_rest(trail)
+        from_root = await _folded(trail)
+
+        await trail.put("main", snapshot)
+        assert await _folded(trail) == from_root, "the snapshot is behind the log, and the rows after it are taken"
+
+        settings, shape = from_root
+        assert settings == {"route": ROUTE, "name": NAME}
+        assert shape == Shape(heads=("e2", "e3", "e4", "e5"), roots=("e1", "e2", "e4", "e5")), (
+            "a continuing row stops its parent being a head, and a root is a root"
+        )
+    finally:
+        await trail.close()
+
+
+async def test_a_fold_whose_snapshot_was_deleted_answers_the_same(tmp_path) -> None:
+    """A snapshot is derived, so deleting it costs the walk and not the answer — the whole of "disposable".
+
+    This is the reason the table can be dropped by any build that distrusts it: nothing outside is a
+    cache of the fold it names (E177).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        snapshot = await _part_way(trail)
+        await _the_rest(trail)
+        await trail.put("main", snapshot)
+        kept = await _folded(trail)
+    finally:
+        await trail.close()
+
+    with closing(sqlite3.connect(path)) as db:
+        _ = db.execute("DELETE FROM checkpoint")
+        db.commit()
+
+    assert await _folded_of(path) == kept, "the fold from the root, which is the same fold"
+
+
+async def test_a_snapshot_of_the_newest_row_needs_no_rows_after_it(tmp_path) -> None:
+    """A snapshot taken at the end is the whole answer, and the fold adds nothing."""
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        _ = await _part_way(trail)
+        await _the_rest(trail)
+        whole = await _folded(trail)
+        await trail.put(
+            "main",
+            Snapshot(
+                seq=5,
+                projector=PROJECTOR,
+                settings=whole[0],
+                heads=whole[1].heads,
+                roots=whole[1].roots,
+            ),
+        )
+        assert await _folded(trail) == whole, "there is nothing after the fold"
+    finally:
+        await trail.close()
+
+
+async def _folded_of(path) -> tuple[dict[str, str], Shape]:
+    """The two folds a journal opened over *path* answers for this conversation."""
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        return await _folded(trail)
+    finally:
+        await trail.close()
 
 
 def _version(path) -> int:
