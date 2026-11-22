@@ -62,7 +62,7 @@ from plyngent.wire.manifest import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from composat import Component, ComponentKey
 
@@ -105,6 +105,25 @@ def endpoint_for() -> Path:
 #: How long a client waits for a kernel to say what it is. A greeting is the first thing on the stream,
 #: so an address that answers and then says nothing is not a kernel this build can be a frontend for.
 GREETING_SECONDS = 10.0
+
+
+class StartupError(Exception):
+    """A component this process cannot bring up, with the exceptions that stopped it.
+
+    A process-level component that fails is a program that does not start, and the sentence has to say
+    *which* one and *what* it said: the assembly reports a failure per key, so the causes travel as
+    ``(which, exception)`` pairs and whoever prints decides how much of each to show — ``--debug`` prints
+    the traceback, and the ordinary answer is the key and what kind of trouble it was (E179).
+
+    Tree-level failures are not this: a tree that will not come up is refused where it was named and
+    everything else carries on, because a tree can be opened later and an assembly cannot.
+    """
+
+    causes: tuple[tuple[str, BaseException], ...]
+
+    def __init__(self, message: str, *, causes: Mapping[ComponentKey, BaseException] | None = None) -> None:
+        super().__init__(message)
+        self.causes = () if causes is None else tuple((str(key), one) for key, one in causes.items())
 
 
 class NoKernelError(OSError):
@@ -956,7 +975,7 @@ async def _assembled(
     # is the providers — so reading one out of its declaration here builds an equal value and not a
     # second instance of anything with a lifetime (E175).
     given = tuple(components)
-    sets = tuple(cast("ToolSet", one.build()) for one in given if one.component_class is ToolSet)
+    sets = _tool_sets(given)
     # One broker for the whole process: it is the root-qualified component, and it is the only thing here
     # that a host reaches for across the qualifier axis (§9.4). A tree shares it, and no tree owns one.
     # What a launcher brought is declared beside it, and a declaration that reaches for something nothing
@@ -990,14 +1009,37 @@ async def _assembled(
     # The process-level parts, before any tree: which tools this program can give is not a fact about a
     # tree, and a group brought up for one conversation is up for all of them (E175).
     started = await assembly.start(
-        Declaration(Tools).key, *(one.key for one in given if one.component_class is ToolSet)
+        Declaration(Tools).key, *(one.key for one in given if issubclass(one.component_class, ToolSet))
     )
     if not started.ok:
-        msg = f"the tools of this process did not come up: {started.failed}"
-        raise RuntimeError(msg)
+        msg = "a component this program needs did not come up"
+        raise StartupError(msg, causes=started.failed)
     if root is not None:
         _ = await kernel.open(root)
     return kernel
+
+
+def _tool_sets(given: tuple[Declaration, ...]) -> tuple[ToolSet, ...]:
+    """The tool sets a launcher brought, as the values they declare, or the ones that would not be built.
+
+    A tool set is value-shaped — its whole content is the providers — so reading one out of its
+    declaration builds an equal value and not a second instance of anything with a lifetime (E175). One
+    that raises while it is being built is a plugin this program cannot start with, and which one it was
+    is the first thing somebody has to know (E179).
+    """
+    sets: list[ToolSet] = []
+    failed: dict[ComponentKey, BaseException] = {}
+    for one in given:
+        if not issubclass(one.component_class, ToolSet):
+            continue
+        try:
+            sets.append(cast("ToolSet", one.build()))
+        except Exception as exc:  # noqa: BLE001 — a plugin that raised is the sentence, not a traceback
+            failed[one.key] = exc
+    if failed:
+        msg = "a tool set this program was given could not be built"
+        raise StartupError(msg, causes=failed)
+    return tuple(sets)
 
 
 def _begun(link: Link, *, declare: bool = True) -> KernelLink:

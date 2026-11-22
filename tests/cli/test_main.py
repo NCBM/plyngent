@@ -170,7 +170,7 @@ def test_a_plugin_named_where_there_is_no_kernel_is_a_usage_error() -> None:
 def test_a_plugin_that_is_not_installed_is_a_mistake_in_what_was_typed() -> None:
     """A name nobody installed is exit code 2, with the names this program does have in the sentence."""
     with pytest.raises(click.UsageError, match="no plugin named 'nowhere' is installed"):
-        _ = _brought(("nowhere",), ())
+        _ = _brought(("nowhere",), (), debug=False)
 
 
 def test_a_plugin_file_brings_the_declarations_its_enable_answers(tmp_path: Path) -> None:
@@ -184,7 +184,7 @@ def test_a_plugin_file_brings_the_declarations_its_enable_answers(tmp_path: Path
         encoding="utf-8",
     )
 
-    brought = _brought((), (str(written),))
+    brought = _brought((), (str(written),), debug=False)
 
     assert [one.instance for one in brought] == ["acme"]
     assert brought[0].component_class is ToolSet
@@ -195,7 +195,7 @@ def test_a_plugin_file_may_say_which_name_answers(tmp_path: Path) -> None:
     written = tmp_path / "mine.py"
     _ = written.write_text("def bring():\n    return ()\n", encoding="utf-8")
 
-    assert _brought((), (f"{written}:bring",)) == ()
+    assert _brought((), (f"{written}:bring",), debug=False) == ()
 
 
 def test_a_plugin_file_that_raises_is_a_broken_install_and_not_a_usage_error(tmp_path: Path) -> None:
@@ -211,7 +211,59 @@ def test_a_plugin_file_that_raises_is_a_broken_install_and_not_a_usage_error(tmp
 
 def test_a_plugin_file_that_is_not_there_is_a_mistake_in_what_was_typed(tmp_path: Path) -> None:
     with pytest.raises(click.UsageError, match="is not a file"):
-        _ = _brought((), (str(tmp_path / "nothing.py"),))
+        _ = _brought((), (str(tmp_path / "nothing.py"),), debug=False)
+
+
+def test_a_program_that_will_not_start_says_which_component_and_why(tmp_path: Path) -> None:
+    """A tool set that raises while it is built is a program that does not start, and the line names it.
+
+    The name is the declaration's own key, because that is the thing a person can go and look at — and the
+    trouble is named by its type, which is the whole of what the ordinary answer says about somebody else's
+    code (E179).
+    """
+    written = tmp_path / "mine.py"
+    _ = written.write_text(
+        "from composat import Declaration\n"
+        "from plyngent.kernel.providing import ToolSet\n"
+        "class Breaking(ToolSet):\n"
+        "    def __init__(self, providers=(), *, origin=''):\n"
+        "        raise RuntimeError('no tools for you')\n"
+        "def enable():\n"
+        "    return (Declaration(Breaking, instance='bad'),)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(main, ["--plugin-file", str(written), "-p", "hi"])
+
+    assert result.exit_code == 1, "a component this program needs and cannot build is exit code 1"
+    assert "a tool set this program was given could not be built" in result.output
+    assert "Breaking:bad: RuntimeError: no tools for you" in result.output
+    assert "Traceback" not in result.output, "one line about it is the ordinary answer"
+
+
+def test_debug_says_where_a_failure_came_from(tmp_path: Path) -> None:
+    """``--debug`` prints the traceback behind the sentence, because somebody else's line is the answer.
+
+    The flag is the command line's own: there is no variable behind it, so "why did this start differently"
+    has one place to be read from (E179).
+    """
+    written = tmp_path / "mine.py"
+    _ = written.write_text(
+        "from composat import Declaration\n"
+        "from plyngent.kernel.providing import ToolSet\n"
+        "class Breaking(ToolSet):\n"
+        "    def __init__(self, providers=(), *, origin=''):\n"
+        "        raise RuntimeError('no tools for you')\n"
+        "def enable():\n"
+        "    return (Declaration(Breaking, instance='bad'),)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(main, ["--debug", "--plugin-file", str(written), "-p", "hi"])
+
+    assert result.exit_code == 1
+    assert "Traceback (most recent call last)" in result.output
+    assert "RuntimeError: no tools for you" in result.output
 
 
 def test_a_plugin_that_answers_something_else_is_a_broken_install(tmp_path: Path) -> None:

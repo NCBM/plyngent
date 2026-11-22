@@ -82,7 +82,18 @@ CONFIG_FILE = "config.toml"
 
 
 class ConfigError(Exception):
-    """A configuration file this program will not start with, worded as what is wrong with it."""
+    """A configuration file this program will not start with, worded as what is wrong with it.
+
+    ``causes`` is what is behind the sentence when something else raised first — a plugin that will not
+    load, most of all — as ``(where, exception)`` pairs, so whoever prints can say which and how much
+    (E179). A file with a typo has none: the sentence is the whole answer.
+    """
+
+    causes: tuple[tuple[str, BaseException], ...]
+
+    def __init__(self, message: str, causes: tuple[tuple[str, BaseException], ...] = ()) -> None:
+        super().__init__(message)
+        self.causes = causes
 
 
 class PtyFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -752,7 +763,7 @@ def _plugin_declarations(settings: Settings) -> tuple[Declaration, ...]:
     try:
         return plugins.installed(settings.plugins)
     except (plugins.UnknownPluginError, plugins.BrokenPluginError) as exc:
-        raise ConfigError(str(exc)) from exc
+        raise ConfigError(str(exc), exc.causes) from exc
 
 
 def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, Any]:

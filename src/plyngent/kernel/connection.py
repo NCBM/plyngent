@@ -28,7 +28,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from composat import ComponentIdentity, Declaration
+from composat import Declaration
 
 from plyngent.kernel.providing import Tools, ToolSet
 from plyngent.kernel.serving import Serving
@@ -48,9 +48,6 @@ if TYPE_CHECKING:
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyQuery, AnyReply
-
-#: Who a tool set is, so the one read that lists plugins can find them without a second table (E178).
-_TOOL_SET = ComponentIdentity.of(ToolSet)
 
 
 class TreeRef(NamedTuple):
@@ -236,7 +233,7 @@ class Connection:
         rows: list[PluginRow] = []
         declared = self.assembly.keys()
         for key in declared:
-            if key.identity != _TOOL_SET:
+            if not issubclass(self.assembly.declaration(key).component_class, ToolSet):
                 continue
             found = self.assembly.instance(key)
             declared = found if isinstance(found, ToolSet) else None

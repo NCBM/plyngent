@@ -51,11 +51,27 @@ PLUGIN_GROUP = "plyngent.plugins"
 DEFAULT_FACTORY = "enable"
 
 
-class UnknownPluginError(Exception):
+class PluginError(Exception):
+    """A plugin this program will not load, with what is behind it when there is something to name.
+
+    ``causes`` is a list of ``(where, exception)`` pairs: the origin a distribution or a file is known by,
+    and the exception that stopped it. A name nobody installed has none — the sentence *is* the whole
+    answer — while a module that raised while it was being loaded has exactly one, and that is the one
+    ``--debug`` prints in full (E179).
+    """
+
+    causes: tuple[tuple[str, BaseException], ...]
+
+    def __init__(self, message: str, *, where: str = "", cause: BaseException | None = None) -> None:
+        super().__init__(message)
+        self.causes = () if cause is None else ((where, cause),)
+
+
+class UnknownPluginError(PluginError):
     """Nothing by that name is installed, or nothing is at that path: a mistake in what was typed."""
 
 
-class BrokenPluginError(Exception):
+class BrokenPluginError(PluginError):
     """Something installed is not loadable, or does not bring declarations: a program installed badly."""
 
 
@@ -109,7 +125,7 @@ def from_file(spec: str) -> tuple[Declaration, ...]:
     except Exception as exc:
         _ = sys.modules.pop(module_name, None)
         msg = f"{path} raised while it was being loaded: {exc}"
-        raise BrokenPluginError(msg) from exc
+        raise BrokenPluginError(msg, where=str(path), cause=exc) from exc
     factory = getattr(module, attribute or DEFAULT_FACTORY, None)
     if factory is None:
         msg = f"{path} has no {attribute or DEFAULT_FACTORY!r} to call"
@@ -127,7 +143,7 @@ def _brought(one: object, name: str) -> tuple[Declaration, ...]:
         loaded = factory()
     except Exception as exc:
         msg = f"the plugin {name!r} raised while it was being loaded: {exc}"
-        raise BrokenPluginError(msg) from exc
+        raise BrokenPluginError(msg, where=f"the plugin {name!r}", cause=exc) from exc
     return _annotated(_declarations(loaded, f"the plugin {name!r}"), _distribution(one))
 
 
@@ -158,7 +174,7 @@ def _declarations(factory: object, where: str) -> tuple[Declaration, ...]:
         answered = call()
     except Exception as exc:
         msg = f"{where} raised when it was asked for its declarations: {exc}"
-        raise BrokenPluginError(msg) from exc
+        raise BrokenPluginError(msg, where=where, cause=exc) from exc
     if not isinstance(answered, (tuple, list)):
         msg = f"{where} answered a {type(answered).__name__}; a plugin answers a tuple of declarations"
         raise BrokenPluginError(msg)

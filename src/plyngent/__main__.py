@@ -28,6 +28,7 @@ import contextlib
 import os
 import signal
 import sys
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -138,6 +139,12 @@ _NOTHING = "nothing"
     metavar="PATH[:NAME]",
     help="start with the declarations this file's `enable` answers; repeatable, and not remembered",
 )
+@click.option(
+    "--debug",
+    "debug",
+    is_flag=True,
+    help="print the traceback behind a start-up failure, instead of one line about it",
+)
 def main(
     session: str,
     workspace: Path | None,
@@ -153,6 +160,7 @@ def main(
     away: bool,
     away_danger: bool,
     once: str | None,
+    debug: bool,
 ) -> None:
     """Talk to a kernel over one connection."""
     if serve_at is not None and connect_at is not None:
@@ -173,7 +181,7 @@ def main(
         # started with whatever it was started with, and nothing here can add to it (E174).
         msg = "--connect brings no kernel of its own: a plugin goes in where the kernel is started"
         raise click.UsageError(msg)
-    components = _brought(plugins_named, plugin_files)
+    components = _brought(plugins_named, plugin_files, debug=debug)
     # A signal is the stop a keyboard's Ctrl+C is, and ``App.run`` turns it into one — so reaching this
     # is a host or a loop that would not be told, where the signal is the process's own business and what
     # is left to do is an exit code and no traceback (§0.13, E97).
@@ -194,20 +202,19 @@ def main(
                 components=components,
             )
         )
-    except config.ConfigError as exc:
-        # A file this program will not run with is a sentence and an exit code (§0.11, E72) — said here
-        # because saying it is the command line's job and not the program's.
-        raise click.ClickException(str(exc)) from exc
-    except plugins.BrokenPluginError as exc:
-        # An installed plugin that will not load is the same kind of answer: a program somebody installed
-        # badly is a sentence and exit code 1, not a traceback (E174).
-        raise click.ClickException(str(exc)) from exc
+    except plugins.UnknownPluginError as exc:
+        raise click.UsageError(str(exc)) from exc
+    except (config.ConfigError, plugins.BrokenPluginError, boot.StartupError) as exc:
+        # A file this program will not run with, or a component it needs and cannot bring up, is a sentence
+        # and exit code 1 (§0.11, E72): saying it is the command line's job and not the program's, and how
+        # much of it to say is this flag's (E179).
+        raise click.ClickException(_explained(exc, debug=debug)) from exc
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
     sys.exit(code)
 
 
-def _brought(named: tuple[str, ...], files: tuple[str, ...]) -> tuple[Declaration, ...]:
+def _brought(named: tuple[str, ...], files: tuple[str, ...], *, debug: bool) -> tuple[Declaration, ...]:
     """The declarations this run's flags name, in the order they were written.
 
     A name that is not installed and a path that is not a file are answered as usage errors: they are
@@ -222,8 +229,28 @@ def _brought(named: tuple[str, ...], files: tuple[str, ...]) -> tuple[Declaratio
     except plugins.UnknownPluginError as exc:
         raise click.UsageError(str(exc)) from exc
     except plugins.BrokenPluginError as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise click.ClickException(_explained(exc, debug=debug)) from exc
     return tuple(brought)
+
+
+def _explained(exc: Exception, *, debug: bool) -> str:
+    """Why this program will not start: the sentence, then what is behind it.
+
+    Two answers in one function because they are one message: without ``--debug`` a cause is named by where
+    it happened and what kind of trouble it was — which is enough to go and look — and with it the
+    traceback is printed first, because a plugin that raised is somebody's code and the line it raised on
+    is the only useful thing about it.
+
+    The flag is the command line's own and there is no variable behind it: a second place to read an
+    environment is a second answer to "why did this start differently" (E179).
+    """
+    lines = [str(exc)]
+    for where, cause in getattr(exc, "causes", ()):
+        if debug:
+            traceback.print_exception(cause)
+        said = f"{type(cause).__name__}: {cause}"
+        lines.append(f"  {where}: {said}" if where else f"  {said}")
+    return "\n".join(lines)
 
 
 async def run(
