@@ -162,11 +162,12 @@ class Host(Component):
     async def stopping(self) -> None:
         """Tell every conversation what it is about to lose, while its log is still open (E151).
 
-        The two things this process holds on a conversation's behalf and cannot hand over are a child on a
-        terminal and a scratch directory, and both die with the process. This is said **now**, because now
-        is when it is true: "this process is going down" is a fact here, while
-        "the last one died" is only provable by a timestamp this tree does not keep, and by a start-up that
-        reads every journal to guess.
+        The two things this kernel holds on a conversation's behalf and cannot hand over are a child on a
+        terminal and a scratch directory, and both go with the tree that holds them — when this process
+        stops, and when a command closes the tree while the process runs (E181). This is said **now**,
+        because now is when it is true: "this tree is going away" is a fact here, while "the last one
+        died" is only provable by a timestamp this tree does not keep, and by a start-up that reads every
+        journal to guess.
 
         Only the conversations that really lose something are told — the answer to "who" is the two tables
         that hold what is lost, so a conversation that never opened a terminal is not told that its

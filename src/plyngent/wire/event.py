@@ -301,10 +301,11 @@ class SessionRefused(Event, tag="session-refused", frozen=True, kw_only=True):
 class WorkspaceRefused(Event, tag="workspace-refused", frozen=True, kw_only=True):
     """A command named a tree this kernel does not serve, and says which tree and why.
 
-    Four answers, because they are four facts and a client acts differently on each: a
+    Five answers, because they are five facts and a client acts differently on each: a
     name nothing here serves is answered by opening it first, a path that is not a directory will never
-    be a tree, a tree nested inside one that is open has to wait for that one to go away, and a kernel at
-    its ceiling is one only a restart makes room in (E154/E157).
+    be a tree, a tree nested inside one that is open has to wait for that one to go away, a kernel at
+    its ceiling is one only a restart makes room in (E154/E157), and a tree that still has a turn running
+    in it is one its own work has to end first (E181).
 
     ``workspace`` is what the command named, spelled as it arrived, because the sentence a person reads
     is about what they typed; ``session`` is the conversation the command was about, when it named one.
@@ -313,6 +314,19 @@ class WorkspaceRefused(Event, tag="workspace-refused", frozen=True, kw_only=True
     session: str = ""
     workspace: str = ""
     reason: Refusal = Refusal.NO_WORKSPACE
+
+
+class WorkspaceClosed(Event, tag="workspace-closed", frozen=True, kw_only=True):
+    """This kernel has closed a tree, and these conversations went with it (E181).
+
+    About the connection and not about the tree it names, which is why every connection is told: a
+    greeting is a snapshot, and a tree a client could have used is gone from the table it read. It is
+    also the last thing a client hears about that tree — the event counts of a closed tree are not
+    replayed, so a mark a client remembers for it is stale from then on.
+    """
+
+    workspace: str = ""
+    sessions: tuple[str, ...] = ()
 
 
 class Compacted(Event, tag="compacted", frozen=True, kw_only=True):
@@ -801,6 +815,7 @@ type AnyEvent = (
     | Deleted
     | SessionRefused
     | WorkspaceRefused
+    | WorkspaceClosed
     | Compacted
     | CompactRefused
     | Pruned

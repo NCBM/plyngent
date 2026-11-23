@@ -160,7 +160,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.toolspec import ToolSpec
     from plyngent.kernel.trail import Trail
-    from plyngent.wire.command import AnyCommand, OfferedTool
+    from plyngent.wire.command import OfferedTool, TreeCommand
     from plyngent.wire.event import AnyEvent
     from plyngent.wire.link import KernelSide
     from plyngent.wire.query import AnyReply, TreeQuery
@@ -298,7 +298,7 @@ class Serving:
 
     # -- what a command means ------------------------------------------------------
 
-    async def handle(self, command: AnyCommand) -> None:
+    async def handle(self, command: TreeCommand) -> None:
         """Do what one command asks of this tree, or say why it cannot be done yet."""
         match command:
             case Open() | Close():

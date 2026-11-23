@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import shlex
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast, get_args, override
+from typing import TYPE_CHECKING, cast, override
 
 import click
 import msgspec
@@ -41,6 +41,7 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 
 from plyngent.wire.command import AnyCommand, Command, PersistModels, SetModel, Submit
 from plyngent.wire.event import TurnKind
+from plyngent.wire.manifest import command_classes
 from plyngent.wire.query import AnyQuery, Grants, Models, Plugins, Query, Skills, Trajectory, Turns
 
 if TYPE_CHECKING:
@@ -268,7 +269,7 @@ def build(manifest: KernelManifest, *, session: str) -> Catalog:
     ``session`` is the session in focus, so ``--session`` can default to it, and no command has to say
     which conversation it means.
     """
-    classes = {cls.__struct_config__.tag: cls for cls in get_args(AnyCommand.__value__)}
+    classes = {cls.__struct_config__.tag: cls for cls in command_classes()}
     offers: dict[str, Entry] = {}
     withheld: dict[str, str] = {}
     for spec in manifest.commands:
@@ -668,7 +669,7 @@ def _command_value(tag: str, values: dict[str, object]) -> AnyCommand:
 
 def _class_of(tag: str) -> type[Command]:
     """The wire class a tag names."""
-    for cls in get_args(AnyCommand.__value__):
+    for cls in command_classes():
         if cls.__struct_config__.tag == tag:
             return cls
     msg = f"no command carries the tag {tag!r}"

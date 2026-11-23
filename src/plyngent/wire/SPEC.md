@@ -90,10 +90,17 @@ behind the client's back would start writing a conversation somewhere nobody ask
 
 `open` is idempotent: naming a tree that is already open says nothing and changes nothing.
 
+`close-workspace` is `open`'s other end: it closes one tree and every conversation open in it, and their
+history stays on disk. It refuses only two facts — `no-workspace` for a tree nothing has open, and
+`turn-running` for one whose own work has not ended — and the second is a refusal that clears itself. A
+client standing in the tree it names refuses for itself: its declaration can name another tree, and
+closing the one under its feet would leave it nothing to draw.
+
 | word | what it asks for |
 |---|---|
 | `open` | start a conversation, or copy another one's text into a new one |
 | `close` | stop serving a conversation; its entries stay on disk |
+| `close-workspace` | close one tree and every conversation open in it; its history stays on disk |
 | `submit` | say something in a conversation; the kernel answers with a turn |
 | `retry` | ask the model again from the end of the chain, without repeating a call |
 | `cancel` | stop one piece of work, or everything a conversation is doing |
@@ -172,8 +179,11 @@ do not fan out — a question a turn asks goes back to the connection that start
   `rollback-refused`, `grant-revoked`, `goal-set`, `goal-refused`, `routed`, `route-refused`,
   `model-set`, `persisted`, `persist-refused`, `changed`, `noticed`, `offer-refused`.
 - **The connection itself**: `kernel-leaving` (the stream ends after it), `workspace-refused` (a command
-  named a tree this kernel does not serve, or one it will not open: `session`, `workspace` as the tree the
-  command *meant* — its own name, or this connection's default when it named none — and `reason`), `batch`.
+  named a tree this kernel does not serve, or one it will not open or close: `session`, `workspace` as the
+  tree the command *meant* — its own name, or this connection's default when it named none — and
+  `reason`), `workspace-closed` (a tree this kernel was serving is gone, and `sessions` names the
+  conversations that went with it; a mark a client remembers for that tree is stale from then on),
+  `batch`.
 
 A refusal carries one word from a closed set; the sentence a person reads is the frontend's to write.
 

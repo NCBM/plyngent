@@ -103,6 +103,16 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
     dead_after: float = DEFAULT_DEAD_AFTER
 
 
+def command_classes() -> tuple[type[Command], ...]:
+    """Every command a client may send, spelled out of the union a large one is written as.
+
+    The table's own reading is :func:`command_specs`; this one is for a caller that needs the *classes*
+    — the CLI builds one value per tag — because :data:`~plyngent.wire.command.AnyCommand` names
+    ``TreeCommand`` as an alias and ``get_args`` hands that alias back rather than flattening it (E181).
+    """
+    return tuple(cast("type[Command]", cls) for cls in _kinds(AnyCommand))
+
+
 def command_specs() -> tuple[CommandSpec, ...]:
     """The command table, derived from the union a client already decodes into.
 
@@ -111,7 +121,7 @@ def command_specs() -> tuple[CommandSpec, ...]:
     docstring. A command added to the union appears here without anybody remembering to add it, and a
     command whose help nobody wrote fails the test that every spec has a summary.
     """
-    return tuple(_spec(cast("type[Command]", cls)) for cls in _kinds(AnyCommand))
+    return tuple(_spec(cls) for cls in command_classes())
 
 
 def query_specs() -> tuple[QuerySpec, ...]:

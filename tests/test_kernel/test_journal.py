@@ -56,6 +56,22 @@ async def test_a_workspace_names_its_journal_and_creates_nothing(tmp_path) -> No
     assert journal_path(tmp_path / "other") != path, "two workspaces are two histories"
 
 
+async def test_a_tree_that_moved_is_a_new_workspace(tmp_path) -> None:
+    """Moving a directory leaves its history behind, because the name of a journal is the path it has.
+
+    Following a move would need something inside the tree saying which journal is its own — a second copy
+    would carry the same id, and a model can read whatever is in there — or the inode for a name, and an inode
+    is recycled. So a moved tree is a tree nobody has written in yet (E181).
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    path = journal_path(root)
+
+    root.rename(tmp_path / "moved")
+
+    assert journal_path(tmp_path / "moved") != path, "the same files under another name are another history"
+
+
 async def test_opening_a_journal_again_changes_nothing(tmp_path) -> None:
     path = tmp_path / "journal.db"
     trail = SqliteTrail(path)

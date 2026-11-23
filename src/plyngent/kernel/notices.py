@@ -183,27 +183,30 @@ def providers(failed: Sequence[tuple[str, str]]) -> tuple[str, str]:
 
 
 def stopping(terminals: int, scratch: int) -> tuple[str, str]:
-    """What a conversation is told at the moment this process is about to lose what it was holding (E151).
+    """What a conversation is told at the moment this tree is about to lose what it was holding (E151).
 
     Two paragraphs, and each is there only when it is true: a conversation that never opened a terminal is
     not told about terminals, because a sentence a model cannot act on is noise in the one place it reads
-    most carefully. The first is certain — a child on a terminal dies with the process that holds it. The
+    most carefully. The first is certain — a child on a terminal dies with the thing that holds it. The
     second is said as the pair of facts it is: a scratch directory is out of this conversation's reach the
-    moment the kernel stops serving it, and whether its bytes are still on disk depends on who removes
-    them, so the sentence promises nothing it cannot keep and then says where to ask for another.
+    moment the kernel stops serving the tree, and whether its bytes are still on disk depends on who
+    removes them, so the sentence promises nothing it cannot keep and then says where to ask for another.
+
+    The tree and not the process, because a workspace can be closed while the program runs (E181): the
+    sentence has to be true of the conversation that reads it either way, and "this workspace" is.
 
     The answer is the marked body and the line a person reads in a listing: the row goes into the log, and
-    no event is emitted, because whoever is reading the screen is on their way out.
+    no event is emitted, because whoever is reading the screen is on their way out of that tree.
     """
     said: list[str] = []
     summary: list[str] = []
     if terminals:
         sessions = counted(terminals, "terminal session")
         said.append(
-            f"This program is stopping, and the {sessions} you have open end with it. Their ids are dead, "
-            "and a process that starts again gives you new ones."
+            f"This workspace is going away, and the {sessions} you have open end with it. Their ids are "
+            "dead, and whatever you open the next time you are here gets a new one."
         )
-        summary.append(f"{counted(terminals, 'terminal session')} gone with the process")
+        summary.append(f"{counted(terminals, 'terminal session')} gone with the workspace")
     if scratch:
         directories = counted(scratch, "temporary workspace")
         said.append(

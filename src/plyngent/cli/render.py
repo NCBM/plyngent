@@ -76,6 +76,7 @@ from plyngent.wire.event import (
     TurnRefused,
     TurnStarted,
     Usage,
+    WorkspaceClosed,
     WorkspaceRefused,
 )
 from plyngent.wire.query import (
@@ -153,6 +154,7 @@ type _Reported = (
     | Renamed
     | Deleted
     | WorkspaceRefused
+    | WorkspaceClosed
     | Compacted
     | Pruned
     | DocumentStored
@@ -860,7 +862,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     own answers the empty session, which :func:`_named` reads as "nothing to name".
     """
     match event:
-        case KernelLeaving() | SessionsListed():
+        case KernelLeaving() | SessionsListed() | WorkspaceClosed():
             return _connection(event)
         case (
             Compacted()
@@ -896,14 +898,17 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def _connection(event: KernelLeaving | SessionsListed) -> tuple[_Row, ...]:
-    """The connection itself: the kernel going away, and which conversations it is serving."""
+def _connection(event: KernelLeaving | SessionsListed | WorkspaceClosed) -> tuple[_Row, ...]:
+    """The connection itself: the kernel going away, which conversations it serves, and a tree it closed."""
     match event:
         case KernelLeaving(reason=reason):
             return (("", Shown(f"the kernel is leaving{': ' + reason if reason else ''}", "notice")),)
         case SessionsListed(sessions=sessions):
             said = f"sessions: {', '.join(_listed(item) for item in sessions) if sessions else 'none'}"
             return (("", Shown(said, "notice")),)
+        case WorkspaceClosed(workspace=workspace, sessions=sessions):
+            held = f"; it held {', '.join(sessions)}" if sessions else ""
+            return (("", Shown(f"closed {workspace}{held}", "notice")),)
         case _ as never:
             assert_never(never)
 
@@ -1078,7 +1083,7 @@ _REFUSALS: Mapping[Refusal, str] = {
     Refusal.DISK_MOVED: "{path} is not what version {version} left, so it was not put back",
     Refusal.OUTSIDE: "{path!r} is not a path a version of this workspace could hold",
     Refusal.STORE: "the store could not do that{detail}",
-    Refusal.TURN_RUNNING: "a turn is running in this session, so the workspace is still being written",
+    Refusal.TURN_RUNNING: "a turn is running here, so the workspace is still being written",
     Refusal.NO_CAPABILITY: "this connection does not take offers from its client",
     Refusal.DUPLICATE: "a tool of this name already exists, and a name is how the model asks for one",
     Refusal.NAMELESS: "a tool without a name is one nothing could call",

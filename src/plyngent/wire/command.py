@@ -5,8 +5,9 @@ A command is an *intent*, never a query: everything a client wants to **read** i
 (:mod:`plyngent.wire.query`). So no command here answers a question, and no command needs a reply id —
 which is why there is no table of outstanding commands anywhere in this package.
 
-Every command names a ``session`` except the ones about the set of sessions, and ``Offer`` — a command
-about the connection itself. Nothing here is a callback and nothing here carries a callable: the kernel
+Every command names a ``session`` except the ones about the set of sessions, ``Offer`` — a command
+about the connection itself — and ``CloseWorkspace``, which names a tree and takes the conversations in
+it away with it. Nothing here is a callback and nothing here carries a callable: the kernel
 owns the time, so a client may only say what it wants, not when or how.
 
 :class:`Open` is the one place a trajectory can start somewhere else: ``seed_from`` copies the chain
@@ -226,6 +227,19 @@ class ListSessions(Command, tag="list-sessions", frozen=True, kw_only=True):
     """List the conversations this journal holds."""
 
 
+class CloseWorkspace(Command, tag="close-workspace", frozen=True, kw_only=True):
+    """Close one workspace, and every conversation open in it. Its history stays on disk.
+
+    About a tree and not about a conversation, which is why it is the one command a tree's serving never
+    sees: what it takes away is the tree that serving belongs to. The ``session`` it inherits is unused.
+
+    An empty ``workspace`` is the tree this connection declared, and a connection that declared none has
+    no tree to close: closing whatever happens to be there is the guess every other empty name refuses.
+    A frontend that is standing in the tree it names is the frontend's own business — it can declare
+    another tree, and closing the one under its feet would leave it with nothing to draw (E181).
+    """
+
+
 class Export(Command, tag="export", frozen=True, kw_only=True):
     """Keep a conversation as a document you can read back.
 
@@ -303,8 +317,13 @@ class Offer(Command, tag="offer", frozen=True, kw_only=True):
     tools: tuple[OfferedTool, ...] = ()
 
 
-#: The union to decode into: msgspec dispatches on the tag for a union, not for a base class.
-type AnyCommand = (
+#: The commands that are about one tree, and therefore handled by that tree's serving.
+#:
+#: The alias exists so that "this command is not about a tree" is a fact the type checker holds: a match
+#: over :data:`TreeCommand` is exhaustive over these, and
+#: :class:`~plyngent.kernel.serving.Serving` takes this and not :data:`AnyCommand` — the one command that
+#: takes a tree away cannot be handled by the serving it belongs to (E181, the same move as ``TreeQuery``).
+type TreeCommand = (
     Open
     | Close
     | Submit
@@ -325,3 +344,4 @@ type AnyCommand = (
     | Rename
     | Delete
 )
+type AnyCommand = TreeCommand | CloseWorkspace

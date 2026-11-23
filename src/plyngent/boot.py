@@ -198,6 +198,14 @@ class _Kernel:
     #: The count for what a *connection* says, and no tree owns it — a goodbye, a listing. It is the
     #: process's own, because those events are about the connection and not about any one tree.
     events: Ledger
+    #: Every connection this kernel is serving. A tree that is closed has to be taken away from each of
+    #: them, and nothing in the assembly holds that membership: the serving does, and one serving per
+    #: connection per tree is made by the connection itself (E181).
+    connections: list[Connection]
+    #: How many trees this process has opened, ever. A qualifier is part of every session's address, so it
+    #: may not name two trees: a count of the ones that are *open* would hand out ``ws2`` twice as soon as
+    #: a tree could be closed (E181).
+    made: int
 
     def __init__(
         self,
@@ -220,6 +228,8 @@ class _Kernel:
         self.trees = {}
         self.ledgers = {}
         self.events = Ledger()
+        self.connections = []
+        self.made = 0
 
     @property
     def tree(self) -> _Tree:
@@ -272,8 +282,9 @@ class _Kernel:
         known = self.trees.get(path)
         if known is not None:
             return known
-        qualifier = self.defaults.qualifier if not self.trees else f"{self.defaults.qualifier}{len(self.trees) + 1}"
-        kept = _journal_file(path, self.defaults.journal if not self.trees else None)
+        made = self.made + 1
+        qualifier = self.defaults.qualifier if made == 1 else f"{self.defaults.qualifier}{made}"
+        kept = _journal_file(path, self.defaults.journal if made == 1 else None)
         # One store per tree, beside the journal it belongs with — and none at all where nothing can keep
         # one, which is a fact about the machine, and no call decides it.
         versions_kept = History(path, history_path(kept)) if self.defaults.versions and available() else None
@@ -315,6 +326,7 @@ class _Kernel:
             msg = f"the host at {path!r} did not come up: {started.failed}"
             raise RuntimeError(msg)
         tree = _Tree(qualifier, path, Ledger())
+        self.made = made
         self.trees[path] = tree
         self.ledgers[str(path)] = tree.ledger
         return tree
@@ -379,6 +391,86 @@ class _Kernel:
             return Refusal.NO_WORKSPACE
         (tree,) = self.trees.values()
         return TreeRef(str(tree.path), tree.qualifier)
+
+    async def close(self, where: str) -> tuple[str, ...] | Refusal:
+        """Close one tree, and answer the conversations that went with it (E181).
+
+        Six things in the order they depend on, and each needs the one before it: every connection stops
+        watching, because a serving reaches for the audience channel that is about to go down; the host
+        says what closing this tree takes with it, while its journal is still open; the tree's components
+        are taken down and their declarations withdrawn as one batch, since a key is stopped before it is
+        withdrawn; the tree leaves the table, and that is what makes its path openable again; and every
+        connection is told, because the tree it could have named is gone.
+
+        Two facts refuse it — a path nothing has open, and a tree whose own work has not ended. The second
+        reads the host's running count, and it is a refusal because it clears itself: the same command
+        made later is answered with the tree closing.
+        """
+        path = _workspace_of(where)
+        tree = self.trees.get(path)
+        if tree is None:
+            return Refusal.NO_WORKSPACE
+        if self._working(tree.qualifier):
+            return Refusal.TURN_RUNNING
+        sessions = self._sessions_of(tree.qualifier)
+        for connection in tuple(self.connections):
+            await connection.forget(str(tree.path))
+        await self._stopping(tree.qualifier)
+        keys = self._keys_of(tree.qualifier)
+        _ = await self.assembly.stop(*keys)
+        self.registry.undeclare(*keys)
+        _ = self.trees.pop(path)
+        _ = self.ledgers.pop(str(tree.path), None)
+        for connection in tuple(self.connections):
+            connection.workspace_closed(str(tree.path), sessions)
+        return sessions
+
+    def holding(self, connection: Connection, task: asyncio.Task[None]) -> None:
+        """Keep one connection until its loop ends, because closing a tree has to reach all of them.
+
+        A serving belongs to the connection and not to this table (E154), so "which connection is watching
+        that tree" is only answerable if the connections themselves are kept.
+        """
+        self.connections.append(connection)
+        _ = task.add_done_callback(lambda _: self._let_go(connection))
+
+    def _let_go(self, connection: Connection) -> None:
+        """Forget a connection whose loop has ended, since nothing is watching anything through it."""
+        with contextlib.suppress(ValueError):
+            self.connections.remove(connection)
+
+    def _working(self, qualifier: str) -> bool:
+        """Whether a turn is running in the tree these components belong to (E181)."""
+        found = self.assembly.instance(Declaration(Host, instance=qualifier).key)
+        return isinstance(found, Host) and found.running.now > 0
+
+    async def _stopping(self, qualifier: str) -> None:
+        """Give one tree's host the chance to say what closing it takes away (E151)."""
+        found = self.assembly.instance(Declaration(Host, instance=qualifier).key)
+        if isinstance(found, Host):
+            await found.stopping()
+
+    def _keys_of(self, qualifier: str) -> tuple[ComponentKey, ...]:
+        """Every declaration that belongs to one tree: its own parts, and the sessions under it.
+
+        A tree's parts are declared under its qualifier, and a session's address is that qualifier plus its
+        id, so one prefix answers it — there is no per-tree table that could fall out of step.
+        """
+        prefix = f"{qualifier}/"
+        return tuple(
+            declaration.key
+            for declaration in self.registry.declarations()
+            if declaration.key.instance == qualifier or declaration.key.instance.startswith(prefix)
+        )
+
+    def _sessions_of(self, qualifier: str) -> tuple[str, ...]:
+        """The ids of the conversations open in one tree, in the order they were admitted."""
+        prefix = f"{qualifier}/"
+        return tuple(
+            declaration.key.instance[len(prefix) :]
+            for declaration in self.registry.declarations()
+            if declaration.key.instance.startswith(prefix)
+        )
 
 
 class _Held(NamedTuple):
@@ -1139,9 +1231,15 @@ def _opened(
 
 
 def _connected(kernel: _Kernel, link: Link) -> tuple[Connection, asyncio.Task[None]]:
-    """The loop for one connection: the server that routes it among trees, and the task that runs it."""
+    """The loop for one connection: the server that routes it among trees, and the task that runs it.
+
+    Registering it here is what keeps "every connection" a fact rather than a hope: the two places a
+    connection is made — a kernel's own client and a daemon's accepted one — both come through this.
+    """
     connection = Connection(link=link, assembly=kernel.assembly, foundry=kernel, specs=kernel.specs)
-    return connection, asyncio.create_task(connection.run())
+    task = asyncio.create_task(connection.run())
+    kernel.holding(connection, task)
+    return connection, task
 
 
 def _accepted(kernel: _Kernel, near: local.SocketChannel, *, manifest: KernelManifest | None = None) -> _Held:

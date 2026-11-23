@@ -154,6 +154,13 @@ EXPECTED: dict[str, str] = {
     "\n"
     "Options:\n"
     "  --session TEXT  the conversation to act on  [default: main]",
+    "close-workspace": "Usage: close-workspace [OPTIONS]\n"
+    "\n"
+    "  Close one workspace, and every conversation open in it. Its history stays on\n"
+    "  disk.\n"
+    "\n"
+    "Options:\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
 }
 
 

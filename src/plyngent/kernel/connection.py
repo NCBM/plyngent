@@ -15,6 +15,9 @@ answers:
 * **When it is over.** One lane read per thing that arrives, one task for the reads, and one goodbye:
   :meth:`stop` says the kernel is leaving and ends the lanes, which is why it belongs here and to no one
   tree.
+* **When a tree goes away.** ``CloseWorkspace`` is the one command about a tree and not about a
+  conversation, so it is answered here: what it takes away is the serving it would otherwise have been
+  handed to, and every connection holding one is told (E181).
 
 The trees are found through a *foundry* — a callable that hands back a tree this process serves, opening
 one it does not, or saying which of the three structural refusals applies. It is a callable, because
@@ -32,8 +35,8 @@ from composat import Declaration
 
 from plyngent.kernel.providing import Tools, ToolSet
 from plyngent.kernel.serving import Serving
-from plyngent.wire.command import Open
-from plyngent.wire.event import KernelLeaving, Refusal, WorkspaceRefused
+from plyngent.wire.command import CloseWorkspace, Open
+from plyngent.wire.event import KernelLeaving, Refusal, WorkspaceClosed, WorkspaceRefused
 from plyngent.wire.manifest import PROTOCOL_VERSION
 from plyngent.wire.query import PluginRow, Plugins, PluginState, PluginTable
 
@@ -64,20 +67,25 @@ class TreeRef(NamedTuple):
 
 
 class Foundry(Protocol):
-    """Where a connection finds a tree, and how one that is not there yet comes to exist."""
+    """Where a connection finds a tree, how one that is not there yet comes to exist, and how one goes."""
 
     async def find(self, where: str) -> TreeRef | Refusal:
         """The tree at ``where``, opening it if this process can, or the reason it will not be opened."""
+        ...
+
+    async def close(self, where: str) -> tuple[str, ...] | Refusal:
+        """Close the tree at ``where`` and answer the conversations that went with it, or the reason not."""
         ...
 
 
 class Connection:
     """One connection to a kernel: the link, the trees it is reading, and the one loop both share.
 
-    The trees are made as they are first named, and they are kept until the process stops: a tree opened
-    on a client's behalf is not closed by that client leaving, because the conversations in it are not the
-    client's (E157). What *is* the client's ends here — its membership of each tree's audience
-    (:meth:`~plyngent.kernel.serving.Serving.end`), and its offer of tools.
+    The trees are made as they are first named, and each is kept until the process stops or a command
+    closes it: a tree opened on a client's behalf is not closed by that client leaving, because the
+    conversations in it are not the client's (E157, E181). What *is* the client's ends here — its
+    membership of each tree's audience (:meth:`~plyngent.kernel.serving.Serving.end`), and its offer of
+    tools.
     """
 
     assembly: Assembly
@@ -191,14 +199,52 @@ class Connection:
 
         The refusal names the tree the command *meant*: a connection that declared its tree sends values
         with no tree in them, and a sentence about the tree that was refused is the one a person can act
-        on (E154).
+        on (E154). Closing a tree is the one command that does not reach one, since what it takes away is
+        the serving it would have been given.
         """
+        if isinstance(command, CloseWorkspace):
+            await self._closing(command)
+            return
         found = await self._tree(command.workspace, opening=isinstance(command, Open))
         if isinstance(found, Refusal):
             meant = _named(command.workspace) or self._bound
             self.link.emit(WorkspaceRefused(session=command.session, workspace=meant, reason=found))
             return
         await found.handle(command)
+
+    async def _closing(self, command: CloseWorkspace) -> None:
+        """Close one tree, or say why this connection will not.
+
+        An empty name means the tree this connection declared, and it means nothing when it declared none:
+        closing whatever happens to be open would be the guess every other empty name refuses (E154), and
+        a connection with no tree of its own has not said which one it is done with.
+        """
+        meant = _named(command.workspace) or self._bound
+        closed: tuple[str, ...] | Refusal = Refusal.NO_WORKSPACE
+        if meant:
+            closed = await self._foundry.close(meant)
+        if isinstance(closed, Refusal):
+            self.link.emit(WorkspaceRefused(session=command.session, workspace=meant, reason=closed))
+
+    async def forget(self, workspace: str) -> None:
+        """Stop watching a tree this kernel is closing: what this connection held there ends with it.
+
+        Awaitable and told apart from :meth:`_leaving`, because the two happen at different times: a tree
+        goes down while its journal is still open, so leaving its audience has to be finished before the
+        kernel takes that tree's components away (E181).
+        """
+        serving = self._servings.pop(workspace, None)
+        if serving is not None:
+            await serving.end()
+
+    def workspace_closed(self, workspace: str, sessions: tuple[str, ...]) -> None:
+        """Say that a tree is gone, and which conversations went with it.
+
+        Said to every connection, and not only to the one that closed it: a greeting is a snapshot, so the
+        client that never touched this tree is the one whose next command would otherwise name a tree the
+        greeting still listed (E181).
+        """
+        self.link.emit(WorkspaceClosed(workspace=workspace, sessions=sessions))
 
     async def _reading(self) -> None:
         """Answer every read this client asks, until its lane ends."""

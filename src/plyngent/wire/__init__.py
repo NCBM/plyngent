@@ -61,6 +61,7 @@ from plyngent.wire.bind import Bind as Bind
 from plyngent.wire.command import AnyCommand as AnyCommand
 from plyngent.wire.command import Cancel as Cancel
 from plyngent.wire.command import Close as Close
+from plyngent.wire.command import CloseWorkspace as CloseWorkspace
 from plyngent.wire.command import Command as Command
 from plyngent.wire.command import Compact as Compact
 from plyngent.wire.command import Export as Export
@@ -114,6 +115,7 @@ from plyngent.wire.event import TurnKind as TurnKind
 from plyngent.wire.event import TurnRefused as TurnRefused
 from plyngent.wire.event import TurnStarted as TurnStarted
 from plyngent.wire.event import Usage as Usage
+from plyngent.wire.event import WorkspaceClosed as WorkspaceClosed
 from plyngent.wire.event import WorkspaceRefused as WorkspaceRefused
 from plyngent.wire.flow import Ack as Ack
 from plyngent.wire.flow import Mark as Mark
@@ -125,6 +127,7 @@ from plyngent.wire.manifest import CommandSpec as CommandSpec
 from plyngent.wire.manifest import KernelManifest as KernelManifest
 from plyngent.wire.manifest import QuerySpec as QuerySpec
 from plyngent.wire.manifest import WorkspaceRow as WorkspaceRow
+from plyngent.wire.manifest import command_classes as command_classes
 from plyngent.wire.manifest import command_specs as command_specs
 from plyngent.wire.manifest import query_specs as query_specs
 from plyngent.wire.query import AnyQuery as AnyQuery

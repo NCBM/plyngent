@@ -100,7 +100,7 @@ async def test_a_conversation_is_told_the_terminals_that_end_with_the_process(tm
 
         assert "the 1 terminal session you have open end with it" in said.text, said.text
         assert "temporary workspace" not in said.text, "and nothing about scratch it never asked for"
-        assert said.summary == "1 terminal session gone with the process"
+        assert said.summary == "1 terminal session gone with the workspace"
     finally:
         await second.close()
 
