@@ -317,7 +317,6 @@ async def test_a_tree_that_was_closed_opens_again_as_the_same_conversation(
 
 async def test_a_tree_opened_after_a_close_is_addressed_as_a_new_one(story_with: Scripted, tmp_path: Path) -> None:
     """A qualifier names sessions for as long as this process runs, so closing a tree may not free its name.
-
     Three trees, the middle one closed, a fourth opened: if the fourth took the closed one's number it would
     be the *same* address as the tree that still holds it, and one conversation would be read as another's.
     The third tree's entries are what proves it — its conversation is still its own (E181).
@@ -347,3 +346,24 @@ async def test_a_tree_opened_after_a_close_is_addressed_as_a_new_one(story_with:
     assert isinstance(there, Forest) and isinstance(here, Forest)
     assert there.entries, "the third tree's conversation is still its own"
     assert not here.entries, "and the tree opened after the close started with nothing"
+
+
+async def test_a_client_does_not_close_the_tree_it_is_standing_in(story_with: Scripted) -> None:
+    """The kernel would obey, and this frontend is the one that says no: it is drawing that tree (E181).
+
+    The word is the kernel's, so it is listed and it describes itself. What a person typing it here gets is a
+    sentence from this program, and the conversation they are in goes on as though nothing had been asked: a
+    frontend that closed its own tree would have nothing left to draw.
+    """
+    story = await story_with(text("still here"))
+
+    await story.type("/close-workspace")
+
+    (said,) = story.notices()
+    assert said.startswith("this client is standing in "), said
+    assert story.workspace.name in said, "and it says which tree it means"
+    assert said.endswith(", so it is not the one to close it"), said
+    await story.type("are you still there")
+    await story.finished()
+
+    assert any("still here" in line for line in story.screen()), "and the tree it stands in is still serving"

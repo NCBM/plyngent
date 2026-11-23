@@ -58,7 +58,17 @@ from plyngent.cli.profile import write as write_profile
 from plyngent.cli.render import Stage, held, notice, unfinished
 from plyngent.cli.screen import Screen
 from plyngent.wire.ask import Picked, Selection, unanswered
-from plyngent.wire.command import Cancel, Compact, ListSessions, Offer, Open, Retry, SetModel, Submit
+from plyngent.wire.command import (
+    Cancel,
+    CloseWorkspace,
+    Compact,
+    ListSessions,
+    Offer,
+    Open,
+    Retry,
+    SetModel,
+    Submit,
+)
 from plyngent.wire.event import Compacted, ModelSet, Pruned, SessionsListed, TurnFinished, TurnKind
 from plyngent.wire.flow import Ack
 from plyngent.wire.flow import Mark as TreeMark
@@ -587,8 +597,17 @@ class App:
         return not self._leaving.is_set()
 
     async def _said(self, line: str) -> int | None:
-        """One line's meaning, and the exit code it earns if the connection was gone."""
+        """One line's meaning, and the exit code it earns if the connection was gone.
+
+        One word never leaves this program: closing a workspace. This client is always standing in a tree —
+        that is what it draws — so closing the one it stands in would leave it with nothing, and a word that
+        can only be answered here is answered here (E181).
+        """
         match decode(line, self.catalog, session=self.session):
+            case Runs(command=CloseWorkspace(workspace=where)) if where in {"", self.workspace}:
+                said = f"this client is standing in {self.workspace}, so it is not the one to close it"
+                await self._screen.tell(notice(said))
+                return None
             case Runs(command=command):
                 if isinstance(command, ListSessions):
                     # The one command whose answer is a listing, and a listing is read by the client,
