@@ -28,6 +28,7 @@ from plyngent.kernel.journal import (
 )
 from plyngent.kernel.model import Assistant, Call, Note, Result, User
 from plyngent.kernel.trail import (
+    BY_BUDGET,
     BY_PERSON,
     NOTICE_MARKER,
     Effect,
@@ -600,6 +601,122 @@ async def test_closing_the_journal_keeps_what_this_process_wrote(tmp_path) -> No
     assert written is not None and written.seq == 2, "the fold of the two rows this process wrote"
     assert written.settings == {"route": ROUTE}
     assert written.shape == Shape(heads=(said.id, "e2"), roots=(said.id, "e2"))
+
+
+async def test_a_conversation_says_when_it_was_last_written_to(tmp_path) -> None:
+    """The one time this tree keeps: one row per conversation, for a reader that runs with no kernel.
+
+    Every write moves it, and a conversation nothing has written to is the one nobody is using — which is
+    the question an offline program asks before it lets one go (E186).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        assert await trail.used("main") is None, "nothing has been written about it yet"
+        first = await trail.append("main", User(text="one"))
+        written = await trail.used("main")
+        assert written is not None, "a row was written, so the conversation is dated"
+        _ = await trail.append("main", Assistant(text="two"), begin_after=first.id)
+        again = await trail.used("main")
+        assert again is not None and again.at >= written.at, "and the newest write is the newest date"
+    finally:
+        await trail.close()
+
+
+async def test_a_prune_adds_the_text_it_took_out_to_the_weight(tmp_path) -> None:
+    """``aside`` is what pruning moved out of the window, counted from the rows the prune names.
+
+    The pair ``live + aside`` is what a conversation has carried, and pruning only moves text from one to
+    the other: a conversation that was pruned does not look small (E186).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        said = await trail.append("main", User(text="x" * 400))
+        answer = await trail.append("main", Assistant(text="y" * 400), begin_after=said.id)
+        before = await trail.used("main")
+        assert before is not None and before.aside == 0
+
+        _ = await trail.append(
+            "main", Withheld(targets=(said.id, answer.id), reason="budget", by=BY_BUDGET), begin_after=answer.id
+        )
+        pruned = await trail.used("main")
+        assert pruned is not None and pruned.aside > 0, "eight hundred characters is a couple of hundred tokens"
+
+        _ = await trail.append("main", User(text="three"))
+        after = await trail.used("main")
+        assert after is not None and after.aside == pruned.aside, "and a later write does not take it back"
+    finally:
+        await trail.close()
+
+
+async def test_a_charge_says_how_much_a_conversation_is_carrying(tmp_path) -> None:
+    """``live`` is the provider's own count and ``room`` the line pruning starts at; both are replaced.
+
+    They are kept rather than worked out later, because they are what one endpoint said about one payload
+    and no reading of the log can reach them again (E186).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        await trail.weighed("main", live=1200, room=8000)
+        first = await trail.used("main")
+        assert first is not None and (first.live, first.room) == (1200, 8000)
+
+        await trail.weighed("main", live=3400, room=8000)
+        second = await trail.used("main")
+        assert second is not None and second.live == 3400, "the newest request is the one that describes it"
+    finally:
+        await trail.close()
+
+
+async def test_opening_a_conversation_counts_as_using_it(tmp_path) -> None:
+    """A conversation nothing was said in is still one somebody has, and the offline reader asks about that.
+
+    No entry arrives, so nothing else in the log would date it (E186).
+    """
+    path = tmp_path / "journal.db"
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        await trail.admitted("empty")
+        said = await trail.used("empty")
+
+        assert said is not None, "an open conversation is a used one"
+        assert (said.live, said.aside, said.room) == (0, 0, 0), "and it has carried nothing"
+    finally:
+        await trail.close()
+
+
+async def test_a_file_from_before_this_dates_what_is_already_in_it(tmp_path) -> None:
+    """The step that adds the table dates every conversation already in the log to the instant of the upgrade.
+
+    Nothing old can be collected until a week has passed, which is the conservative half of a delete that
+    cannot be undone (E186).
+    """
+    path = tmp_path / "journal.db"
+    with closing(sqlite3.connect(path)) as db:
+        _ = db.executescript(MIGRATIONS[0])
+        _ = db.executescript(MIGRATIONS[1])
+        _ = db.execute("PRAGMA user_version = 2")
+        _ = db.execute(
+            "INSERT INTO entry (session, seq, turn, parent, tag, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("old", 1, 1, None, "user", '{"text":"said long ago"}'),
+        )
+        db.commit()
+
+    trail = SqliteTrail(path)
+    await trail.open()
+    try:
+        said = await trail.used("old")
+
+        assert said is not None, "the step dates what was already there"
+        assert (said.live, said.aside, said.room) == (0, 0, 0), "and knows nothing about what it carried"
+    finally:
+        await trail.close()
 
 
 async def _folded_of(path) -> tuple[dict[str, str], Shape]:

@@ -683,7 +683,21 @@ class Serving:
             self._begin_recovery(session)
         if seed_from is not None and inherit is Inherit.APPROVALS:
             self._carry_approvals(session, seed_from[0])
+        await self._admitted(session, *(seed_from or ()))
         self._say_route(session)
+
+    async def _admitted(self, session: str, *seeded: str) -> None:
+        """Say that this conversation, and whatever it was copied from, has been used (E186).
+
+        Two acts say nothing in the log and are still uses: opening a conversation, and copying its text
+        into a new one. What decides "nobody needs this any more" weighs both, so both are recorded here,
+        where both are known.
+        """
+        host = self._host()
+        if host is None:
+            return
+        for one in (session, *seeded):
+            await host.trail.admitted(one)
 
     def _carry_approvals(self, session: str, source: str) -> None:
         """Give *session* every answer *source* was given, and nothing else.

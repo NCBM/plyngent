@@ -558,6 +558,27 @@ class Shape:
     roots: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class Weight:
+    """What one conversation has carried, and when it was last written to (E186).
+
+    ``at`` is the newest instant a row was written for this conversation, as text — the one time this
+    tree keeps, and the reader it is kept for is a program that runs with no kernel at all. ``live`` is
+    the provider's own count of the last request's payload and answer; ``aside`` is how much text
+    pruning has moved out of ``live``, in tokens; ``room`` is the line pruning starts at, or ``0`` when
+    the route never said how much it can hold.
+
+    ``live + aside`` is the pair that matters, because pruning moves content from one to the other and
+    leaves the sum where it was: a conversation weighed by what it has carried cannot be made lighter by
+    pruning, which is what keeps one threshold from being both unreachable and dangerous.
+    """
+
+    at: str = ""
+    live: int = 0
+    aside: int = 0
+    room: int = 0
+
+
 #: The tag a snapshot carries in a journal's own table, so a stored row says what it is.
 SNAPSHOT_TAG = "snapshot"
 
@@ -721,3 +742,25 @@ class Trail(ABC):
         For the moments a writer knows the conversation's state moved and no row was written for it — a
         tool set that grew, most of all: the next process reads its recovery basis out of this (E176).
         """
+
+    @abstractmethod
+    async def admitted(self, session: str) -> None:
+        """Say that somebody has this conversation open: this is one of the ways it counts as used.
+
+        Opened and copied-from are uses without a word being said, and the reader that decides what nobody
+        needs any more asks about both (E186).
+        """
+
+    @abstractmethod
+    async def weighed(self, session: str, *, live: int, room: int) -> None:
+        """Record what one request carried, and the line pruning starts at (E186).
+
+        ``live`` is the provider's own count of the payload and the answer — the one number here that this
+        build did not estimate — and ``room`` is ``context_window - max_output``, which is where
+        :meth:`~plyngent.kernel.turn.TurnRunner._room` begins to prune. Together with the text
+        :class:`Withheld` rows have taken out they are the pair the offline reader weighs.
+        """
+
+    @abstractmethod
+    async def used(self, session: str) -> Weight | None:
+        """When this conversation was last written to, and how much it has carried (E186)."""

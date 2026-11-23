@@ -33,6 +33,7 @@ import hashlib
 import os
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
@@ -41,6 +42,7 @@ import msgspec
 from composat import Component
 from platformdirs import user_data_path
 
+from plyngent.kernel.budget import CHARS_PER_TOKEN
 from plyngent.kernel.model import MODEL_TAGS, AnyMessage
 from plyngent.kernel.trail import (
     ATTEMPT_TAG,
@@ -69,6 +71,7 @@ from plyngent.kernel.trail import (
     Trail,
     TurnEnded,
     Usage,
+    Weight,
     Withheld,
     as_message,
     kind_of,
@@ -164,9 +167,31 @@ CREATE TABLE IF NOT EXISTS checkpoint (
 );
 """
 
+#: Schema version 3: one row per conversation saying when it was last written to and what it has carried.
+#:
+#: This is the one place in this tree that keeps a time, and it is one row per conversation, not one column
+#: per record: the reader is an offline program deciding which conversations nobody needs any more (E186), and
+#: it runs with no kernel and no clock of its own. The order of a chain is still the order it arrived in.
+#:
+#: The backfill is part of the step, so a file written before this exists answers the question too: every
+#: conversation in the log is dated to the instant of the upgrade, which is why nothing old can be collected
+#: until a week has passed. SQLite's own ``now`` is the clock here, because a script is applied by the
+#: database and not by this process.
+_SCHEMA_3 = """
+CREATE TABLE IF NOT EXISTS weight (
+    session TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    live INTEGER NOT NULL DEFAULT 0,
+    aside INTEGER NOT NULL DEFAULT 0,
+    room INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO weight (session, at)
+SELECT session, strftime('%Y-%m-%dT%H:%M:%SZ', 'now') FROM entry GROUP BY session;
+"""
+
 #: The schema versions, in order. Step *n* is the answer to "how does the log look at version *n*", and
 #: the list is append-only: a change to a released step is a new step.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2, _SCHEMA_3)
 
 #: Which snapshot shape this build writes. It is stored in every checkpoint row, so raising it makes
 #: every stored snapshot unreachable at once — the same invalidation story as :data:`PROJECTOR`, and the
@@ -236,6 +261,28 @@ SELECT :session,
     OR EXISTS (SELECT 1 FROM entry WHERE session = :session AND id = :parent)
 RETURNING id, seq
 """
+
+#: One conversation's row in ``weight``, kept in step by three statements and read by one query.
+#:
+#: Three statements and not one with switches in it: each is the exact thing that happened — a row was
+#: written, a prune set text aside, a request was weighed — and one statement with ``CASE`` in it would put
+#: the reading of "which" into SQL. ``aside`` accumulates because pruning only ever moves more text out of
+#: the window; ``live`` and ``room`` are replaced because the newest request is the one that says what this
+#: conversation is carrying now.
+_TOUCHED = """
+INSERT INTO weight (session, at) VALUES (:session, :at)
+ON CONFLICT(session) DO UPDATE SET at = excluded.at
+"""
+_SET_ASIDE = """
+INSERT INTO weight (session, at, aside) VALUES (:session, :at, :aside)
+ON CONFLICT(session) DO UPDATE SET at = excluded.at, aside = weight.aside + excluded.aside
+"""
+_SET_LIVE = """
+INSERT INTO weight (session, at, live, room) VALUES (:session, :at, :live, :room)
+ON CONFLICT(session) DO UPDATE SET at = excluded.at, live = excluded.live, room = excluded.room
+"""
+_WEIGH = "SELECT at, live, aside, room FROM weight WHERE session = ?"
+_ASIDE_OF = "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM entry WHERE session = ? AND id IN ({marks})"
 
 #: One entry's chain, from the entry named down to its root.
 #:
@@ -409,6 +456,7 @@ class SqliteTrail(Trail):
             assert begin_after is not None
             raise ValueError(_no_such_entry(begin_after, session))
         self._since[session] = self._since.get(session, 0) + 1
+        await self._kept(session, payload)
         if self._since[session] >= self._checkpoint_rows or isinstance(payload, Withheld):
             _ = await self.snapshot(session)
             self._since[session] = 0
@@ -429,6 +477,47 @@ class SqliteTrail(Trail):
             return None
         found = await self._read(_COLUMNS + " WHERE session = ? AND id = ?", (session, row))
         return None if found is None else _entry(session, found)
+
+    @override
+    async def admitted(self, session: str) -> None:
+        """Say that somebody has this conversation open (E186)."""
+        _ = await self._execute(_TOUCHED, {"session": session, "at": _now()})
+
+    @override
+    async def weighed(self, session: str, *, live: int, room: int) -> None:
+        """Record the size the provider counted, and the line pruning starts at (E186)."""
+        _ = await self._execute(_SET_LIVE, {"session": session, "at": _now(), "live": live, "room": room})
+
+    @override
+    async def used(self, session: str) -> Weight | None:
+        """What this conversation has carried, or ``None`` when nothing has written about it."""
+        found = await self._read(_WEIGH, (session,))
+        if found is None:
+            return None
+        return Weight(at=str(found[0]), live=int(found[1]), aside=int(found[2]), room=int(found[3]))
+
+    async def _kept(self, session: str, payload: AnyRecord) -> None:
+        """Keep this conversation's weight in step with the row just written (E186).
+
+        Two of the four numbers are this method's. ``at`` moves on every write, because "somebody used
+        this" is what the offline reader asks. ``aside`` grows by the payload of the entries a
+        :class:`Withheld` names: a prune is the act that takes text out of the window, so the number is
+        counted from the log here instead of being a second tally kept beside it.
+        """
+        if not isinstance(payload, Withheld) or not payload.targets:
+            _ = await self._execute(_TOUCHED, {"session": session, "at": _now()})
+            return
+        chars = await self._hidden_chars(session, payload.targets)
+        _ = await self._execute(_SET_ASIDE, {"session": session, "at": _now(), "aside": chars // CHARS_PER_TOKEN})
+
+    async def _hidden_chars(self, session: str, targets: Sequence[str]) -> int:
+        """How many characters of payload the entries one prune names hold."""
+        rows = [row for target in targets if (row := _row_of(target)) is not None]
+        if not rows:
+            return 0
+        marks = ", ".join("?" for _ in rows)
+        found = await self._read(_ASIDE_OF.format(marks=marks), (session, *rows))
+        return 0 if found is None else int(found[0])
 
     @override
     async def head(self, session: str) -> Entry | None:
@@ -819,6 +908,26 @@ class Journal(Component, Trail):
     async def snapshot(self, session: str) -> Snapshot:
         """Fold this session now and keep the fold, as the backend folds it."""
         return await self._backend.snapshot(session)
+
+    @override
+    async def admitted(self, session: str) -> None:
+        """Say that somebody has this conversation open, so it counts as used (E186)."""
+        await self._backend.admitted(session)
+
+    @override
+    async def weighed(self, session: str, *, live: int, room: int) -> None:
+        """Record what one request carried and the line pruning starts at (E186)."""
+        await self._backend.weighed(session, live=live, room=room)
+
+    @override
+    async def used(self, session: str) -> Weight | None:
+        """When this conversation was last written to, and how much it has carried (E186)."""
+        return await self._backend.used(session)
+
+
+def _now() -> str:
+    """The instant a row is written, spelled the way the schema's backfill spells one (E186)."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _row_of(entry_id: str) -> int | None:

@@ -922,6 +922,13 @@ class TurnRunner:
             ),
             turn=ctx.turn_id,
         )
+        # What this conversation is carrying, beside the charge it came from: the provider's own count of
+        # the payload and the answer, and the line pruning begins at. One row per conversation, and the
+        # reader is a program with no kernel — it asks "is this big, and has anybody touched it lately"
+        # about conclusions the log already reached (E186).
+        _ = await ctx.host.trail.weighed(
+            ctx.session.session_id, live=usage.prompt + usage.completion, room=self._room(state)
+        )
         # The same payload, counted twice: what this build said and what the provider charged. The ratio is
         # what the next decision is scaled by, so the session keeps it — and only while there is a charge
         # to compare against, since a route that reports nothing is not a route that charged nothing.
