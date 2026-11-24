@@ -60,6 +60,7 @@ from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.history import History, Unreadable
 from plyngent.kernel.listing import walk
+from plyngent.kernel.model import Call
 from plyngent.kernel.paths import display, key
 from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Mutation, Posture, Remember, Res, Role, argument
@@ -73,7 +74,6 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.cancel import Scope, Segments
     from plyngent.kernel.catalog import ToolCatalog, ToolTable, ToolView
-    from plyngent.kernel.model import Call
     from plyngent.kernel.providing import Brought
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.toolresult import Part
@@ -148,6 +148,10 @@ class _Call:
     held: tuple[Held, ...] = ()
     #: Whether the workspace refused a path this call named, which its own handler is about to report.
     refused: bool = False
+    #: Whether a plan already put the question that allowed this call. A plan asks once for the program it
+    #: runs, so its steps do not ask again — a second question per step would make an ordinary program a
+    #: wall of prompts (E190).
+    planned: bool = False
     #: The calls that have to finish before this one may start.
     after: set[int] = field(default_factory=set)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
@@ -213,6 +217,28 @@ class ToolExecutor:
             assert result is not None, "a batch answers every call it was given"
             answered.append(result)
         return tuple(answered)
+
+    async def one(self, ctx: TurnCtx, name: str, arguments: str, *, segments: Segments) -> ToolResult:
+        """Run one call a plan asked for, under the place the plan gave it (E190).
+
+        A program's step is one call and not a round: it goes through the same envelope a round's call does
+        — the arguments read, the paths held, the version kept — so nothing about approvals, locks, effects
+        or versions is implemented twice. Two things differ. It does not ask again, because the question
+        that allowed the program covered this call. And what it leaves is written as an effect row of its
+        own, a root, since a step has no result in the history to hang below.
+
+        A name this session was not shown is answered with the refusal a round would answer with, which is
+        how a plan finds out that the tool it wanted is not there.
+        """
+        view = self._table.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
+        inside = Call(id="/".join(segments), tool=name, arguments=arguments)
+        (node,) = _prepared(ctx, self._table.catalog, view, [(segments, inside)])
+        node.planned = True
+        result = await self._answer(ctx, node, view)
+        row = ctx.effect(tool=name, call=segments, effects=result.effects)
+        if row is not None:
+            _ = await ctx.host.trail.append(ctx.session.session_id, row, turn=ctx.turn_id)
+        return result
 
     async def _run(self, ctx: TurnCtx, nodes: list[_Call], view: ToolView) -> None:
         """Start each call once what it waits for has finished, and no more than ``CONCURRENCY`` at once."""
@@ -383,6 +409,8 @@ class ToolExecutor:
         """
         spec, args = node.spec, node.args
         assert spec is not None
+        if node.planned:
+            return None
         asking = spec.asking(args)
         if asking.posture is Posture.AUTO or node.refused:
             return None

@@ -31,10 +31,12 @@ from plyngent.kernel.locks import Locks
 from plyngent.kernel.model import Call
 from plyngent.kernel.paths import key
 from plyngent.kernel.process import Execution, FromFile
+from plyngent.kernel.session import TurnCtx
 from plyngent.kernel.toolresult import Effects, Status, ToolResult
 from plyngent.kernel.tools import fs
 from plyngent.kernel.tools.process.execution import ExecuteArgs
 from plyngent.kernel.toolspec import Group, Mutation, Posture, Res, Role, ToolArgs, ToolSpec
+from plyngent.kernel.trail import Effect
 from plyngent.kernel.workspace import Workspace
 from plyngent.wire.ask import AskSite
 from plyngent.wire.event import TurnKind
@@ -52,6 +54,25 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class _Row:
+    """What a journal answers with: an id, and nothing else these tests read."""
+
+    id: str
+
+
+@dataclass
+class _Trail:
+    """A journal that keeps what was written, so a test can say which row a call left."""
+
+    rows: list[object] = field(default_factory=list)
+
+    async def append(self, session: str, payload: object, *, begin_after: str | None = None, turn: int = 0) -> _Row:
+        _ = (session, begin_after, turn)
+        self.rows.append(payload)
+        return _Row(str(len(self.rows)))
+
+
+@dataclass(frozen=True)
 class _Host:
     """The parts of a host a call reaches: the workspace it resolves through, its locks, its human."""
 
@@ -61,6 +82,8 @@ class _Host:
     #: Where versions are kept. Most of these tests have none: a store is only reached for by a call
     #: that changed a path, and only one test here changes one on purpose.
     history: History | None = None
+    #: The journal, as these tests see it: the payload of every row, in the order it was written.
+    trail: _Trail = field(default_factory=_Trail)
 
 
 @dataclass(frozen=True)
@@ -92,6 +115,9 @@ class _Ctx:
 
     def site(self, *segments: str) -> AskSite:
         return AskSite(session=self.session.session_id, turn=self.turn_id, scope="/".join(("1", "r0", *segments)))
+
+    #: The row a call leaves, as the turn itself assembles it: what a step writes is not a second copy.
+    effect = TurnCtx.effect
 
 
 def _ctx(root: Path, *, history: object = None) -> TurnCtx:
@@ -307,6 +333,43 @@ async def test_a_program_that_cannot_say_what_it_wrote_is_swept(tmp_path) -> Non
     revision = results[0].effects.revision
     assert revision, (results[0],)
     assert await store.blob(revision, "built.txt") == b"made by a program\n"
+
+
+async def test_a_step_of_a_plan_is_one_call_that_asks_nothing_and_leaves_its_own_row(tmp_path) -> None:
+    """A program's step goes through the same envelope a round's call does, under the plan's own name (E190).
+
+    Two things differ. The plan's question already allowed this call, so nothing is put to a person here —
+    a question would be answered by nobody in this test, and a refusal is what that means. And the row is
+    a root of its own, because a step leaves no result in the history for it to sit below.
+    """
+    ran: list[str] = []
+
+    async def write(env: Env, args: object) -> ToolResult:
+        _ = (env, args)
+        ran.append("wrote")
+        return ToolResult.ok("wrote it", effects=Effects(changed=("notes.txt",)))
+
+    spec = ToolSpec(
+        name="write",
+        group=Group.FS,
+        args=_PathArgs,
+        run=write,
+        uses=Res.PATHS,
+        mutates=Mutation.WORKSPACE,
+        roles={"path": Role.WRITE},
+    )
+    executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
+    ctx = _ctx(tmp_path)
+
+    result = await executor.one(ctx, "write", json.dumps({"path": "notes.txt"}), segments=("tool-3", "s1"))
+
+    assert result.status is Status.OK, "the call ran: a question here would have been answered by nobody"
+    assert ran == ["wrote"]
+    trail = cast("_Trail", cast("object", ctx.host.trail))
+    (row,) = [one for one in trail.rows if isinstance(one, Effect)]
+    assert (row.call, row.tool, row.changed) == ("tool-3/s1", "write", ("notes.txt",)), (
+        "the row names the step the plan named, and says it on its own"
+    )
 
 
 @pytest.mark.skipif(repositories.MISSING, reason="a version is kept by starting git")

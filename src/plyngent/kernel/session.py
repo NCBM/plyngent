@@ -35,7 +35,7 @@ from plyngent.kernel.host import Host  # noqa: TC001
 from plyngent.kernel.notices import PLAN, Notices
 from plyngent.kernel.reads import Reads
 from plyngent.kernel.todos import Todos
-from plyngent.kernel.trail import Consent, StateChange
+from plyngent.kernel.trail import Consent, Effect, StateChange
 from plyngent.wire.ask import Agreed, AskSite, Confirmation
 from plyngent.wire.event import GoalMode, TurnKind
 from plyngent.wire.scope import CancelReason, CancelScope
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from plyngent.kernel.events import Human
+    from plyngent.kernel.toolresult import Effects
     from plyngent.wire.ask import AnyAnswer, AnyAsk
 
 #: The key a session's tool disclosure is written under. One key in the journal's state vocabulary, and
@@ -186,6 +187,26 @@ class TurnCtx:
             turn=self.turn_id,
         )
         return answer
+
+    def effect(self, *, tool: str, call: Segments, effects: Effects) -> Effect | None:
+        """One call's effect as the row it becomes, or ``None`` when it left nothing to say.
+
+        The one assembly of an :class:`~plyngent.kernel.trail.Effect`, because two places write one: a
+        round puts it below the result it belongs to, and a step of a program writes it on its own, as a
+        root, since a step leaves no result in the history to hang below (E190).
+        """
+        if not (effects.changed or effects.external or effects.approvals or effects.unswept):
+            return None
+        return Effect(
+            turn=self.turn_id,
+            call="/".join(call),
+            tool=tool,
+            revision=effects.revision,
+            changed=tuple(str(one) for one in effects.changed),
+            external=effects.external,
+            approvals=effects.approvals,
+            unswept=effects.unswept,
+        )
 
     def round_scope(self) -> Scope:
         """The cancellation handle for the round itself."""

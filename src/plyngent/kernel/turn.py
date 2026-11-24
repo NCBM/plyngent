@@ -53,7 +53,6 @@ from plyngent.kernel.toolresult import OUTCOMES, Document, ToolResult
 from plyngent.kernel.trail import (
     BY_BUDGET,
     Attempt,
-    Effect,
     Notice,
     Promoted,
     Summary,
@@ -1078,22 +1077,8 @@ class TurnRunner:
         result produced without a store still records *what* changed with no version to read it back from,
         because "these paths are not what you last saw" is true whether or not this host keeps bytes.
         """
-        effects = result.effects
-        if not (effects.changed or effects.external or effects.approvals or effects.unswept):
-            return state
-        return await self._append(
-            state,
-            Effect(
-                turn=state.ctx.turn_id,
-                call=call.id,
-                tool=call.tool,
-                revision=effects.revision,
-                changed=tuple(str(one) for one in effects.changed),
-                external=effects.external,
-                approvals=effects.approvals,
-                unswept=effects.unswept,
-            ),
-        )
+        row = state.ctx.effect(tool=call.tool, call=(call.id,), effects=result.effects)
+        return state if row is None else await self._append(state, row)
 
     # -- the pieces ----------------------------------------------------------------
 
