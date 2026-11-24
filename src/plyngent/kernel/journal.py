@@ -101,9 +101,51 @@ def journal_path(root: Path | str) -> Path:
     directory appears when the journal opens, which is why starting the program with ``--help`` leaves
     the file system exactly as it found it.
     """
+    return workspace_dir(root) / "journal.db"
+
+
+def workspace_dir(root: Path | str, *, data: Path | str | None = None) -> Path:
+    """The directory one workspace's three stores live in, and the one rule that names it (E185).
+
+    One rule and not two: ``journal_path`` derives a journal from it, and the offline program moves a whole
+    ledger by it — a second spelling of "which directory is this workspace's" would let the two disagree
+    about what a move did. ``data`` is the directory to look in, and ``None`` is this person's own.
+    """
     resolved = Path(root).expanduser().resolve()
     digest = hashlib.sha256(os.fsencode(resolved)).hexdigest()[:12]
-    return user_data_path("plyngent") / "workspaces" / f"{_slug(resolved.name)}-{digest}" / "journal.db"
+    inside = user_data_path("plyngent") if data is None else Path(data)
+    return Path(inside) / "workspaces" / f"{_slug(resolved.name)}-{digest}"
+
+
+#: The sidecar that says which tree a ledger belongs to: one line, the resolved path (E185).
+#:
+#: A file of its own and not a row, because it is what a person reads *without* opening the database — and
+#: because the choice of ledger must never depend on it: the digest of the path decides, so a stale label is
+#: a wrong sentence about a directory and nothing more.
+LABEL = "workspace.txt"
+
+
+def label_of(directory: Path | str) -> str:
+    """What the ledger in *directory* says it is about, or the empty string (E185)."""
+    try:
+        return Path(directory, LABEL).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def label(directory: Path | str, root: Path | str) -> None:
+    """Say that the ledger in *directory* belongs to the tree at *root*, and never fail for it (E185).
+
+    Written when a kernel opens the tree, and rewritten by the offline program when a person says a ledger
+    was moved. A directory this process may not write to is a label that stays as it was: nothing reaches a
+    ledger *through* this file, so a failure to write it is not a failure to serve the tree.
+    """
+    named = Path(directory)
+    try:
+        named.mkdir(parents=True, exist_ok=True)
+        _ = (named / LABEL).write_text(f"{Path(root).expanduser().resolve()}\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 #: What a directory name may keep of the workspace's own: lowercase words, one dash between them.

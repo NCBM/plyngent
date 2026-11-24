@@ -33,7 +33,7 @@ from plyngent.kernel.documents import Documents, documents_path
 from plyngent.kernel.events import HumanChannel
 from plyngent.kernel.history import History, available, history_path
 from plyngent.kernel.host import Host
-from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path
+from plyngent.kernel.journal import MEMORY_JOURNAL, Journal, SqliteTrail, journal_path, label
 from plyngent.kernel.ledger import Ledger
 from plyngent.kernel.link import Link
 from plyngent.kernel.lm.route import Posted, Route, Routes
@@ -329,6 +329,10 @@ class _Kernel:
         self.made = made
         self.trees[path] = tree
         self.ledgers[str(path)] = tree.ledger
+        if kept != MEMORY_JOURNAL:
+            # Which tree this ledger is about, said for readers that never open it: the offline program
+            # lists and weighs what is on disk, and it has no kernel to ask (E185).
+            label(Path(kept).parent, path)
         return tree
 
     async def find(self, where: str) -> TreeRef | Refusal:

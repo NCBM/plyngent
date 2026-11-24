@@ -27,6 +27,7 @@ notify = ["desktop-notifier>=6.2.0"]
 
 [project.scripts]
 plyngent = "plyngent.__main__:main"
+plyngent-admin = "plyngent.admin:main"
 
 [build-system]
 requires = ["pdm-backend"]

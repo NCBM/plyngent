@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast, get_args
 import pytest
 
 import plyngent
-from plyngent import boot, cli, kernel, wire
+from plyngent import admin, boot, cli, kernel, wire
 from plyngent.cli import offers
 from plyngent.cli.grammar import ALIASES, build
 from plyngent.cli.render import Role, render
@@ -224,6 +224,18 @@ def test_the_composition_root_does_not_depend_on_a_client() -> None:
     offenders = _offenders([pathlib.Path(boot.__file__)], lambda name: name.startswith("plyngent.cli"))
 
     assert offenders == [], "boot hands a link over; what draws on it is the client's business"
+
+
+def test_the_offline_program_does_not_depend_on_a_client() -> None:
+    """``admin`` reads stores where no terminal exists, so the frontend is the half it may not have (E185).
+
+    It is on the composition root's side of the boundary: it may import ``kernel``'s store modules and
+    ``boot``'s address, and a single import of ``cli`` would make a supervisor's command need a terminal
+    library and a person who is typing.
+    """
+    offenders = _offenders([pathlib.Path(admin.__file__)], lambda name: name.startswith("plyngent.cli"))
+
+    assert offenders == [], "a command that runs with nobody in front of it cannot import a frontend"
 
 
 def test_the_kernel_does_not_know_how_it_was_configured() -> None:
