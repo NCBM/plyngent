@@ -190,6 +190,56 @@ async def test_a_pause_of_the_last_open_task_still_gets_its_turn(story_with: Scr
     assert "goal off: the plan waits" in screen, "and the switch says so"
 
 
+async def test_a_layer_holding_a_set_aside_task_cannot_be_popped(story_with: Scripted) -> None:
+    """E188: a paused task keeps its layer on the stack, and the refusal names the one way out.
+
+    A pop takes the whole level back off, so a level with something set aside in it would lose the only
+    record of a task somebody may still come back to. Nobody else can unlock it — a person has no todo
+    command — which is why the sentence says which two statuses will do.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        calling("todo_update", {"group": 0, "number": 1, "status": "paused"}),
+        calling("todo_pop", {}),
+        calling("todo_update", {"group": 0, "number": 1, "status": "cancelled"}),
+        calling("todo_pop", {}),
+        text("that level is gone"),
+    )
+
+    await story.type("plan it")
+    await story.finished()
+
+    refused = _answers(story.requests()[3])[-1]
+    assert refused.startswith(
+        "the TOP group holds 1 set-aside task: change each to `cancelled` or `done`, and this level can come off"
+    ), refused
+    assert "hint: todo_update" in refused, "and the call that would unlock it is named"
+
+    popped = _answers(story.requests()[-1])[-1]
+    assert popped.startswith("popped 1 item"), "the level comes off once nothing in it is set aside"
+
+
+async def test_a_stack_holding_a_set_aside_task_cannot_be_cleared(story_with: Scripted) -> None:
+    """The same rule one level up: clearing a stack would throw the set-aside task away with everything else."""
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        calling("todo_push", {"titles": ["write the parser"]}),
+        calling("todo_update", {"group": 0, "number": 1, "status": "paused"}),
+        calling("todo_clear", {}),
+        calling("todo_clear", {}),  # still refused: nothing changed it
+        text("still there"),
+    )
+    await story.require("session")
+
+    await story.type("plan it")
+    await story.finished()
+
+    refused = _answers(story.requests()[-1])[-1]
+    assert refused.startswith(
+        "the stack holds 1 set-aside task: change each to `cancelled` or `done`, and the stack can be cleared"
+    ), refused
+
+
 async def test_a_pushed_group_is_listed_under_its_own_number(story_with: Scripted) -> None:
     story = await story_with(
         calling("todo_push", {"titles": ["write the parser", "test it"]}),

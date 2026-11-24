@@ -29,7 +29,7 @@ import msgspec
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.notices import PLAN
 from plyngent.kernel.session import TODOS
-from plyngent.kernel.todos import OPEN, Todos, TodoStatus
+from plyngent.kernel.todos import OPEN, TodoGroup, Todos, TodoStatus
 from plyngent.kernel.toolresult import Hint, Meta, Part, Text, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Group, Mutation, Res, ToolArgs, ToolSpec, argument
 from plyngent.kernel.words import counted, plural
@@ -100,7 +100,8 @@ class PopArgs(ToolArgs, kw_only=True):
 
     A pop takes the whole level back off: the tasks in it are not finished one by one by being
     removed, which is what ``todo_update`` is for. An empty stack is not an error — it is a stack with
-    nothing on it.
+    nothing on it. A level holding a ``paused`` task is refused: that task is not work and not finished,
+    so it has to be ``done`` or ``cancelled`` before the level can come off.
     """
 
 
@@ -108,7 +109,8 @@ class ClearArgs(ToolArgs, kw_only=True):
     """Empty the stack: every group and every task, gone in one call.
 
     The plan is the conversation's, so clearing it clears it for good; what was there is still in the
-    history as the state changes that wrote it, one entry at a time.
+    history as the state changes that wrote it, one entry at a time. A stack with a ``paused`` task
+    anywhere in it is refused, for the reason a pop of such a level is.
     """
 
 
@@ -272,6 +274,9 @@ async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
 
     def pop(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
+        stuck = _set_aside_in(todos.group(todos.top_depth()))
+        if stuck:
+            return None, _held(stuck, where="the TOP group", then="this level can come off")
         group = todos.pop()
         if group is None:
             empty = ToolResult.ok(
@@ -290,11 +295,32 @@ async def todo_clear(env: Env, _args: ClearArgs) -> ToolResult:
 
     def clear(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
+        stuck = len(todos.paused_items())
+        if stuck:
+            return None, _held(stuck, where="the stack", then="the stack can be cleared")
         count = todos.clear()
         answer = ToolResult.ok(f"cleared {counted(count, 'item')}", body=Text(value=todos.render()))
         return (todos.dump() if count else None), answer
 
     return await _planned(env, clear)
+
+
+def _set_aside_in(group: TodoGroup | None) -> int:
+    """How many tasks in one layer are set aside, which is what keeps that layer from coming off."""
+    return 0 if group is None else sum(1 for item in group.items if item.status is TodoStatus.PAUSED)
+
+
+def _held(stuck: int, *, where: str, then: str) -> ToolResult:
+    """A layer that cannot come off because something in it is set aside, and the one way out (E188).
+
+    The way out is named because nobody else can take it: a person has no todo command, so a task left
+    paused is one only the model can unlock — by saying it is finished, or by saying it is given up on.
+    """
+    return ToolResult.of(
+        Failure.BLOCKED,
+        f"{where} holds {counted(stuck, 'set-aside task')}: change each to `cancelled` or `done`, and {then}",
+        hints=(Hint(tool=TODO_UPDATE.name, why="a task set aside is neither work nor finished"),),
+    )
 
 
 def _layer(todos: Todos, depth: int, summary: str) -> ToolResult:
