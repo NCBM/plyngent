@@ -47,6 +47,10 @@ class Failure(StrEnum):
     #: passed. What it did is unknown on purpose — the effect happened in somebody else's process, so
     #: the call is neither "refused" nor "nothing happened" (§10.8).
     CLIENT = "client"
+    #: A server outside this program answered a tool call and said the call did not work — its own
+    #: refusal, in its own words. The call reached the tool and the tool said no, so the next move is
+    #: different arguments and not the same ones (E182).
+    TOOL = "tool"
     BUG = "bug"
 
     @classmethod
