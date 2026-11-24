@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import msgspec
 import tomlkit
+from composat import Declaration
 from msgspec import Struct
 from platformdirs import user_data_path
 from tomlkit.exceptions import ParseError
@@ -49,11 +50,13 @@ from plyngent.kernel.lm import codec_named
 from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.route import DEFAULT_TIMEOUT, ModelEntry, PrefixCache, Route, Routes, RouteWeb
 from plyngent.kernel.lm.thinking import said
+from plyngent.kernel.mcp.server import McpServer
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import DEFAULT_COUNT, Web
 from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
 from plyngent.kernel.paths import normalize
 from plyngent.kernel.prompt import PromptPlan
+from plyngent.kernel.providing import ToolSet
 from plyngent.kernel.pty.registry import (
     DEFAULT_MAX_PER_SESSION,
     DEFAULT_MAX_SESSIONS,
@@ -72,7 +75,6 @@ from plyngent.wire.event import PersistProblem
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from composat import Declaration
     from tomlkit.toml_document import TOMLDocument
 
     from plyngent.boot import Daemon, Installed
@@ -932,7 +934,7 @@ async def install(
         root,
         transport=transport,
         model=model,
-        components=(*components, *_plugin_declarations(settings)),
+        components=(*components, *_mcp_declarations(settings), *_plugin_declarations(settings)),
         **_from_the_file(root=root, settings=settings),
     )
 
@@ -953,7 +955,7 @@ async def serve(
     return await serve_kernel(
         endpoint=endpoint,
         model=model,
-        components=(*components, *_plugin_declarations(settings)),
+        components=(*components, *_mcp_declarations(settings), *_plugin_declarations(settings)),
         **_from_the_file(root=None, settings=settings),
     )
 
@@ -969,6 +971,36 @@ def _plugin_declarations(settings: Settings) -> tuple[Declaration, ...]:
         return plugins.installed(settings.plugins)
     except (plugins.UnknownPluginError, plugins.BrokenPluginError) as exc:
         raise ConfigError(str(exc), exc.causes) from exc
+
+
+def _mcp_declarations(settings: Settings) -> tuple[Declaration, ...]:
+    """The servers the file names, as one tool set each — the same door a plugin comes through (E182).
+
+    One set per server, because "/plugins" prints a row per set and that row is how a person learns where
+    a group came from: one set holding six servers would print one line for six of them, and ``origin``
+    is the file, since that is what named them. ``cwd`` empty is the directory this program was started
+    in, resolved here because the kernel is handed a place and never a "wherever I am".
+    """
+    origin = "" if settings.source is None else str(settings.source)
+    return tuple(
+        Declaration(
+            ToolSet,
+            instance=f"mcp-{one.name}",
+            kwargs={
+                "providers": (
+                    McpServer(
+                        name=one.name,
+                        argv=one.argv,
+                        cwd=Path.cwd() if one.cwd is None else one.cwd,
+                        env=one.env,
+                        severity=one.severity,
+                    ),
+                ),
+                "origin": origin,
+            },
+        )
+        for one in settings.mcp.servers
+    )
 
 
 def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, Any]:

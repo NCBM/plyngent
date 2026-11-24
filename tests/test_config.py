@@ -846,3 +846,24 @@ def test_a_server_name_that_could_not_be_half_of_a_tool_name_is_refused(tmp_path
 
     with pytest.raises(config.ConfigError, match="has no command"):
         _ = config.load(_written(tmp_path, '[[mcp.server]]\nname = "files"\ncommand = []\n', "empty.toml"))
+
+
+def test_the_servers_a_file_names_are_declared_beside_this_program_s_own(tmp_path: Path) -> None:
+    """Each server is one tool set, so "/plugins" says which file brought which group (E182).
+
+    One set per server and not one for all of them: the row a person reads names the group and where it
+    came from, and a single set holding six servers would print one line for six of them. The ``cwd`` an
+    empty row leaves out is the directory this program was started in, resolved at the door and never
+    inside the kernel.
+    """
+    settings = config.load(_written(tmp_path, SERVERS))
+
+    declared = config._mcp_declarations(settings)
+
+    assert [one.instance for one in declared] == ["mcp-files", "mcp-lookup"]
+    servers = [one.build().providers[0] for one in declared]
+    assert [one.name for one in servers] == ["files", "lookup"]
+    assert servers[1].cwd == tmp_path / "servers"
+    assert servers[0].cwd == Path.cwd(), "an empty cwd is where this program was started"
+    assert {one.kwargs["origin"] for one in declared} == {str(tmp_path / "config.toml")}
+    assert config._mcp_declarations(config.load(_written(tmp_path, "", "plain.toml"))) == ()
