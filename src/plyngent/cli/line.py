@@ -118,6 +118,14 @@ class LineEditor(Protocol):
         """Let the human write something longer than a line, and come back with what they wrote."""
         ...
 
+    def let_go(self) -> None:
+        """Take back whatever this editor is asking, because the question has been answered elsewhere.
+
+        Only a question is ever taken back: a line being typed is not one, and a client that has a second
+        place to ask is one whose question can be settled after it was put at the prompt (E180).
+        """
+        ...
+
 
 def answer_to(question: AnyAsk, line: Line) -> AnyAnswer | None:
     """What this line answers, or ``None`` when it did not answer the question at all.
@@ -348,6 +356,7 @@ class PromptEditor:
     _drawing: asyncio.Task[object] | None
     _gone: asyncio.Event | None
     _taken: bool
+    _asking: bool
     _buffer: str
     _restore: str
 
@@ -370,6 +379,7 @@ class PromptEditor:
         self._drawing = None
         self._gone = None
         self._taken = False
+        self._asking = False
         self._buffer = ""
         self._restore = ""
         self._prompt = PromptSession[str](
@@ -441,6 +451,20 @@ class PromptEditor:
             if not self._wanted:
                 _ = self._free.set()
 
+    def let_go(self) -> None:
+        """Take the question down, through the way out prompt_toolkit keeps for one.
+
+        The prompt leaves by its own exit, so the row it drew is the library's to finish: a read cancelled
+        from outside leaves that row standing, and the next thing written lands inside it. What comes back
+        is the answer a question gets when nobody was there to read it, and a caller that asked somewhere
+        else throws that answer away (E180).
+
+        Only a question is ever taken back. A line being typed is not one — a person typing is a person
+        who is here — and the check is the flag below, not the prompt's own state.
+        """
+        if self._asking and self._prompt.app.is_running:
+            self._prompt.app.exit(exception=EOFError())
+
     # -- taking the cursor ---------------------------------------------------------
 
     async def _take(self) -> str:
@@ -466,6 +490,7 @@ class PromptEditor:
         of answer that must never be written down is the one nobody can see being typed.
         """
         default, secret = _offer(question, taken)
+        self._asking = True
         try:
             with self._not_remembered():
                 text = await self._prompt.prompt_async(
@@ -477,6 +502,8 @@ class PromptEditor:
             return Cancelled()
         except EOFError:
             return EndOfInput()
+        finally:
+            self._asking = False
         return Typed(text)
 
     @contextmanager
@@ -555,6 +582,9 @@ class PlainEditor:
         """Everything left on the stream, since there is no editor here to open."""
         draft = (await asyncio.to_thread(self._stream.read)).strip()
         return Typed(draft) if draft else Cancelled()
+
+    def let_go(self) -> None:
+        """Nothing to take back: this lane draws no prompt, and a run with no prompt has no second place to ask."""
 
 
 def _as_line(text: str) -> Line:
