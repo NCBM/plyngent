@@ -331,7 +331,9 @@ class ToolExecutor:
         if turned_down is not None:
             return turned_down
         reads, writes = _locks(node.held)
-        env = Env(ctx, spec.uses, node.segments, tool=spec.name, tools=view, materialise=self._materialise)
+        env = Env(
+            ctx, spec.uses, node.segments, tool=spec.name, tools=view, materialise=self._materialise, dispatch=self
+        )
         try:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.

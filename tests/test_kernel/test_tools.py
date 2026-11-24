@@ -27,6 +27,7 @@ from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
+from plyngent.kernel.toolresult import ToolResult
 from plyngent.kernel.tools import fs, session
 from plyngent.kernel.toolspec import ArgsError, Res
 from plyngent.wire.ask import AskSite, Confirmation
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
     from plyngent.kernel.access import AccessMode
     from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.session import TurnCtx
 
 
@@ -82,6 +84,18 @@ _EVERYTHING = Res.PATHS | Res.EXEC | Res.PTY | Res.NET | Res.HUMAN | Res.HISTORY
 _VIEW = ToolCatalog().view(())
 
 
+class _Reacher:
+    """An executor as a tool sees it through :meth:`Env.dispatch`: what it was asked to run, and where."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str, tuple[str, ...]]] = []
+
+    async def one(self, ctx: object, name: str, arguments: str, *, segments: tuple[str, ...]) -> ToolResult:
+        _ = ctx
+        self.asked.append((name, arguments, segments))
+        return ToolResult.ok("ran it")
+
+
 def _env(root: Path, *, trash_enabled: bool = True) -> Env:
     """A call's world as the executor builds it, around a host, not around a turn."""
     host = Host(root, trash_enabled=trash_enabled)
@@ -111,6 +125,31 @@ async def test_a_call_inside_a_call_is_a_path_of_segments(tmp_path) -> None:
     _ = env.address("gate")
 
     assert ctx.places == [("tool-3", "s1", "gate"), ("tool-3", "s1", "gate")]
+
+
+async def test_reaching_another_call_is_declared_and_named_under_the_call_that_asks(tmp_path) -> None:
+    """A tool that runs other calls says so, and its steps are numbered under its own place (E190)."""
+    reacher = _Reacher()
+    env = Env(
+        cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))),
+        Res.TOOLS,
+        ("tool-1",),
+        tool="probe",
+        tools=_VIEW,
+        dispatch=cast("ToolExecutor", cast("object", reacher)),
+    )
+
+    answer = await env.dispatch("read", '{"path": "a.txt"}', step=2)
+
+    assert answer.summary == "ran it"
+    assert reacher.asked == [("read", '{"path": "a.txt"}', ("tool-1", "s2"))], (
+        "the executor is handed this call's place plus the step, so the row says which step it was"
+    )
+    narrow = Env(
+        cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, ("tool-1",), tool="probe", tools=_VIEW
+    )
+    with pytest.raises(AttributeError, match="dispatch"):
+        _ = await narrow.dispatch("read", "{}", step=1)
 
 
 async def test_a_wait_with_nobody_to_ask_still_sleeps(tmp_path: Path) -> None:

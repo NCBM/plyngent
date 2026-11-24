@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.client import Client
     from plyngent.kernel.documents import Documents
+    from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.net.policy import NetPolicy
     from plyngent.kernel.net.web import Engines
     from plyngent.kernel.providing import Brought
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.reads import Reads
     from plyngent.kernel.session import Session, TurnCtx
     from plyngent.kernel.skills import Skills
+    from plyngent.kernel.toolresult import ToolResult
     from plyngent.kernel.workspace import Workspace
     from plyngent.wire.ask import AnyAnswer, AnyAsk, AskSite
 
@@ -61,7 +63,7 @@ class Env:
     the call would be a second way to reach the same resources that no declaration is checked against.
     """
 
-    __slots__ = ("_ctx", "_materialise", "_segments", "_tool", "_tools", "_uses")
+    __slots__ = ("_ctx", "_dispatch", "_materialise", "_segments", "_tool", "_tools", "_uses")
 
     def __init__(
         self,
@@ -72,6 +74,7 @@ class Env:
         tool: str,
         tools: ToolView,
         materialise: Callable[[str], Awaitable[Brought]] | None = None,
+        dispatch: ToolExecutor | None = None,
     ) -> None:
         self._ctx = ctx
         self._uses = uses
@@ -89,6 +92,9 @@ class Env:
         #: is the process's and the view is this round's: what a call may ask *for* is not what it may
         #: reach (§10.4).
         self._materialise = materialise
+        #: What runs one call for a tool that runs other calls: the executor this environment was built
+        #: by, so a program's step goes through the same envelope as any other call (E190).
+        self._dispatch = dispatch
 
     # -- the address, which is not a resource --------------------------------------
 
@@ -236,6 +242,20 @@ class Env:
             msg = "materialise is not reachable from an environment built without a process table for it"
             raise AttributeError(msg)
         return await self._materialise(group)
+
+    async def dispatch(self, name: str, arguments: str, *, step: int) -> ToolResult:
+        """Run one call a program asked for, named as a step under this call. Granted by :attr:`Res.TOOLS`.
+
+        The one way a tool reaches another call of the same executor, so that a step goes through the same
+        envelope as a round's call — arguments read, paths held, locks taken, version kept — and nothing
+        about a call is implemented twice. It is declared for the reason every reach is: what a tool may do
+        is what it said it does, and a tool that runs programs says so (E190).
+        """
+        self._granted(Res.TOOLS, "dispatch")
+        if self._dispatch is None:
+            msg = "dispatch is not reachable from an environment built without an executor behind it"
+            raise AttributeError(msg)
+        return await self._dispatch.one(self._ctx, name, arguments, segments=(*self._segments, f"s{step}"))
 
     @property
     def engines(self) -> Engines:
