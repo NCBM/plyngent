@@ -126,7 +126,7 @@ def _script(where: Path, name: str, text: str) -> str:
 
 
 def _server(where: Path, script: str) -> McpServer:
-    """One server this test can start, speaking through a script instead of a package."""
+    """One server this test can start, speaking through a script written for it."""
     return McpServer(name="fake", argv=[sys.executable, script], cwd=where, env=dict(os.environ))
 
 

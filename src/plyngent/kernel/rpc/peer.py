@@ -181,7 +181,7 @@ class Peer:
     async def _write(self) -> None:
         """Everything this end says, in the order it was said, until there is nothing more.
 
-        One task and a queue rather than a lock around each write: the order messages leave in is then
+        One task and a queue, with no lock around a write: the order messages leave in is then
         the order they were queued in, which is what a protocol with ids is allowed to assume, and no
         caller can be interleaved into the middle of another one's bytes.
         """
@@ -199,7 +199,7 @@ class Peer:
     async def _read(self) -> None:
         """Every message the other end sends, until there are none.
 
-        A line that cannot be read ends the conversation instead of being skipped: nothing here can
+        A line that cannot be read ends the conversation and is never skipped: nothing here can
         tell a program that printed a debug line from one that is answering a different protocol, and
         carrying on would put an answer to the wrong question into somebody's result.
         """

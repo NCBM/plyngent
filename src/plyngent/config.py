@@ -721,7 +721,7 @@ def _notify(declared: NotifyFile | None) -> Notify:
 def _mcp(declared: McpFile | None, path: Path) -> Mcp:
     """The ``[mcp]`` table as the servers this program may ask, refusing the ones it cannot name.
 
-    Two refusals, and each is about a name rather than a setting: a server's name is the half of every
+    Two refusals, and each is about a name and not a setting: a server's name is the half of every
     tool name it brings, so a name holding ``__`` would make the tool say two servers where there is one,
     and two servers under one name would leave a tool call with no answer to "which one" (E182). A row
     with no command is refused here as well, because a server is a program and a program is arguments.

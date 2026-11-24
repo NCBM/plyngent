@@ -196,7 +196,7 @@ class Child:
 
 
 class _Tail:
-    """The end of a stream, kept as the last characters rather than as a file."""
+    """The end of a stream, kept as the last characters and not as a file."""
 
     most: int
     _text: str

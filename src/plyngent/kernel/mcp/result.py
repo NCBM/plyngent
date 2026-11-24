@@ -10,7 +10,7 @@ arguments, which is what a server means when it says its own tool refused (E182)
 
 **Everything the answer can carry as text is shown as text** — the parts the server wrote, and an
 embedded resource's own text under its uri. What is not text (a picture, a recording, a blob) is *said*
-rather than dropped: a model that is told the answer carried two images can ask for one to be kept,
+and never dropped: a model that is told the answer carried two images can ask for one to be kept,
 and a model that is shown nothing would report an empty answer as the truth.
 """
 

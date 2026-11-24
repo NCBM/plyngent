@@ -54,7 +54,7 @@ LAUNCH_SECONDS = 180.0
 #: How long one tool call may take before the round stops waiting for it.
 CALL_SECONDS = 120.0
 
-#: The executables that are a download-and-run rather than a program: named because the difference is
+#: The executables that are a download-and-run and not a program: named because the difference is
 #: in what they do the first time, and a name is all this end can see before it runs one.
 LAUNCHERS: frozenset[str] = frozenset({"npx", "pnpx", "bunx", "uvx", "pipx", "uv"})
 

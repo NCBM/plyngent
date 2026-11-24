@@ -65,7 +65,7 @@ def named(server: str, tool: str) -> str:
 def specs(server: str, listed: Iterable[Mapping[str, Any]], *, severity: Severity, runs: Runs) -> tuple[ToolSpec, ...]:
     """One page of a server's listing, as the tools this kernel can offer.
 
-    ``severity`` is the level the file gave this server, and it is stated on every spec rather than
+    ``severity`` is the level the file gave this server, and it is stated on every spec and never
     derived: what a tool reaches for says nothing here — the program behind the name is somebody
     else's, and what it touches is exactly what this build cannot see (E182).
     """
@@ -76,7 +76,7 @@ def spec_of(server: str, one: Mapping[str, Any], *, severity: Severity, run: Run
     """One listed tool as a spec: its own schema, its own words, and the level the file gave it.
 
     A tool with no name, or one whose name is not a string, cannot be asked for at all — :func:`specs`
-    leaves it out rather than failing the whole group, because a server that lists one bad row is still
+    leaves it out and does not fail the whole group, because a server that lists one bad row is still
     a server whose other tools work.
     """
     tool = str(one["name"])
