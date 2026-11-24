@@ -707,6 +707,52 @@ def test_how_far_a_chain_may_go_is_three_numbers_and_zero_is_one_of_them(tmp_pat
         _ = config.load(_written(tmp_path, "[turn]\ngoal_depth = -1\n", "negative.toml"))
 
 
+def test_the_notify_table_is_three_answers_and_the_key_left_out_is_whatever_this_build_can_do(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``[notify]`` is a frontend's table, and its switch has three answers (E180).
+
+    ``true`` is a person asking, ``false`` is a person refusing, and a file that says nothing about it is a
+    client doing what its own install can: which of the two that is, is the client's answer, because the
+    client is the half with a surface. The two numbers are a grace and a spacing, and a spacing of zero is
+    a real answer — every question said out loud as soon as its grace is over.
+    """
+    monkeypatch.setattr(config, "find_spec", lambda name: object())
+    plain = config.load(_written(tmp_path, "", "none.toml"))
+
+    assert plain.notify.enabled is None, "a file that is silent leaves the answer to the client"
+    assert (plain.notify.grace_seconds, plain.notify.min_interval_seconds) == (10.0, 30.0)
+
+    chosen = config.load(
+        _written(tmp_path, "[notify]\nenabled = true\ngrace_seconds = 2.5\nmin_interval_seconds = 0\n", "mine.toml")
+    )
+
+    assert chosen.notify.enabled is True
+    assert (chosen.notify.grace_seconds, chosen.notify.min_interval_seconds) == (2.5, 0.0)
+    assert config.load(_written(tmp_path, "[notify]\nenabled = false\n", "off.toml")).notify.enabled is False
+    with pytest.raises(config.ConfigError):
+        _ = config.load(_written(tmp_path, "[notify]\ngrace_seconds = 0\n", "no-grace.toml"))
+
+
+def test_asking_for_notifications_an_install_cannot_give_is_refused_where_the_file_is_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A file that says ``enabled = true`` on an install without the extra is one this program will not start with.
+
+    It is the one place the two halves' facts meet before a kernel exists: the person wrote what they want,
+    the machine says what it has, and a program that started anyway would spend every question saying
+    nothing and pretending it had. ``false`` and the key left out are both readable here, so nothing about
+    an install without the extra is broken by it (E180).
+    """
+    monkeypatch.setattr(config, "find_spec", lambda name: None)
+
+    with pytest.raises(config.ConfigError, match="plyngent\\[notify\\]"):
+        _ = config.load(_written(tmp_path, "[notify]\nenabled = true\n", "on.toml"))
+
+    assert config.load(_written(tmp_path, "[notify]\nenabled = false\n", "off.toml")).notify.enabled is False
+    assert config.load(_written(tmp_path, "", "silent.toml")).notify.enabled is None
+
+
 def test_the_sandbox_is_two_lists_and_its_commands_only_ever_get_longer(tmp_path: Path) -> None:
     """`[sandbox]` is the first real caller of ``WorkspaceConfig``, and `[trash]` of the host's flag (E160)."""
     plain = config.load(_written(tmp_path, "", "none.toml"))

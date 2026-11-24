@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import dataclass, field, replace
+from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -79,6 +80,15 @@ if TYPE_CHECKING:
 
 #: What the file is called under the user's data directory — the same root the journals live in.
 CONFIG_FILE = "config.toml"
+
+#: The module the ``notify`` extra installs, checked by name because it is a fact about this machine and
+#: not about the file: a person who wrote ``enabled = true`` asked for something this build may not have.
+NOTIFY_MODULE = "desktop_notifier"
+
+#: How long a question waits at the prompt before it is also said out loud, and how soon a second one may
+#: follow. Both are seconds, and both are what a program nobody configured gets (E180).
+DEFAULT_NOTIFY_GRACE = 10.0
+DEFAULT_NOTIFY_INTERVAL = 30.0
 
 
 class ConfigError(Exception):
@@ -163,6 +173,26 @@ class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
     goals: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_GOALS
     depth: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_DEPTH
     goal_depth: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_GOAL_DEPTH
+
+
+class NotifyFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[notify]``: whether a question is worth saying out loud, and how often (E180).
+
+    ``enabled`` holds three answers because two of them are not the same fact: ``true`` is a person
+    asking for notifications, ``false`` is a person refusing them, and the key left out is "whatever
+    this build can do" — a machine with the extra installed announces, and one without never learns
+    that it was an option. Asking for it where the extra is absent is refused where the file is read:
+    a program that was told to announce and cannot would be lying about itself at the start.
+
+    ``grace_seconds`` is how long a question stands at the prompt before it is also said elsewhere, and
+    ``min_interval_seconds`` is how soon a second one may follow. A burst of questions is answered by
+    the one the person is already looking at: the rest are suppressed while it is fresh, and never
+    queued for later.
+    """
+
+    enabled: bool | None = None
+    grace_seconds: Annotated[float, msgspec.Meta(gt=0)] = DEFAULT_NOTIFY_GRACE
+    min_interval_seconds: Annotated[float, msgspec.Meta(ge=0)] = DEFAULT_NOTIFY_INTERVAL
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -276,11 +306,26 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     skills: SkillsFile | None = None
     pty: PtyFile | None = None
     turn: TurnFile | None = None
+    notify: NotifyFile | None = None
     sandbox: SandboxFile | None = None
     trash: TrashFile | None = None
     journal: JournalFile | None = None
     plugins: PluginsFile | None = None
     web: WebFile | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Notify:
+    """``[notify]`` as the three answers a frontend needs, with the tri-state kept (E180).
+
+    ``enabled`` is not resolved here, because "whatever this build can do" is a fact about the surface a
+    client puts a question on, and the client is the half that has one. A kernel that has no frontend in
+    front of it reads this value and does nothing with it.
+    """
+
+    enabled: bool | None = None
+    grace_seconds: float = DEFAULT_NOTIFY_GRACE
+    min_interval_seconds: float = DEFAULT_NOTIFY_INTERVAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +354,9 @@ class Settings:
     goals: int = DEFAULT_GOALS
     depth: int = DEFAULT_DEPTH
     goal_depth: int = DEFAULT_GOAL_DEPTH
+    #: What this program says out loud about a question nobody is sitting in front of, and how often — a
+    #: frontend's own table, read there and nowhere in the kernel (E180).
+    notify: Notify = field(default_factory=Notify)
     sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     trash: bool = True
     journal: Path | None = None
@@ -563,6 +611,7 @@ def _settings(
         goals=turn.goals,
         depth=turn.depth,
         goal_depth=turn.goal_depth,
+        notify=_notify(parsed.notify),
         sandbox=WorkspaceConfig(
             path_denylist=sandbox.path_denylist,
             command_denylist=DEFAULT_COMMAND_DENYLIST | frozenset(sandbox.command_denylist),
@@ -574,6 +623,29 @@ def _settings(
         document=document,
         source=path,
         text=text,
+    )
+
+
+def _notify(declared: NotifyFile | None) -> Notify:
+    """The ``[notify]`` table as a frontend reads it, refusing the one thing this build cannot do.
+
+    ``enabled = true`` is a person asking, and a machine without the extra has nothing to give them: the
+    sentence names the install that would, because a program that announces nothing while its file says
+    it should is a program whose file stopped meaning anything (E180). The other two answers are always
+    readable — ``false`` is a person who said no, and the key left out is resolved by the client, which
+    is the half that knows what surface it has.
+    """
+    said = NotifyFile() if declared is None else declared
+    if said.enabled is True and find_spec(NOTIFY_MODULE) is None:
+        msg = (
+            "[notify].enabled asks for desktop notifications, which this install does not have; "
+            "install the notify extra: plyngent[notify]"
+        )
+        raise ConfigError(msg)
+    return Notify(
+        enabled=said.enabled,
+        grace_seconds=said.grace_seconds,
+        min_interval_seconds=said.min_interval_seconds,
     )
 
 
