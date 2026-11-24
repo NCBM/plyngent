@@ -21,14 +21,18 @@ every refusal here. The numbers are the ones the kernel's own program returns (E
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 from platformdirs import user_data_path
 
+from plyngent import boot
 from plyngent.kernel.journal import label_of, workspace_dir
 
 if TYPE_CHECKING:
@@ -43,6 +47,26 @@ FAILED = 1
 #: Which schema version has the table that says what a conversation has carried (E186).
 WEIGHED = 3
 
+#: The line beside a ledger that says what was let go of it, and what that gave back (E186).
+LOG = "gc.log"
+
+
+@dataclass(frozen=True, slots=True)
+class _Gone:
+    """One conversation that may be let go, and what letting it go would free (E186)."""
+
+    session: str
+    rows: int
+    documents: int
+    bytes: int
+    tokens: int
+    at: str
+
+    def line(self) -> str:
+        """The line a person reads about it: what it is called, what it holds, and when it was last used."""
+        said = f"{self.session}  {self.rows} rows  {self.documents} documents  {self.tokens} tokens"
+        return f"{said}  last written {self.at}"
+
 
 class _Desk:
     """The data directory this run is about, and the three questions a ledger answers.
@@ -52,9 +76,11 @@ class _Desk:
     """
 
     data: Path
+    force: bool
 
-    def __init__(self, data: Path) -> None:
+    def __init__(self, data: Path, *, force: bool = False) -> None:
         self.data = data
+        self.force = force
 
     def ledgers(self) -> tuple[Path, ...]:
         """Every ledger directory under this data directory, sorted by name, without opening any of them."""
@@ -67,6 +93,17 @@ class _Desk:
         """Where the ledger of *root* keeps its journal under this data directory."""
         return workspace_dir(root, data=self.data) / "journal.db"
 
+    def may_write(self) -> None:
+        """Refuse to write while a kernel is answering, because two writers of one ledger is not a thing
+        an offline program can do safely (E185).
+
+        The question is asked of this person's own address, which is where a kernel serving these ledgers
+        would be. Nothing is asked of an address that is not there: no kernel, no lease to take.
+        """
+        if self.force or not _answering(boot.endpoint_for()):
+            return
+        _stop(f"a kernel is answering at {boot.endpoint_for()}; say --force to work on the ledgers anyway")
+
 
 @click.group()
 @click.option(
@@ -76,10 +113,11 @@ class _Desk:
     default=None,
     help="the directory whose ledgers to work on",
 )
+@click.option("--force", is_flag=True, help="work on the ledgers even though a kernel is answering")
 @click.pass_context
-def main(ctx: click.Context, data: Path | None) -> None:
+def main(ctx: click.Context, data: Path | None, *, force: bool) -> None:
     """Read, and where it is asked to, rewrite the ledgers under one data directory."""
-    ctx.obj = _Desk(DEFAULT_DATA if data is None else data)
+    ctx.obj = _Desk(DEFAULT_DATA if data is None else data, force=force)
 
 
 @main.command("workspaces")
@@ -114,6 +152,211 @@ def sessions(desk: _Desk, root: Path) -> None:
         _stop(f"no ledger for {root}: nothing has opened that tree with this data directory")
     for row in _weighed(journal):
         click.echo(row)
+
+
+@main.command("gc")
+@click.option(
+    "--older-than",
+    "older_than",
+    default="7d",
+    show_default=True,
+    help="how long a conversation must have been left alone, as in 7d, 12h or 30m",
+)
+@click.option(
+    "--bigger-than",
+    "bigger_than",
+    type=int,
+    default=None,
+    help="tokens a conversation must have carried, in place of the window the kernel prunes at",
+)
+@click.option("--apply", is_flag=True, help="delete what is found, which cannot be undone")
+@click.pass_obj
+def gc(desk: _Desk, older_than: str, bigger_than: int | None, *, apply: bool) -> None:
+    """Find, and with ``--apply`` let go, the conversations nobody has used in a while (E186).
+
+    Two facts, and the second is what makes the first worth asking: how long ago a conversation was last
+    written to, and how much it has carried — the window a kernel prunes at, unless a number is given. A
+    conversation nothing has ever written about is not a candidate, because nothing is known about it.
+
+    Nothing is deleted without ``--apply``, and a deletion is not reversible: the rows and the documents go,
+    the space is given back, and what was done is written down beside the ledger.
+    """
+    horizon = datetime.now(UTC) - _duration(older_than)
+    if apply:
+        desk.may_write()
+    found = False
+    for ledger in desk.ledgers():
+        journal = ledger / "journal.db"
+        if not journal.exists():
+            continue
+        root = label_of(ledger) or ledger.name
+        gone = _candidates(journal, horizon=horizon, bigger=bigger_than)
+        if not gone:
+            continue
+        found = True
+        for one in gone:
+            click.echo(f"{root}  {one.line()}")
+        if not apply:
+            click.echo(f"{root}  nothing was deleted; say --apply to let {len(gone)} go")
+            continue
+        _let_go(journal, gone, root=root)
+    if not found:
+        click.echo(f"nothing to let go under {desk.data}")
+
+
+def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tuple[_Gone, ...]:
+    """The conversations of one ledger that are idle enough and large enough, with what each would free."""
+    with closing(_read_only(journal)) as db:
+        if _version(db) < WEIGHED:
+            return ()
+        rows = dict(_counted(db, WEIGHED))
+        documents = _documents_of(journal)
+        found: list[_Gone] = []
+        for session, at, live, aside, room in _weights(db):
+            when = _instant(at)
+            carried = live + aside
+            line = room if bigger is None else bigger
+            if when is None or when > horizon or line <= 0 or carried < line:
+                continue
+            found.append(
+                _Gone(
+                    session=session,
+                    rows=rows.get(session, 0),
+                    documents=documents.get(session, (0, 0))[0],
+                    bytes=documents.get(session, (0, 0))[1],
+                    tokens=carried,
+                    at=at,
+                )
+            )
+        return tuple(found)
+
+
+def _let_go(journal: Path, gone: tuple[_Gone, ...], *, root: str) -> None:
+    """Delete what was found, reclaim the room, and write down what was done (E186).
+
+    The order is the promise: the rows go, the file is made to give the space back, and the line is written
+    last — a log entry about a deletion that did not happen would be the one thing here nobody could check.
+    A space that cannot be reclaimed is said as the pair of facts it is: the rows are gone, the bytes are
+    still on disk.
+    """
+    reason = _unclean(journal)
+    if reason:
+        click.echo(f"{root}  left alone: {reason}", err=True)
+        return
+    before = journal.stat().st_size
+    _deleted(journal, gone)
+    _reclaimed(journal)
+    after = journal.stat().st_size
+    for one in gone:
+        _logged(journal, f"{_now()}  {root}  {one.line()}")
+    _logged(journal, f"{_now()}  {root}  {before - after} bytes given back")
+    click.echo(f"{root}  let {len(gone)} go, and gave back {before - after} bytes")
+
+
+def _deleted(journal: Path, gone: tuple[_Gone, ...]) -> None:
+    """Take the rows of these conversations out of every table a kernel keeps them in, and their documents."""
+    with closing(sqlite3.connect(journal)) as db:
+        for one in gone:
+            for table in ("entry", "turn_no", "projection", "checkpoint", "weight"):
+                _ = db.execute(f"DELETE FROM {table} WHERE session = ?", (one.session,))
+        db.commit()
+    beside = journal.parent / "documents.db"
+    if not beside.exists():
+        return
+    with closing(sqlite3.connect(beside)) as db:
+        for one in gone:
+            _ = db.execute("DELETE FROM document WHERE session = ?", (one.session,))
+        db.commit()
+
+
+def _reclaimed(journal: Path) -> None:
+    """Make the file give back the space its rows no longer need (E186).
+
+    ``VACUUM`` needs room the size of the database itself, and a machine without it says so: the rows are
+    already gone, and this is the half that can fail without having broken anything.
+    """
+    with closing(sqlite3.connect(journal)) as db:
+        db.isolation_level = None
+        try:
+            _ = db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            _ = db.execute("VACUUM")
+        except sqlite3.OperationalError as exc:
+            click.echo(f"the rows are gone, and the space is still on disk: {exc}", err=True)
+
+
+def _logged(journal: Path, line: str) -> None:
+    """Write one line about what happened to this ledger, where a person can find it afterwards (E186)."""
+    with (journal.parent / LOG).open("a", encoding="utf-8") as said:
+        _ = said.write(f"{line}\n")
+
+
+def _weights(db: sqlite3.Connection) -> tuple[tuple[str, str, int, int, int], ...]:
+    """Every conversation's weight in one ledger, in the order they were last written to."""
+    rows = db.execute("SELECT session, at, live, aside, room FROM weight ORDER BY at, session").fetchall()
+    return tuple((str(row[0]), str(row[1]), int(row[2]), int(row[3]), int(row[4])) for row in rows)
+
+
+def _documents_of(journal: Path) -> dict[str, tuple[int, int]]:
+    """How many documents each conversation holds beside this journal, and how many bytes they are."""
+    beside = journal.parent / "documents.db"
+    if not beside.exists():
+        return {}
+    with closing(_read_only(beside)) as db:
+        rows = db.execute(
+            "SELECT session, COUNT(id), COALESCE(SUM(LENGTH(content)), 0) FROM document GROUP BY session"
+        ).fetchall()
+    return {str(row[0]): (int(row[1]), int(row[2])) for row in rows}
+
+
+def _instant(said: str) -> datetime | None:
+    """The moment a weight row says, or ``None`` when it says something this build cannot read."""
+    try:
+        return datetime.fromisoformat(said)
+    except ValueError:
+        return None
+
+
+_DURATIONS = {"s": 1, "m": 60, "h": 3_600, "d": 86_400}
+
+
+def _duration(said: str) -> timedelta:
+    """How long ``7d`` means, refusing anything that is not a number and one of four units."""
+    number, unit = said[:-1], said[-1:]
+    if not number.isdigit() or unit not in _DURATIONS:
+        why = f"{said!r} is not a length of time: give a number and one of s, m, h, d"
+        raise click.BadParameter(why)
+    return timedelta(seconds=int(number) * _DURATIONS[unit])
+
+
+def _answering(endpoint: Path) -> bool:
+    """Whether a kernel is answering at *endpoint* right now (E185)."""
+    if not endpoint.exists():
+        return False
+    return asyncio.run(_pinged(endpoint))
+
+
+async def _pinged(endpoint: Path) -> bool:
+    """Ask an address whether a kernel is behind it, and say goodbye before answering (E185)."""
+    try:
+        link = await boot.connect(str(endpoint), declare=False)
+    except boot.NoKernelError, OSError:
+        return False
+    link.close()
+    await link.finished()
+    return True
+
+
+def _unclean(journal: Path) -> str:
+    """Why this ledger may not be written to as it stands, or the empty string (E185)."""
+    beside = journal.with_name(journal.name + "-wal")
+    if beside.exists() and beside.stat().st_size:
+        return f"{beside.name} is not empty, so this store was left mid-write or somebody has it open"
+    return ""
+
+
+def _now() -> str:
+    """The instant a line is written, spelled the way a weight row spells one (E186)."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _weighed(journal: Path) -> Iterator[str]:

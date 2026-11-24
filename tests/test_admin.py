@@ -13,16 +13,18 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
-from plyngent import boot
+from plyngent import admin, boot
 from plyngent.admin import FAILED, main
+from plyngent.kernel.documents import Documents
 from plyngent.kernel.journal import MIGRATIONS, SqliteTrail, label, label_of, workspace_dir
 from plyngent.kernel.model import User
 from plyngent.kernel.trail import BY_BUDGET, Withheld
 
 
-async def _ledger(data: Path, root: Path, *, weigh: bool = True) -> Path:
+async def _ledger(data: Path, root: Path, *, weigh: bool = True, room: int = 8000) -> Path:
     """A ledger for *root* under *data*, holding a conversation, as a kernel would have left one."""
     root.mkdir(parents=True, exist_ok=True)
     journal = workspace_dir(root, data=data) / "journal.db"
@@ -33,11 +35,49 @@ async def _ledger(data: Path, root: Path, *, weigh: bool = True) -> Path:
         _ = await trail.append("s1", Withheld(targets=(said.id,), reason="budget", by=BY_BUDGET), begin_after=said.id)
         await trail.admitted("s2")
         if weigh:
-            await trail.weighed("s1", live=1200, room=8000)
+            await trail.weighed("s1", live=1200, room=room)
     finally:
         await trail.close()
     label(journal.parent, root)
     return journal
+
+
+async def _kept(journal: Path, session: str) -> None:
+    """One document a conversation put aside, in the store that lives beside its journal."""
+    store = Documents(journal.parent / "documents.db")
+    await store.open()
+    try:
+        _ = await store.put(session, "the text nobody is going to ask for", summary="a note")
+    finally:
+        await store.close()
+
+
+def _aged(journal: Path, session: str, said: str) -> None:
+    """Move one conversation's last use into the past, which is the only clock this program reads (E186)."""
+    with closing(sqlite3.connect(journal)) as db:
+        _ = db.execute("UPDATE weight SET at = ? WHERE session = ?", (said, session))
+        db.commit()
+
+
+def _rows(journal: Path, session: str) -> int:
+    """How many rows one conversation has in a ledger."""
+    with closing(sqlite3.connect(journal)) as db:
+        return int(db.execute("SELECT COUNT(id) FROM entry WHERE session = ?", (session,)).fetchone()[0])
+
+
+def _documents(journal: Path, session: str) -> int:
+    """How many documents one conversation holds beside its journal."""
+    beside = journal.parent / "documents.db"
+    if not beside.exists():
+        return 0
+    with closing(sqlite3.connect(beside)) as db:
+        return int(db.execute("SELECT COUNT(id) FROM document WHERE session = ?", (session,)).fetchone()[0])
+
+
+def _logged(journal: Path) -> tuple[str, ...]:
+    """What was written down beside this ledger about what was let go of it."""
+    found = journal.parent / "gc.log"
+    return () if not found.exists() else tuple(found.read_text(encoding="utf-8").splitlines())
 
 
 def _ran(*argv: str) -> tuple[int, str]:
@@ -190,3 +230,120 @@ async def test_a_tree_that_moved_is_not_the_ledger_it_left_behind(tmp_path: Path
 
     assert code == FAILED
     assert str(tmp_path / "elsewhere") in said
+
+
+async def test_a_conversation_nobody_has_used_is_reported_and_kept(tmp_path: Path) -> None:
+    """The default is a report: a deletion nobody can undo is not decided by a flag left out (E186).
+
+    What a person reads is what it would free — the rows, the documents, the tokens it carried — and the
+    ledger still holds every one of them.
+    """
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=1000)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+
+    code, said = _ran("--data-dir", str(data), "gc")
+
+    assert code == 0, said
+    assert "s1  2 rows" in said and "last written 2020-01-01T00:00:00Z" in said, said
+    assert "nothing was deleted; say --apply to let 1 go" in said, said
+    assert _rows(journal, "s1") == 2
+    assert _logged(journal) == (), "and nothing was written down, because nothing happened"
+
+
+async def test_apply_lets_a_conversation_go_and_writes_down_what_it_did(tmp_path: Path) -> None:
+    """``--apply`` deletes the rows and the documents, gives the room back, and leaves a line about it.
+
+    The line comes last, so it cannot describe a deletion that did not happen (E186).
+    """
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=1000)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+    await _kept(journal, "s1")
+    assert _documents(journal, "s1") == 1
+
+    code, said = _ran("--data-dir", str(data), "gc", "--apply")
+
+    assert code == 0, said
+    assert "let 1 go, and gave back" in said, said
+    assert _rows(journal, "s1") == 0, "every table that named it is done with it"
+    assert _documents(journal, "s1") == 0, "and the documents went with it"
+    lines = _logged(journal)
+    assert any("s1" in line and "2020-01-01T00:00:00Z" in line for line in lines), lines
+    assert any("bytes given back" in line for line in lines), lines
+
+
+async def test_a_conversation_used_just_now_is_not_a_candidate(tmp_path: Path) -> None:
+    """The clock is the one the kernel wrote, and what it says about the last week is the whole criterion."""
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=1000)
+
+    code, said = _ran("--data-dir", str(data), "gc", "--older-than", "1h")
+
+    assert code == 0, said
+    assert "nothing to let go" in said, "written to a moment ago, so it is in use"
+    assert _rows(journal, "s1") == 2
+
+
+async def test_a_conversation_whose_route_never_said_a_window_needs_a_number(tmp_path: Path) -> None:
+    """``room = 0`` is "this route never said how much it holds", so there is no line to be over (E186).
+
+    A number given on the command line takes the place of that line, which is the only way such a
+    conversation can be weighed at all.
+    """
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=0)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+
+    code, said = _ran("--data-dir", str(data), "gc")
+    assert code == 0, said
+    assert "nothing to let go" in said, "nothing here can say how big it is"
+
+    code, said = _ran("--data-dir", str(data), "gc", "--bigger-than", "1000")
+    assert code == 0, said
+    assert "s1  2 rows" in said, "and a number given here is the line it is measured by"
+
+
+def test_a_length_of_time_that_is_not_one_is_a_usage_error(tmp_path: Path) -> None:
+    """``--older-than 7`` is a question this program cannot turn into a moment, and click says so."""
+    code, said = _ran("--data-dir", str(tmp_path), "gc", "--older-than", "7")
+
+    assert code == 2
+    assert "not a length of time" in said
+
+
+async def test_a_kernel_that_is_answering_keeps_the_ledgers_to_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two writers of one ledger is the one thing an offline program cannot do (E185).
+
+    ``--force`` is the person saying they know: the program then works on the files anyway, which is the
+    state a machine is in when a kernel was killed rather than stopped.
+    """
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=1000)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+    monkeypatch.setattr(admin, "_answering", lambda endpoint: True)
+
+    code, said = _ran("--data-dir", str(data), "gc", "--apply")
+    assert code == FAILED
+    assert "--force" in said, said
+    assert _rows(journal, "s1") == 2, "and nothing was deleted"
+
+    code, said = _ran("--data-dir", str(data), "--force", "gc", "--apply")
+    assert code == 0, said
+    assert _rows(journal, "s1") == 0
+
+
+async def test_a_ledger_left_mid_write_is_left_alone(tmp_path: Path) -> None:
+    """A write-ahead log with anything in it is a store somebody has open, or one that died mid-write."""
+    data = tmp_path / "data"
+    journal = await _ledger(data, tmp_path / "tree", room=1000)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+    (journal.parent / "journal.db-wal").write_bytes(b"not empty")
+
+    code, said = _ran("--data-dir", str(data), "gc", "--apply")
+
+    assert code == 0, said
+    assert "left alone" in said and "not empty" in said, said
+    assert _rows(journal, "s1") == 2
