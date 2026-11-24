@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.kernel.access import AccessMode
-    from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.cancel import Scope, Segments
     from plyngent.kernel.session import TurnCtx
 
     type Run = Callable[[Env, object], Awaitable[ToolResult]]
@@ -172,9 +172,9 @@ def _holding(name: str, run: Run) -> ToolSpec:
     return ToolSpec(name=name, group=Group.FS, args=_PathArgs, run=run, uses=Res.PATHS, roles={"path": Role.READ})
 
 
-def _asked(address: str, tool: str, path: str) -> tuple[str, Call]:
+def _asked(address: str, tool: str, path: str) -> tuple[Segments, Call]:
     """One call as a turn hands it over: its address, and what the model asked for."""
-    return address, Call(id=address, tool=tool, arguments=json.dumps({"path": path}))
+    return (address,), Call(id=address, tool=tool, arguments=json.dumps({"path": path}))
 
 
 async def test_two_calls_that_read_different_files_are_in_their_handlers_together(tmp_path) -> None:
@@ -300,7 +300,7 @@ async def test_a_program_that_cannot_say_what_it_wrote_is_swept(tmp_path) -> Non
     )
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
     executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
-    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "build"})))
+    asked = (("tool-1",), Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "build"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])
 
@@ -337,7 +337,7 @@ async def test_a_tree_too_big_to_compare_says_so_instead_of_saying_nothing(tmp_p
     monkeypatch.setattr("plyngent.kernel.executor.SWEEP_PATHS", 1)
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
     executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
-    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "run"})))
+    asked = (("tool-1",), Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "run"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])
 
@@ -364,7 +364,7 @@ async def test_a_program_that_changed_nothing_is_not_a_version(tmp_path) -> None
     )
     store = History(tmp_path, tmp_path.parent / f"{tmp_path.name}-history.git")
     executor = ToolExecutor(ToolTable(ToolCatalog([spec])))
-    asked = ("tool-1", Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "list"})))
+    asked = (("tool-1",), Call(id="tool-1", tool="execute", arguments=json.dumps({"path": "x", "intention": "list"})))
 
     results = await executor.batch(_ctx(tmp_path, history=store), [asked])
 

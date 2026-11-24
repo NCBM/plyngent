@@ -396,7 +396,7 @@ class TurnRunner:
                     severity=Severity.ROUTINE,
                 ),
                 tool="",
-                call="rounds",
+                call=("rounds",),
             )
         )
         match answer.value:
@@ -427,7 +427,7 @@ class TurnRunner:
             await ctx.ask(
                 Confirmation(prompt="keep this in the main conversation?", default=False, severity=Severity.CONFIRM),
                 tool="",
-                call="aside",
+                call=("aside",),
             )
         )
         if not agreed.accepted:
@@ -1134,10 +1134,15 @@ class TurnRunner:
         entry = await trail.append(ctx.session.session_id, payload, begin_after=state.cursor, turn=ctx.turn_id)
         return replace(state, cursor=entry.id)
 
-    def _addressing(self) -> str:
-        """The segment of the turn's scope the next call is named by — ``tool-1``, ``tool-2``, …."""
+    def _addressing(self) -> tuple[str, ...]:
+        """The segments the next call is named by — ``("tool-1",)``, ``("tool-2",)``, ….
+
+        A tuple, because a call's place is a path and not a word: a program's step is named inside the
+        call that runs the program (``tool-3/s1``), and being segments is what lets it be addressed at all
+        — a cancellation segment may not hold a slash (E190).
+        """
         self._calls += 1
-        return f"tool-{self._calls}"
+        return (f"tool-{self._calls}",)
 
     def _emit(self, event: AnyEvent) -> None:
         """Say something outward through the host's human channel, whether or not anybody is attached."""

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
     from pathlib import Path
 
-    from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.cancel import Scope, Segments
     from plyngent.kernel.catalog import ToolView
     from plyngent.kernel.client import Client
     from plyngent.kernel.documents import Documents
@@ -61,13 +61,13 @@ class Env:
     the call would be a second way to reach the same resources that no declaration is checked against.
     """
 
-    __slots__ = ("_call", "_ctx", "_materialise", "_tool", "_tools", "_uses")
+    __slots__ = ("_ctx", "_materialise", "_segments", "_tool", "_tools", "_uses")
 
     def __init__(
         self,
         ctx: TurnCtx,
         uses: Res,
-        call: str,
+        segments: Segments,
         *,
         tool: str,
         tools: ToolView,
@@ -75,8 +75,10 @@ class Env:
     ) -> None:
         self._ctx = ctx
         self._uses = uses
-        #: This call's segment of the turn's address — ``tool-1`` in ``3/r0/tool-1/proc-0``.
-        self._call = call
+        #: This call's place in the turn's address, as its segments — ``("tool-1",)``, and ``("tool-3", "s1")``
+        #: for one step of a program. Segments and not one string, because a cancellation segment may hold no
+        #: slash, and being a path is what lets a step be addressed under the call that runs it (E190).
+        self._segments = segments
         #: The tool being run, which is what a question asked from here is recorded under: "somebody
         #: asked" is not an audit until it says who.
         self._tool = tool
@@ -126,7 +128,7 @@ class Env:
 
     def scope(self, *segments: str) -> Scope:
         """The cancellation handle for one piece of work under this call."""
-        return self._ctx.scope(self._call, *segments)
+        return self._ctx.scope(*self._segments, *segments)
 
     def address(self, *segments: str) -> AskSite:
         """Where something asked from here belongs: under this call, under this turn.
@@ -135,11 +137,11 @@ class Env:
         question to a person (:meth:`ask`) and a call to a client — so both are put where the call is
         and neither can guess.
         """
-        return self._ctx.site(self._call, *segments)
+        return self._ctx.site(*self._segments, *segments)
 
     @override
     def __repr__(self) -> str:
-        return f"Env({self._call}, {self._uses})"
+        return f"Env({'/'.join(self._segments)}, {self._uses})"
 
     # -- what the declaration grants -----------------------------------------------
 
@@ -307,7 +309,7 @@ class Env:
         """
         if not self._uses & ASKING:
             self._refused("ask", ASKING)
-        return await self._ctx.ask(question, tool=self._tool, call=self._call, at=at)
+        return await self._ctx.ask(question, tool=self._tool, call=self._segments, at=at)
 
     @property
     def client(self) -> Client:

@@ -29,7 +29,7 @@ from plyngent.kernel.failure import Failure
 from plyngent.kernel.host import Host
 from plyngent.kernel.tools import fs, session
 from plyngent.kernel.toolspec import ArgsError, Res
-from plyngent.wire.ask import Confirmation
+from plyngent.wire.ask import AskSite, Confirmation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,13 +57,21 @@ class _Ctx:
 
     ``scope`` is one that nothing ever cancels, because none of these tests is about a stop: what a
     call hands to a thread is the work's own business, and the answer is all that is read here.
+    ``places`` is every address this call asked to be put under, as the segments it passed, because a
+    segment is what a test can check and the joined path it would become is not.
     """
 
     host: Host
     session: _Session = field(default_factory=_Session)
+    places: list[tuple[str, ...]] = field(default_factory=list)
 
     def scope(self, *segments: str) -> Scope:
+        self.places.append(segments)
         return CancelToken().at(*segments)
+
+    def site(self, *segments: str) -> AskSite:
+        self.places.append(segments)
+        return AskSite(session=self.session.session_id, turn=1, scope="/".join(("1", "r0", *segments)))
 
 
 #: What these tests let a call reach: everything, because each test is about a tool's behaviour rather
@@ -77,17 +85,32 @@ _VIEW = ToolCatalog().view(())
 def _env(root: Path, *, trash_enabled: bool = True) -> Env:
     """A call's world as the executor builds it, around a host, not around a turn."""
     host = Host(root, trash_enabled=trash_enabled)
-    return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW)
+    return Env(cast("TurnCtx", cast("object", _Ctx(host))), _EVERYTHING, ("tool-1",), tool="probe", tools=_VIEW)
 
 
 async def test_a_handler_reaches_only_what_its_tool_declared(tmp_path) -> None:
-    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, "tool-1", tool="probe", tools=_VIEW)
+    env = Env(cast("TurnCtx", cast("object", _Ctx(Host(tmp_path)))), Res.PATHS, ("tool-1",), tool="probe", tools=_VIEW)
 
     assert env.workspace.root == tmp_path.resolve(), "a declared resource answers"
     with pytest.raises(AttributeError, match="pty"):
         _ = env.pty
     with pytest.raises(AttributeError, match="ask"):
         _ = await env.ask(Confirmation(prompt="anything?"))
+
+
+async def test_a_call_inside_a_call_is_a_path_of_segments(tmp_path) -> None:
+    """A program's step is named ``tool-3/s1``, and it is addressed as two segments (E190).
+
+    One string would be a segment holding a slash, which a cancellation address refuses: the step could
+    then not be cancelled under the call that runs the program, which is the one thing naming it is for.
+    """
+    ctx = _Ctx(Host(tmp_path))
+    env = Env(cast("TurnCtx", cast("object", ctx)), _EVERYTHING, ("tool-3", "s1"), tool="probe", tools=_VIEW)
+
+    _ = env.scope("gate")
+    _ = env.address("gate")
+
+    assert ctx.places == [("tool-3", "s1", "gate"), ("tool-3", "s1", "gate")]
 
 
 async def test_a_wait_with_nobody_to_ask_still_sleeps(tmp_path: Path) -> None:

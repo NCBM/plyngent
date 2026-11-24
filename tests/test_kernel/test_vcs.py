@@ -80,7 +80,7 @@ _VIEW = ToolCatalog().view(())
 def _env(root: Path) -> Env:
     host = _Host(Workspace(root), NoSink())
     return Env(
-        cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW
+        cast("TurnCtx", cast("object", _Ctx(host, CancelToken()))), _EVERYTHING, ("tool-1",), tool="probe", tools=_VIEW
     )
 
 

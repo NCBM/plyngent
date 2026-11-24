@@ -16,7 +16,7 @@ import pytest
 from composat import Assembly, Component, ComponentKey, ComponentRegistry, Declaration
 from composat.std.root import ancestors, answering_from_the_root
 
-from plyngent.kernel.cancel import CancelToken, Scope
+from plyngent.kernel.cancel import CancelToken, Scope, Segments
 from plyngent.kernel.catalog import ToolCatalog
 from plyngent.kernel.env import Env
 from plyngent.kernel.events import Human, NoSink
@@ -73,9 +73,9 @@ class _Ctx:
     def site(self, *segments: str) -> AskSite:
         return AskSite(session=self.session.session_id, turn=1, scope="/".join(("1", "r0", *segments)))
 
-    async def ask(self, question: AnyAsk, *, tool: str, call: str = "", at: str = "") -> AnyAnswer:
+    async def ask(self, question: AnyAsk, *, tool: str, call: Segments = (), at: str = "") -> AnyAnswer:
         """Put the question to this host's channel: what a turn does, without a journal to write to."""
-        return await self.host.human.put(question, site=self.site(*(part for part in (call, at) if part)))
+        return await self.host.human.put(question, site=self.site(*call, *((at,) if at else ())))
 
 
 #: Everything a call may reach: these tests are about what a tool does, not about what it declared.
@@ -93,7 +93,7 @@ def _env(root: Path, registry: PtyRegistry, *, human: Human | None = None) -> En
         human=human if human is not None else NoSink(),
     )
     return Env(
-        cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, "tool-1", tool="probe", tools=_VIEW
+        cast("TurnCtx", cast("object", _Ctx(host, _Session()))), _EVERYTHING, ("tool-1",), tool="probe", tools=_VIEW
     )
 
 

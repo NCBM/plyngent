@@ -224,6 +224,12 @@ class CancelToken:
             _ = self._running.pop(scope, None)
 
 
+#: One place in a turn's address, as its segments: a call is ``("tool-1",)``, and one step of a program is
+#: ``("tool-3", "s1")``. Segments and not one string, because a cancellation segment may hold no slash, and
+#: a path of them is what lets a step be addressed under the call that runs the program (E190).
+type Segments = tuple[str, ...]
+
+
 @final
 @dataclass(frozen=True, slots=True)
 class Scope:

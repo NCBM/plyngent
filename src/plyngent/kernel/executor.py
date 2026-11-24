@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
     from pathlib import Path
 
-    from plyngent.kernel.cancel import Scope
+    from plyngent.kernel.cancel import Scope, Segments
     from plyngent.kernel.catalog import ToolCatalog, ToolTable, ToolView
     from plyngent.kernel.model import Call
     from plyngent.kernel.providing import Brought
@@ -133,7 +133,10 @@ class Held:
 class _Call:
     """One call of a batch, as the schedule sees it: what it touches, what it waits for, what came out."""
 
-    call: str
+    #: This call's place, as the segments of the turn's address: ``("tool-3",)``, and ``("tool-3", "s1")``
+    #: for one step of a program. Being segments is what lets a step be cancelled under the call that runs
+    #: the program, since a cancellation segment may hold no slash (E190).
+    segments: Segments
     name: str
     spec: ToolSpec | None
     args: object
@@ -149,6 +152,11 @@ class _Call:
     after: set[int] = field(default_factory=set)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     result: ToolResult | None = None
+
+    @property
+    def call(self) -> str:
+        """This call's place as one address (``tool-1``, ``tool-3/s1``): what events and rows name it by."""
+        return "/".join(self.segments)
 
     @property
     def runs(self) -> bool:
@@ -180,13 +188,13 @@ class ToolExecutor:
         self._table = table
         self._materialise = materialise
 
-    async def batch(self, ctx: TurnCtx, calls: Sequence[tuple[str, Call]]) -> tuple[ToolResult, ...]:
+    async def batch(self, ctx: TurnCtx, calls: Sequence[tuple[Segments, Call]]) -> tuple[ToolResult, ...]:
         """Run one answer's calls as far in parallel as the paths they hold allow.
 
-        ``calls`` are ``(address, call)`` pairs in the order the model asked for them, and the answers come
+        ``calls`` are ``(segments, call)`` pairs in the order the model asked for them, and the answers come
         back in that order whatever order they finished in: an answer's results are part of the history,
-        and two runs of one script have to write the same history. ``address`` is this call's segment of
-        the turn's scope (``tool-1``) — the turn knows how many calls it has made — and the same segment is
+        and two runs of one script have to write the same history. ``segments`` is this call's place in the
+        turn's scope (``("tool-1",)``) — the turn knows how many calls it has made — and the same place is
         what a frontend pairs :class:`~plyngent.wire.event.ToolCalled` with
         :class:`~plyngent.wire.event.ToolReturned` by.
 
@@ -297,7 +305,7 @@ class ToolExecutor:
         if turned_down is not None:
             return turned_down
         reads, writes = _locks(node.held)
-        env = Env(ctx, spec.uses, node.call, tool=spec.name, tools=view, materialise=self._materialise)
+        env = Env(ctx, spec.uses, node.segments, tool=spec.name, tools=view, materialise=self._materialise)
         try:
             # The lock is the host's, so this is where two turns in two conversations agree about one file
             # — the graph above only orders the calls of a single answer.
@@ -387,7 +395,7 @@ class ToolExecutor:
             await ctx.ask(
                 Confirmation(prompt=question, severity=asking.severity),
                 tool=spec.name,
-                call=node.call,
+                call=node.segments,
                 at="approve",
             )
         )
@@ -500,7 +508,9 @@ def _paths(ctx: TurnCtx, spec: ToolSpec, args: object) -> tuple[tuple[Held, ...]
     return tuple(held), refused
 
 
-def _prepared(ctx: TurnCtx, catalog: ToolCatalog, view: ToolView, calls: Sequence[tuple[str, Call]]) -> list[_Call]:
+def _prepared(
+    ctx: TurnCtx, catalog: ToolCatalog, view: ToolView, calls: Sequence[tuple[Segments, Call]]
+) -> list[_Call]:
     """Read every call of one answer before any of them runs.
 
     A batch has to be decoded as a whole, because what a call will touch is inside its arguments and the
@@ -517,10 +527,10 @@ def _prepared(ctx: TurnCtx, catalog: ToolCatalog, view: ToolView, calls: Sequenc
         spec = view.get(call.tool)
         if spec is None:
             unanswered = _unreachable(catalog, call.tool)
-            nodes.append(_Call(call=address, name=call.tool, spec=None, args=None, refusal=unanswered))
+            nodes.append(_Call(segments=address, name=call.tool, spec=None, args=None, refusal=unanswered))
             continue
         args, refusal = _read(spec, call.arguments)
-        node = _Call(call=address, name=call.tool, spec=spec, args=args, refusal=refusal, raw=call.arguments)
+        node = _Call(segments=address, name=call.tool, spec=spec, args=args, refusal=refusal, raw=call.arguments)
         if args is not None:
             node.held, node.refused = _paths(ctx, spec, args)
         nodes.append(node)

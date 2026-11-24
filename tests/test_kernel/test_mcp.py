@@ -146,7 +146,7 @@ def _env(root: Path) -> Env:
     """A call's world as the executor builds it, around a host, not around a turn."""
     host = _Host(Documents(root / "documents.db"))
     ctx = cast("TurnCtx", cast("object", _Ctx(host)))
-    return Env(ctx, _EVERYTHING, "tool-1", tool="probe", tools=ToolCatalog().view(()))
+    return Env(ctx, _EVERYTHING, ("tool-1",), tool="probe", tools=ToolCatalog().view(()))
 
 
 def _script(where: Path, name: str, text: str) -> str:
