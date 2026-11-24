@@ -21,13 +21,26 @@ is somebody who is elsewhere (E180).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from functools import partial
+from importlib.util import find_spec
 from typing import TYPE_CHECKING, Protocol
 
 from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Picked, Secret, Selection, Written
 
 if TYPE_CHECKING:
+    from desktop_notifier import DesktopNotifier
+
     from plyngent.wire.ask import AnyAnswer, AnyAsk
+
+#: The module the ``notify`` extra installs: an optional dependency, so its absence is an answer and not a
+#: broken install. The file may also be refused for it, where somebody wrote that they wanted it (E180).
+NOTIFY_MODULE = "desktop_notifier"
+
+#: What the desktop calls this program: the title on every notice, and the name the service files them
+#: under, so several runs of it are one application to the person reading them.
+APP = "plyngent"
 
 #: The two words a press on a yes-or-no question carries, in the vocabulary of a line that answers one.
 YES = "y"
@@ -71,8 +84,12 @@ class Surface(Protocol):
         """Put one question out there, and come back with the word that answered it — or ``None``."""
         ...
 
-    async def withdraw(self) -> None:
-        """Take back whatever is still showing, because the question has been answered or has expired."""
+    def withdraw(self) -> None:
+        """Take back whatever is still showing, because the question has been answered or has expired.
+
+        A plain call and not a coroutine, because the loop calls it while it may be unwinding a
+        cancellation — the one moment nothing may wait on anything (E180).
+        """
         ...
 
 
@@ -155,3 +172,101 @@ class Announcements:
 def _listed(prompt: str, options: tuple[str, ...]) -> str:
     """One question with its options written into it, for a notice that has nothing to press."""
     return prompt if not options else f"{prompt}\n{', '.join(options)}"
+
+
+def available() -> bool:
+    """Whether this install has a way to put a question on the desktop.
+
+    The extra is optional, so ``False`` is an ordinary answer and not a broken install: a client without
+    it answers at the prompt, exactly as every run before this one did (E180).
+    """
+    return find_spec(NOTIFY_MODULE) is not None
+
+
+class Desktop:
+    """The desktop's own notifications, behind the two verbs, and nothing else.
+
+    One notice stands at a time, which is the whole state: announcing replaces what is showing, a press
+    comes back through the future the button's callback completes, and taking it back clears it by the
+    identifier the library gave out.
+
+    The library is imported, and its backend brought up, on the *first* announcement: a machine with no
+    notification service is a machine whose client answers at the prompt, and a surface that cannot be
+    built says nothing rather than failing a turn somebody was waiting on (E180).
+    """
+
+    _notifier: DesktopNotifier | None
+    _shown: str | None
+    _silent: bool
+    _clearing: set[asyncio.Task[None]]
+
+    def __init__(self) -> None:
+        self._notifier = None
+        self._shown = None
+        self._silent = False
+        self._clearing = set()
+
+    async def announce(self, told: Wording) -> str | None:
+        """Post one question, and wait for the button that answers it — ``None`` when none can come back."""
+        try:
+            return await self._saying(told)
+        except Exception:  # noqa: BLE001 — a desktop that cannot be reached is a client that asks at the prompt
+            return None
+
+    def withdraw(self) -> None:
+        """Clear what is showing, if anything is — off the loop, because this is called on the way out."""
+        shown, self._shown = self._shown, None
+        if shown is None or self._notifier is None:
+            return
+        clearing = asyncio.create_task(self._cleared(self._notifier, shown))
+        self._clearing.add(clearing)
+        clearing.add_done_callback(self._clearing.discard)
+
+    async def _saying(self, told: Wording) -> str | None:
+        """One notification, with the buttons and the reply box this platform can carry back."""
+        from desktop_notifier import Button, Capability, ReplyField
+
+        notifier = self._built()
+        if notifier is None:
+            return None
+        caps = await notifier.get_capabilities()
+        pressed: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+        def press(value: str) -> None:
+            """Record what was pressed, once: a second press on a notice that is going away is not news."""
+            if not pressed.done():
+                pressed.set_result(value)
+
+        buttons = (
+            [Button(title=one.label, on_pressed=partial(press, one.value)) for one in told.choices]
+            if told.choices and Capability.BUTTONS in caps
+            else []
+        )
+        reply = (
+            ReplyField(title="answer", button_title="send", on_replied=press)
+            if told.reply and Capability.REPLY_FIELD in caps
+            else None
+        )
+        self._shown = await notifier.send(title=APP, message=told.body, buttons=buttons, reply_field=reply)
+        if not buttons and reply is None:
+            return None
+        return await pressed
+
+    def _built(self) -> DesktopNotifier | None:
+        """The library's notifier, built once; ``None`` for a machine that has no notification service."""
+        if self._notifier is None and not self._silent:
+            from desktop_notifier import DesktopNotifier
+
+            try:
+                self._notifier = DesktopNotifier(app_name=APP)
+            except Exception:  # noqa: BLE001 — no service to talk to is a client that answers at the prompt
+                self._silent = True
+                return None
+        return self._notifier
+
+    async def _cleared(self, notifier: DesktopNotifier, shown: str) -> None:
+        """Clear one notification, where a desktop that has gone away is not this turn's problem."""
+        try:
+            await notifier.clear(shown)
+        except Exception:  # noqa: BLE001 — a notice nobody can clear is one the desktop will expire itself
+            return

@@ -97,7 +97,9 @@ class KernelManifest(Struct, frozen=True, kw_only=True):
     #: The reads, beside the commands: a person asking "which paths may this reach" is one question
     #: whether it is asked with a slash word or a button (E155).
     queries: tuple[QuerySpec, ...] = ()
-    #: What this build can do — "pty", "notify", "client-offer", … Read by the client, never by a turn.
+    #: What this build can do — "pty", "client-offer", … Read by the client, never by a turn. What a
+    #: *frontend* can do is not here: the kernel promises nothing about a desktop or a keyboard, because
+    #: those are the client's own (E180).
     caps: tuple[str, ...] = ()
     ack_interval: float = DEFAULT_ACK_INTERVAL
     dead_after: float = DEFAULT_DEAD_AFTER

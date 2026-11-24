@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
     from typing import TextIO
 
+    from plyngent.cli.announce import Announcements
     from plyngent.cli.policy import Policy
     from plyngent.config import Settings
     from plyngent.kernel.connection import Connection
@@ -141,6 +142,14 @@ class ScriptedHuman:
         """What they wrote in the editor `/submit` opened."""
         return await self.drafts.get()
 
+    def let_go(self) -> None:
+        """Take the question back, the way a terminal's prompt comes down when it is answered elsewhere.
+
+        A real prompt leaves through prompt_toolkit's own exit, which lands here as the answer a question
+        gets when nobody was there; this stand-in says the same thing by handing itself that line (E180).
+        """
+        self.answers.put_nowait(EndOfInput())
+
 
 class Story:
     """One run of the program: the connection, the screen in front, and the human between.
@@ -172,6 +181,7 @@ class Story:
         model: Model | None = None,
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
+        announce: Announcements | None = None,
         markdown: bool = False,
         mark: Path | None = None,
         profile: Path | None = None,
@@ -203,6 +213,7 @@ class Story:
             workspace=workspace_label(str(self.workspace)),
             tools=tools,
             policy=policy,
+            announce=announce,
             markdown=markdown,
             mark=mark,
             profile=profile,
@@ -242,6 +253,7 @@ class Story:
         deadline: float | None = None,
         grades: Grades | None = None,
         policy: Policy | None = None,
+        announce: Announcements | None = None,
         markdown: bool = False,
         mark: Path | None = None,
         once: str | None = None,
@@ -363,6 +375,7 @@ class Story:
             model=model,
             tools=tools,
             policy=policy,
+            announce=announce,
             markdown=markdown,
             mark=mark,
             profile=profile,

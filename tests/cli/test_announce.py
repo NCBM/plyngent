@@ -19,7 +19,7 @@ class _Silent:
     async def announce(self, told: Wording) -> str | None:
         raise AssertionError("the rules do not announce anything")
 
-    async def withdraw(self) -> None:
+    def withdraw(self) -> None:
         raise AssertionError("nothing was announced, so nothing is taken back")
 
 

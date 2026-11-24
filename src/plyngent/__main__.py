@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import click
 
 from plyngent import boot, config, plugins
+from plyngent.cli.announce import Announcements, Desktop, available
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
@@ -337,6 +338,7 @@ async def _serve(
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
+            notify=settings.notify,
             once=once,
         )
     # The single run is the one shape whose tree is decided before there is a connection: "I am working
@@ -353,6 +355,7 @@ async def _serve(
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
+            notify=settings.notify,
             once=once,
         )
     finally:
@@ -367,6 +370,7 @@ async def _connected(
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
+    notify: config.Notify,
     once: str | None,
 ) -> int:
     """Talk to a kernel somebody else is serving, over the one address they named (``--connect``).
@@ -391,6 +395,7 @@ async def _connected(
             no_colour=no_colour,
             no_diff=no_diff,
             policy=policy,
+            notify=notify,
             once=once,
         )
     finally:
@@ -467,6 +472,7 @@ async def _talk(
     no_colour: bool,
     no_diff: bool,
     policy: Policy,
+    notify: config.Notify,
     once: str | None = None,
 ) -> int:
     """Be this program in front of one connection: the loop, the editor, and the screen (§0.13).
@@ -478,8 +484,17 @@ async def _talk(
     ``address`` and ``workspace`` are what the reading mark is filed under, and they are the caller's
     because only the caller knows them: a run that reached a kernel at an address files its mark by that
     address and the tree it chose, and a run that *is* the kernel has neither (E154, §5 B).
+
+    ``notify`` is the ``[notify]`` table, and it is read here because this is where a frontend is built:
+    a question nobody answers at the prompt is put where the person may be, when this run has a terminal
+    in front of it to have lost them from (E180).
     """
     catalog = build(client.manifest, session=session)
+    # A pipe has nobody to ask, and ``-p`` asked for one message and no questions: both are a run that
+    # must not wait for an answer, so the model it asks for is the one it remembers or none at all
+    # (E172). The same fact decides whether a question can be put anywhere else either: a run with no
+    # prompt has no second place to lose the person from (E180).
+    interactive = not _plain(sys.stdin) and once is None
     app = App(
         client,
         session=session,
@@ -489,19 +504,34 @@ async def _talk(
         err=sys.stderr,
         workspace=workspace_label(str(workspace)),
         policy=policy,
+        announce=_announcements(notify) if interactive else None,
         colour=_colour(asked=no_colour, stream=sys.stdout),
         markdown=_markdown(reading=sys.stdin, written=sys.stdout),
         diff=not no_diff,
         mark=mark_path(session, address=address, workspace=str(workspace)),
         profile=profile_path(),
         choosing=True,
-        # A pipe has nobody to ask, and ``-p`` asked for one message and no questions: both are a run
-        # that must not wait for an answer, so the model it asks for is the one it remembers or none at
-        # all (E172).
-        interactive=not _plain(sys.stdin) and once is None,
+        interactive=interactive,
         once=once,
     )
     return await app.run()
+
+
+def _announcements(notify: config.Notify) -> Announcements | None:
+    """Where this client puts a question nobody answered, or ``None`` when it has nowhere to put one.
+
+    The table's third answer is resolved here, where the surface is: a key left out is "whatever this
+    build can do", which is a desktop when the extra is installed and nothing at all otherwise. A person
+    who wrote ``false`` gets nothing even where the extra is there, and one who wrote ``true`` was already
+    told at the file that this install cannot announce (E180).
+    """
+    if notify.enabled is False or not available():
+        return None
+    return Announcements(
+        surface=Desktop(),
+        grace_seconds=notify.grace_seconds,
+        min_interval_seconds=notify.min_interval_seconds,
+    )
 
 
 def _address(asked: Path | str) -> Path:

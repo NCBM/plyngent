@@ -39,7 +39,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import signal
+import time
 from collections import deque
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -57,7 +59,7 @@ from plyngent.cli.profile import read as read_profile
 from plyngent.cli.profile import write as write_profile
 from plyngent.cli.render import Stage, held, notice, unfinished
 from plyngent.cli.screen import Screen
-from plyngent.wire.ask import Picked, Selection, unanswered
+from plyngent.wire.ask import Agreed, Picked, Selection, Written, unanswered
 from plyngent.wire.command import (
     Cancel,
     CloseWorkspace,
@@ -80,6 +82,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TextIO
 
+    from plyngent.cli.announce import Announcements
     from plyngent.cli.line import Line, LineEditor
     from plyngent.wire.ask import AnyAnswer, AnyAsk
     from plyngent.wire.command import AnyCommand
@@ -143,8 +146,10 @@ class App:
     catalog: Catalog
     tools: ClientTools
     policy: Policy
+    announce: Announcements | None
     _screen: Screen
     _tally: Tally
+    _spoken: float | None
     _leaving: asyncio.Event
     _cursor: str | None
     _listings: deque[_Asked]
@@ -166,6 +171,7 @@ class App:
         workspace: str = "",
         tools: ClientTools = TERMINAL,
         policy: Policy | None = None,
+        announce: Announcements | None = None,
         colour: bool = False,
         markdown: bool = False,
         diff: bool = True,
@@ -199,6 +205,12 @@ class App:
         # frontend's own: the kernel asks and is answered, and never learns which of the two answered.
         self.policy = Policy() if policy is None else policy
         self._tally = Tally()
+        # Where a question goes when nobody answers at the prompt, or ``None`` when this run has no second
+        # place to put one — a pipe, a script, or a build with no desktop (§0.15, E180). When this client
+        # last announced anything is its own clock reading, because how often it may speak is a fact about
+        # this frontend and reaches no kernel.
+        self.announce = announce
+        self._spoken = None
         # One screen, two streams: where they go is the caller's answer — a story points both at its own
         # buffers (E90) — and who may write through them while a prompt stands is the screen's (E91).
         # Whether an answer may be laid out as markdown and grown in place is the caller's answer too, and
@@ -463,11 +475,90 @@ class App:
             await self._screen.tell(notice(self.policy.said(answered)))
             return answered.reply(question)
         if question.timeout is None:
-            return await self.editor.ask(question)
+            return await self._waiting(question)
         try:
-            return await asyncio.wait_for(self.editor.ask(question), question.timeout)
+            return await asyncio.wait_for(self._waiting(question), question.timeout)
         except TimeoutError:
             return unanswered(question)
+
+    async def _waiting(self, question: AnyAsk) -> AnyAnswer:
+        """One question, put in every place this client has, and the first answer to it is the answer.
+
+        A person in front of the terminal answers at the prompt, and that is the only place to look for
+        the whole of this client's grace — so nothing is said out loud until then, and nobody in front of
+        the machine ever sees a notice. A question that is not worth announcing is just the prompt, which
+        is what every run without a surface has anyway (E180).
+
+        A press that came back from elsewhere takes the prompt down before it is believed: the loser of
+        this race is settled here, in the order a person would see it, and no row is left standing.
+        """
+        announce = self.announce
+        if announce is None or not self._speaks(announce, question):
+            return await self.editor.ask(question)
+        here = asyncio.create_task(self.editor.ask(question))
+        there = asyncio.create_task(self._elsewhere(announce, question))
+        try:
+            done, _ = await asyncio.wait({here, there}, return_when=asyncio.FIRST_COMPLETED)
+            if here in done:
+                return here.result()
+            said = there.result()
+            if said is None:
+                return await here
+            self.editor.let_go()
+            _ = await here
+            await self._screen.tell(notice(self._notified(said)))
+            return said
+        finally:
+            # Taking back what is showing is the first thing done here, and the reason is the shape of a
+            # cancellation: a notice left up for a question that has been answered is worse than no notice
+            # at all, and this is the one step that must happen even when this call is being cancelled.
+            announce.surface.withdraw()
+            for task in (here, there):
+                _ = task.cancel()
+            _ = await asyncio.gather(here, there, return_exceptions=True)
+
+    async def _elsewhere(self, announce: Announcements, question: AnyAsk) -> AnyAnswer | None:
+        """Say the question out loud after the grace, and wait for a press when one can come back.
+
+        ``None`` is "nothing came of it": a platform with no buttons shows the notice and is done, and one
+        whose notice was taken back never answers at all. The prompt has been waiting the whole time, so
+        the question is not lost — it is back to the one place it started in.
+        """
+        await asyncio.sleep(announce.grace_seconds)
+        told = announce.words(question)
+        if told is None:
+            return None
+        said = await announce.surface.announce(told)
+        return None if said is None else announce.answered(question, said)
+
+    def _speaks(self, announce: Announcements, question: AnyAsk) -> bool:
+        """Whether this question is said out loud, and if it is, note the moment for the next one.
+
+        The spacing rule is the only part of this that needs a clock, and the clock is this frontend's:
+        nothing about when a desktop buzzed reaches the kernel, which sees one question and one answer
+        (E180).
+        """
+        now = time.monotonic()
+        since = math.inf if self._spoken is None else now - self._spoken
+        if not announce.speaks(question, since=since):
+            return False
+        self._spoken = now
+        return True
+
+    def _notified(self, answer: AnyAnswer) -> str:
+        """The line an answer from elsewhere leaves: where it came from, and what it was.
+
+        This is the writer's own row and not the account of a policy — a policy answers *instead of* the
+        person, and this is the person, somewhere else. It says which question is settled and with what,
+        on one row, because the notices stream is one row per thing that happened (E180).
+        """
+        match answer:
+            case Agreed(accepted=accepted):
+                return f"notified: {'yes' if accepted else 'no'}"
+            case Picked(value=value):
+                return f"notified: {value or 'nothing'}"
+            case Written(text=text):
+                return f"notified: {' '.join((text or '').split()) or 'an empty line'}"
 
     async def _invocations(self) -> None:
         """Run what the kernel asks this client's tools for, one at a time, and answer each one.

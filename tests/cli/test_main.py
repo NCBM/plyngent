@@ -15,8 +15,10 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from plyngent.__main__ import _address, _brought, _editor, _markdown, _tree_of, main
+from plyngent import config
+from plyngent.__main__ import _address, _announcements, _brought, _editor, _markdown, _tree_of, main
 from plyngent.boot import endpoint_for
+from plyngent.cli.announce import Desktop
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
 from plyngent.kernel.providing import ToolSet
@@ -134,6 +136,30 @@ def test_a_run_with_a_terminal_is_asked_which_tree_it_means(tmp_path: Path, monk
     assert offered == [[str(tmp_path.resolve()), str(elsewhere), "nothing"]], (
         "this directory, the trees the kernel named, or nothing at all"
     )
+
+
+def test_a_question_is_put_elsewhere_only_where_this_run_has_somewhere_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``[notify]`` has three answers and the third is read here, where the surface is (E180).
+
+    A key left out is "whatever this build can do": a desktop when the extra is installed, and nothing at
+    all otherwise. A person who wrote ``false`` gets nothing even where the extra is there, and the numbers
+    the rules were given are the file's own.
+    """
+    said = config.Notify(grace_seconds=2.0, min_interval_seconds=7.0)
+    monkeypatch.setattr("plyngent.__main__.available", lambda: True)
+
+    chosen = _announcements(said)
+
+    assert chosen is not None
+    assert (chosen.grace_seconds, chosen.min_interval_seconds) == (2.0, 7.0)
+    assert isinstance(chosen.surface, Desktop)
+    assert _announcements(config.Notify(enabled=False)) is None, "a person who said no is answered with nothing"
+
+    monkeypatch.setattr("plyngent.__main__.available", lambda: False)
+
+    assert _announcements(said) is None, "and a build with no extra has nowhere to put a question either"
 
 
 def test_an_address_a_run_named_is_the_one_it_serves_on() -> None:

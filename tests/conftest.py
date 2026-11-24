@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from composat import Declaration
 
+    from plyngent.cli.announce import Announcements
     from plyngent.cli.offers import ClientTools
     from plyngent.cli.policy import Policy
     from plyngent.config import Settings
@@ -143,6 +144,7 @@ async def story_with(tmp_path, transport):
         deadline: float | None = None,
         grades: Grades | None = None,
         policy: Policy | None = None,
+        announce: Announcements | None = None,
         markdown: bool = False,
         mark: Path | None = None,
         once: str | None = None,
@@ -178,6 +180,7 @@ async def story_with(tmp_path, transport):
             deadline=deadline,
             grades=grades,
             policy=policy,
+            announce=announce,
             markdown=markdown,
             mark=mark,
             once=once,
