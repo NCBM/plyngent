@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import shlex
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.access import AccessMode
 from plyngent.kernel.cancel import Cancelled
+from plyngent.kernel.command_scan import code_of, unwrap_command
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.paths import display
 from plyngent.kernel.process import Batch, Execution, Failfast, FromFile, Ran, validate
@@ -189,26 +190,34 @@ def _reached(args: ExecuteArgs) -> tuple[Reach, ...]:
     These two are the paths the gate resolves for a node as well, so the walk here and the walk there see
     the same nodes, and a path that is locked and approved is a path the command will really use (§10.12).
 
+    The third is the script an interpreter is given: the file it will read is a file this call reads, so it
+    is held the same way and named the way the gate will open it — from the directory the node runs in,
+    which is why the walk carries that down (E191).
+
     Nothing is resolved here: these are the values as the model spelled them, and the executor resolves
     them the way it resolves every other declared path.
     """
     reached: list[Reach] = []
-    for node in _nodes(args.steps):
+    for node, here in _walk(args.steps, args.cwd):
         if isinstance(node.stdin, FromFile):
             reached.append(Reach(value=node.stdin.path, role=Role.READ))
         if isinstance(node.pipe, str):
             reached.append(Reach(value=node.pipe, role=Role.WRITE))
+        script = code_of(unwrap_command(node.argv).command).path
+        if script:
+            reached.append(Reach(value=str(PurePosixPath(here) / script), role=Role.READ))
     return tuple(reached)
 
 
-def _nodes(steps: Sequence[Execution]) -> Iterator[Execution]:
-    """Every node of a tree, in the order the model wrote them: a command, then what follows it."""
+def _walk(steps: Sequence[Execution], cwd: str) -> Iterator[tuple[Execution, str]]:
+    """Every node of a tree, in the order the model wrote them, with the directory it runs in."""
     for node in steps:
-        yield node
-        yield from _nodes(node.then)
-        yield from _nodes(node.else_)
+        here = str(PurePosixPath(cwd) / node.cwd) if node.cwd else cwd
+        yield node, here
+        yield from _walk(node.then, here)
+        yield from _walk(node.else_, here)
         if isinstance(node.pipe, Execution):
-            yield from _nodes((node.pipe,))
+            yield from _walk((node.pipe,), here)
 
 
 EXECUTE = ToolSpec(

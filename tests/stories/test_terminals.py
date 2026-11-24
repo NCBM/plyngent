@@ -72,15 +72,15 @@ async def test_a_program_on_a_terminal_is_written_to_and_read_back(story_with: S
     (_, first, second, written, read, closed) = story.requests()
     opened, used = _session_id(first), _session_id(second)
     assert used != opened, "two terminals were opened, so neither number is the only one that could work"
-    asked = (
-        f"run {shlex.join(shell)} on a terminal? "
-        f"sh runs code given on its own command line, and this build does not read that code: {shell[-1]}"
-    )
+    asked = f"run {shlex.join(shell)} on a terminal? sh runs code given on its own command line, and its code is below"
     assert [question.prompt for question in story.questions()] == [
         asked,
         asked,
         f"change PTY session {used}, which is still running?",
-    ], "the two shells are asked about as code this build does not read, and the write once"
+    ], "the two shells are asked about as code, and the write once"
+    assert [question.executable_code for question in story.questions()][:2] == [shell[-1], shell[-1]], (
+        "what the shell will read is in the question, so the person reads the program they allow"
+    )
     assert told(written) == (f"wrote 6 chars to session {used}\nsession_id={used}\nwrote=6 chars"), (
         "the write reaches the terminal it named, in the line and in the fields"
     )

@@ -3,8 +3,9 @@ from __future__ import annotations
 import base64
 
 from plyngent.kernel.command_scan import (
+    Code,
     basename,
-    dash_c_code,
+    code_of,
     escalators_in_chain,
     git_is_irreversible,
     is_interpreter,
@@ -223,8 +224,34 @@ def test_unwrap_remote_command_still_reviews_what_runs() -> None:
     """The remote slice is parsed like a local command (code, escalation)."""
     scan = unwrap_command(["ssh", "prod", "bash", "-c", "rm -rf /"])
     assert scan.base == "bash"
-    assert dash_c_code(scan.command) == (1, "rm -rf /")
+    assert code_of(scan.command).text == "rm -rf /"
     assert escalators_in_chain(["ssh", "prod", "sudo", "rm", "-rf", "/"]) == ("sudo",)
+
+
+def test_the_code_an_interpreter_runs_is_found_past_its_own_options() -> None:
+    """Which options eat the next argument is a table per family, so the first free position is the script."""
+    assert code_of(("python", "-W", "ignore", "run.py")) == Code(path="run.py")
+    assert code_of(("python3.12", "run.py")) == Code(path="run.py")
+    assert code_of(("bash", "-o", "pipefail", "deploy.sh")) == Code(path="deploy.sh")
+    assert code_of(("php", "-f", "page.php")) == Code(path="page.php"), "a script named by an option is a script"
+    assert code_of(("python", "-q", "run.py")).says, "an option this build does not know stops the walk"
+
+
+def test_the_code_an_interpreter_carries_on_its_line_is_the_code() -> None:
+    assert code_of(("bash", "-c", "echo hi")) == Code(text="echo hi")
+    assert code_of(("node", "-e", "process.exit()")) == Code(text="process.exit()")
+    assert code_of(("ruby", "-I", "lib", "-e", "puts 1")) == Code(text="puts 1")
+
+
+def test_an_interpreter_that_reads_its_program_from_its_input_says_so() -> None:
+    for command in (("python",), ("python", "-"), ("python", "--")):
+        assert code_of(command) == Code(stdin=True), "the program is not on this line at all"
+
+
+def test_a_module_or_a_family_this_build_does_not_read_is_said_and_not_guessed() -> None:
+    module = code_of(("python", "-m", "json.tool"))
+    assert module.says == "its code is the module 'json.tool', which is not a file in this workspace"
+    assert code_of(("julia", "run.jl")) == Code(), "a family with no table answers nothing, and claims nothing"
 
 
 def test_a_shell_switch_that_carries_a_command_line_is_collected() -> None:

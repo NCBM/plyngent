@@ -27,13 +27,14 @@ if TYPE_CHECKING:
 __all__ = [
     "ESCALATION_PROGRAMS",
     "REVIEW_SAYS",
+    "Code",
     "CommandString",
     "Reason",
     "RemoteTarget",
     "Review",
     "UnwrappedCommand",
     "basename",
-    "dash_c_code",
+    "code_of",
     "escalators_in_chain",
     "git_is_irreversible",
     "is_interpreter",
@@ -94,8 +95,52 @@ _INTERPRETERS: frozenset[str] = frozenset(
     }
 )
 
-# Trailing version of an interpreter: ``python3.12`` / ``node20`` / ``php8.2``.
+#: Trailing version of an interpreter: ``python3.12`` / ``node20`` / ``php8.2``.
 _VERSION_SUFFIX = re.compile(r"[0-9][0-9.]*$")
+
+
+@dataclass(frozen=True)
+class _Syntax:
+    """How one family of interpreters is invoked, as far as where its code is goes.
+
+    ``values`` are the options that eat the next argument and mean nothing else; ``code`` those whose
+    value *is* the program; ``module`` those that name code the interpreter finds on its own path; and
+    ``script`` those that name the file the interpreter would otherwise take as its first argument.
+    """
+
+    values: frozenset[str] = frozenset()
+    code: frozenset[str] = frozenset()
+    module: frozenset[str] = frozenset()
+    script: frozenset[str] = frozenset()
+
+
+_SHELL = _Syntax(values=frozenset({"-o", "-O"}), code=frozenset({"-c"}))
+_NODE = _Syntax(values=frozenset({"-r", "-C"}), code=frozenset({"-e", "-p"}))
+_RUBY = _Syntax(values=frozenset({"-I", "-C", "-r", "-E", "-0", "-W"}), code=frozenset({"-e"}))
+
+#: Where each family names the text it runs, by version-stripped basename. A family that is not here is
+#: one this build does not read, and a question about it says nothing about code rather than guessing.
+_SYNTAX: dict[str, _Syntax] = {
+    "bash": _SHELL,
+    "bun": _NODE,
+    "csh": _SHELL,
+    "dash": _SHELL,
+    "deno": _NODE,
+    "fish": _SHELL,
+    "irb": _RUBY,
+    "ksh": _SHELL,
+    "node": _NODE,
+    "nodejs": _NODE,
+    "perl": _Syntax(
+        values=frozenset({"-I", "-M", "-E", "-0", "-F", "-d"}), code=frozenset({"-e"}), module=frozenset({"-m"})
+    ),
+    "php": _Syntax(values=frozenset({"-c", "-d", "-l"}), code=frozenset({"-r"}), script=frozenset({"-f"})),
+    "python": _Syntax(values=frozenset({"-X", "-W"}), code=frozenset({"-c"}), module=frozenset({"-m"})),
+    "ruby": _RUBY,
+    "sh": _SHELL,
+    "tcsh": _SHELL,
+    "zsh": _SHELL,
+}
 
 # Privilege escalation: these run with rights the session itself does not have,
 # so a call that reaches one is refused outright.
@@ -393,17 +438,78 @@ def is_interpreter(base: str) -> bool:
     return base in _INTERPRETERS or _VERSION_SUFFIX.sub("", base) in _INTERPRETERS
 
 
-def dash_c_code(command: Sequence[str]) -> tuple[int, str] | None:
-    """Index and text of the ``-c`` code in an interpreter argv, if present.
+@dataclass(frozen=True, slots=True)
+class Code:
+    """Where the text an interpreter is about to run comes from, and what to say when it is not a file.
 
-    Only interpreters hand ``-c`` a block of code; for anything else it is a
-    plain flag (``grep -c``, ``od -c``) with nothing to review.
+    ``text`` is a program the command carries on its own line (``-c`` / ``-e``), ``path`` is the script it
+    names as spelled, relative to where the command runs, and ``stdin`` is the one that reads its program
+    from its own input. ``says`` is what a question says instead of a code — the module an interpreter
+    finds on its own path, an option this build does not know — and is empty for the rest.
     """
-    for index, part in enumerate(command[1:], start=1):
-        if part == "-c":
-            return index, command[index + 1] if index + 1 < len(command) else ""
-        # Combined short forms are uncommon; only exact -c is supported.
-    return None
+
+    text: str = ""
+    path: str = ""
+    stdin: bool = False
+    says: str = ""
+
+
+def code_of(command: Sequence[str]) -> Code:
+    """Where the text an interpreter is about to run comes from, read off one command.
+
+    Which options eat the next argument is a table per family (:data:`_SYNTAX`), so the first position
+    that eats nothing is the script: ``python -W ignore run.py`` names ``run.py``. ``--`` ends the
+    options, ``-`` is the interpreter's own input, and an option the table does not list stops the walk
+    and says so, because guessing that it is a flag is how a script would be read as one — and this build
+    would then show a person the wrong file. A family with no table answers with nothing at all, and the
+    question about it keeps the sentence it had.
+
+    The reading is of the command line and never of a file: what the script says is the gate's business,
+    because only the gate knows where the command runs.
+    """
+    if not command:
+        return Code()
+    base = basename(command[0])
+    syntax = _SYNTAX.get(_VERSION_SUFFIX.sub("", base))
+    if syntax is None:
+        return Code()
+    at = _script_at(command, syntax)
+    if isinstance(at, Code):
+        return at
+    return Code(stdin=True) if at >= len(command) else Code(path=command[at])
+
+
+def _script_at(command: Sequence[str], syntax: _Syntax) -> int | Code:
+    """Where the script starts in *command*, or the answer itself when it runs no file of its own."""
+    index = 1
+    while index < len(command):
+        token = command[index]
+        if token == "--":
+            return index + 1
+        if token == "-":
+            return Code(stdin=True)
+        if not token.startswith("-"):
+            return index
+        step = _past_option(command, index, syntax)
+        if isinstance(step, Code):
+            return step
+        index = step
+    return index
+
+
+def _past_option(command: Sequence[str], index: int, syntax: _Syntax) -> int | Code:
+    """Where the walk looks next after the option at *index*, or the answer a command with no file gives."""
+    token = command[index]
+    value = command[index + 1] if index + 1 < len(command) else ""
+    if token in syntax.code:
+        return Code(text=value) if value else Code(stdin=True)
+    if token in syntax.module:
+        return Code(says=f"its code is the module {value!r}, which is not a file in this workspace")
+    if token in syntax.script:
+        return index + 1
+    if token in syntax.values:
+        return index + 2
+    return Code(says=f"the option {token} is not one this build knows, so where its code is, is a guess")
 
 
 def escalators_in_chain(argv: Sequence[str]) -> tuple[str, ...]:
@@ -654,7 +760,7 @@ class Review(StrEnum):
 #: One table because the kind is for a client and the sentence is for a person, and two places deciding
 #: what a kind means is how the two drift; the text a reason carries, when it has any, is appended.
 REVIEW_SAYS: Mapping[Review, str] = {
-    Review.INTERPRETER: "{about} runs code given on its own command line, and this build does not read that code",
+    Review.INTERPRETER: "{about} runs code given on its own command line",
     Review.DETACHED: "{about} starts something that outlives this call, so its output never comes back",
     Review.COMMAND_STRING: "{about} carries a command line this build does not read through",
     Review.REMOTE_SHELL: "{about} opens a shell on another machine, and nothing typed into it is checked",
@@ -695,8 +801,7 @@ def reasons_for(argv: Sequence[str]) -> tuple[Reason, ...]:
     if scan.unparsed:
         reasons.append(Reason(Review.OPTIONS, scan.unparsed))
     if is_interpreter(scan.base):
-        code = dash_c_code(scan.command)
-        reasons.append(Reason(Review.INTERPRETER, scan.base, "" if code is None else code[1]))
+        reasons.append(Reason(Review.INTERPRETER, scan.base, code_of(scan.command).text))
     reasons.extend(Reason(Review.DETACHED, name) for name in scan.self_review)
     quoted = {reason.text for reason in reasons if reason.text}
     reasons.extend(

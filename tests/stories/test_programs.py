@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from plyngent.cli.policy import Policy
+from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
@@ -128,6 +129,62 @@ async def test_a_shell_is_asked_about_every_time_and_the_answer_is_not_remembere
     assert len(asked) == 2, "the second call is asked again, and does not trade on the first answer"
     assert all(prompt.startswith("run sh -c") for prompt in asked), asked
     assert all("runs code given on its own command line" in prompt for prompt in asked), "and says why"
+
+
+async def test_the_code_a_shell_will_run_is_in_the_question_and_in_the_record(story_with: Scripted) -> None:
+    """The line a shell is handed is the text that will run, so it is what the person reads and agrees to (E191)."""
+    story = await story_with(
+        calling("execute", {"steps": [{"argv": ["sh", "-c", "echo one"]}], "intention": "say one"}),
+        text("it said one"),
+    )
+
+    await story.type("say one")
+    await story.answer("y")
+    await story.finished()
+
+    (question,) = story.questions()
+    assert question.executable_code == "echo one", "the text that will run is the text that was shown"
+    assert question.prompt.endswith("runs code given on its own command line, and its code is below")
+    assert any("  echo one" in line for line in story.notices()), "and the block is on the screen under the sentence"
+    rows = [row.payload for row in await story.host.trail.entries(story.session)]
+    (consent,) = [row for row in rows if isinstance(row, Consent)]
+    assert (consent.tool, consent.executable_code) == ("execute", "echo one"), (
+        "the record says which program the person was shown, and not only that they said yes"
+    )
+
+
+async def test_a_script_the_call_will_read_is_the_code_in_the_question(story_with: Scripted) -> None:
+    """An interpreter given a file reads it, so the question carries what the file says (E191)."""
+    story = await story_with(
+        calling("execute", {"steps": [{"argv": ["sh", "say.sh"]}], "intention": "run the note"}),
+        text("it said two"),
+    )
+    _ = (story.workspace / "say.sh").write_text("echo two\n", encoding="utf-8")
+
+    await story.type("run the note")
+    await story.answer("y")
+    await story.finished()
+
+    (question,) = story.questions()
+    assert question.executable_code == "echo two\n", "a script is a file this call reads, and the person reads it too"
+
+
+async def test_code_this_build_cannot_point_at_is_named_and_not_shown(story_with: Scripted) -> None:
+    """``-m`` hands the interpreter a module: the code is on its own path, and the question says so."""
+    if shutil.which("python3") is None:  # pragma: no cover — a module question needs a python to run
+        pytest.skip("python3 is how a module is named")
+    story = await story_with(
+        calling("execute", {"steps": [{"argv": ["python3", "-m", "json.tool"]}], "intention": "tidy the json"}),
+        text("tidy"),
+    )
+
+    await story.type("tidy the json")
+    await story.answer("y")
+    await story.finished()
+
+    (question,) = story.questions()
+    assert question.executable_code == "", "there is no file to show, and an empty block would be a lie"
+    assert question.prompt.endswith("its code is the module 'json.tool', which is not a file in this workspace")
 
 
 async def test_a_call_can_take_a_name_out_of_the_environment(story_with: Scripted) -> None:
