@@ -5,10 +5,10 @@ here. The schema is that server's own promise about what its tool accepts, and a
 renamed a field would be a call the server refuses *after* the model has made it — so what this module
 adds is only what the kernel needs to tell one server's tool from another's.
 
-**One name, two halves.** Two servers are free to offer ``read_file``, and a model asks for a tool by
-one string, so a name is ``<server>__<tool>``: the separator is in one place here, and the file refuses
-to name a server that holds it. A group is ``mcp:<server>``, the same spelling a client's offer gets,
-because a session asks for a group by name too.
+**One name, three parts.** Two servers are free to offer ``read_file``, and a model asks for a tool by
+one string, so a name is ``mcp__<server>__<tool>``: the prefix says which program answered it, and the
+separators are in one place here — the file refuses to name a server that holds one. A group is
+``mcp:<server>``, the same spelling a client's offer gets, because a session asks for a group by name too.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def as_list(value: object) -> list[object]:
 
 def named(server: str, tool: str) -> str:
     """The one name a model asks for a tool of *server* by."""
-    return f"{server}{SEPARATOR}{tool}"
+    return f"{PREFIX}{SEPARATOR}{server}{SEPARATOR}{tool}"
 
 
 def specs(server: str, listed: Iterable[Mapping[str, Any]], *, severity: Severity, runs: Runs) -> tuple[ToolSpec, ...]:

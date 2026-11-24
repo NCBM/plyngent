@@ -102,7 +102,7 @@ async def test_a_server_is_named_before_it_is_asked_for_and_is_a_group_beside_th
     await story.type("what can you do?")
 
     first = story.requests()[0]
-    assert "echo__echo" not in {tool.name for tool in first.tools}, "a child nothing asked for was not started"
+    assert "mcp__echo__echo" not in {tool.name for tool in first.tools}, "a child nothing asked for was not started"
     assert _index(first).endswith("1 group can be brought in: mcp:echo (the echo server)")
 
 
@@ -112,7 +112,7 @@ async def test_asking_for_a_server_brings_it_and_a_call_goes_through_the_pipe(
     """The asking is the making, and what it made is a program: the call leaves this process and answers."""
     story = await story_with(
         calling("tool_require", {"group": "mcp:echo"}),
-        calling("echo__echo", {"text": "hello"}),
+        calling("mcp__echo__echo", {"text": "hello"}),
         text("done"),
         components=_declared(tmp_path),
         policy=_YES,
@@ -122,10 +122,10 @@ async def test_asking_for_a_server_brings_it_and_a_call_goes_through_the_pipe(
     await story.finished()
 
     first, second, last = story.requests()
-    assert "echo__echo" not in {tool.name for tool in first.tools}
-    assert "echo__echo" in {tool.name for tool in second.tools}, "what one round asked for arrives in the next"
+    assert "mcp__echo__echo" not in {tool.name for tool in first.tools}
+    assert "mcp__echo__echo" in {tool.name for tool in second.tools}, "what one round asked for arrives in the next"
     said = second.messages[-1].text
-    assert said.startswith("mcp:echo is up: 1 tool (echo__echo)"), said
+    assert said.startswith("mcp:echo is up: 1 tool (mcp__echo__echo)"), said
     assert "Echo is all this server does." in said, "the server's own instructions arrive with the answer"
     assert "the server heard hello" in told(last), "and the call went through the pipe and back"
 

@@ -154,7 +154,7 @@ def test_a_listed_tool_becomes_a_name_a_model_can_ask_for() -> None:
 
     (one,) = specs("files", listed, severity=Severity.CONFIRM, runs=lambda tool: _never)
 
-    assert named("files", "read") == one.name
+    assert named("files", "read") == one.name == "mcp__files__read"
     assert one.group == group_of("files") == "mcp:files"
     schema = as_object(one.schema()) or {}
     assert schema["properties"] == {"path": {"type": "string"}}
@@ -170,7 +170,7 @@ def test_a_row_without_a_name_is_left_out_and_the_others_still_arrive() -> None:
 
     found = specs("fake", listed, severity=Severity.DANGER, runs=lambda tool: _never)
 
-    assert [one.name for one in found] == ["fake__ok"]
+    assert [one.name for one in found] == ["mcp__fake__ok"]
 
 
 # -- the answer --------------------------------------------------------------------
@@ -229,7 +229,7 @@ async def test_a_program_becomes_a_group_of_tools(tmp_path: Path) -> None:
     try:
         found = await server.materialise()
 
-        assert [one.name for one in found] == ["fake__read", "fake__boom"]
+        assert [one.name for one in found] == ["mcp__fake__read", "mcp__fake__boom"]
         assert server.group == "mcp:fake" and server.summary == "the fake server"
         assert "outside this one" in server.guide, "a model is told the call leaves this process"
         assert "read carefully" in server.guide, "and the server's own instructions follow"
@@ -243,7 +243,7 @@ async def test_a_call_reaches_the_program_and_comes_back_as_a_result(tmp_path: P
     server = _server(tmp_path, _script(tmp_path, "server.py", SERVER))
     try:
         found = await server.materialise()
-        read = next(one for one in found if one.name == "fake__read")
+        read = next(one for one in found if one.name == "mcp__fake__read")
 
         result = await read.run(_env(tmp_path), {"path": "/tmp/x"})
 
@@ -258,7 +258,7 @@ async def test_a_program_that_refuses_the_call_says_so_as_the_tool_s_failure(tmp
     server = _server(tmp_path, _script(tmp_path, "server.py", SERVER))
     try:
         found = await server.materialise()
-        boom = next(one for one in found if one.name == "fake__boom")
+        boom = next(one for one in found if one.name == "mcp__fake__boom")
 
         result = await boom.run(_env(tmp_path), {})
 
