@@ -18,8 +18,8 @@ pdm run ruff format --check src tests
 pdm run basedpyright src tests
 ```
 
-`prek install` wires those three as the commit gateway (`prek.toml`), `prek run --all-files` runs them on
-demand.
+`prek install` wires those three, and the message check below, as the commit gateway (`prek.toml`);
+`prek run --all-files` runs the three on demand.
 
 ## Writing
 
@@ -38,8 +38,14 @@ the frontend does not re-word it.
 ## Commits
 
 A message reads `scope: statement`, then one paragraph giving the reason, in the state the change leaves the
-tree. The exploration that produced it does not appear, and neither does a correction of something the same
-change introduced. One coherent change per commit.
+tree. The statement is one sentence, and the paragraph holds at most five, written on one line, because a
+wrap belongs to whatever width the reader's window has; a clause past fifteen words counts as a sentence of
+its own. The exploration that produced it does not appear, and neither does a correction of something the
+same change introduced. One coherent change per commit.
+
+`tools/commit_message.py` holds every message to that shape, and `prek install` wires it at the
+`commit-msg` stage beside the three lint hooks. It reports each break with the line it is on, and a message
+it refuses is not written.
 
 Work stays unstaged while it is worked out: staging, amending, rebasing and resetting are how a change comes
 to have the commits it should, and a commit is settled once its content is the content to keep. Unpushed

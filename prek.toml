@@ -6,7 +6,7 @@
 # Pin additional_dependencies to the same versions as pdm.lock (dev group).
 # Bump these when you pdm update ruff / basedpyright.
 
-default_install_hook_types = ["pre-commit"]
+default_install_hook_types = ["pre-commit", "commit-msg"]
 default_stages = ["pre-commit"]
 default_language_version = { python = "python3.14" }
 
@@ -41,3 +41,14 @@ language = "python"
 pass_filenames = false
 require_serial = true
 additional_dependencies = ["basedpyright==1.40.2"]
+
+# The message a commit is written with: a scope and a statement of one sentence, a blank line, and one paragraph of
+# reason on one line, of at most five sentences, where a clause past fifteen words counts as one. AGENTS.md states the
+# shape and tools/commit_message.py checks it on every message, since a shape no hook reads is the one that drifts.
+[[repos.hooks]]
+id = "commit-message"
+name = "commit message"
+entry = "python tools/commit_message.py"
+language = "python"
+stages = ["commit-msg"]
+require_serial = true
