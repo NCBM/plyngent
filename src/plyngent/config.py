@@ -66,6 +66,7 @@ from plyngent.kernel.skills import Skills
 from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
 from plyngent.kernel.workspace import WorkspaceConfig
 from plyngent.kernel.writing import Written
+from plyngent.wire.ask import Severity
 from plyngent.wire.event import PersistProblem
 
 if TYPE_CHECKING:
@@ -89,6 +90,11 @@ NOTIFY_MODULE = "desktop_notifier"
 #: follow. Both are seconds, and both are what a program nobody configured gets (E180).
 DEFAULT_NOTIFY_GRACE = 10.0
 DEFAULT_NOTIFY_INTERVAL = 30.0
+
+#: How long a round waits for a group that is still coming up before it goes on without it. A server on
+#: another machine may take longer than a conversation should, so what arrives late arrives in the
+#: background and is said then (E182).
+DEFAULT_MCP_WAIT = 2.0
 
 
 class ConfigError(Exception):
@@ -219,6 +225,37 @@ class PluginsFile(Struct, forbid_unknown_fields=True, kw_only=True):
     enable: tuple[str, ...] = ()
 
 
+class McpServerFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[[mcp.server]]``: one program this program may speak the Model Context Protocol to (E182).
+
+    ``command`` is a list of arguments and never a line, because a shell is a way to run something this
+    build cannot read before running it: a file that wants one names the shell.
+
+    ``env`` is added to this process's environment and cannot take a name away, because a server is not a
+    caller's own command. ``cwd`` is resolved against this file, and an empty one runs where the program
+    was started. ``severity`` is the level a call to this server's tools asks at — per server, because
+    what one server is asked to do is nobody else's fact.
+    """
+
+    name: str
+    command: tuple[str, ...]
+    env: dict[str, str] = msgspec.field(default_factory=dict)
+    cwd: str = ""
+    severity: Severity = Severity.DANGER
+
+
+class McpFile(Struct, forbid_unknown_fields=True, kw_only=True):
+    """``[mcp]``: the servers this program can ask, and how long a round waits for one to come up.
+
+    ``wait_seconds`` answers "the group is still coming up" inside a round: a server that takes longer is
+    left to arrive in the background, and the conversation is told when it does. ``0`` is a program that
+    never waits, which is what a server somebody knows is slow asks for (E182).
+    """
+
+    wait_seconds: Annotated[float, msgspec.Meta(ge=0)] = DEFAULT_MCP_WAIT
+    server: list[McpServerFile] = msgspec.field(default_factory=list)
+
+
 class SkillsFile(Struct, forbid_unknown_fields=True, kw_only=True):
     """``[skills]``: extra roots to look in, and whether the standard three are still read (§0.11, E81)."""
 
@@ -311,6 +348,7 @@ class ConfigFile(Struct, forbid_unknown_fields=True, kw_only=True):
     trash: TrashFile | None = None
     journal: JournalFile | None = None
     plugins: PluginsFile | None = None
+    mcp: McpFile | None = None
     web: WebFile | None = None
 
 
@@ -326,6 +364,30 @@ class Notify:
     enabled: bool | None = None
     grace_seconds: float = DEFAULT_NOTIFY_GRACE
     min_interval_seconds: float = DEFAULT_NOTIFY_INTERVAL
+
+
+@dataclass(frozen=True, slots=True)
+class McpLaunch:
+    """One server as the file named it: the program, where it runs, and how heavy its calls are.
+
+    A value and not a provider, because the file says what to start and nothing about what was started:
+    the group a server brings is a fact about the program on the other end, and it does not exist until
+    somebody asks for it (E175).
+    """
+
+    name: str
+    argv: tuple[str, ...]
+    env: Mapping[str, str] = field(default_factory=dict[str, str])
+    cwd: Path | None = None
+    severity: Severity = Severity.DANGER
+
+
+@dataclass(frozen=True, slots=True)
+class Mcp:
+    """``[mcp]`` as the two answers a kernel needs: which servers, and how long one may take to come up."""
+
+    wait_seconds: float = DEFAULT_MCP_WAIT
+    servers: tuple[McpLaunch, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +426,10 @@ class Settings:
     #: declarations: what a name brings is a fact about this machine, so it is resolved where the kernel
     #: is brought up and not where the file is read (E174).
     plugins: tuple[str, ...] = ()
+    #: The servers this program may ask, as the file named them, and how long a round waits for one to
+    #: come up. Values and not declarations, because the group a server brings is a fact about a program
+    #: on the other end, which no file can know (E182).
+    mcp: Mcp = field(default_factory=Mcp)
     #: How many rows one conversation may gather before its fold is kept beside the log: the cadence
     #: ``[journal] checkpoint_rows`` sets, and the number a program nobody configured ships with (E177).
     checkpoint_rows: int = DEFAULT_CHECKPOINT_ROWS
@@ -620,6 +686,7 @@ def _settings(
         journal=_resolved(journal.path, path) if journal.path else None,
         checkpoint_rows=journal.checkpoint_rows,
         plugins=(parsed.plugins or PluginsFile()).enable,
+        mcp=_mcp(parsed.mcp, path),
         document=document,
         source=path,
         text=text,
@@ -647,6 +714,57 @@ def _notify(declared: NotifyFile | None) -> Notify:
         grace_seconds=said.grace_seconds,
         min_interval_seconds=said.min_interval_seconds,
     )
+
+
+def _mcp(declared: McpFile | None, path: Path) -> Mcp:
+    """The ``[mcp]`` table as the servers this program may ask, refusing the ones it cannot name.
+
+    Two refusals, and each is about a name rather than a setting: a server's name is the half of every
+    tool name it brings, so a name holding ``__`` would make the tool say two servers where there is one,
+    and two servers under one name would leave a tool call with no answer to "which one" (E182). A row
+    with no command is refused here as well, because a server is a program and a program is arguments.
+    """
+    said = McpFile() if declared is None else declared
+    seen: set[str] = set()
+    launches: list[McpLaunch] = []
+    for one in said.server:
+        name = one.name.strip()
+        _check_mcp_name(name)
+        if name in seen:
+            msg = f"[mcp] names two servers {name!r}: a tool call would have no way to say which one it meant"
+            raise ConfigError(msg)
+        seen.add(name)
+        if not one.command:
+            msg = f"[mcp.server] {name!r} has no command: a server is a program, written as a list of arguments"
+            raise ConfigError(msg)
+        launches.append(
+            McpLaunch(
+                name=name,
+                argv=tuple(one.command),
+                env=dict(one.env),
+                cwd=_resolved(one.cwd, path) if one.cwd else None,
+                severity=one.severity,
+            )
+        )
+    return Mcp(wait_seconds=said.wait_seconds, servers=tuple(launches))
+
+
+def _check_mcp_name(name: str) -> None:
+    """Refuse a server name that could not be half of a tool name.
+
+    ``__`` is what separates a server from a tool inside one name, and a space would leave a name no
+    schema and no call could spell; both are refused where the file is read, with the file's own path in
+    nobody's sentence but the error's.
+    """
+    if not name:
+        msg = "[mcp.server] has no name: the name is half of every tool the server brings"
+        raise ConfigError(msg)
+    if "__" in name:
+        msg = f"[mcp.server] {name!r} holds `__`, which is what separates a server from a tool in one name"
+        raise ConfigError(msg)
+    if any(one.isspace() for one in name):
+        msg = f"[mcp.server] {name!r} holds a space, and a name a tool can be called by cannot"
+        raise ConfigError(msg)
 
 
 def _web(declared: WebFile | None, routes: tuple[Route, ...]) -> Web:

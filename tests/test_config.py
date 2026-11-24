@@ -37,6 +37,7 @@ from plyngent.kernel.pty.registry import (
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
 from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
+from plyngent.wire.ask import Severity
 from plyngent.wire.event import PersistProblem
 from tests.loopback import answered
 
@@ -771,3 +772,77 @@ def test_the_sandbox_is_two_lists_and_its_commands_only_ever_get_longer(tmp_path
         "a file adds to the built-in list and never shortens it: taking sudo off would be a way to run as root"
     )
     assert config.load(_written(tmp_path, "[trash]\nenabled = false\n", "no-trash.toml")).trash is False
+
+
+#: Two servers: one spelled with every key a row may hold, one with the least a row can be.
+SERVERS = """
+[mcp]
+wait_seconds = 0
+
+[[mcp.server]]
+name = "files"
+command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[mcp.server.env]
+LOG = "debug"
+
+[[mcp.server]]
+name = "lookup"
+command = ["./lookup"]
+cwd = "servers"
+severity = "routine"
+"""
+
+
+def test_the_file_names_the_servers_this_program_may_ask(tmp_path: Path) -> None:
+    """E182: `[mcp]` is what to run, where, and how heavy a call through it is.
+
+    A row is a value and not a declaration: the group a server brings is a fact about a program on the
+    other end, and the file can no more name its tools than it can name its version. ``cwd`` is taken
+    against the file like every other path, so a person's ``servers`` directory means the one beside the
+    file they wrote in.
+    """
+    settings = config.load(_written(tmp_path, SERVERS))
+
+    assert settings.mcp.wait_seconds == 0.0
+    assert [(one.name, one.argv) for one in settings.mcp.servers] == [
+        ("files", ("npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")),
+        ("lookup", ("./lookup",)),
+    ]
+    assert settings.mcp.servers[0].env == {"LOG": "debug"} and settings.mcp.servers[0].cwd is None
+    assert settings.mcp.servers[0].severity is Severity.DANGER, "a server is a program, so its calls are heavy"
+    assert settings.mcp.servers[1].cwd == tmp_path / "servers"
+    assert settings.mcp.servers[1].severity is Severity.ROUTINE, "and a row may say lighter, by name"
+
+
+def test_a_program_nobody_configured_asks_no_server_and_waits_as_long_as_it_says(tmp_path: Path) -> None:
+    """Absent is the program this tree always was: nothing to talk to, and the wait a round may spend."""
+    plain = config.load(_written(tmp_path, "", "none.toml"))
+
+    assert plain.mcp == config.Mcp(), "no server, so no group that could arrive late"
+    assert config.Mcp().wait_seconds == config.DEFAULT_MCP_WAIT == 2.0
+    with pytest.raises(config.ConfigError):
+        _ = config.load(_written(tmp_path, "[mcp]\nwait_seconds = -1\n", "negative.toml"))
+
+
+def test_two_servers_under_one_name_are_refused(tmp_path: Path) -> None:
+    """A tool call naming a group has no second word to say *which* server it meant."""
+    twice = '[[mcp.server]]\nname = "files"\ncommand = ["files"]\n'
+
+    with pytest.raises(config.ConfigError, match="names two servers 'files'"):
+        _ = config.load(_written(tmp_path, twice + twice))
+
+
+def test_a_server_name_that_could_not_be_half_of_a_tool_name_is_refused(tmp_path: Path) -> None:
+    """``__`` is what separates a server from a tool inside one name, and a space is nothing at all."""
+    with pytest.raises(config.ConfigError, match="separates a server from a tool"):
+        _ = config.load(_written(tmp_path, '[[mcp.server]]\nname = "my__files"\ncommand = ["x"]\n', "split.toml"))
+
+    with pytest.raises(config.ConfigError, match="holds a space"):
+        _ = config.load(_written(tmp_path, '[[mcp.server]]\nname = "my files"\ncommand = ["x"]\n', "space.toml"))
+
+    with pytest.raises(config.ConfigError, match="has no name"):
+        _ = config.load(_written(tmp_path, '[[mcp.server]]\nname = ""\ncommand = ["x"]\n', "anon.toml"))
+
+    with pytest.raises(config.ConfigError, match="has no command"):
+        _ = config.load(_written(tmp_path, '[[mcp.server]]\nname = "files"\ncommand = []\n', "empty.toml"))
