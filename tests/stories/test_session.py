@@ -158,6 +158,7 @@ async def test_a_plan_is_still_there_after_a_restart(tmp_path, transport: str) -
     )
     try:
         await second.type("what is the plan?")
+        await second.finished(turn=2)
 
         assert _answers(second.requests()[-1])[-1] == (
             "1 group, 1 item (1 open)\nGroup 0 (TOP):\n  [ ] 1. write the parser"
@@ -356,6 +357,7 @@ async def test_what_is_left_of_the_plan_is_said_above_the_next_answer(story_with
     )
 
     await story.type("here is the plan")
+    await story.until("turn 1 finished")
 
     _first, second = story.requests()
     assert isinstance(second.messages[-1], Note), "the reminder is the last thing the model reads"
@@ -363,7 +365,6 @@ async def test_what_is_left_of_the_plan_is_said_above_the_next_answer(story_with
         "the marker is in the text, so the model can tell the harness from the person"
     )
     assert isinstance(second.messages[-2], Result), "and it sits above the result it was written after"
-    await story.until("turn 1 finished")
     assert "written: 2 items still open: read the spec, write the parser" in "\n".join(story.screen()), (
         "the person reads the same sentence, under the entry it was written at"
     )
@@ -383,10 +384,10 @@ async def test_a_plan_that_was_cleared_says_the_reminder_no_longer_holds(story_w
     await story.require("session")
 
     await story.type("plan it, then drop it")
+    await story.until("turn 1 finished")
 
     told = [message for message in story.requests()[-1].messages if isinstance(message, Note)]
     assert told == [Note(text=f"{NOTICE_MARKER}\n1 item still open: read the spec")], (
         "the reminder that held is the one the model was given, and the empty one is not a message"
     )
-    await story.until("turn 1 finished")
     assert "written: nothing is left on the plan" in "\n".join(story.screen()), "while a person reads what went away"
