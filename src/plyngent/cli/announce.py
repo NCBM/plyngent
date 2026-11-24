@@ -51,6 +51,10 @@ NO = "n"
 #: than walking back to the window that asked (E180).
 MOST = 3
 
+#: How many lines of the code a question is about a notice shows. A notice is not a reader: it has to be
+#: enough to tell what is being asked about, and the rest is for whoever walks back to the terminal.
+CODE_LINES = 8
+
 
 @dataclass(frozen=True, slots=True)
 class Choice:
@@ -133,9 +137,9 @@ class Announcements:
         offered to press.
         """
         match ask:
-            case Confirmation(prompt=prompt):
+            case Confirmation(prompt=prompt, executable_code=code):
                 return Wording(
-                    body=prompt,
+                    body=_code(prompt, code),
                     choices=(Choice(label="yes", value=YES), Choice(label="no", value=NO)),
                 )
             case Selection(prompt=prompt, options=options, multiple=True):
@@ -172,6 +176,21 @@ class Announcements:
 def _listed(prompt: str, options: tuple[str, ...]) -> str:
     """One question with its options written into it, for a notice that has nothing to press."""
     return prompt if not options else f"{prompt}\n{', '.join(options)}"
+
+
+def _code(prompt: str, code: str) -> str:
+    """One question with the head of the code it is about, and how much of it is left.
+
+    The first few lines say what is being asked about, and the count says the notice is not the whole
+    thing: a person who wants to read the program goes to the terminal that is waiting for their answer.
+    """
+    if not code:
+        return prompt
+    lines = code.splitlines()
+    shown = "\n".join(lines[:CODE_LINES])
+    if len(lines) <= CODE_LINES:
+        return f"{prompt}\n{shown}"
+    return f"{prompt}\n{shown}\n… {len(lines) - CODE_LINES} more lines"
 
 
 def available() -> bool:

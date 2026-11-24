@@ -358,6 +358,9 @@ class Consent(Struct, tag=CONSENT_TAG, frozen=True, kw_only=True):
     ``question`` is the label that was put to the person and nothing else: a passphrase typed into a
     terminal is carried back to where it was needed and nowhere else (R2.1 D6), so a secret's row says
     that a secret was asked and never what it was.
+
+    ``executable_code`` is the code the person was shown, when the question was about code: what they
+    agreed to is the text they read, and a row holding only the sentence would not say which program ran.
     """
 
     turn: int = 0
@@ -366,6 +369,7 @@ class Consent(Struct, tag=CONSENT_TAG, frozen=True, kw_only=True):
     kind: str = ""
     severity: str = ""
     question: str = ""
+    executable_code: str = ""
     by: str = ""
     policy: str = ""
     accepted: bool | None = None

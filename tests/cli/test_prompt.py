@@ -62,6 +62,22 @@ async def test_a_question_answered_elsewhere_comes_down_as_one_nobody_answered()
     )
 
 
+async def test_a_question_about_code_shows_the_code_above_the_prompt() -> None:
+    """The block goes to the same stream the prompt draws on, before the prompt is drawn on it (E191)."""
+    screen = io.StringIO()
+    with create_pipe_input() as keys:
+        editor = _editor(keys, screen)
+        asking = asyncio.create_task(editor.ask(Confirmation(prompt="run this?", executable_code="print(1)\n")))
+        await _until(lambda: "print(1)" in screen.getvalue())
+
+        keys.send_text("n\r")
+
+        answer = await asyncio.wait_for(asking, timeout=PATIENCE)
+
+    assert answer == Agreed(accepted=False, by=By.HUMAN)
+    assert "  print(1)" in screen.getvalue()
+
+
 async def test_a_line_being_typed_is_not_a_question_and_is_not_taken_back() -> None:
     """A person typing is a person who is here: only a question is ever called off."""
     screen = io.StringIO()

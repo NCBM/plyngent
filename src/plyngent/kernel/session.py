@@ -178,6 +178,7 @@ class TurnCtx:
                 kind=str(question.__struct_config__.tag),
                 severity=str(question.severity) if isinstance(question, Confirmation) else "",
                 question=question.prompt,
+                executable_code=question.executable_code if isinstance(question, Confirmation) else "",
                 by=str(answer.by),
                 policy=answer.policy,
                 accepted=answer.accepted if isinstance(answer, Agreed) else None,

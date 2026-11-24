@@ -84,6 +84,7 @@ class Human(ABC):
         prompt: str,
         default: bool | None = None,
         severity: Severity = Severity.CONFIRM,
+        executable_code: str = "",
         site: AskSite | None = None,
         timeout: float | None = None,  # noqa: ASYNC109 — the caller's deadline for the question, not a wait of this call's
     ) -> Agreed:
@@ -91,6 +92,9 @@ class Human(ABC):
 
         Silence is not consent unless the level says it is: a ``routine`` question falls back to yes
         when its deadline arrives, and the two heavier levels never do.
+
+        ``executable_code`` is the code the person is about to allow, when what is being allowed is code:
+        it travels with the question because the channel that shows it decides nothing about it.
         """
 
     @abstractmethod
@@ -154,6 +158,7 @@ class Human(ABC):
                     prompt=question.prompt,
                     default=question.default,
                     severity=question.severity,
+                    executable_code=question.executable_code,
                     site=site,
                     timeout=question.timeout,
                 )
@@ -194,11 +199,12 @@ class NoSink(Human):
         prompt: str,
         default: bool | None = None,
         severity: Severity = Severity.CONFIRM,
+        executable_code: str = "",
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
         """Answer "no", with nothing attached and nobody named."""
-        _ = (prompt, default, severity, site, timeout)
+        _ = (prompt, default, severity, executable_code, site, timeout)
         return Agreed(by=By.NOBODY)
 
     @override
@@ -295,12 +301,18 @@ class HumanChannel(Component, Human):
         prompt: str,
         default: bool | None = None,
         severity: Severity = Severity.CONFIRM,
+        executable_code: str = "",
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
         """Ask whoever is attached now, and wait for them within the deadline."""
         return await self._human().confirm(
-            prompt=prompt, default=default, severity=severity, site=site, timeout=timeout
+            prompt=prompt,
+            default=default,
+            severity=severity,
+            executable_code=executable_code,
+            site=site,
+            timeout=timeout,
         )
 
     @override

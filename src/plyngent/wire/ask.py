@@ -200,9 +200,16 @@ class Confirmation(Ask, tag="confirmation", frozen=True, kw_only=True):
     typing when this question took the cursor), not what an unanswered question becomes: that is
     :attr:`Ask.timeout_default`'s business, which follows the level. No
     default at all means a blank line is not an answer, so the client asks again.
+
+    ``executable_code`` is what the person is being asked to allow, when what is being allowed is code: a
+    program a tool is about to run, or the script an interpreter is about to read. Empty is the ordinary
+    question, which is about an action and not about a text. It carries that code as it will run, and
+    nothing here trims it: how much of it one screen shows is the client's own business, because the person
+    agreeing to a program is agreeing to the text they were shown.
     """
 
     default: bool | None = None
+    executable_code: str = ""
 
 
 class Selection(Ask, tag="selection", frozen=True, kw_only=True):

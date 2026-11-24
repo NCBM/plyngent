@@ -207,6 +207,7 @@ class LinkHuman(Human):
         prompt: str,
         default: bool | None = None,
         severity: Severity = Severity.CONFIRM,
+        executable_code: str = "",
         site: AskSite | None = None,
         timeout: float | None = None,
     ) -> Agreed:
@@ -215,7 +216,13 @@ class LinkHuman(Human):
         The deadline is the question's, and ``None`` is the connection's own: whoever owns the clock
         (R2.1 D13) is still the connection, and this adds nothing of its own to it.
         """
-        question = Confirmation(prompt=prompt, default=default, severity=severity, timeout=timeout)
+        question = Confirmation(
+            prompt=prompt,
+            default=default,
+            severity=severity,
+            executable_code=executable_code,
+            timeout=timeout,
+        )
         return as_agreed(await self._link.ask(_placed(question, site)))
 
     @override

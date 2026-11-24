@@ -239,6 +239,9 @@ Four questions, three answers, and a question's kind says which answer it admits
   yes.
 - **`label`** is what this answer is called when several are gathered into one form; empty means the
   question stands alone.
+- **`executable_code`** is on a `confirmation` only: the code the person is about to allow, as it will
+  run. Empty is a question about an action. It travels untrimmed — a client that cannot show all of it
+  says so itself, because the person agreeing to a program is agreeing to the text they were shown.
 - **`session`, `turn`, `scope`** say where the question belongs, so a frontend holding several
   conversations can draw it under the right one.
 - An answer of the wrong kind does not end the wait: the question is still outstanding and its deadline

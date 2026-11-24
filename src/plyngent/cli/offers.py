@@ -132,6 +132,7 @@ def _question(raw: Mapping[str, Any], *, title: str) -> Confirmation | FreeText 
                 default=offered if isinstance(offered, bool) else None,
                 severity=Severity(str(raw.get("severity") or Severity.CONFIRM)),
                 label=label,
+                executable_code=_text(raw, "executable_code"),
             )
         case "selection" if options:
             return Selection(

@@ -37,7 +37,7 @@ from plyngent.cli.app import App
 from plyngent.cli.grammar import Catalog, build
 from plyngent.cli.line import Cancelled, EndOfInput, Line, Typed, answer_to
 from plyngent.cli.offers import TERMINAL, ClientTools
-from plyngent.cli.render import question as question_line
+from plyngent.cli.render import question as question_text
 from plyngent.cli.render import workspace_label
 from plyngent.kernel.host import Host
 from plyngent.kernel.session import Session
@@ -131,7 +131,7 @@ class ScriptedHuman:
         self.waiting += 1
         try:
             while True:
-                _ = self._err.write(f"{question_line(question, focus=self._focus)}\n")
+                _ = self._err.write(f"{question_text(question, focus=self._focus)}\n")
                 answer = answer_to(question, await self.answers.get())
                 if answer is not None:
                     return answer

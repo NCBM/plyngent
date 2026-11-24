@@ -75,6 +75,23 @@ def test_a_yes_or_no_question_carries_two_buttons_and_a_press_on_one_is_the_pers
     assert rules.answered(question, "maybe") is None, "a word that is not one of the buttons answers nothing"
 
 
+def test_a_question_about_code_names_the_head_of_it_and_how_much_is_left() -> None:
+    """A notice is not a reader: it says what is being asked about, and stops (E191)."""
+    rules = _rules()
+    code = "".join(f"line {one}\n" for one in range(10))
+    question = Confirmation(prompt="run this?", executable_code=code, timeout=600.0)
+
+    told = rules.words(question)
+
+    assert told is not None
+    assert told.body.splitlines()[:2] == ["run this?", "line 0"]
+    assert told.body.endswith("… 2 more lines"), "the count is what sends a person to the terminal it waits at"
+    short = Confirmation(prompt="run this?", executable_code="print(1)\n", timeout=600.0)
+    assert rules.words(short) == Wording(
+        body="run this?\nprint(1)", choices=(Choice(label="yes", value=YES), Choice(label="no", value=NO))
+    ), "a whole program that fits is shown whole, with nothing to count"
+
+
 def test_a_small_choice_carries_one_button_per_option() -> None:
     rules = _rules()
     question = Selection(id=7, prompt="keep going?", options=("again", "stop"), timeout=600.0)

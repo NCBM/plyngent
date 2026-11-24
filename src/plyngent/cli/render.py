@@ -104,6 +104,8 @@ if TYPE_CHECKING:
 #: The session a single-session run shows bare.
 DEFAULT_FOCUS = "main"
 
+CODE_INDENT = "  "
+
 #: How wide a screen is taken to be when nobody says: the classic terminal, and what a lane with no
 #: screen to ask reads. A terminal passes its own every frame (:meth:`plyngent.cli.screen.Screen.width`).
 DEFAULT_WIDTH = 80
@@ -1144,6 +1146,20 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
 
     The default is shown, not applied: confirming it is a keystroke, and a question with no default
     says so by offering a blank line, with no answer prefilled.
+
+    A question that is about code carries the code underneath its sentence, indented as one block, and
+    whole: a person agreeing to a program is agreeing to the text they read, so nothing here shortens it.
+    """
+    line = question_line(ask, focus=focus)
+    code = code_block(ask)
+    return line if not code else f"{line}\n{code}"
+
+
+def question_line(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
+    """The sentence a question asks, and none of the code it is about.
+
+    For a frontend that has somewhere else to put the code: a prompt that draws only the sentence and
+    prints the block above itself before it reads.
     """
     match ask:
         case Confirmation(prompt=prompt, default=default):
@@ -1157,6 +1173,16 @@ def question(ask: AnyAsk, *, focus: str = DEFAULT_FOCUS) -> str:
             return _joined(ask.session, focus, prompt)
         case _ as never:
             assert_never(never)
+
+
+def code_block(ask: AnyAsk) -> str:
+    """The code this question is about, indented to read as one block under its sentence — or nothing.
+
+    Two spaces and nothing else added: enough to read as one block, and no room taken from a line a
+    narrow terminal would have to wrap anyway.
+    """
+    code = ask.executable_code if isinstance(ask, Confirmation) else ""
+    return "\n".join(f"{CODE_INDENT}{one}" for one in code.splitlines())
 
 
 def _many(ask: Selection) -> str:

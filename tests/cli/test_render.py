@@ -8,7 +8,16 @@ turns into a claim (E90).
 
 from __future__ import annotations
 
-from plyngent.cli.render import _PERSIST_SENTENCES, _REFUSALS, Shown, notice, question, render, unfinished
+from plyngent.cli.render import (
+    _PERSIST_SENTENCES,
+    _REFUSALS,
+    Shown,
+    notice,
+    question,
+    question_line,
+    render,
+    unfinished,
+)
 from plyngent.wire.ask import Confirmation, Severity
 from plyngent.wire.event import (
     AssistantText,
@@ -132,3 +141,13 @@ def test_a_question_shows_how_heavy_it_is_and_what_its_silence_means() -> None:
         question(Confirmation(prompt="write it?", severity=Severity.ROUTINE, timeout_default=True))
         == "write it? [y/n] [no answer is a yes]"
     ), "the only question whose silence agrees to something is the only one that has to say so"
+
+
+def test_a_question_about_code_shows_the_code_under_its_sentence() -> None:
+    """The person agreeing to a program is agreeing to the text they read, so all of it is shown (E191)."""
+    asked = Confirmation(prompt="run this program?", executable_code="for name in names:\n    print(name)\n")
+
+    assert question(asked) == "run this program? [y/n]\n  for name in names:\n      print(name)"
+    assert question_line(asked) == "run this program? [y/n]", (
+        "a frontend with somewhere else to put the code asks the sentence alone"
+    )

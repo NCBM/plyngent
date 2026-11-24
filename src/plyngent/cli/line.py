@@ -59,8 +59,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.output import create_output
 
 from plyngent.cli.grammar import SlashCompleter
-from plyngent.cli.render import DEFAULT_FOCUS
-from plyngent.cli.render import question as question_line
+from plyngent.cli.render import DEFAULT_FOCUS, code_block, question_line
+from plyngent.cli.render import question as question_text
 from plyngent.wire.ask import Agreed, By, Confirmation, FreeText, Picked, Secret, Selection, Written, unanswered
 
 if TYPE_CHECKING:
@@ -488,8 +488,13 @@ class PromptEditor:
 
         Nothing read here is remembered: an answer is not something this person said, and the one kind
         of answer that must never be written down is the one nobody can see being typed.
+
+        A question that is about code has it printed above the prompt first, and the prompt itself draws
+        only the sentence: the block is written straight to the same stream, as it is, because code that
+        happens to look like markup is not markup and must not be read as any.
         """
         default, secret = _offer(question, taken)
+        self._said(code_block(question))
         self._asking = True
         try:
             with self._not_remembered():
@@ -514,6 +519,18 @@ class PromptEditor:
             yield
         finally:
             self._history.quiet = False
+
+    def _said(self, text: str) -> None:
+        """Lines put above the prompt, through the stream the prompt itself draws on.
+
+        Written, not drawn: the prompt is not running when this is called, so there is no row to take
+        over, and what arrives is exactly those characters — the same bytes the person is agreeing to.
+        """
+        if not text:
+            return
+        output = self._prompt.app.output
+        _ = output.write(f"{text}\n")
+        _ = output.flush()
 
     async def _composed(self) -> Line:
         """Run the human's editor on a scratch draft and read it back."""
@@ -572,7 +589,7 @@ class PlainEditor:
     async def ask(self, question: AnyAsk) -> AnyAnswer:
         """Print the question, and read lines until one of them answers it."""
         while True:
-            _ = self._err.write(f"{question_line(question, focus=self._focus)}\n")
+            _ = self._err.write(f"{question_text(question, focus=self._focus)}\n")
             _ = self._err.flush()
             answer = answer_to(question, await self.read_line())
             if answer is not None:

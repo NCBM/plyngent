@@ -41,6 +41,16 @@ async def test_a_question_is_printed_and_asked_again_until_a_line_answers_it() -
     assert notices.getvalue() == "carry on? [y/n]\ncarry on? [y/n]\n", "a file has no prompt, so it is a line"
 
 
+async def test_a_question_about_code_is_printed_with_the_code_before_the_line_that_answers_it() -> None:
+    """A stream has no screen to put a block on, so the block is printed where the question goes (E191)."""
+    editor, notices = _editor("n\n")
+
+    answer = await editor.ask(Confirmation(prompt="run this?", executable_code="print(1)\n"))
+
+    assert answer == Agreed(accepted=False, by=By.HUMAN)
+    assert notices.getvalue() == "run this? [y/n]\n  print(1)\n"
+
+
 async def test_a_menu_takes_only_one_of_the_words_it_offered() -> None:
     """A word that is not on the menu answered nothing, so the same question is put again."""
     editor, notices = _editor("maybe\na\n")
