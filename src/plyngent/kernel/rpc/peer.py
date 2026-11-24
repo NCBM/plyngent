@@ -11,9 +11,9 @@ is retried — the thing above this module knows what it asked for and what a re
 * **A notification is handed over and not waited for.** Handlers are plain functions, because that is
   all this tree asks of one — "the list of tools changed" is a flag and not a task — and a handler that
   raised must not look like the other end going quiet.
-* **A request arriving from the other end is answered with "no such method".** Nothing here asks the
-  other end to do anything, so there is none to answer with, and silence would leave it waiting
-  forever.
+* **A request arriving from the other end is answered by what this end offers.** A peer with no
+  :class:`~plyngent.kernel.rpc.serving.Serving` offers nothing, and says "no such method" — silence
+  would leave the other end waiting forever.
 * **Everything ends together.** When the reading stops — the stream ended, a line was not a message —
   every caller still waiting is failed, because the conversation they were waiting on is over, and
   telling one of them about it is not truer than telling all of them.
@@ -33,8 +33,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from typing import Any
 
+    from plyngent.kernel.rpc.serving import Serving
+
 #: The number JSON-RPC gives "there is no such method", which is the one answer this end has for a
-#: request: it asks for methods, and it does not offer any.
+#: request nobody here has a handler for: a peer with no table offers nothing at all.
 METHOD_NOT_FOUND = -32601
 
 #: What a notification is handed: its params, and nothing else — a handler is told what happened, not
@@ -89,25 +91,37 @@ class Peer:
 
     ``notices`` is fixed at construction because what a peer acts on is a fact about the protocol above
     it: a handler registered halfway through a conversation would be a method whose notifications were
-    sometimes read and sometimes dropped.
+    sometimes read and sometimes dropped. ``serving`` is fixed for the same reason, and is the other
+    direction of one protocol: the methods the other end may call here.
     """
 
     _lines: Lines
     _writer: StreamWriter
     _notices: Mapping[str, Notice]
+    _serving: Serving | None
     _ids: count[int]
     _waiting: dict[int, asyncio.Future[Any]]
+    _answering: set[asyncio.Task[None]]
     _out: asyncio.Queue[bytes | None]
     _reading: asyncio.Task[None] | None
     _writing: asyncio.Task[None] | None
     _ended: PeerGone | ProtocolBroken | None
 
-    def __init__(self, lines: Lines, writer: StreamWriter, *, notices: Mapping[str, Notice] | None = None) -> None:
+    def __init__(
+        self,
+        lines: Lines,
+        writer: StreamWriter,
+        *,
+        notices: Mapping[str, Notice] | None = None,
+        serving: Serving | None = None,
+    ) -> None:
         self._lines = lines
         self._writer = writer
         self._notices = dict(notices or {})
+        self._serving = serving
         self._ids = count(1)
         self._waiting = {}
+        self._answering = set()
         self._out = asyncio.Queue()
         self._reading = None
         self._writing = None
@@ -158,12 +172,15 @@ class Peer:
     async def close(self) -> None:
         """Stop talking, on the way out of a process that is about to end anyway."""
         self._end(PeerGone("the conversation was closed"))
+        for task in self._answering:
+            _ = task.cancel()
         for task in (self._reading, self._writing):
             if task is None:
                 continue
             _ = task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        self._answering.clear()
         self._reading = None
         self._writing = None
 
@@ -217,24 +234,45 @@ class Peer:
 
     def _took(self, message: Mapping[str, Any]) -> None:
         """One message, put where it belongs: an answer to its id, a notification to its handler, a
-        request from the other end to the one answer this end has."""
+        request from the other end to the method this end offers for it."""
         method, number = message.get("method"), message.get("id")
         if isinstance(method, str):
             if number is None:
                 self._noticed(method, message.get("params"))
             else:
-                self._say(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": number,
-                        "error": {"code": METHOD_NOT_FOUND, "message": f"{method} is not a method this end offers"},
-                    }
-                )
+                self._requested(number, method, message.get("params"))
             return
         if number is None:
             self._end(ProtocolBroken("a message with neither a method nor an id is not one of the three shapes"))
             return
         self._answered(message)
+
+    def _requested(self, number: Any, method: str, params: Any) -> None:
+        """One request from the other end, worked out beside the reading of the stream.
+
+        A handler is a tool call and may take as long as it likes, so it runs as a task: waiting for it
+        here would stop this end from hearing the answer to its own call, which is a deadlock between two
+        programs each waiting on the other. A method this end does not offer is refused at once.
+        """
+        if self._serving is None or not self._serving.offers(method):
+            self._say(
+                {
+                    "jsonrpc": "2.0",
+                    "id": number,
+                    "error": {"code": METHOD_NOT_FOUND, "message": f"{method} is not a method this end offers"},
+                }
+            )
+            return
+        task = asyncio.create_task(self._answer_to(number, method, params))
+        self._answering.add(task)
+        task.add_done_callback(self._answering.discard)
+
+    async def _answer_to(self, number: Any, method: str, params: Any) -> None:
+        """Answer one request, unless the conversation ended while the method was being worked out."""
+        assert self._serving is not None, "a request reaches here only when there is a table to answer it"
+        answer = await self._serving.answer(number, method, params)
+        if answer is not None and self._ended is None:
+            self._say(answer)
 
     def _answered(self, message: Mapping[str, Any]) -> None:
         """One answer to the call that is waiting for it, if anybody still is."""

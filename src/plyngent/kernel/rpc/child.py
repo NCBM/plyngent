@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from plyngent.kernel.rpc.peer import Notice
+    from plyngent.kernel.rpc.serving import Serving
 
 #: How long a child is given to stop after being asked, before its group is killed. Long enough for a
 #: program to write its last line, short enough that a stuck one does not hold up the process that
@@ -82,6 +83,7 @@ class Child:
     cwd: Path
     env: Mapping[str, str] | None
     notices: Mapping[str, Notice]
+    serving: Serving | None
     _process: asyncio.subprocess.Process | None
     _peer: Peer | None
     _tail: _Tail
@@ -94,11 +96,15 @@ class Child:
         cwd: Path,
         env: Mapping[str, str] | None = None,
         notices: Mapping[str, Notice] | None = None,
+        serving: Serving | None = None,
     ) -> None:
         self.argv = tuple(argv)
         self.cwd = cwd
         self.env = env
         self.notices = dict(notices or {})
+        #: What the child may ask *this* end for: the other direction of the same conversation, and the
+        #: one a program talking back needs (E190).
+        self.serving = serving
         self._process = None
         self._peer = None
         self._tail = _Tail()
@@ -147,7 +153,7 @@ class Child:
         if writing is None or reading is None:
             msg = "a child without its pipes cannot be spoken to, and both were asked for"
             raise RuntimeError(msg)
-        peer = Peer(Lines(reading), writing, notices=self.notices)
+        peer = Peer(Lines(reading), writing, notices=self.notices, serving=self.serving)
         peer.start()
         self._peer = peer
         return peer

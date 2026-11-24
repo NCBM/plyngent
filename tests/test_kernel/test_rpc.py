@@ -16,9 +16,11 @@ import pytest
 
 from plyngent.kernel.rpc.framing import Lines, decode, encode
 from plyngent.kernel.rpc.peer import METHOD_NOT_FOUND, Peer, PeerGone, ProtocolBroken, RpcError
+from plyngent.kernel.rpc.serving import INTERNAL_ERROR, Serving
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+    from typing import Any
 
 
 class _Sink:
@@ -46,7 +48,9 @@ class _Sink:
 
 
 def _peer(
-    *, notices: dict[str, Callable[[dict[str, object]], None]] | None = None
+    *,
+    notices: dict[str, Callable[[dict[str, object]], None]] | None = None,
+    serving: Serving | None = None,
 ) -> tuple[Peer, asyncio.StreamReader, _Sink]:
     """One conversation with a stream this test feeds and a sink this test reads."""
     reading = asyncio.StreamReader()
@@ -54,7 +58,7 @@ def _peer(
     # A peer writes into a ``StreamWriter``; what it writes is all this test needs, so the sink stands in
     # for the one half of it that a real writer would add — a socket with nobody on the other end.
     writing = cast("asyncio.StreamWriter", cast("object", sink))
-    peer = Peer(Lines(reading), writing, notices=notices)
+    peer = Peer(Lines(reading), writing, notices=notices, serving=serving)
     peer.start()
     return peer, reading, sink
 
@@ -219,7 +223,7 @@ async def test_a_line_that_is_not_a_message_ends_the_conversation() -> None:
 
 
 async def test_a_request_from_the_other_end_is_answered_with_no_such_method() -> None:
-    """Nothing here asks the other end for anything, and saying so is kinder than waiting forever."""
+    """An end with nothing to offer says so, and saying so is kinder than waiting forever."""
     peer, reading, sink = _peer()
     try:
         reading.feed_data(encode({"jsonrpc": "2.0", "id": 7, "method": "sampling/createMessage", "params": {}}))
@@ -229,6 +233,46 @@ async def test_a_request_from_the_other_end_is_answered_with_no_such_method() ->
         assert answer["id"] == 7
         assert cast("dict[str, object]", answer["error"])["code"] == METHOD_NOT_FOUND
         assert peer.failure is None, "answering it is not a reason to stop talking"
+    finally:
+        await peer.close()
+
+
+async def test_a_peer_that_offers_a_method_answers_the_other_end_with_it() -> None:
+    """The other direction of one protocol: a program talking back asks, and this end answers (E190)."""
+    heard: list[dict[str, object]] = []
+
+    async def lending(params: Mapping[str, Any]) -> object:
+        heard.append(dict(params))
+        return {"lent": params.get("name", "")}
+
+    peer, reading, sink = _peer(serving=Serving({"lend": lending}))
+    try:
+        reading.feed_data(encode({"jsonrpc": "2.0", "id": 3, "method": "lend", "params": {"name": "x"}}))
+        await _until(lambda: len(sink.said) == 1)
+
+        assert heard == [{"name": "x"}], "the handler is handed the caller's own package"
+        assert sink.messages()[0] == {"jsonrpc": "2.0", "id": 3, "result": {"lent": "x"}}
+        assert peer.failure is None
+    finally:
+        await peer.close()
+
+
+async def test_a_method_that_raised_is_answered_and_not_left_waiting() -> None:
+    """A handler's own mistake is a refusal to the other end: silence there is a future nobody completes."""
+
+    async def broke(params: Mapping[str, Any]) -> object:
+        _ = params
+        raise ValueError("not that one")
+
+    peer, reading, sink = _peer(serving=Serving({"broke": broke}))
+    try:
+        reading.feed_data(encode({"jsonrpc": "2.0", "id": 5, "method": "broke", "params": {}}))
+        await _until(lambda: len(sink.said) == 1)
+
+        answer = sink.messages()[0]
+        assert answer["id"] == 5
+        assert cast("dict[str, object]", answer["error"]) == {"code": INTERNAL_ERROR, "message": "not that one"}
+        assert peer.failure is None, "our own handler failing is not the other end going quiet"
     finally:
         await peer.close()
 

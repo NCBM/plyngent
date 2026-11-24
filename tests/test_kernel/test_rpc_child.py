@@ -16,10 +16,12 @@ import pytest
 
 from plyngent.kernel.rpc.child import CannotStart, Child
 from plyngent.kernel.rpc.peer import PeerGone
+from plyngent.kernel.rpc.serving import Serving
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
+    from typing import Any
 
 #: A server in six lines: every method it is asked for is answered with its own name, shouted.
 ECHO = """\
@@ -62,6 +64,22 @@ sys.stderr.flush()
 sys.exit(3)
 """
 
+#: A program that asks the end that started it for something, and then tells it what it was given.
+TALKS_BACK = """\
+import json, sys
+
+def say(message):
+    sys.stdout.write(json.dumps(message) + "\\n")
+    sys.stdout.flush()
+
+say({"jsonrpc": "2.0", "id": 1, "method": "lend", "params": {"name": "x"}})
+for line in sys.stdin:
+    message = json.loads(line)
+    if "result" in message:
+        say({"jsonrpc": "2.0", "id": 2, "method": "told", "params": {"given": message["result"]}})
+        break
+"""
+
 
 def _script(where: Path, name: str, text: str) -> str:
     """One of the scripts above, on disk, as the path to run."""
@@ -91,6 +109,30 @@ async def test_a_child_answers_what_it_is_asked(tmp_path: Path) -> None:
     try:
         peer = await child.start()
         assert await peer.call("pinging") == "PINGING"
+    finally:
+        await child.stop()
+
+
+async def test_a_child_that_asks_this_end_gets_an_answer(tmp_path: Path) -> None:
+    """Two directions over one pipe: the program asks, this end serves, and the program says what it got."""
+    told: list[dict[str, object]] = []
+
+    async def lending(params: Mapping[str, Any]) -> object:
+        return {"lent": params.get("name", "")}
+
+    async def hearing(params: Mapping[str, Any]) -> object:
+        told.append(dict(params))
+        return "heard"
+
+    child = Child(
+        [sys.executable, _script(tmp_path, "talks_back.py", TALKS_BACK)],
+        cwd=tmp_path,
+        serving=Serving({"lend": lending, "told": hearing}),
+    )
+    try:
+        _ = await child.start()
+        await _until(lambda: bool(told))
+        assert told == [{"given": {"lent": "x"}}], "the answer to the child's own request reached the child"
     finally:
         await child.stop()
 
