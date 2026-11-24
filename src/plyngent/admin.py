@@ -22,6 +22,7 @@ every refusal here. The numbers are the ones the kernel's own program returns (E
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ import click
 from platformdirs import user_data_path
 
 from plyngent import boot
-from plyngent.kernel.journal import label_of, workspace_dir
+from plyngent.kernel.journal import label, label_of, workspace_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -202,6 +203,43 @@ def gc(desk: _Desk, older_than: str, bigger_than: int | None, *, apply: bool) ->
         _let_go(journal, gone, root=root)
     if not found:
         click.echo(f"nothing to let go under {desk.data}")
+
+
+@main.command("adopt")
+@click.option(
+    "--from",
+    "was",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="the path this ledger was made under",
+)
+@click.option("--to", "now", required=True, type=click.Path(path_type=Path), help="where that tree is now")
+@click.pass_obj
+def adopt(desk: _Desk, was: Path, now: Path) -> None:
+    """Say that a ledger belongs to a tree that moved, which is the half a move leaves behind (E185).
+
+    A ledger's name is its tree's path, so a tree that moved is a tree nothing can find a ledger for. The
+    three stores live in one directory — the journal, the documents, and the versions — so moving it is one
+    move, and the line beside it is rewritten to say where the tree is now.
+    """
+    desk.may_write()
+    old = desk.journal(was).parent
+    new = desk.journal(now).parent
+    if not (old / "journal.db").exists():
+        _stop(f"no ledger for {was}: nothing has opened that tree with this data directory")
+    if old == new:
+        click.echo(f"{was} and {now} are one tree, so this ledger is already its own")
+        return
+    if not Path(now).expanduser().is_dir():
+        _stop(f"{now} is not a directory, so there is no tree there to take this ledger")
+    if (new / "journal.db").exists():
+        _stop(f"{now} already has a ledger, and two ledgers of one tree is the thing this command is for")
+    reason = _unclean(old / "journal.db")
+    if reason:
+        _stop(f"left alone: {reason}")
+    _ = shutil.move(str(old), str(new))
+    _ = label(new, now)
+    click.echo(f"{was} is now {now}: {old.name} says so")
 
 
 def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tuple[_Gone, ...]:

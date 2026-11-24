@@ -347,3 +347,102 @@ async def test_a_ledger_left_mid_write_is_left_alone(tmp_path: Path) -> None:
     assert code == 0, said
     assert "left alone" in said and "not empty" in said, said
     assert _rows(journal, "s1") == 2
+
+
+async def test_adopting_a_ledger_is_saying_which_tree_it_is_now(tmp_path: Path) -> None:
+    """A tree that moved kept its ledger, and one command says where it went (E185).
+
+    The three stores are one directory, so the move is one move: the conversation, the documents it kept and
+    the versions of the bytes its calls left all arrive together, and the line beside them says which tree
+    this is now.
+    """
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    journal = await _ledger(data, tree)
+    await _kept(journal, "s1")
+    tree.rename(tmp_path / "moved")
+
+    code, said = _ran("--data-dir", str(data), "adopt", "--from", str(tree), "--to", str(tmp_path / "moved"))
+
+    assert code == 0, said
+    adopted = workspace_dir(tmp_path / "moved", data=data)
+    assert adopted.is_dir() and not journal.parent.exists(), "the one directory moved"
+    assert label_of(adopted) == str((tmp_path / "moved").resolve())
+    assert _rows(adopted / "journal.db", "s1") == 2, "and what it held came with it"
+    assert _documents(adopted / "journal.db", "s1") == 1
+
+    code, said = _ran("--data-dir", str(data), "sessions", str(tmp_path / "moved"))
+    assert code == 0, said
+    assert "s1  2 rows" in said
+
+
+async def test_adopting_a_tree_that_has_no_ledger_is_a_refusal(tmp_path: Path) -> None:
+    """There is nothing to move, and saying so is the whole answer."""
+    now = tmp_path / "now"
+    now.mkdir()
+
+    code, said = _ran(
+        "--data-dir", str(tmp_path / "data"), "adopt", "--from", str(tmp_path / "never"), "--to", str(now)
+    )
+
+    assert code == FAILED
+    assert "no ledger for" in said
+
+
+async def test_adopting_onto_a_tree_that_has_its_own_ledger_is_a_refusal(tmp_path: Path) -> None:
+    """Two ledgers of one tree is the thing this command exists to prevent, so it never makes one."""
+    data = tmp_path / "data"
+    _ = await _ledger(data, tmp_path / "tree")
+    taken = tmp_path / "taken"
+    _ = await _ledger(data, taken)
+
+    code, said = _ran("--data-dir", str(data), "adopt", "--from", str(tmp_path / "tree"), "--to", str(taken))
+
+    assert code == FAILED
+    assert "already has a ledger" in said, said
+
+
+async def test_adopting_a_ledger_onto_itself_says_it_is_already_there(tmp_path: Path) -> None:
+    """The same tree twice is not a failure: nothing is moved, and nothing is lost."""
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    journal = await _ledger(data, tree)
+
+    code, said = _ran("--data-dir", str(data), "adopt", "--from", str(tree), "--to", str(tree))
+
+    assert code == 0, said
+    assert "already its own" in said, said
+    assert _rows(journal, "s1") == 2
+
+
+async def test_adopting_onto_a_path_that_is_not_a_tree_is_a_refusal(tmp_path: Path) -> None:
+    """A ledger is adopted by a tree, and a path that is not a directory is not one."""
+    data = tmp_path / "data"
+    _ = await _ledger(data, tmp_path / "tree")
+
+    code, said = _ran(
+        "--data-dir", str(data), "adopt", "--from", str(tmp_path / "tree"), "--to", str(tmp_path / "gone")
+    )
+
+    assert code == FAILED
+    assert "is not a directory" in said, said
+
+
+async def test_adopting_while_a_kernel_answers_needs_the_person_to_insist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same refusal ``gc`` has, and the same word to get past it (E185)."""
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    journal = await _ledger(data, tree)
+    tree.rename(tmp_path / "moved")
+    monkeypatch.setattr(admin, "_answering", lambda endpoint: True)
+
+    code, said = _ran("--data-dir", str(data), "adopt", "--from", str(tree), "--to", str(tmp_path / "moved"))
+    assert code == FAILED
+    assert "--force" in said, said
+    assert journal.parent.exists(), "and nothing moved"
+
+    code, said = _ran("--data-dir", str(data), "--force", "adopt", "--from", str(tree), "--to", str(tmp_path / "moved"))
+    assert code == 0, said
+    assert not journal.parent.exists()
