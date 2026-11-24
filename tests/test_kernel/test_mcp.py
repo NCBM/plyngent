@@ -8,6 +8,7 @@ pipe, to a program that was written somewhere else.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from dataclasses import dataclass, field
@@ -78,6 +79,36 @@ for line in sys.stdin:
     said = {"jsonrpc": "2.0", "id": message["id"], "result": {"protocolVersion": "2019-01-01"}}
     sys.stdout.write(json.dumps(said) + "\\n")
     sys.stdout.flush()
+"""
+
+#: A server that grows a second tool once its first one has been called, and says its list moved.
+GROWING = """\
+import json, sys
+
+reads = 0
+
+
+def say(message):
+    sys.stdout.write(json.dumps(message) + "\\n")
+    sys.stdout.flush()
+
+
+for line in sys.stdin:
+    message = json.loads(line)
+    method = message.get("method")
+    params = message.get("params") or {}
+    if method == "initialize":
+        said = {"protocolVersion": params.get("protocolVersion")}
+        say({"jsonrpc": "2.0", "id": message["id"], "result": said})
+    elif method == "tools/list":
+        reads += 1
+        names = ["one"] if reads == 1 else ["one", "two"]
+        tools = [{"name": name, "inputSchema": {"type": "object"}} for name in names]
+        say({"jsonrpc": "2.0", "id": message["id"], "result": {"tools": tools}})
+    elif method == "tools/call":
+        said = {"content": [{"type": "text", "text": "done"}]}
+        say({"jsonrpc": "2.0", "id": message["id"], "result": said})
+        say({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
 """
 
 
@@ -284,3 +315,38 @@ async def test_a_call_into_a_server_that_never_came_up_is_gone_and_not_a_crash(t
     result = await server._runs("read")(_env(tmp_path), {})
 
     assert result.failure is Failure.BUSY, "asking again is the right next move"
+
+
+async def test_a_server_that_says_its_tools_moved_is_read_again(tmp_path: Path) -> None:
+    """A listing is a snapshot, and the one thing a server says about it going out of date is a notification.
+
+    Nothing is re-read on the way past it: the flag is a fact about the group, and what a round does with
+    a group whose names are old is the table's business (E182).
+    """
+    server = _server(tmp_path, _script(tmp_path, "growing.py", GROWING))
+    try:
+        first = await server.materialise()
+        assert [one.name for one in first] == ["mcp__fake__one"]
+        assert not server.stale, "nothing has moved yet"
+
+        result = await first[0].run(_env(tmp_path), {})
+        assert result.status.value == "ok"
+        await _moved(server)
+
+        assert server.stale, "the server said so, and this end took it at its word"
+        second = await server.materialise()
+
+        assert [one.name for one in second] == ["mcp__fake__one", "mcp__fake__two"]
+        assert not server.stale, "the read that answered the notification clears it"
+    finally:
+        await server.close()
+
+
+async def _moved(server: McpServer, patience: float = 2.0) -> None:
+    """Let the notification reach this end, or fail saying it never did."""
+    for _ in range(int(patience / 0.01) + 1):
+        if server.stale:
+            return
+        await asyncio.sleep(0.01)
+    msg = "the notification of a moved tool list never arrived"
+    raise AssertionError(msg)

@@ -1,10 +1,11 @@
 """The table of tools a program can give: what it refuses, and what one ask costs.
 
 What a story can see of this is asserted there — a group arriving in the next round, a conversation's
-groups coming back in its first request, a provider that failed being a result and not a stopped turn. What
-is left is the two shapes a running program cannot show: a table that refuses to exist at all, because two
-sources answer to one name, and what the table does when everybody stops. Both are refusals and lifetimes,
-and a refusal at start-up has no story to be told in (E175).
+groups coming back in its first request, a provider that failed being a result and not a stopped turn, a
+server that died leaving the tool block. What is left is what only a chosen moment can show: a table that
+refuses to exist at all, because two sources answer to one name; what the table does when everybody stops;
+and the three ways a group that was up can end, each of which a story would have to reach by sleeping —
+the server died, it said its list moved, or it never came up with nobody left waiting (E182).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import override
 
 import pytest
 
-from plyngent.kernel.providing import Brought, ToolNameTakenError, ToolProvider, Tools, ToolSet
+from plyngent.kernel.providing import Brought, ToolNameTakenError, ToolProvider, Tools, ToolSet, TooSoon
 from plyngent.kernel.toolresult import ToolResult
 from plyngent.kernel.toolspec import Mutation, Res, ToolArgs, ToolSpec
 
@@ -36,11 +37,17 @@ def _spec(name: str, group: str) -> ToolSpec:
 class Scripted(ToolProvider):
     """A provider whose whole behaviour is what it was constructed with, and what it was asked."""
 
+    #: What a test flips to say the thing behind the group is gone, and that it said its list moved.
+    gone: bool
+    moved: bool
+
     def __init__(
         self, group: str, *, specs: tuple[ToolSpec, ...] | None = None, fails: bool = False, slow: float = 0.0
     ) -> None:
         self.calls = 0
         self.closed = 0
+        self.gone = False
+        self.moved = False
         self._group = group
         self._specs = (_spec(f"{group}_one", group),) if specs is None else specs
         self._fails = fails
@@ -50,6 +57,16 @@ class Scripted(ToolProvider):
     @override
     def group(self) -> str:
         return self._group
+
+    @property
+    @override
+    def alive(self) -> bool:
+        return not self.gone
+
+    @property
+    @override
+    def stale(self) -> bool:
+        return self.moved
 
     @property
     @override
@@ -167,6 +184,7 @@ async def test_a_group_that_failed_is_not_remembered() -> None:
 
     assert provider.calls == 2, "a failure is a minute, not a fact"
     assert tools.available() == (("acme", "the acme group"),), "and nothing arrived"
+    assert tools.gone() == (), "a caller standing still for the answer took the failure itself"
 
 
 async def test_a_name_another_source_has_is_refused_with_both_names() -> None:
@@ -193,3 +211,134 @@ async def _both(tools: Tools) -> tuple[Brought, Brought]:
     """Two asks for one group at the same time, as two calls of one answer are."""
     first, second = await asyncio.gather(tools.materialise("acme"), tools.materialise("acme"))
     return first, second
+
+
+# -- what becomes of a group that was up -------------------------------------------
+
+
+async def test_a_group_whose_server_died_is_brought_up_again() -> None:
+    """A group is materialised once and stays, so the table is the only place a crash can be noticed.
+
+    What a round would otherwise carry is a set of names nobody answers, and the model would spend a call
+    finding out. Taken out here, the next ask is a real ask, and the provider's own ``materialise`` is
+    what starts the program a second time (E176, E182).
+    """
+    provider = Scripted("acme")
+    now = [0.0]
+    tools = Tools(sets=(ToolSet(providers=(provider,)),), clock=lambda: now[0])
+    _ = await tools.materialise("acme")
+
+    provider.gone = True
+    tools.reap()
+
+    assert tools.specs() == (), "the names of a group nobody answers are not what this program has"
+    assert tools.available() == (("acme", "the acme group"),), "and the group is something to ask for again"
+    now[0] = 2.0
+    _ = await tools.materialise("acme")
+    assert provider.calls == 2, "the provider started the program again"
+    assert "acme_one" in {spec.name for spec in tools.specs()}
+    assert tools.version == 3, "up, out, and up again: every move is one"
+
+
+async def test_a_group_whose_list_moved_is_read_again() -> None:
+    """A server is entitled to change its own tools, and the table acts on it where it acts on a crash."""
+    provider = Scripted("acme")
+    tools = Tools(sets=(ToolSet(providers=(provider,)),))
+    _ = await tools.materialise("acme")
+
+    provider.moved = True
+    tools.reap()
+
+    assert tools.specs() == (), "the names the table holds are the ones the server said are old"
+    _ = await tools.materialise("acme")
+    assert provider.calls == 2, "the list was read a second time"
+
+
+async def test_a_group_that_was_up_and_died_is_not_started_again_this_second() -> None:
+    """A server that dies is a loop waiting to happen, so its restart waits: one death is two seconds."""
+    provider = Scripted("acme")
+    now = [0.0]
+    tools = Tools(sets=(ToolSet(providers=(provider,)),), clock=lambda: now[0])
+    _ = await tools.materialise("acme")
+    provider.gone = True
+    tools.reap()
+
+    with pytest.raises(TooSoon, match=r"has gone down 1 time in a row and this program will start it again in 2s"):
+        _ = await tools.materialise("acme")
+    assert provider.calls == 1, "nothing was started inside the wait"
+
+    now[0] = 2.0
+    provider.gone = False
+    _ = await tools.materialise("acme")
+    assert provider.calls == 2, "after the wait, the ask is a real one"
+
+
+async def test_the_wait_doubles_with_each_death_and_stops_at_a_minute() -> None:
+    """The number doubles because a second death is likelier than the first to be no accident, and it
+    stops at a minute because a server that dies every time is not worth starting in a tight loop."""
+    provider = Scripted("acme")
+    now = [0.0]
+    tools = Tools(sets=(ToolSet(providers=(provider,)),), clock=lambda: now[0])
+    _ = await tools.materialise("acme")
+
+    waits: list[float] = []
+    for _ in range(7):
+        provider.gone = True
+        tools.reap()
+        with pytest.raises(TooSoon) as soon:
+            _ = await tools.materialise("acme")
+        waits.append(round(soon.value.seconds, 1))
+        now[0] += soon.value.seconds
+        provider.gone = False
+        _ = await tools.materialise("acme")
+
+    assert waits == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0]
+
+
+async def test_a_wait_that_was_long_ago_is_not_a_streak_any_more() -> None:
+    """A server that ran for a minute and then died is a server that dies once, and one death is two seconds."""
+    provider = Scripted("acme")
+    now = [0.0]
+    tools = Tools(sets=(ToolSet(providers=(provider,)),), clock=lambda: now[0])
+    _ = await tools.materialise("acme")
+    provider.gone = True
+    tools.reap()
+    now[0] = 100.0
+    provider.gone = False
+    _ = await tools.materialise("acme")
+
+    now[0] = 161.0
+    provider.gone = True
+    tools.reap()
+
+    with pytest.raises(TooSoon, match="1 time in a row"):
+        _ = await tools.materialise("acme")
+
+
+async def test_a_group_that_failed_with_nobody_waiting_is_not_offered_again() -> None:
+    """The round that gave up has already answered, so a failure afterwards has nobody left to tell.
+
+    What is left is to stop offering a group this process cannot start, which is what bounds a model's
+    calls on a broken server: it is refused by name, and the group is back on the next start (E182).
+    """
+    provider = Scripted("acme", fails=True, slow=0.05)
+    tools = Tools(sets=(ToolSet(providers=(provider,)),))
+
+    with pytest.raises(TimeoutError):
+        _ = await tools.materialise("acme", wait=0.01)
+    await _settled(tools)
+
+    assert tools.available() == (), "it is offered no more"
+    assert tools.gone() == ("acme",), "and a refusal can say which name this is"
+    with pytest.raises(LookupError, match="was given up on in this process"):
+        _ = await tools.materialise("acme")
+
+
+async def _settled(tools: Tools) -> None:
+    """Let the background making finish, once nobody is waiting for it."""
+    for _ in range(60):
+        if not tools.recovering():
+            return
+        await asyncio.sleep(0.01)
+    msg = "the making was still going after the test stopped waiting for it"
+    raise AssertionError(msg)

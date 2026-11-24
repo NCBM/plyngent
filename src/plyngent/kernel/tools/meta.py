@@ -63,6 +63,12 @@ async def tool_require(env: Env, args: RequireArgs) -> ToolResult:
         # worth teaching a model, and a group whose tools are all resident has nothing to give.
         waiting = [group for group, names in view.groups if any(view.get(name) is None for name in names)]
         can = [group for group, _summary in view.available]
+        if args.group in view.gone:
+            return ToolResult.of(
+                Failure.ARGS,
+                f"{args.group} was asked for in this program and did not come up, so it is not offered "
+                f"again until the program restarts. It can still give: {', '.join([*waiting, *can])}",
+            )
         return ToolResult.of(Failure.ARGS, f"no group named {args.group!r}; there are: {', '.join([*waiting, *can])}")
     # Asked before the disclosure, so "not visible" means "arriving now": the view a call is handed was
     # built for the round it runs in, and the group it is about to add is exactly what it does not hold.

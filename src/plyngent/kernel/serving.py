@@ -885,13 +885,18 @@ class Serving:
         process's own: a group a round asks for is brought up once for everybody (E175).
         """
         tools = self._tools()
+        if tools is not None:
+            # A group whose server died, or said its list moved, is not something this round tells the
+            # model it has: taking it out here is what makes the next ask a real ask (E182).
+            tools.reap()
         grew = 0 if tools is None else tools.version
         key = (grew, self._epoch)
         if self._made is None or self._made_key != key:
             base = self._specs if tools is None else tools.specs()
             available = () if tools is None else tools.available()
+            gone = () if tools is None else tools.gone()
             catalog = ToolCatalog((*base, *self._attached), resident=(*RESIDENT, *self._resident))
-            table = ToolTable(catalog=catalog, available=available)
+            table = ToolTable(catalog=catalog, available=available, gone=gone)
             # The waiting a round is willing to do is the table's, and it is bound here because this is
             # where a round asks: a group still coming up must not hold one for longer than that (E182).
             waiting = None if tools is None else partial(tools.materialise, wait=tools.wait)

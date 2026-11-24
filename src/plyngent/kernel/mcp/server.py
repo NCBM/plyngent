@@ -89,6 +89,7 @@ class McpServer(ToolProvider):
     _peer: Peer | None
     _tools: tuple[ToolSpec, ...]
     _instructions: str
+    _moved: bool
 
     def __init__(
         self,
@@ -108,6 +109,7 @@ class McpServer(ToolProvider):
         self._peer = None
         self._tools = ()
         self._instructions = ""
+        self._moved = False
 
     @property
     @override
@@ -142,13 +144,34 @@ class McpServer(ToolProvider):
         """How long this group may take to come up, which depends on what starts it."""
         return LAUNCH_SECONDS if self.argv and Path(self.argv[0]).name in LAUNCHERS else START_SECONDS
 
+    @property
+    @override
+    def alive(self) -> bool:
+        """Whether the program is still running and the conversation with it is still one.
+
+        A crashed server keeps the name and loses the process, which is the one thing about it this end
+        can see from here: whoever above wants its tools has to start it again (E182).
+        """
+        return self._peer is not None and self._peer.failure is None and self._child is not None and self._child.running
+
+    @property
+    @override
+    def stale(self) -> bool:
+        """Whether the server said its own tool list moved since this end last read it."""
+        return self._moved
+
     @override
     async def materialise(self) -> tuple[ToolSpec, ...]:
         """Start the program, say hello, and answer its tools — or say what went wrong and let it go."""
         if self._peer is not None and self._peer.failure is None:
-            return self._tools
+            return self._tools if not self._moved else await self._reread(self._peer)
         self._child, self._peer = None, None
-        child = Child(self.argv, cwd=self.cwd, env=self.env)
+        child = Child(
+            self.argv,
+            cwd=self.cwd,
+            env=self.env,
+            notices={"notifications/tools/list_changed": self._moved_list},
+        )
         # Held from the first moment, so a program that is still saying hello when the process closes is
         # stopped by :meth:`close` like any other: a half-initialised child is the one nobody looks after.
         self._child = child
@@ -187,6 +210,26 @@ class McpServer(ToolProvider):
         self._peer = None
         if child is not None:
             await child.stop()
+
+    async def _reread(self, peer: Peer) -> tuple[ToolSpec, ...]:
+        """Read the tool list again, because the server said it moved.
+
+        The flag is cleared only once the new list is in hand: a read that failed leaves the group saying
+        it is out of date, so the next ask reads the list again (E182).
+        """
+        found = await self._listed(peer)
+        self._moved = False
+        self._tools = found
+        return found
+
+    def _moved_list(self, params: dict[str, Any]) -> None:
+        """Take the server at its word that its tools are not the ones this end read.
+
+        What it costs to read them again is this end's to decide, so nothing is re-read here: the flag
+        is a fact, and the table asks for it at the top of a round (E182).
+        """
+        _ = params
+        self._moved = True
 
     async def _ready(self, peer: Peer) -> None:
         """The handshake: what this end speaks, what the server speaks, and what it says of itself.
@@ -252,7 +295,9 @@ class McpServer(ToolProvider):
                 return ToolResult.of(Failure.PROTOCOL, f"{self.name} answered {tool} with something unreadable: {exc}")
             except PeerGone as exc:
                 return ToolResult.of(
-                    Failure.BUSY, f"{self.name} is not answering ({exc}); ask again if you still need it"
+                    Failure.BUSY,
+                    f"{self.name} has stopped answering ({exc}). Ask for {self.group} again to start it, "
+                    f"and then call {tool}.",
                 )
             return await answered(env, server=self.name, tool=tool, arguments=arguments, answer=answer)
 

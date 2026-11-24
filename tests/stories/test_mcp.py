@@ -2,8 +2,9 @@
 
 The provider's own tests say what one listing becomes and what one answer means. What is left is the
 thing only a story can show: a group nobody has made yet is *named* in the index, asking for it makes a
-child appear and puts its tools in the next request, and a call to one of them comes back as a result the
-model reads — with the server's own instructions beside it, in the conversation and not in the prompt.
+child appear and puts its tools in the next request, a call to one of them comes back as a result the
+model reads — with the server's own instructions beside it, in the conversation and not in the prompt —
+and a server that dies takes its names out of the round that follows.
 """
 
 from __future__ import annotations
@@ -73,6 +74,30 @@ for line in sys.stdin:
     said = {"jsonrpc": "2.0", "id": message["id"], "result": {"protocolVersion": "2025-06-18"}}
     sys.stdout.write(json.dumps(said) + "\\n")
     sys.stdout.flush()
+"""
+
+
+#: A server that answers one call and then dies, which is what a crash looks like from here.
+CRASHY = """\
+import json, sys
+
+TOOLS = [{"name": "echo", "inputSchema": {"type": "object"}}]
+
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    method, params = message.get("method"), message.get("params") or {}
+    if method == "initialize":
+        answer = {"protocolVersion": params.get("protocolVersion")}
+    elif method == "tools/list":
+        answer = {"tools": TOOLS}
+    else:
+        answer = {"content": [{"type": "text", "text": "said it"}]}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": answer}) + "\\n")
+    sys.stdout.flush()
+    if method == "tools/call":
+        sys.exit(0)
 """
 
 
@@ -157,3 +182,34 @@ async def test_a_server_that_is_slow_to_start_does_not_hold_the_round(story_with
     assert "mcp:sleepy did not come up in its time" in failed[0]
 
     assert await story.stop() == 0, "a group that is still coming up is not a failed turn"
+
+
+async def test_a_server_that_dies_is_no_longer_a_group_the_model_can_call(story_with: Started, tmp_path: Path) -> None:
+    """A crashed server keeps its name and loses its process, and the round after the crash is where the
+    table notices: the names leave the tool block and the group is something to ask for again.
+
+    A model left holding a dead group spends a call learning what this end already knew, and the index
+    line is how it learns the group is still worth asking for (E182).
+    """
+    script = tmp_path / "crashy.py"
+    _ = script.write_text(CRASHY, encoding="utf-8")
+    server = McpServer(name="crashy", argv=[sys.executable, str(script)], cwd=tmp_path, env=dict(os.environ))
+    story = await story_with(
+        calling("tool_require", {"group": "mcp:crashy"}),
+        calling("mcp__crashy__echo", {}),
+        calling("mcp__crashy__echo", {}),
+        calling("todo_list", {}),
+        text("that is that"),
+        components=(Declaration(ToolSet, instance="mcp-crashy", kwargs={"providers": (server,)}),),
+        policy=_YES,
+    )
+
+    await story.type("use the crashy server")
+    await story.finished()
+
+    asked = story.requests()
+    assert "said it" in "\n".join(message.text for message in asked[2].messages), "the call answered"
+    assert "has stopped answering" in told(asked[3]), "the next one is refused, and says why"
+    last = asked[4]
+    assert "mcp__crashy__echo" not in {tool.name for tool in last.tools}, "a round later, its tools are gone"
+    assert _index(last).endswith("1 group can be brought in: mcp:crashy (the crashy server)")

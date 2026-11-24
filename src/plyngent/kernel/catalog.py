@@ -167,6 +167,7 @@ class ToolCatalog:
         *,
         reading: bool = False,
         available: Collection[tuple[str, str]] = (),
+        gone: Collection[str] = (),
     ) -> ToolView:
         """What one session may see: the residents, plus whatever groups it has been shown.
 
@@ -189,6 +190,7 @@ class ToolCatalog:
             groups=self.groups(),
             disclosed=frozenset(disclosed),
             available=tuple(available),
+            gone=tuple(gone),
         )
 
 
@@ -215,6 +217,9 @@ class ToolView:
     #: ``groups``, because a name there means "tools that exist and this session has not been shown";
     #: these are tools that do not exist yet (E175).
     available: tuple[tuple[str, str], ...] = ()
+    #: The groups this program tried and gave up on, so that the refusal of one can say so. A name here
+    #: is not askable and not forthcoming: what a model can do about it is nothing (E182).
+    gone: tuple[str, ...] = ()
 
     def __len__(self) -> int:
         return len(self.specs)
@@ -291,14 +296,18 @@ class ToolTable:
     the same two things. A round reads it once, at the top: a group materialised during the round arrives
     in the next one, which is what makes "the tool block does not change inside a round" true even when
     the set it is built from does (E175).
+
+    ``gone`` travels with ``available`` because it is the same question's other answer: a group the
+    program gave up on is one a model may still name, and the refusal is where it finds out (E182).
     """
 
     catalog: ToolCatalog
     available: tuple[tuple[str, str], ...] = ()
+    gone: tuple[str, ...] = ()
 
     def view(self, disclosed: Collection[str], *, reading: bool = False) -> ToolView:
         """What one session may reach, and the groups it could still ask for."""
-        return self.catalog.view(disclosed, reading=reading, available=self.available)
+        return self.catalog.view(disclosed, reading=reading, available=self.available, gone=self.gone)
 
 
 def _declared(specs: Mapping[str, ToolSpec]) -> tuple[ToolDecl, ...]:
