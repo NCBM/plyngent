@@ -48,11 +48,16 @@ class TodoStatus(StrEnum):
     The members are declared in name order and not in the order a task moves through them, because
     this is the closed set a tool's schema carries and a schema is written in a stable order (§10.5).
     Which of them still count as work is :data:`OPEN`.
+
+    ``PAUSED`` is the one that is neither work nor finished: something that cannot be done now, kept in
+    the plan so the person can see it, and out of ``OPEN`` so the plan can be at rest while it waits
+    (E188).
     """
 
     CANCELLED = "cancelled"
     DONE = "done"
     IN_PROGRESS = "in_progress"
+    PAUSED = "paused"
     PENDING = "pending"
 
 
@@ -64,6 +69,7 @@ MARKS: dict[TodoStatus, str] = {
     TodoStatus.CANCELLED: "[-]",
     TodoStatus.DONE: "[x]",
     TodoStatus.IN_PROGRESS: "[~]",
+    TodoStatus.PAUSED: "[!]",
     TodoStatus.PENDING: "[ ]",
 }
 
@@ -134,6 +140,19 @@ class Todos(Struct, kw_only=True):
         """Every item that is still work."""
         return [item for item in self.items() if item.status in OPEN]
 
+    def paused_items(self) -> list[TodoItem]:
+        """Every item that was set aside for now: still in the plan, and not work to do."""
+        return [item for item in self.items() if item.status is TodoStatus.PAUSED]
+
+    def has_work(self) -> bool:
+        """Whether the plan still owes work — which is a question about ``OPEN`` and nothing else.
+
+        The predicate and the sentence are two things (:meth:`reminder` is the sentence), because a plan
+        whose every item is paused has nothing to do and something to say: reading "is there work" off a
+        line of prose is how a plan that is waiting comes to be read as a plan that is finished (E188).
+        """
+        return any(item.status in OPEN for item in self.items())
+
     def push_group(self, titles: Iterable[str], *, notes: str = "") -> TodoGroup:
         """Put one new group of siblings on top, and answer it.
 
@@ -184,21 +203,42 @@ class Todos(Struct, kw_only=True):
             item.notes = notes.strip()
         return item
 
+    def pause(self, group: int, number: int) -> TodoItem | None:
+        """Set one item aside, and answer it — ``None`` when it is not there or is set aside already.
+
+        A method of its own because setting a task aside is not a field this call may or may not mention:
+        it is the one transition the plan makes on the kernel's behalf, and a second write of it changes
+        nothing (E188).
+        """
+        found = self.group(group)
+        if found is None or not 1 <= number <= len(found.items):
+            return None
+        item = found.items[number - 1]
+        if item.status is TodoStatus.PAUSED:
+            return None
+        item.status = TodoStatus.PAUSED
+        return item
+
     def reminder(self) -> str:
         """What is left of the plan, as the one line a model is told between rounds.
 
-        Empty when nothing is open, and that is a real answer: a reminder that has nothing to say is how
-        a writer says the one it wrote before no longer holds (E142). The
-        titles are named up to :data:`NAMED` and counted past that, because this line is written once and
+        Empty when nothing is open **and nothing is set aside**, and that is a real answer: a reminder that
+        has nothing to say is how a writer says the one it wrote before no longer holds (E142). A paused
+        item is not work, so it is counted in a tail and never named among the open ones — a plan whose
+        last open item was paused reads "nothing open (1 paused)", where silence would be half a lie.
+
+        The titles are named up to :data:`NAMED` and counted past that, because this line is written once and
         then read in every request that follows it.
         """
         opened = self.open_items()
+        paused = len(self.paused_items())
+        tail = f" ({paused} paused)" if paused else ""
         if not opened:
-            return ""
+            return f"nothing open{tail}" if paused else ""
         named = ", ".join(item.title for item in opened[:NAMED])
         rest = len(opened) - NAMED
         said = f"{named} and {rest} more" if rest > 0 else named
-        return f"{counted(len(opened), 'item')} still open: {said}"
+        return f"{counted(len(opened), 'item')} still open: {said}{tail}"
 
     def render(self, only: Collection[int] | None = None) -> str:
         """The listing: the whole stack, or the groups ``only`` names, each under its own number.

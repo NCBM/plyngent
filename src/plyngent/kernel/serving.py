@@ -1340,12 +1340,16 @@ class Serving:
         being asked about, so nothing is written: a switch somebody threw has to survive somebody saying a
         word beside it.
 
-        **The chain is over** is the other five, and each is a way of not insisting: the plan is finished,
-        the turn was stopped or failed (an end other than the empty reason), it acted on nothing — a model
-        that answered without calling anything has nothing a second turn could carry on from — it has
-        driven as many turns as this program allows, or the plan is broken down less deeply than the floor
-        a plan may drive from. Each of them writes the switch back to ``off`` and says so, which is what
-        keeps a plan nobody can act on from leaving "goal on" on the screen forever (E187).
+        **The chain is over** is the other five, and each is a way of not insisting: the plan is finished
+        (:attr:`~plyngent.kernel.session.Session.unfinished`, which is open work and nothing else), the turn
+        was stopped or failed (an end other than the empty reason), it acted on nothing — a model that
+        answered without calling anything has nothing a second turn could carry on from — it has driven as
+        many turns as this program allows, or the plan is broken down less deeply than the floor a plan may
+        drive from. Each of them writes the switch back to ``off`` and says so, which is what keeps a plan
+        nobody can act on from leaving "goal on" on the screen forever (E187).
+
+        A pause waiting to be recorded is the one thing that is neither: the kernel promised a turn for it,
+        so it drives one more whatever the floor says, and that turn is where the plan records it (E188).
 
         A turn that cannot be started at all — an entry that is gone, a kernel already at its ceiling — is
         neither: it is this process's ceiling and not the plan's end, so the switch is left as it is (E156).
@@ -1353,16 +1357,18 @@ class Serving:
         session = turned.session
         if not session.goal or turned.kind in (TurnKind.ASIDE, TurnKind.COMPACT) or session.turns():
             return None
-        if end.reason or not end.acted or not session.todos.reminder():
+        if end.reason or not end.acted or not session.unfinished:
             return await self._stopped(session)
         if turned.host.goals and session.goals >= turned.host.goals:
             return await self._stopped(session)
-        if session.todos.top_depth() < session.goal_depth:
+        if not session.pause_asked and session.todos.top_depth() < session.goal_depth:
             return await self._stopped(session)
         try:
-            return await session.begin_turn(asker=turned.asker, begin_after=end.ends_at, kind=TurnKind.GOAL)
+            started = await session.begin_turn(asker=turned.asker, begin_after=end.ends_at, kind=TurnKind.GOAL)
         except ValueError, TooManyTurns:
             return None
+        _ = await session.land_pause(turn=started.turn_id)
+        return started
 
     async def _stopped(self, session: Session) -> None:
         """Turn the switch off because the chain this turn belonged to is over, and say both out loud.

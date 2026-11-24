@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from plyngent.kernel.env import Env
+    from plyngent.kernel.session import Session
 
 
 class ListArgs(ToolArgs, kw_only=True):
@@ -67,6 +68,15 @@ class PushArgs(ToolArgs, kw_only=True):
     notes: str = ""
 
 
+#: What a deferred pause answers with: what just happened, and what to spend this turn on. It never asks
+#: the model to watch for a turn boundary, because nothing in the conversation marks one — the recording is
+#: the kernel's to make, and the boundary is its own to see (E188).
+DEFERRED = (
+    "held for the next turn: group {group} item {number} is recorded when the harness starts one itself. "
+    "Work on what else is open, and say so if there is nothing."
+)
+
+
 class UpdateArgs(ToolArgs, kw_only=True):
     """Change one task: its status, its title, its notes, or several at once.
 
@@ -74,7 +84,8 @@ class UpdateArgs(ToolArgs, kw_only=True):
     ``number`` is the task's number inside that group. Both come from the latest ``todo_list``, and
     nothing is changed when a number names nothing. A field left out is a field this call does not
     touch; ``notes=""`` clears a note. ``status`` is one of ``pending``, ``in_progress``, ``done``,
-    ``cancelled``.
+    ``cancelled``, ``paused``. ``paused`` means the task cannot be done now: it is recorded by the
+    harness at the next turn it starts itself, so this call answers with that and writes nothing.
     """
 
     group: Annotated[int, msgspec.Meta(ge=0)]
@@ -194,6 +205,9 @@ async def todo_push(env: Env, args: PushArgs) -> ToolResult:
 async def todo_update(env: Env, args: UpdateArgs) -> ToolResult:
     """One task changed, answered as the group it belongs to."""
 
+    if args.status is TodoStatus.PAUSED:
+        return await _set_aside(env, args)
+
     def update(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
         group = todos.group(args.group)
@@ -206,6 +220,51 @@ async def todo_update(env: Env, args: UpdateArgs) -> ToolResult:
         return todos.dump(), _layer(todos, args.group, summary)
 
     return await _planned(env, update)
+
+
+async def _set_aside(env: Env, args: UpdateArgs) -> ToolResult:
+    """Ask the plan to set one task aside, which is recorded at a turn the kernel starts (E188).
+
+    Why not here, and why one turn: writing it now would empty the plan of its last open item, and a plan
+    with nothing open is a chain that ends — so the request that just said "this cannot be done now" would
+    be the thing that stopped the conversation from ever recording it. The turn between the asking and the
+    recording is the price, and it is only asked for while the chain still has a turn to spend: with no
+    turn left to protect, the pause is written at once.
+    """
+    session = env.session_state
+    # A request from an earlier turn that never got its turn is recorded now, before this one is queued:
+    # one slot, and the older promise is the one already made (E188).
+    _ = await session.land_pause(turn=env.turn)
+    todos = Todos.load(session.setting(TODOS))
+    group = todos.group(args.group)
+    if group is None:
+        return _no_group(todos, args.group)
+    if args.number > len(group.items):
+        return _no_item(args.group, args.number, len(group.items))
+    if _rounds_kept(session):
+        asked = session.pause(env.turn, args.group, args.number)
+        return ToolResult.of(Failure.NEXT_TURN, DEFERRED.format(group=asked.group, number=asked.number))
+
+    def pause(before: str | None) -> tuple[str | None, ToolResult]:
+        held = Todos.load(before)
+        item = held.pause(args.group, args.number)
+        summary = f"set aside group {args.group} item {args.number}"
+        if item is None:
+            return None, ToolResult.ok(f"group {args.group} item {args.number} was already set aside")
+        return held.dump(), _layer(held, args.group, summary)
+
+    return await _planned(env, pause)
+
+
+def _rounds_kept(session: Session) -> bool:
+    """Whether the chain this turn belongs to has another turn to spend, which is what a wait costs.
+
+    Two things have to hold and they are the two the kernel checks before it starts a turn of its own: the
+    switch is on, and this chain is under the number of turns a plan may drive. With neither, there is
+    nothing to protect from a plan that empties — the pause is written immediately (E188).
+    """
+    limit = session.host.goals
+    return session.goal and (not limit or session.goals < limit)
 
 
 async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
@@ -264,7 +323,9 @@ def _counted(todos: Todos, *, shown: int | None = None) -> str:
     if not items:
         return f"{held}, no items"
     opened = sum(1 for item in items if item.status in OPEN)
-    return f"{held}, {counted(len(items), 'item')} ({opened} open)"
+    paused = sum(1 for item in items if item.status is TodoStatus.PAUSED)
+    tail = f", {paused} paused" if paused else ""
+    return f"{held}, {counted(len(items), 'item')} ({opened} open{tail})"
 
 
 def _changed(args: UpdateArgs) -> str:

@@ -134,8 +134,11 @@ back is the count of bytes it handed over: redirect into a file when you want to
 The plan a turn is worked through: `todo_push` opens a group of steps, `todo_update` moves one,
 `todo_pop` closes a group, and `todo_list` shows the stack. The numbers a listing prints are positions in
 that listing, not names, and they move when the stack does. Nothing is cleared for you: a finished group
-stays until it is popped. `wait` is the other call here: it hands the turn over to a person for a while
-and answers what they did — wrote a line, pressed enter, or said nothing at all.""",
+stays until it is popped. A task that cannot be done now is `paused` (`todo_update` with that status): it
+leaves the open ones alone, stays in the listing marked `[!]`, and the harness records it at the next turn
+it starts itself — so ask once, and spend that turn on what else is open. `wait` is the other call here:
+it hands the turn over to a person for a while and answers what they did — wrote a line, pressed enter, or
+said nothing at all.""",
     Group.SKILLS: """\
 Skills are instruction directories somebody installed for this machine. Read the one you mean with
 `skill_read` before following it, and reach for `skill_list` or `skill_search` when the catalog above is

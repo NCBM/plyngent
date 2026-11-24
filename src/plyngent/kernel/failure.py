@@ -39,6 +39,10 @@ class Failure(StrEnum):
     LIMIT = "limit"
     TIMEOUT = "timeout"
     PROTOCOL = "protocol"
+    #: The call is the right one and it is not for now: the kernel does this itself at the next turn it
+    #: starts, so the same call would be answered the same way before then. Refused and not failed —
+    #: nothing about the call was wrong, and what it asked for will happen (E188).
+    NEXT_TURN = "next_turn"
     #: A tool the client offered was called and never answered: the client is gone, or the deadline
     #: passed. What it did is unknown on purpose — the effect happened in somebody else's process, so
     #: the call is neither "refused" nor "nothing happened" (§10.8).

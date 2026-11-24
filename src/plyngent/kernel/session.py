@@ -32,7 +32,7 @@ from plyngent.kernel.cancel import CancelToken, Scope
 
 # Not a type-only import: ``require()`` resolves the field's annotation from this module's globals.
 from plyngent.kernel.host import Host  # noqa: TC001
-from plyngent.kernel.notices import Notices
+from plyngent.kernel.notices import PLAN, Notices
 from plyngent.kernel.reads import Reads
 from plyngent.kernel.todos import Todos
 from plyngent.kernel.trail import Consent, StateChange
@@ -210,6 +210,20 @@ class TurnCtx:
         self.session.end_turn(self)
 
 
+@dataclass(frozen=True, slots=True)
+class Pause:
+    """One task a turn asked to set aside, and the turn that asked.
+
+    ``turn`` is what makes the two halves of E188 one rule: a pause asked for in a turn is recorded at the
+    next turn the kernel starts, and a request that is this turn's own is the one it must not record
+    early — recording it now would end the plan's own chain at the moment the model said "not this one".
+    """
+
+    turn: int
+    group: int
+    number: int
+
+
 class Session(Component):
     """One conversation: the turns it has, and the cancellation they are addressed through.
 
@@ -252,6 +266,11 @@ class Session(Component):
     #: process ended is a plan that may drive three more, and a person's own line starts the count again
     #: (E187).
     goals: int
+    #: The pauses this conversation asked for and the plan has not recorded yet, oldest first — the one
+    #: thing about a plan that is a *request* before it is a state. In memory for the reason the count
+    #: above is: a process that ends between the asking and the recording loses the request, and the item
+    #: stays open, which is the direction that asks nobody to trust a promise nobody kept (E188).
+    pause_asked: list[Pause]
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
     _lock: asyncio.Lock
@@ -263,6 +282,7 @@ class Session(Component):
         self.approvals = Approvals()
         self.calibration = None
         self.goals = 0
+        self.pause_asked = []
         self._turns = {}
         self._state = {}
         self._lock = asyncio.Lock()
@@ -536,6 +556,57 @@ class Session(Component):
         and one reader that folds it here, so no caller folds its own (§10.4, E146).
         """
         return Todos.load(self._state.get(TODOS))
+
+    @property
+    def unfinished(self) -> bool:
+        """Whether this conversation still owes its plan anything: open work, or a pause to record.
+
+        The pause is the one term the stack cannot answer, because it is not a state of the plan yet: a
+        chain that stopped while the last open item was waiting to be set aside would leave the request
+        unrecorded forever, so the request itself is a reason to start one more turn (E188).
+        """
+        return self.todos.has_work() or bool(self.pause_asked)
+
+    def pause(self, turn: int, group: int, number: int) -> Pause:
+        """Ask the plan to set one task aside, and answer the request as it was recorded.
+
+        A request is a value and the recording is a later turn's business, which is why this only touches
+        the list: the same task asked for twice is one request, and asking again in a later turn is a
+        second one (E188).
+        """
+        for asked in self.pause_asked:
+            if asked.group == group and asked.number == number:
+                return asked
+        asked = Pause(turn=turn, group=group, number=number)
+        self.pause_asked.append(asked)
+        return asked
+
+    async def land_pause(self, *, turn: int) -> bool:
+        """Record every pause asked for before *turn*, and tell the model what the plan is now (E188).
+
+        Written through the same setting the todo tools write, in one row for all of them: the plan is one
+        value, and two pauses recorded in a turn are one change to it. The reminder is fired here for the
+        reason every other plan change fires one — a plan the model is not told about is a plan it works
+        from memory.
+
+        ``turn`` is what keeps the two halves of the rule apart: a request this turn made is still being
+        made, and the caller that is asking for it is the one that must not see it recorded.
+        """
+        asked = [one for one in self.pause_asked if one.turn < turn]
+        if not asked:
+            return False
+        self.pause_asked = [one for one in self.pause_asked if one.turn >= turn]
+
+        def mutate(before: str | None) -> tuple[str | None, bool]:
+            todos = Todos.load(before)
+            landed = [one for one in asked if todos.pause(one.group, one.number) is not None]
+            return (todos.dump(), True) if landed else (None, False)
+
+        if not await self.change(TODOS, mutate):
+            return False
+        left = self.todos.reminder()
+        self.notices.say(PLAN, left, summary=left or "nothing is left on the plan")
+        return True
 
     # -- which paths this conversation may reach -----------------------------------
 

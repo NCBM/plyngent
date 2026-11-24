@@ -106,6 +106,15 @@ class Env:
         return self._ctx.session.route
 
     @property
+    def turn(self) -> int:
+        """Which turn this call belongs to — the same number its results are written under.
+
+        Part of the address, and a tool asks for it when "now" and "the next turn" are two different
+        answers: a plan that records something at the next turn has to know which one it is in (E188).
+        """
+        return self._ctx.turn_id
+
+    @property
     def reads(self) -> Reads:
         """What this turn has already shown with line numbers.
 

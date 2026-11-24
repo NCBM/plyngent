@@ -73,6 +73,123 @@ async def test_a_push_past_the_stack_ceiling_is_refused(story_with: Scripted) ->
     assert "hint: todo_pop — or finish that level and pop it" in refused, "the other is to close the level"
 
 
+async def test_a_pause_is_recorded_at_the_next_turn_the_kernel_starts(story_with: Scripted) -> None:
+    """E188: ``paused`` is asked for in one turn and written into the plan in the next one the kernel begins.
+
+    The wait is the price of not emptying the plan in the middle of a chain: writing it where it was asked
+    would leave the plan with nothing open, and a plan with nothing open stops driving — the request that
+    said "this cannot be done now" would be the thing that stopped the conversation from ever recording it.
+    Two things say the two halves happened: the answer that wrote nothing (it carries no layer), and the
+    listing of the turn after it, which has the task marked and counted.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec", "write the parser"]}),
+        text("planned"),
+        calling("todo_update", {"group": 0, "number": 1, "status": "paused"}),
+        text("one of them I cannot do now"),
+        calling("todo_list", {}),
+        text("waiting for you"),
+        text("nobody asked for this"),
+    )
+
+    await story.type("/goal on")
+    await story.type("plan it")
+    await story.finished(turn=3)
+
+    refused = _answers(story.requests()[3])[-1]
+    assert refused == (
+        "held for the next turn: group 0 item 1 is recorded when the harness starts one itself. "
+        "Work on what else is open, and say so if there is nothing."
+    ), "the turn that asked is answered, and nothing was written"
+
+    listed = _answers(story.requests()[5])[-1]
+    assert "[!] 1. read the spec" in listed, "the turn the kernel started is where the plan records it"
+    assert "[ ] 2. write the parser" in listed, "and the work that is still work is untouched"
+    assert "1 open, 1 paused" in listed, "the count says both, since one of them is neither done nor open"
+
+    carried = [one for one in story.requests()[4].messages if isinstance(one, Note)]
+    assert any("1 item still open: write the parser (1 paused)" in one.text for one in carried), (
+        "and the reminder the model reads names the open one and counts the set-aside one"
+    )
+
+
+async def test_a_pause_with_no_turn_left_to_spend_is_recorded_at_once(story_with: Scripted) -> None:
+    """E188: the wait is asked for only while there is a turn to protect, and ``goals=1`` has none left.
+
+    What a deferral buys is the rest of a chain, so a chain at its ceiling has nothing a pause could empty:
+    the answer is the layer it changed, written where it was asked.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        text("planned"),
+        calling("todo_update", {"group": 0, "number": 1, "status": "paused"}),
+        text("waiting for you"),
+        text("nobody asked for this"),
+        goals=1,
+    )
+
+    await story.type("/goal on")
+    await story.type("plan it")
+    await story.finished(turn=2)
+
+    told = _answers(story.requests()[3])[-1]
+    assert told.startswith("set aside group 0 item 1"), told
+    assert "[!] 1. read the spec" in told, "and the answer is the layer, written"
+
+
+async def test_a_pause_with_the_switch_off_is_recorded_at_once(story_with: Scripted) -> None:
+    """The same rule from the other side: a conversation that does not drive itself has no turn to protect."""
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        calling("todo_update", {"group": 0, "number": 1, "status": "paused"}),
+        text("waiting for you"),
+    )
+
+    await story.type("plan it")
+    await story.finished()
+
+    told = _answers(story.requests()[2])[-1]
+    assert told.startswith("set aside group 0 item 1"), told
+
+
+async def test_a_pause_of_the_last_open_task_still_gets_its_turn(story_with: Scripted) -> None:
+    """E188: the request is a reason to start one more turn, even with nothing else open in the plan.
+
+    The chain has to survive the asking: the one open task is the one waiting to be set aside, so a driver
+    that judged "is there open work" alone would end here, and the request would be the thing that stopped
+    the turn it was waiting for. That turn is where the plan records it — and then the plan really does
+    rest, so the turn after it is nobody's.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec", "write the parser"]}),
+        _batch(
+            _asked("todo_update", call="pause", group=0, number=1, status="paused"),
+            _asked("todo_update", call="done", group=0, number=2, status="done"),
+        ),
+        text("one is set aside and one is done"),
+        calling("todo_list", {}),
+        text("nothing left that I can do"),
+        text("nobody asked for this"),
+    )
+
+    await story.type("/goal on")
+    await story.type("plan them")
+    await story.finished(turn=2)
+    await story.settle()
+
+    screen = "\n".join(story.screen())
+    assert "turn 2 started (goal)" in screen, "the recorded-nowhere request is what drove it"
+
+    refused = _answers(story.requests()[2])[-2]
+    assert refused.startswith("held for the next turn: group 0 item 1"), refused
+
+    listed = _answers(story.requests()[4])[-1]
+    assert "[!] 1. read the spec" in listed, "the turn the kernel started is where it is written"
+    assert "0 open, 1 paused" in listed, "and nothing in the plan is work any more"
+    assert "turn 3 started" not in screen, "so the plan rests: a set-aside task is not work to drive"
+    assert "goal off: the plan waits" in screen, "and the switch says so"
+
+
 async def test_a_pushed_group_is_listed_under_its_own_number(story_with: Scripted) -> None:
     story = await story_with(
         calling("todo_push", {"titles": ["write the parser", "test it"]}),

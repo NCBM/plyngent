@@ -953,9 +953,16 @@ def test_the_kernel_does_not_know_the_names_of_the_policies() -> None:
 
 
 def test_the_world_can_fix_two_of_them_by_itself_and_the_rest_ask_for_something() -> None:
+    """Three kinds are worth trying again exactly as they were, and only one of them is about the world.
+
+    ``BUSY`` and ``TIMEOUT`` are the world's own answer, and ``NEXT_TURN`` is the kernel saying the call is
+    right and not for now: the plan records a pause at the next turn the kernel starts, so the same call
+    made before then would be answered the same way (E188).
+    """
     assert {kind for kind, (_, retry) in OUTCOMES.items() if retry is Retry.SAME_CALL} == {
         Failure.BUSY,
         Failure.TIMEOUT,
+        Failure.NEXT_TURN,
     }, "nothing else is worth trying again as it was"
 
 
