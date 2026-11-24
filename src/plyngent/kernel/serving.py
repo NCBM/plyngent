@@ -37,6 +37,7 @@ them takes the session's single turn slot.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import TYPE_CHECKING, assert_never
 
 from composat import Declaration
@@ -891,7 +892,10 @@ class Serving:
             available = () if tools is None else tools.available()
             catalog = ToolCatalog((*base, *self._attached), resident=(*RESIDENT, *self._resident))
             table = ToolTable(catalog=catalog, available=available)
-            self._made = (table, ToolExecutor(table, materialise=None if tools is None else tools.materialise))
+            # The waiting a round is willing to do is the table's, and it is bound here because this is
+            # where a round asks: a group still coming up must not hold one for longer than that (E182).
+            waiting = None if tools is None else partial(tools.materialise, wait=tools.wait)
+            self._made = (table, ToolExecutor(table, materialise=waiting))
             self._made_key = key
         return self._made
 

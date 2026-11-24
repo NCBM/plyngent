@@ -149,6 +149,9 @@ class McpServer(ToolProvider):
             return self._tools
         self._child, self._peer = None, None
         child = Child(self.argv, cwd=self.cwd, env=self.env)
+        # Held from the first moment, so a program that is still saying hello when the process closes is
+        # stopped by :meth:`close` like any other: a half-initialised child is the one nobody looks after.
+        self._child = child
         try:
             peer = await child.start()
             await self._ready(peer)
@@ -156,9 +159,10 @@ class McpServer(ToolProvider):
         except BaseException:
             # Whatever started is stopped on the way out: a group that could not come up has no process
             # to look after it, and a half-initialised server is a child nobody will ever close.
+            self._child = None
             await child.stop()
             raise
-        self._child, self._peer, self._tools = child, peer, found
+        self._peer, self._tools = peer, found
         return found
 
     async def call(self, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:

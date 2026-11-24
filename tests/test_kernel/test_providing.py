@@ -36,12 +36,15 @@ def _spec(name: str, group: str) -> ToolSpec:
 class Scripted(ToolProvider):
     """A provider whose whole behaviour is what it was constructed with, and what it was asked."""
 
-    def __init__(self, group: str, *, specs: tuple[ToolSpec, ...] | None = None, fails: bool = False) -> None:
+    def __init__(
+        self, group: str, *, specs: tuple[ToolSpec, ...] | None = None, fails: bool = False, slow: float = 0.0
+    ) -> None:
         self.calls = 0
         self.closed = 0
         self._group = group
         self._specs = (_spec(f"{group}_one", group),) if specs is None else specs
         self._fails = fails
+        self._slow = slow
 
     @property
     @override
@@ -66,6 +69,7 @@ class Scripted(ToolProvider):
     @override
     async def materialise(self) -> tuple[ToolSpec, ...]:
         self.calls += 1
+        await asyncio.sleep(self._slow)
         if self._fails:
             msg = "the server said no"
             raise ConnectionError(msg)
@@ -111,6 +115,44 @@ async def test_one_group_is_made_once_and_its_names_join_the_table() -> None:
     assert tools.version == 1, "one change, not two"
     assert "acme_one" in {spec.name for spec in tools.specs()}
     assert tools.available() == (), "a group that is up is not something to ask for"
+
+
+async def test_a_caller_that_says_how_long_it_waits_goes_on_without_the_group() -> None:
+    """A server that takes longer than the round is willing to stand still keeps coming up behind it.
+
+    The wait is a bound on the *waiting*, never on the making: cancelling the work would turn a slow
+    server into a broken one, and the round that asked has an answer it can act on either way (E182).
+    """
+    provider = Scripted("acme", slow=0.2)
+    tools = Tools(sets=(ToolSet(providers=(provider,)),))
+
+    with pytest.raises(TimeoutError):
+        _ = await tools.materialise("acme", wait=0.01)
+
+    assert "acme_one" not in {spec.name for spec in tools.specs()}, "the tools are not here yet"
+    await _arrived(tools, 0.5)
+    assert "acme_one" in {spec.name for spec in tools.specs()}, "the making was not cancelled with the wait"
+    assert provider.calls == 1, "and it is the one making, not a second one"
+
+
+async def test_a_caller_that_says_nothing_waits_for_the_whole_group() -> None:
+    """``None`` is "as long as it takes", which is what a conversation being reopened asks for."""
+    provider = Scripted("acme", slow=0.05)
+    tools = Tools(sets=(ToolSet(providers=(provider,)),))
+
+    answer = await tools.materialise("acme")
+
+    assert [spec.name for spec in answer.specs] == ["acme_one"]
+
+
+async def _arrived(tools: Tools, patience: float) -> None:
+    """Let the background making finish, or fail saying it never did."""
+    for _ in range(int(patience / 0.01) + 1):
+        if tools.specs():
+            return
+        await asyncio.sleep(0.01)
+    msg = "the group never arrived behind the round that stopped waiting"
+    raise AssertionError(msg)
 
 
 async def test_a_group_that_failed_is_not_remembered() -> None:

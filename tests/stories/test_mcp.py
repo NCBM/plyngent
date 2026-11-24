@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from composat import Declaration
 
 from plyngent.cli.policy import Policy
+from plyngent.config import Mcp, McpLaunch, Settings
 from plyngent.kernel.mcp.server import McpServer
 from plyngent.kernel.providing import ToolSet
 from tests.stories.model import calling, text, told
@@ -60,6 +61,19 @@ for line in sys.stdin:
 #: What answers the question a server's call asks: a tool somebody else wrote is ``danger`` until the
 #: file says otherwise, and a story that answers "yes" is a person who already agreed.
 _YES = Policy(away=True, away_danger=True)
+
+
+#: A server that takes its time to come up, which is the one thing a round cannot afford to wait for.
+SLEEPY = """\
+import json, sys, time
+
+for line in sys.stdin:
+    message = json.loads(line)
+    time.sleep(0.3)
+    said = {"jsonrpc": "2.0", "id": message["id"], "result": {"protocolVersion": "2025-06-18"}}
+    sys.stdout.write(json.dumps(said) + "\\n")
+    sys.stdout.flush()
+"""
 
 
 def _declared(where: Path) -> tuple[Declaration, ...]:
@@ -114,3 +128,32 @@ async def test_asking_for_a_server_brings_it_and_a_call_goes_through_the_pipe(
     assert said.startswith("mcp:echo is up: 1 tool (echo__echo)"), said
     assert "Echo is all this server does." in said, "the server's own instructions arrive with the answer"
     assert "the server heard hello" in told(last), "and the call went through the pipe and back"
+
+
+async def test_a_server_that_is_slow_to_start_does_not_hold_the_round(story_with: Started, tmp_path: Path) -> None:
+    """``[mcp] wait_seconds`` is how long a round stands still, and a server may take longer than that.
+
+    The number is the file's, so the story sets it to zero: with no patience the round is answered and
+    goes on, where a held round would have been the same call arriving two hundred milliseconds later.
+    What the model reads is that it did not come up in its time — the group keeps coming up in the
+    background, and the next ask finds it (E182).
+    """
+    script = tmp_path / "sleepy.py"
+    _ = script.write_text(SLEEPY, encoding="utf-8")
+    settings = Settings(
+        journal=tmp_path / "journal.db",
+        mcp=Mcp(
+            wait_seconds=0.0,
+            servers=(McpLaunch(name="sleepy", argv=(sys.executable, str(script)), env=dict(os.environ), cwd=tmp_path),),
+        ),
+    )
+    story = await story_with(calling("tool_require", {"group": "mcp:sleepy"}), text("later, then"), config=settings)
+
+    await story.type("bring the slow one")
+    await story.finished()
+
+    failed = [line for line in story.screen() if line.startswith("tool_require failed:")]
+    assert len(failed) == 1, f"the round was answered, not held: {story.screen()}"
+    assert "mcp:sleepy did not come up in its time" in failed[0]
+
+    assert await story.stop() == 0, "a group that is still coming up is not a failed turn"

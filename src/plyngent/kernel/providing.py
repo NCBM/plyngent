@@ -45,6 +45,13 @@ class ToolNameTakenError(ValueError):
     """Two sources brought one tool name, which the sentence says and no user of the table can act on."""
 
 
+#: How long a round waits for a group that is still coming up before it answers without it. A server on
+#: another machine may take longer than a conversation should stand still for, so what arrives late
+#: arrives for whatever asks next — the making is the process's and is not cancelled with the wait.
+#: ``0`` is a program that never waits (E182).
+DEFAULT_WAIT = 2.0
+
+
 @dataclass(frozen=True, slots=True)
 class Brought:
     """One group's arrival: the tools that came up, and the words its provider wants said about them.
@@ -146,14 +153,18 @@ class Tools(Component):
     """
 
     base: tuple[ToolSpec, ...]
+    wait: float
     _sets: tuple[ToolSet, ...]
     _materialised: dict[str, tuple[ToolSpec, ...]]
     _in_flight: dict[str, asyncio.Task[Brought]]
     _version: int
 
-    def __init__(self, *, base: Iterable[ToolSpec] = (), sets: Iterable[ToolSet] = ()) -> None:
+    def __init__(
+        self, *, base: Iterable[ToolSpec] = (), sets: Iterable[ToolSet] = (), wait: float = DEFAULT_WAIT
+    ) -> None:
         super().__init__()
         self.base = tuple(base)
+        self.wait = wait
         self._sets = tuple(sets)
         self._materialised = {}
         self._in_flight = {}
@@ -208,13 +219,19 @@ class Tools(Component):
 
     # -- asking for one ------------------------------------------------------------
 
-    async def materialise(self, group: str) -> Brought:
+    async def materialise(self, group: str, *, wait: float | None = None) -> Brought:
         """Bring one group up, once for everybody who asked at the same time.
 
         Two callers in one round both want the group, and one connection is not worth opening twice: the
         work in flight is one task and the second caller waits on it. The wait is *shielded*, so a caller
         whose own turn is cancelled stops waiting and the group still arrives for whoever else asked —
         what is shared is the materialising, not the permission to be cancelled.
+
+        ``wait`` is how long *this* caller is willing to stand still, and ``None`` is "as long as it
+        takes". It is a bound on the waiting and not on the work: a group that outlives it keeps coming
+        up in the background, and the round that asked goes on without its tools. That is the difference
+        between a slow server and a broken one — a conversation that stopped for three minutes could not
+        tell them apart (E182).
 
         The provider's own deadline is enforced here, once, so nothing above has to invent a second
         number for it: a group that does not come up in its time raises :class:`TimeoutError`, and a
@@ -227,8 +244,14 @@ class Tools(Component):
         running = self._in_flight.get(group)
         if running is None:
             running = asyncio.create_task(self._bringing(group))
+            # Nobody may be waiting when this finishes — a round that stopped waiting left the work
+            # going — and an exception nothing read is a warning printed where nobody is looking.
+            running.add_done_callback(_quietly)
             self._in_flight[group] = running
-        return await asyncio.shield(running)
+        if wait is None:
+            return await asyncio.shield(running)
+        async with asyncio.timeout(wait):
+            return await asyncio.shield(running)
 
     async def _bringing(self, group: str) -> Brought:
         """Do the work one group's materialising is, and let go of the entry either way."""
@@ -272,3 +295,9 @@ class Tools(Component):
 def _group_of(spec: ToolSpec) -> str:
     """The group a spec travels in, spelled as the index line spells it."""
     return str(spec.group)
+
+
+def _quietly(task: asyncio.Task[Brought]) -> None:
+    """Read a finished task's exception, so a group nobody waits for any more does not warn on its way out."""
+    if not task.cancelled():
+        _ = task.exception()

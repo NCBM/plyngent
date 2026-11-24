@@ -41,7 +41,7 @@ from plyngent.kernel.model import Model, ModelChannel
 from plyngent.kernel.net.shipped import WEB_PROVIDERS, web_half
 from plyngent.kernel.net.web import Engine, Engines, Web
 from plyngent.kernel.prompt import PromptPlan
-from plyngent.kernel.providing import Tools, ToolSet
+from plyngent.kernel.providing import DEFAULT_WAIT, Tools, ToolSet
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.running import DEFAULT_RUNNING
@@ -674,6 +674,7 @@ async def install(
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
     checkpoint_rows: int | None = None,
+    wait: float = DEFAULT_WAIT,
     pty: Limits | None = None,
     running: int | None = None,
     rounds: int | None = None,
@@ -795,6 +796,7 @@ async def install(
         prompt=prompt,
         journal=journal,
         checkpoint_rows=checkpoint_rows,
+        wait=wait,
         pty=pty,
         running=running,
         rounds=rounds,
@@ -942,6 +944,7 @@ async def serve(
     prompt: PromptPlan | None = None,
     journal: Path | str | None = None,
     checkpoint_rows: int | None = None,
+    wait: float = DEFAULT_WAIT,
     pty: Limits | None = None,
     running: int | None = None,
     rounds: int | None = None,
@@ -982,6 +985,7 @@ async def serve(
         prompt=prompt,
         journal=journal,
         checkpoint_rows=checkpoint_rows,
+        wait=wait,
         pty=pty,
         running=running,
         rounds=rounds,
@@ -1055,6 +1059,7 @@ async def _assembled(
     prompt: PromptPlan | None,
     journal: Path | str | None,
     checkpoint_rows: int | None,
+    wait: float,
     pty: Limits | None,
     running: int | None,
     rounds: int | None,
@@ -1105,8 +1110,10 @@ async def _assembled(
     # What a launcher brought is declared beside it, and a declaration that reaches for something nothing
     # declared is the registry's refusal to make — order here is dependency order, not declaration order.
     # The tool table is the process's too, and it is declared with everything anybody brought: which
-    # groups can be asked for is a fact about the program and not about a tree (E175).
-    _ = registry.declare_all([Declaration(PtyBroker), *given, Declaration(Tools, kwargs={"base": specs, "sets": sets})])
+    # groups can be asked for is a fact about the program and not about a tree (E175). ``wait`` is the
+    # round's patience with a group that is still coming up, and it comes from the file (E182).
+    tools_declared = Declaration(Tools, kwargs={"base": specs, "sets": sets, "wait": wait})
+    _ = registry.declare_all([Declaration(PtyBroker), *given, tools_declared])
     rule = answering_from_the_root(registry, up, only={PtyBroker}, below=ancestors)
     assembly = Assembly(registry, up=up, rule=rule)
     kernel = _Kernel(

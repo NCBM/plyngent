@@ -56,7 +56,7 @@ from plyngent.kernel.net.web import DEFAULT_COUNT, Web
 from plyngent.kernel.net.web import DEFAULT_TIMEOUT as WEB_TIMEOUT
 from plyngent.kernel.paths import normalize
 from plyngent.kernel.prompt import PromptPlan
-from plyngent.kernel.providing import ToolSet
+from plyngent.kernel.providing import DEFAULT_WAIT, ToolSet
 from plyngent.kernel.pty.registry import (
     DEFAULT_MAX_PER_SESSION,
     DEFAULT_MAX_SESSIONS,
@@ -93,10 +93,10 @@ NOTIFY_MODULE = "desktop_notifier"
 DEFAULT_NOTIFY_GRACE = 10.0
 DEFAULT_NOTIFY_INTERVAL = 30.0
 
-#: How long a round waits for a group that is still coming up before it goes on without it. A server on
-#: another machine may take longer than a conversation should, so what arrives late arrives in the
-#: background and is said then (E182).
-DEFAULT_MCP_WAIT = 2.0
+#: How long a round waits for a group that is still coming up before it goes on without it, which is the
+#: same number the tool table falls back to: the file names it because how long a person will stand still
+#: is not a fact about a protocol (E182).
+DEFAULT_MCP_WAIT = DEFAULT_WAIT
 
 
 class ConfigError(Exception):
@@ -1037,4 +1037,7 @@ def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, 
         # The one door back into the file this value was read from, and ``None`` for a program nobody
         # configured — which is what a write-back answers with when it is asked for one (E173).
         "writing": None if settings.source is None else Writer(settings.source, settings.text),
+        # How long a round waits for a group that is still coming up, spent by the tool table and not by
+        # the round: the number is the file's, and one round may not decide it for the next (E182).
+        "wait": settings.mcp.wait_seconds,
     }
