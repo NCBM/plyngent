@@ -84,7 +84,8 @@ EXPECTED: dict[str, str] = {
     "  stands.\n"
     "\n"
     "Options:\n"
-    "  --session TEXT  the conversation to act on  [default: main]",
+    "  --depth INTEGER\n"
+    "  --session TEXT   the conversation to act on  [default: main]",
     "compact": "Usage: compact [OPTIONS]\n"
     "\n"
     "  Write a summary into the conversation. Later turns continue from it.\n"

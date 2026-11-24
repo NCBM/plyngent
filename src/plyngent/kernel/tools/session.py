@@ -59,7 +59,8 @@ class PushArgs(ToolArgs, kw_only=True):
 
     ``titles`` is the group: one call is one level of breakdown, so several titles are siblings and not
     several levels. Blank titles are dropped, and nothing is pushed when every one of them was blank.
-    ``notes`` is written onto every member of the new group.
+    ``notes`` is written onto every member of the new group. A stack already as deep as this program goes
+    refuses the push: finish the TOP group and pop it first.
     """
 
     titles: Annotated[list[str], msgspec.Meta(min_length=1)]
@@ -166,9 +167,9 @@ async def _planned(env: Env, mutate: Callable[[str | None], tuple[str | None, To
 async def todo_list(env: Env, args: ListArgs) -> ToolResult:
     """The TOP group, or every group when the call asked for the whole stack."""
     todos = Todos.load(env.session_state.setting(TODOS))
-    drawn = None if args.full else {todos.depth() - 1}
-    shown = todos.depth() if drawn is None else 1
-    hidden = todos.depth() - shown
+    drawn = None if args.full else {todos.levels() - 1}
+    shown = todos.levels() if drawn is None else 1
+    hidden = todos.levels() - shown
     body: list[Part] = [Text(value=todos.render(drawn))]
     if hidden:
         body.append(_hidden(hidden))
@@ -180,9 +181,12 @@ async def todo_push(env: Env, args: PushArgs) -> ToolResult:
 
     def push(before: str | None) -> tuple[str | None, ToolResult]:
         todos = Todos.load(before)
+        limit = env.session_state.host.depth
+        if limit and todos.levels() >= limit:
+            return None, _too_deep(todos, limit)
         group = todos.push_group(args.titles, notes=args.notes)
-        summary = f"pushed {counted(len(group.items), 'item')} (depth {todos.depth()})"
-        return todos.dump(), _layer(todos, todos.depth() - 1, summary)
+        summary = f"pushed {counted(len(group.items), 'item')} ({counted(todos.levels(), 'group')})"
+        return todos.dump(), _layer(todos, todos.levels() - 1, summary)
 
     return await _planned(env, push)
 
@@ -216,8 +220,8 @@ async def todo_pop(env: Env, _args: PopArgs) -> ToolResult:
                 body=Hint(tool=TODO_LIST.name, why="see what is on the stack"),
             )
             return None, empty
-        summary = f"popped {counted(len(group.items), 'item')} (depth {todos.depth()})"
-        return todos.dump(), _layer(todos, todos.depth() - 1, summary)
+        summary = f"popped {counted(len(group.items), 'item')} ({counted(todos.levels(), 'group')})"
+        return todos.dump(), _layer(todos, todos.levels() - 1, summary)
 
     return await _planned(env, pop)
 
@@ -240,7 +244,7 @@ def _layer(todos: Todos, depth: int, summary: str) -> ToolResult:
     The hint says "not shown", never "below", because a call that changed a middle layer has
     groups on both sides of the one it answered.
     """
-    hidden = todos.depth() - 1
+    hidden = todos.levels() - 1
     body: list[Part] = [Text(value=todos.render({depth}))]
     if hidden:
         body.append(_hidden(hidden))
@@ -254,7 +258,7 @@ def _hidden(count: int) -> Hint:
 
 def _counted(todos: Todos, *, shown: int | None = None) -> str:
     """What the stack holds — in the window it was drawn in, when the call asked for a window."""
-    groups = todos.depth()
+    groups = todos.levels()
     held = f"{shown} of {groups} groups" if shown is not None and shown != groups else counted(groups, "group")
     items = todos.items()
     if not items:
@@ -272,7 +276,7 @@ def _changed(args: UpdateArgs) -> str:
 
 def _no_group(todos: Todos, depth: int) -> ToolResult:
     """A group number the stack does not have, and where numbers that do come from."""
-    held = "the stack is empty" if not todos.depth() else f"the stack has {todos.depth()} ({_deepest(todos)})"
+    held = "the stack is empty" if not todos.levels() else f"the stack has {todos.levels()} ({_deepest(todos)})"
     return ToolResult.of(Failure.ARGS, f"no group {depth}: {held}", hints=(_listing_hint(),))
 
 
@@ -292,7 +296,23 @@ def _listing_hint() -> Hint:
 
 def _deepest(todos: Todos) -> str:
     """Which numbers the stack does have, without spelling out a range a model has to work out."""
-    return "0 is the bottom" if todos.depth() == 1 else f"0 is the bottom, {todos.depth() - 1} is the top"
+    return "0 is the bottom" if todos.levels() == 1 else f"0 is the bottom, {todos.levels() - 1} is the top"
+
+
+def _too_deep(todos: Todos, limit: int) -> ToolResult:
+    """A push the stack has no room for, and the two ways a model can get room for it.
+
+    What it protects is the one thing a stack of groups is for: the TOP group is the work being done now,
+    and a breakdown deeper than this program allows has stopped naming any (E187).
+    """
+    return ToolResult.of(
+        Failure.BLOCKED,
+        f"the stack already has {counted(limit, 'group')}, which is as deep as this program goes ({_deepest(todos)})",
+        hints=(
+            Hint(tool=TODO_UPDATE.name, why="work the TOP group: it is the level being done now"),
+            Hint(tool=TODO_POP.name, why="or finish that level and pop it, and this push will fit"),
+        ),
+    )
 
 
 def _titles_given(args: Any) -> None:

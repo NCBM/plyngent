@@ -62,7 +62,7 @@ from plyngent.kernel.pty.registry import (
 from plyngent.kernel.resources import Root
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
-from plyngent.kernel.turn import DEFAULT_ROUNDS
+from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
 from plyngent.kernel.workspace import WorkspaceConfig
 from plyngent.kernel.writing import Written
 from plyngent.wire.event import PersistProblem
@@ -149,11 +149,20 @@ class TurnFile(Struct, forbid_unknown_fields=True, kw_only=True):
     the wall does — ``false`` ends the turn there, and ``true`` asks the person first, once per window,
     so that a program left alone keeps the ceiling it was given, and never quietly runs past it
     (E150).
+
+    ``goals``, ``depth`` and ``goal_depth`` bound a conversation that drives itself, and they are here
+    because they are the same kind of number as the round's: ``goals`` how many turns one plan may start
+    before the chain stops (``0`` is "never said", so it goes on), ``depth`` how many groups the todo
+    stack may hold, and ``goal_depth`` the lowest group a plan may drive from — where ``0``, unlike
+    the others, is a real answer: the bottom group (E187).
     """
 
     running: Annotated[int, msgspec.Meta(ge=1)] = DEFAULT_RUNNING
     rounds: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_ROUNDS
     soft: bool = False
+    goals: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_GOALS
+    depth: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_DEPTH
+    goal_depth: Annotated[int, msgspec.Meta(ge=0)] = DEFAULT_GOAL_DEPTH
 
 
 class JournalFile(Struct, forbid_unknown_fields=True, kw_only=True):
@@ -297,6 +306,9 @@ class Settings:
     running: int = DEFAULT_RUNNING
     rounds: int = DEFAULT_ROUNDS
     soft: bool = False
+    goals: int = DEFAULT_GOALS
+    depth: int = DEFAULT_DEPTH
+    goal_depth: int = DEFAULT_GOAL_DEPTH
     sandbox: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     trash: bool = True
     journal: Path | None = None
@@ -548,6 +560,9 @@ def _settings(
         running=turn.running,
         rounds=turn.rounds,
         soft=turn.soft,
+        goals=turn.goals,
+        depth=turn.depth,
+        goal_depth=turn.goal_depth,
         sandbox=WorkspaceConfig(
             path_denylist=sandbox.path_denylist,
             command_denylist=DEFAULT_COMMAND_DENYLIST | frozenset(sandbox.command_denylist),
@@ -792,6 +807,9 @@ def _from_the_file(*, root: Path | str | None, settings: Settings) -> dict[str, 
         "running": settings.running,
         "rounds": settings.rounds,
         "soft": settings.soft,
+        "goals": settings.goals,
+        "depth": settings.depth,
+        "goal_depth": settings.goal_depth,
         "sandbox": settings.sandbox,
         "trash": settings.trash,
         # The one door back into the file this value was read from, and ``None`` for a program nobody

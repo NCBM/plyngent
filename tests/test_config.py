@@ -36,7 +36,7 @@ from plyngent.kernel.pty.registry import (
 )
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.skills import Skills
-from plyngent.kernel.turn import DEFAULT_ROUNDS
+from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
 from plyngent.wire.event import PersistProblem
 from tests.loopback import answered
 
@@ -684,6 +684,27 @@ def test_how_far_one_turn_may_go_is_two_numbers_and_absent_is_no_wall(tmp_path: 
     assert (chosen.rounds, chosen.soft) == (3, True)
     with pytest.raises(config.ConfigError, match="rounds"):
         _ = config.load(_written(tmp_path, "[turn]\nrounds = -1\n", "negative.toml"))
+
+
+def test_how_far_a_chain_may_go_is_three_numbers_and_zero_is_one_of_them(tmp_path: Path) -> None:
+    """`[turn] goals`/`depth`/`goal_depth` bound a plan that drives itself, and `0` reads twice (E187).
+
+    ``goals = 0`` is "nobody named a number", the reading ``rounds`` gets, so the chain goes on. ``goal_depth
+    = 0`` is a floor and not an absence: the bottom group is a group a plan may drive from, so a program
+    that says nothing drives from any of them — which is the same answer, reached the other way.
+    """
+    plain = config.load(_written(tmp_path, "", "none.toml"))
+
+    assert (plain.goals, plain.depth, plain.goal_depth) == (DEFAULT_GOALS, DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH)
+    assert plain.goals == 3, "a program nobody configured drives three turns and stops"
+    assert plain.depth == 3, "and its plan may be three groups deep"
+    assert plain.goal_depth == 0, "and any group is deep enough to drive from"
+
+    chosen = config.load(_written(tmp_path, "[turn]\ngoals = 0\ndepth = 5\ngoal_depth = 2\n", "chain.toml"))
+
+    assert (chosen.goals, chosen.depth, chosen.goal_depth) == (0, 5, 2)
+    with pytest.raises(config.ConfigError, match="goal_depth"):
+        _ = config.load(_written(tmp_path, "[turn]\ngoal_depth = -1\n", "negative.toml"))
 
 
 def test_the_sandbox_is_two_lists_and_its_commands_only_ever_get_longer(tmp_path: Path) -> None:

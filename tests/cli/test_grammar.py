@@ -26,7 +26,7 @@ from plyngent.cli.grammar import (
     help_text,
     word_help,
 )
-from plyngent.wire.command import Goal, PersistModels, Rollback, SetModel, SetRoute, Submit
+from plyngent.wire.command import Goal, Inherit, Open, PersistModels, Rollback, SetModel, SetRoute, Submit
 from plyngent.wire.event import GoalMode
 from plyngent.wire.manifest import KernelManifest, command_specs
 from plyngent.wire.query import Grants, Models, Skills, Trajectory
@@ -87,9 +87,13 @@ def test_the_route_word_is_reachable_by_its_own_name() -> None:
 def test_a_word_whose_argument_is_one_of_two_words_takes_it_bare() -> None:
     """E146: ``/goal on`` is the value, and ``/goal`` alone is the question, not the empty mode.
 
-    A word whose whole argument is a closed set has no option for it: naming the option would make a person
-    type a word they can already see in the help, and the value they type is the same value the wire
-    carries — ``GoalMode``, not the string click read off the line.
+    A word whose head is a closed set has no option for it: naming the option would make a person type a
+    word they can already see in the help, and the value they type is the same value the wire carries —
+    ``GoalMode``, not the string click read off the line.
+
+    The head is the *first* field the struct declares, and the schema's own order cannot answer which one
+    that is: it is alphabetical, so ``/open``'s first property is ``inherit``, a closed set that is
+    nobody's head — it stays an option (E187).
     """
     catalog = _catalog()
 
@@ -100,6 +104,24 @@ def test_a_word_whose_argument_is_one_of_two_words_takes_it_bare() -> None:
     assert isinstance(decode("/goal sideways", catalog, session="main"), Wrong), (
         "a word the command does not have is a complaint, not a mode"
     )
+    assert decode("/open --inherit approvals", catalog, session="main") == Runs(
+        command=Open(session="main", inherit=Inherit.APPROVALS)
+    ), "a closed set that is not the head is a named option"
+    assert isinstance(decode("/open approvals", catalog, session="main"), Wrong), (
+        "and nothing outside the head is typed bare"
+    )
+
+
+def test_the_goal_word_carries_a_floor_beside_the_switch() -> None:
+    """E187: ``--depth`` moves the floor alone, and the switch moves alone, and neither names the other."""
+    catalog = _catalog()
+
+    assert decode("/goal --depth 2", catalog, session="main") == Runs(command=Goal(session="main", depth=2)), (
+        "a floor with no word about the switch leaves the switch where it is"
+    )
+    assert decode("/goal on --depth 0", catalog, session="main") == Runs(
+        command=Goal(session="main", mode=GoalMode.ON, depth=0)
+    ), "and zero is a floor, which a call can say"
 
 
 def test_completion_of_a_bare_value_says_which_words_it_takes() -> None:

@@ -66,6 +66,12 @@ PROMPT_PLAN = "prompt-plan"
 #: is doing, not something one turn is (§10.4, E146).
 GOAL = "goal"
 
+#: The key the goal's own floor is written under: the lowest group a plan may drive from, when this
+#: conversation wants a different answer from the one the program was started with. Beside the switch
+#: because it is the same question — under what conditions the plan keeps this conversation going — and a
+#: setting of its own because it moves alone: a person moves the floor without touching the switch (E187).
+GOAL_DEPTH = "goal-depth"
+
 #: The key the session's route is written under: which of the host's endpoints answers it, and the epoch
 #: that says when that changed. A fourth key in the same vocabulary, and the first one whose value is a
 #: *choice* — which is why the epoch is written
@@ -241,6 +247,11 @@ class Session(Component):
     #: a setting could not be: a reopened conversation re-learns it in one request. ``None`` until it has
     #: asked.
     calibration: tuple[int, int] | None
+    #: How many turns this conversation's plan has started by itself since somebody last spoke. In memory
+    #: and not a row: it is how far *this* chain has got, so a plan that drove three turns before the
+    #: process ended is a plan that may drive three more, and a person's own line starts the count again
+    #: (E187).
+    goals: int
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
     _lock: asyncio.Lock
@@ -251,6 +262,7 @@ class Session(Component):
         self.notices = Notices()
         self.approvals = Approvals()
         self.calibration = None
+        self.goals = 0
         self._turns = {}
         self._state = {}
         self._lock = asyncio.Lock()
@@ -477,6 +489,31 @@ class Session(Component):
         return await self.change(GOAL, mutate)
 
     @property
+    def goal_depth(self) -> int:
+        """The lowest group a plan may drive from: this conversation's own answer, or the program's.
+
+        ``0`` is a real floor here and not "never said": the bottom group is a group, and a plan whose TOP
+        group is the bottom one is a plan. So the absence of a session value is spelled as ``None`` in the
+        stored text and answered from the host, which is the one place the two sources can meet (E187).
+        """
+        written = self._state.get(GOAL_DEPTH)
+        return self.host.goal_depth if written is None else _floor(written)
+
+    async def set_goal_depth(self, depth: int) -> int:
+        """Put the floor at *depth*, and answer what it is now. A floor it already has writes nothing.
+
+        What it "already has" is read the way :attr:`goal_depth` reads it, because a conversation whose own
+        floor equals the program's is one where writing the row would say something happened and nothing
+        would (E187).
+        """
+
+        def mutate(before: str | None) -> tuple[str | None, int]:
+            held = self.host.goal_depth if before is None else _floor(before)
+            return None if held == depth else msgspec.json.encode({"depth": depth}).decode(), depth
+
+        return await self.change(GOAL_DEPTH, mutate)
+
+    @property
     def name(self) -> str:
         """What a person called this conversation, or nothing when nobody did."""
         return self._state.get(NAME, "")
@@ -613,12 +650,25 @@ class Session(Component):
             since=time.monotonic(),
         )
         self._turns[turn.turn_id] = turn
+        self._count(turn)
         return turn
 
     def end_turn(self, turn: TurnCtx) -> None:
         """Forget a turn, and give back the place it took; a scope that names it afterwards fires nothing."""
         if self._turns.pop(turn.turn_id, None) is not None:
             turn.host.running.stop()
+
+    def _count(self, turn: TurnCtx) -> None:
+        """Count this turn against the plan's wall, or clear the count because somebody spoke.
+
+        The two halves are one rule: a chain is the run of turns one plan started, so a turn nobody's plan
+        asked for is where the next chain begins. Counting here, where a turn becomes live, is what makes
+        the number follow the chain and no row: it is how far *this* run got (E187).
+        """
+        if turn.kind is TurnKind.GOAL:
+            self.goals += 1
+        else:
+            self.goals = 0
 
     def turns(self) -> tuple[TurnCtx, ...]:
         """The turns still live, oldest first.
@@ -736,6 +786,23 @@ def _disclosure(value: str | None) -> tuple[frozenset[str], int]:
 def _disclosure_value(shown: frozenset[str], epoch: int) -> str:
     """One disclosure setting as the text written under its key — the whole set, not a difference."""
     return msgspec.json.encode({"groups": sorted(shown), "toolset_epoch": epoch}).decode()
+
+
+def _floor(value: str) -> int:
+    """The group a goal floor setting holds; a value this build cannot read is the bottom one.
+
+    Decoded here, away from :meth:`Session.load`, for the reason the other decoders are: a stored value a
+    later build cannot parse costs a floor at the bottom group, which is the widest reading and the one a
+    conversation with no setting at all gets (E187).
+    """
+    try:
+        record = msgspec.json.decode(value)
+    except msgspec.DecodeError:
+        return 0
+    if not isinstance(record, dict):
+        return 0
+    depth = cast("dict[str, object]", record).get("depth")
+    return depth if isinstance(depth, int) and depth >= 0 else 0
 
 
 def _epoch(value: str | None) -> int:

@@ -105,9 +105,22 @@ class Todos(Struct, kw_only=True):
     #: The id the next item gets. Stored with the stack so that a restart cannot hand out an id twice.
     next_id: int = 1
 
-    def depth(self) -> int:
-        """How many groups the stack holds — 0 for an empty stack, which is also how deep it is."""
+    def levels(self) -> int:
+        """How many groups the stack holds — 0 for an empty stack.
+
+        A level is one group, and the word is this method's on purpose: ``depth`` is a group's own number
+        (``0`` is the bottom), so counting the groups with it would make one word answer "where is this
+        group" and "how many are there" (E187).
+        """
         return len(self.groups)
+
+    def top_depth(self) -> int:
+        """Which number the TOP group has — ``-1`` when the stack holds nothing.
+
+        The one number a plan that drives itself is judged by: how deep the work has been broken down is
+        where a person's floor is compared against, and an empty stack has no group to compare (E187).
+        """
+        return len(self.groups) - 1
 
     def group(self, depth: int) -> TodoGroup | None:
         """The group a listing wrote as number *depth* (0 is the bottom), or ``None``."""
@@ -196,12 +209,12 @@ class Todos(Struct, kw_only=True):
         """
         if not self.groups:
             return EMPTY
-        drawn = range(self.depth()) if only is None else sorted(d for d in only if 0 <= d < self.depth())
+        drawn = range(self.levels()) if only is None else sorted(d for d in only if 0 <= d < self.levels())
         return "\n".join(line for depth in drawn for line in self._layer(depth))
 
     def _layer(self, depth: int) -> list[str]:
         """One group's heading and its items, in the shape a model reads a checklist in."""
-        heading = f"Group {depth} (TOP):" if depth == self.depth() - 1 else f"Group {depth}:"
+        heading = f"Group {depth} (TOP):" if depth == self.levels() - 1 else f"Group {depth}:"
         numbered = enumerate(self.groups[depth].items, start=1)
         lines = [f"  {MARKS[item.status]} {number}. {item.title}{_noted(item)}" for number, item in numbered]
         return [heading, *lines]

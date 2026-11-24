@@ -163,6 +163,10 @@ _ASKS: dict[type[AnyQuery], Callable[[str], AnyQuery]] = {
 #: How many entries an option that stands for a tuple takes, when the schema fixes its length.
 PAIR_LENGTH = 2
 
+#: The fields every command has and no command spells as an option: the tag it is sent under, and the two
+#: addresses the connection already carries (``session`` is an option too, added once at the end).
+_BASE = frozenset({"cmd", "session", "workspace"})
+
 #: The plain JSON Schema types this client can put on a line.
 _BY_TYPE: dict[str, type] = {"string": str, "integer": int}
 
@@ -280,7 +284,7 @@ def build(manifest: KernelManifest, *, session: str) -> Catalog:
         if tag == COMPOSED:
             offers[tag] = Entry(tag=tag, command=_bare(spec), composes=True)
             continue
-        options, pairs, missing = _options(spec, session=session)
+        options, pairs, missing = _options(spec, classes[tag], session=session)
         if missing:
             withheld[tag] = missing
             continue
@@ -532,7 +536,7 @@ def _ignored(**_values: object) -> None:
     """Click insists on a callback; sending happens in the loop, not here."""
 
 
-def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter], list[str], str]:
+def _options(spec: CommandSpec, kind: type[Command], *, session: str) -> tuple[list[click.Parameter], list[str], str]:
     """The options of one command, the ones that are pairs, and why it cannot be spelled (if so).
 
     Every command carries ``session`` — the contract gives each one a target — so it is an option here
@@ -543,19 +547,24 @@ def _options(spec: CommandSpec, *, session: str) -> tuple[list[click.Parameter],
     a frontend with more than one tree does deliberately, and typing a flag fifteen times is not that
     (E154).
 
-    ``sole`` is whether this command's whole argument is the one field besides ``session``: a word with a
-    single value takes it bare (``/goal on``), because an option for it would be a name a person has to
-    type to say a word they already know (E146).
+    The **head** is this command's first field, and it is read from the struct's own declaration order
+    because the schema is written in alphabetical order: taken from there, ``/open``'s head would be
+    ``inherit`` and ``/cancel``'s would be ``detail``, and neither is what a person types first. A head
+    whose type is a closed set takes its value **bare** (``/goal on``), because an option for it would be
+    a name a person has to type to say a word they already know; every other field is an option, and a
+    closed set anywhere but the head stays one — ``/submit --kind`` is a choice, and nobody types it bare
+    (E147, E187).
     """
     document = _object(json.loads(spec.args))
     name = _text(document.get("$ref")).rpartition("/")[2]
     defs = _object(document.get("$defs"))
     properties = _object(_object(defs.get(name)).get("properties"))
-    fields = {field: schema for field, schema in properties.items() if field not in {"cmd", "session", "workspace"}}
+    fields = {field: schema for field, schema in properties.items() if field not in _BASE}
+    head = next((field for field in kind.__struct_fields__ if field not in _BASE), "")
     options: list[click.Parameter] = []
     pairs: list[str] = []
     for field_name, schema in fields.items():
-        option, pair, why = _option(field_name, _object(schema), defs, sole=len(fields) == 1)
+        option, pair, why = _option(field_name, _object(schema), defs, sole=field_name == head)
         if option is None:
             return [], [], why
         if pair:
@@ -604,7 +613,7 @@ def _shaped(
     if choices:
         default = None if nullable else offered if offered is not None else ""
         if sole:
-            # The whole argument of the word is one of a few words, so it is typed bare: an option here
+            # This is the word's head and its values are a few words, so it is typed bare: an option here
             # would make a person name a value they are looking at in the help.
             return click.Argument([name], type=click.Choice(choices), default=default, required=False), False, ""
         # The choices are the option's metavar, so they are already on the line: help here would say

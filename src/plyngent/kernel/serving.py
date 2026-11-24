@@ -496,8 +496,8 @@ class Serving:
                 await self._persisting(session)
             case Ungrant(session=session, path=path):
                 await self._ungrant(session, path)
-            case Goal(session=session, mode=mode):
-                await self._goal(session, mode)
+            case Goal(session=session, mode=mode, depth=depth):
+                await self._goal(session, mode, depth)
             case Rename(session=session, name=name):
                 await self._rename(session, name)
             case Delete(session=session):
@@ -531,19 +531,36 @@ class Serving:
         _ = await found.host.trail.append(session, DeletedRecord(), begin_after=None if head is None else head.id)
         self._say(Deleted(session=session))
 
-    async def _goal(self, session: str, mode: GoalMode | None) -> None:
-        """Answer where the switch stands, or move it first.
+    async def _goal(self, session: str, mode: GoalMode | None, depth: int | None) -> None:
+        """Answer where the switch stands, or move it — and the floor under it — first.
 
         One refusal, which is the one every setting has: a conversation this kernel does not serve. What
-        the answer says is the mode the session now *has*, so the same event answers both halves of the
-        word — a question and a move — and a person reading a screen is told where the switch is either way.
+        the answer says is what the session now *has*, so the same event answers both halves of the word —
+        a question and a move — and a person reading a screen is told where the switch is either way.
+
+        ``mode`` and ``depth`` are two settings that move one at a time: ``None`` is this call saying
+        nothing about that one, which is why ``/goal --depth 2`` leaves the switch where it was (E187).
         """
         found = self._session(session)
         if found is None:
             self._say(GoalRefused(session=session, reason=Refusal.NO_SESSION))
             return
-        now = await found.set_goal(mode) if mode is not None else found.mode
-        self._say(GoalSet(session=session, mode=now))
+        if mode is not None:
+            _ = await found.set_goal(mode)
+        if depth is not None:
+            _ = await found.set_goal_depth(depth)
+        self._say_goal(found)
+
+    def _say_goal(self, found: Session) -> None:
+        """Say where the switch stands, what floor it drives from, and how deep the plan goes now."""
+        self._say(
+            GoalSet(
+                session=found.session_id,
+                mode=found.mode,
+                depth=found.goal_depth,
+                top=found.todos.top_depth(),
+            )
+        )
 
     async def _ungrant(self, session: str, path: str) -> None:
         """Take back one path this conversation was allowed, and say which of the two happened.
@@ -1318,23 +1335,44 @@ class Serving:
     async def _following(self, turned: TurnCtx, end: TurnEnd) -> TurnCtx | None:
         """The turn a goal asks for, or ``None`` when nothing should be started.
 
-        Four answers, and each of them is a way of not insisting: the switch is off, the plan is finished,
-        the turn was stopped or failed (an end other than the empty reason), or it acted on nothing — a
-        model that answered without calling anything has nothing a second turn could carry on from. A
-        turn already running is the fifth: a person may have typed while this one was finishing, and a
-        session has one turn at a time.
+        Seven answers, in two kinds. **Not this time** — the switch is off, a person typed while this turn
+        was finishing, or the turn was an aside or a compaction — is a moment where the plan is not what is
+        being asked about, so nothing is written: a switch somebody threw has to survive somebody saying a
+        word beside it.
+
+        **The chain is over** is the other five, and each is a way of not insisting: the plan is finished,
+        the turn was stopped or failed (an end other than the empty reason), it acted on nothing — a model
+        that answered without calling anything has nothing a second turn could carry on from — it has
+        driven as many turns as this program allows, or the plan is broken down less deeply than the floor
+        a plan may drive from. Each of them writes the switch back to ``off`` and says so, which is what
+        keeps a plan nobody can act on from leaving "goal on" on the screen forever (E187).
+
+        A turn that cannot be started at all — an entry that is gone, a kernel already at its ceiling — is
+        neither: it is this process's ceiling and not the plan's end, so the switch is left as it is (E156).
         """
         session = turned.session
-        if not session.goal or turned.kind in (TurnKind.ASIDE, TurnKind.COMPACT):
+        if not session.goal or turned.kind in (TurnKind.ASIDE, TurnKind.COMPACT) or session.turns():
             return None
-        if end.reason or not end.acted or not session.todos.reminder() or session.turns():
-            return None
+        if end.reason or not end.acted or not session.todos.reminder():
+            return await self._stopped(session)
+        if turned.host.goals and session.goals >= turned.host.goals:
+            return await self._stopped(session)
+        if session.todos.top_depth() < session.goal_depth:
+            return await self._stopped(session)
         try:
             return await session.begin_turn(asker=turned.asker, begin_after=end.ends_at, kind=TurnKind.GOAL)
         except ValueError, TooManyTurns:
-            # A plan that cannot continue is not a failure: an entry that is gone and a kernel already at
-            # its ceiling both mean this turn is the last one for now (E156).
             return None
+
+    async def _stopped(self, session: Session) -> None:
+        """Turn the switch off because the chain this turn belonged to is over, and say both out loud.
+
+        The row and the event are one act: a person who reads "the plan waits" is reading the setting the
+        next turn will obey, and a client that only heard the event would draw a switch this kernel is not
+        holding (E187).
+        """
+        _ = await session.set_goal(GoalMode.OFF)
+        self._say_goal(session)
 
     # -- the addresses -------------------------------------------------------------
 

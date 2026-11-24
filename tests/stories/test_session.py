@@ -50,6 +50,29 @@ async def _round(story: Story, request: int, count: int) -> tuple[str, ...]:
     return _answers(story.requests()[request])[-count:]
 
 
+async def test_a_push_past_the_stack_ceiling_is_refused(story_with: Scripted) -> None:
+    """E187: a stack has as many levels as this program allows, and the refusal names both ways out.
+
+    ``depth=2`` is the ceiling here, where a program nobody configured goes to three. What the number
+    protects is the one thing a stack of groups is for: the TOP group is the work being done now, and a
+    breakdown deeper than this has stopped naming any.
+    """
+    story = await story_with(
+        calling("todo_push", {"titles": ["read the spec"]}),
+        calling("todo_push", {"titles": ["write it"]}),
+        calling("todo_push", {"titles": ["test it"]}),
+        text("that is as far as this goes"),
+        depth=2,
+    )
+
+    await story.type("plan it")
+
+    refused = await _told(story)
+    assert refused.startswith("the stack already has 2 groups, which is as deep as this program goes"), refused
+    assert "hint: todo_update — work the TOP group" in refused, "one way out is to do the work that is there"
+    assert "hint: todo_pop — or finish that level and pop it" in refused, "the other is to close the level"
+
+
 async def test_a_pushed_group_is_listed_under_its_own_number(story_with: Scripted) -> None:
     story = await story_with(
         calling("todo_push", {"titles": ["write the parser", "test it"]}),
@@ -60,12 +83,12 @@ async def test_a_pushed_group_is_listed_under_its_own_number(story_with: Scripte
     await story.type("here is the plan")
 
     assert await _told(story, 1) == (
-        "pushed 2 items (depth 1)\nGroup 0 (TOP):\n  [ ] 1. write the parser\n  [ ] 2. test it"
+        "pushed 2 items (1 group)\nGroup 0 (TOP):\n  [ ] 1. write the parser\n  [ ] 2. test it"
     ), "a push answers the group it pushed, under the number the listing will use for it"
     assert await _told(story) == (
         "1 group, 2 items (2 open)\nGroup 0 (TOP):\n  [ ] 1. write the parser\n  [ ] 2. test it"
     ), "and the listing prints the same two tasks, with the marks they are at"
-    assert "todo_push ok: pushed 2 items (depth 1)" in story.screen(), "the person sees the same count"
+    assert "todo_push ok: pushed 2 items (1 group)" in story.screen(), "the person sees the same count"
 
 
 async def test_pushing_a_breakdown_leaves_the_group_under_it_numbered_the_same(story_with: Scripted) -> None:
@@ -79,7 +102,7 @@ async def test_pushing_a_breakdown_leaves_the_group_under_it_numbered_the_same(s
     await story.type("break it down")
 
     assert await _told(story, 2) == (
-        "pushed 1 item (depth 2)\n"
+        "pushed 1 item (2 groups)\n"
         "Group 1 (TOP):\n"
         "  [ ] 1. write the parser\n"
         "hint: todo_list(full=true) — 1 more group not shown"
@@ -102,8 +125,8 @@ async def test_two_pushes_in_one_answer_are_two_groups(story_with: Scripted) -> 
     await story.type("two separate things to do")
 
     assert await _round(story, 1, 2) == (
-        "pushed 1 item (depth 1)\nGroup 0 (TOP):\n  [ ] 1. alpha",
-        "pushed 1 item (depth 2)\nGroup 1 (TOP):\n  [ ] 1. beta\nhint: todo_list(full=true) — 1 more group not shown",
+        "pushed 1 item (1 group)\nGroup 0 (TOP):\n  [ ] 1. alpha",
+        "pushed 1 item (2 groups)\nGroup 1 (TOP):\n  [ ] 1. beta\nhint: todo_list(full=true) — 1 more group not shown",
     ), "a batch really does run at once, so the second push reads the stack the first one wrote"
     assert await _told(story) == (
         "2 groups, 2 items (2 open)\nGroup 0:\n  [ ] 1. alpha\nGroup 1 (TOP):\n  [ ] 1. beta"
@@ -122,7 +145,7 @@ async def test_a_plan_is_still_there_after_a_restart(tmp_path, transport: str) -
     )
     try:
         await first.type("here is the plan")
-        assert "todo_push ok: pushed 1 item (depth 1)" in first.screen(), first.screen()
+        assert "todo_push ok: pushed 1 item (1 group)" in first.screen(), first.screen()
         assert await first.stop() == 0
     finally:
         await first.close()
@@ -274,7 +297,7 @@ async def test_a_pop_takes_the_whole_top_group_and_answers_the_one_under_it(stor
 
     await story.type("that breakdown is not the question")
 
-    assert await _told(story, 3) == ("popped 2 items (depth 1)\nGroup 0 (TOP):\n  [ ] 1. read the spec"), (
+    assert await _told(story, 3) == ("popped 2 items (1 group)\nGroup 0 (TOP):\n  [ ] 1. read the spec"), (
         "a pop takes the level off whole, and answers the group that is now the top one"
     )
     assert await _told(story) == ("1 group, 1 item (1 open)\nGroup 0 (TOP):\n  [ ] 1. read the spec"), (

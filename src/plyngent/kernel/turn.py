@@ -100,6 +100,21 @@ OUTGREW = "the conversation outgrew what this route can hold"
 #: model has nothing more to ask for, and nothing here counts them (E150).
 DEFAULT_ROUNDS = 0
 
+#: How many turns one plan may start by itself before the chain stops, unless `[turn] goals` says
+#: otherwise. Zero is the same reading ``DEFAULT_ROUNDS`` gets: this program never said, so a finished
+#: turn with work left in the plan is followed by another one for as long as the plan holds (E187).
+DEFAULT_GOALS = 3
+
+#: How many groups the todo stack may hold, unless `[turn] depth` says otherwise. It is the stack's own
+#: ceiling and not a turn's: past it a push is refused, because a plan broken down more finely than this
+#: is a plan whose top group is not the thing being worked on (E187).
+DEFAULT_DEPTH = 3
+
+#: The lowest group a plan may drive from when the session says nothing, unless `[turn] goal_depth` says
+#: otherwise. **Zero is a real value here** and not "never said": the bottom group is a place to drive
+#: from, so a plan whose TOP group is the bottom one still keeps the conversation going (E187).
+DEFAULT_GOAL_DEPTH = 0
+
 #: The two of the three answers to the round wall's question that are not another window: a person
 #: saying "this turn, no more counting" and a person saying "not any more". The words are the question's
 #: own options, so the screen and the answer cannot disagree about them.

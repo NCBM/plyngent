@@ -18,7 +18,9 @@ a fresh session" is — ``Compact`` itself never knows a session exists.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Annotated
 
+import msgspec
 from msgspec import Struct
 
 from plyngent.wire.event import GoalMode, TurnKind
@@ -152,11 +154,17 @@ class Goal(Command, tag="goal", frozen=True, kw_only=True):
     is a place where "which is it now?" and "make it be" are the two things they say. The answer is
     :class:`~plyngent.wire.event.GoalSet` either way, and it always says the mode the session now *has*.
 
+    ``depth`` is the other half of what the switch does: the lowest group a plan may drive from, so a
+    person can say "keep going, but only while the work is broken down this far". It moves on its own —
+    ``/goal --depth 2`` leaves the switch where it is — and empty is "do not touch it, and answer where it
+    stands" (E187).
+
     Nothing about this is a turn's business: the switch moves now, and what it changes is what the kernel
     does *after* a turn ends (§10.4, E146).
     """
 
     mode: GoalMode | None = None
+    depth: Annotated[int, msgspec.Meta(ge=0)] | None = None
 
 
 class Compact(Command, tag="compact", frozen=True, kw_only=True):

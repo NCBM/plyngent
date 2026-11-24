@@ -937,9 +937,10 @@ def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — on
             return ((session, Shown(f"{route} written back to {path}", "notice")),)
         case PersistRefused(session=session, problem=problem):
             return ((session, Shown(f"nothing was written: {_PERSIST_SENTENCES[problem]}", "refusal")),)
-        case GoalSet(session=session, mode=mode):
+        case GoalSet(session=session, mode=mode, depth=depth, top=top):
             said = "an unfinished plan keeps this conversation going" if mode is GoalMode.ON else "the plan waits"
-            return ((session, Shown(f"goal {mode}: {said}", "notice")),)
+            here = "the plan is empty" if top < 0 else f"the top group is {top}"
+            return ((session, Shown(f"goal {mode}: {said} (from group {depth} up; {here})", "notice")),)
         case RolledBack(session=session, revision=revision, target=target, restored=restored):
             counted = "1 path" if len(restored) == 1 else f"{len(restored)} paths"
             said = f"rolled back to {target[:8]}: {counted} put back ({revision[:8]})"

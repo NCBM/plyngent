@@ -33,7 +33,7 @@ from plyngent.kernel.pty.registry import PtyRegistry  # noqa: TC001
 from plyngent.kernel.running import DEFAULT_RUNNING, Running
 from plyngent.kernel.skills import Skills  # noqa: TC001
 from plyngent.kernel.trail import Notice
-from plyngent.kernel.turn import DEFAULT_ROUNDS
+from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
 from plyngent.kernel.workspace import Workspace, WorkspaceConfig
 from plyngent.kernel.writing import Persisting  # noqa: TC001 — a component's field annotation is resolved here
 
@@ -99,6 +99,14 @@ class Host(Component):
     # count stops it; the wall itself is counted per turn, which is why only the policy lives here (E150).
     rounds: int
     soft: bool
+    # How many turns one plan may start by itself, and how deep the todo stack may go. Both are numbers
+    # this program was started with and both bound a chain that drives itself: the first how far it goes,
+    # the second how much breakdown it may write down. `0` for the first is "never said" (E187).
+    goals: int
+    depth: int
+    # The lowest group a plan may drive from. Unlike ``goals``, `0` here is a real floor — the bottom
+    # group — because a plan whose TOP group is the bottom one is still a plan (E187).
+    goal_depth: int
     # The skills this host can read, or ``None`` when it was started without any. A plain field: a skill
     # has no lifecycle, so there is nothing to open or close and nothing that a component would answer.
     # ``None`` is a value — a kernel with no skills directory has no skill tools at all, which is decided
@@ -135,6 +143,9 @@ class Host(Component):
         running: int = DEFAULT_RUNNING,
         rounds: int = DEFAULT_ROUNDS,
         soft: bool = False,
+        goals: int = DEFAULT_GOALS,
+        depth: int = DEFAULT_DEPTH,
+        goal_depth: int = DEFAULT_GOAL_DEPTH,
         workspace_config: WorkspaceConfig | None = None,
         writing: Persisting | None = None,
     ) -> None:
@@ -145,6 +156,9 @@ class Host(Component):
         self.running = Running(running)
         self.rounds = rounds
         self.soft = soft
+        self.goals = goals
+        self.depth = depth
+        self.goal_depth = goal_depth
         self.net = NetPolicy()
         self.locks = Locks()
         self.skills = skills

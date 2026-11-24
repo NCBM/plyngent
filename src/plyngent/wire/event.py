@@ -543,10 +543,23 @@ class GoalSet(Event, tag="goal-set", frozen=True, kw_only=True):
     itself when a turn ends with work left in the plan, so a conversation is not left waiting for somebody
     to type "go on". What it is *not* is a loop: a goal turn that did not act — no call, nothing to
     change — ends the chain, because asking a model again for an answer it already gave makes no progress.
+
+    Three numbers, because the switch alone does not say what it will do: ``mode``, ``depth`` (the lowest
+    group a plan may drive from) and ``top`` (which group the plan's TOP one is now, ``-1`` when the stack
+    is empty). A plan whose TOP group is under the floor is a plan the switch will not act on, and saying
+    so is what keeps "on" from reading as "it will keep going" (E187).
+
+    Said only as a change, and never as the answer to attaching: the switch is a thing a person threw, and
+    a frontend that has just attached asks with ``/goal``. Every one of these rows is therefore a line
+    somebody reads — including the one the kernel writes when a chain ends by itself.
     """
 
     session: str = ""
     mode: GoalMode = GoalMode.OFF
+    #: The lowest group a plan may drive from, as this session answered it.
+    depth: int = 0
+    #: Which group the plan's TOP one is, or ``-1`` when the stack holds nothing.
+    top: int = -1
 
 
 class GoalRefused(Event, tag="goal-refused", frozen=True, kw_only=True):

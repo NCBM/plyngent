@@ -47,7 +47,7 @@ from plyngent.kernel.pty.registry import Limits, PtyRegistry
 from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
-from plyngent.kernel.turn import DEFAULT_ROUNDS
+from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
 from plyngent.wire.event import Refusal
@@ -167,6 +167,9 @@ class _Defaults(NamedTuple):
     running: int | None
     rounds: int | None
     soft: bool
+    goals: int | None
+    depth: int | None
+    goal_depth: int | None
     sandbox: WorkspaceConfig | None
     trash: bool
     writing: Persisting | None
@@ -314,6 +317,11 @@ class _Kernel:
                         "running": DEFAULT_RUNNING if self.defaults.running is None else self.defaults.running,
                         "rounds": DEFAULT_ROUNDS if self.defaults.rounds is None else self.defaults.rounds,
                         "soft": self.defaults.soft,
+                        "goals": DEFAULT_GOALS if self.defaults.goals is None else self.defaults.goals,
+                        "depth": DEFAULT_DEPTH if self.defaults.depth is None else self.defaults.depth,
+                        "goal_depth": (
+                            DEFAULT_GOAL_DEPTH if self.defaults.goal_depth is None else self.defaults.goal_depth
+                        ),
                         "workspace_config": self.defaults.sandbox,
                         "trash_enabled": self.defaults.trash,
                         "writing": self.defaults.writing,
@@ -670,6 +678,9 @@ async def install(
     running: int | None = None,
     rounds: int | None = None,
     soft: bool = False,
+    goals: int | None = None,
+    depth: int | None = None,
+    goal_depth: int | None = None,
     sandbox: WorkspaceConfig | None = None,
     trash: bool = True,
     deadline: float | None = None,
@@ -739,6 +750,11 @@ async def install(
     ``rounds`` and ``soft`` are how far one turn may go: how many times it may ask the model before the
     wall, and whether the wall asks the person first. ``None`` is this tree's own number, which is no wall
     at all, so a program nobody configured is one whose turns end when the model is done (E150).
+
+    ``goals``, ``depth`` and ``goal_depth`` are how far a *chain* may go: how many turns one plan may
+    start by itself, how many groups the todo stack may hold, and the lowest group a plan may drive from.
+    ``None`` is this tree's own number for each, so a program nobody configured keeps driving for three
+    turns, refuses a fourth group, and drives from any group at all (E187).
     ``transport`` is named, and nothing is assumed: it is what a client reaches the kernel over, and a
     name this build cannot open is refused here, and never half-works somewhere further in.
     ``local`` is one connection over a socket this kernel accepted, so ``endpoint`` is where it listens:
@@ -783,6 +799,9 @@ async def install(
         running=running,
         rounds=rounds,
         soft=soft,
+        goals=goals,
+        depth=depth,
+        goal_depth=goal_depth,
         sandbox=sandbox,
         trash=trash,
         versions=versions,
@@ -927,6 +946,9 @@ async def serve(
     running: int | None = None,
     rounds: int | None = None,
     soft: bool = False,
+    goals: int | None = None,
+    depth: int | None = None,
+    goal_depth: int | None = None,
     sandbox: WorkspaceConfig | None = None,
     trash: bool = True,
     deadline: float | None = None,
@@ -964,6 +986,9 @@ async def serve(
         running=running,
         rounds=rounds,
         soft=soft,
+        goals=goals,
+        depth=depth,
+        goal_depth=goal_depth,
         sandbox=sandbox,
         trash=trash,
         versions=versions,
@@ -1034,6 +1059,9 @@ async def _assembled(
     running: int | None,
     rounds: int | None,
     soft: bool,
+    goals: int | None,
+    depth: int | None,
+    goal_depth: int | None,
     sandbox: WorkspaceConfig | None,
     trash: bool,
     versions: bool,
@@ -1094,6 +1122,9 @@ async def _assembled(
             running=running,
             rounds=rounds,
             soft=soft,
+            goals=goals,
+            depth=depth,
+            goal_depth=goal_depth,
             sandbox=sandbox,
             trash=trash,
             versions=versions,
