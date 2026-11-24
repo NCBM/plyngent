@@ -302,6 +302,11 @@ class Tools(Component):
         """The groups being brought up right now, which is neither absent nor up."""
         return frozenset(self._in_flight)
 
+    def brought(self, group: str) -> Brought | None:
+        """What one group brought if it is in the table right now, and ``None`` for one that is not."""
+        done = self._materialised.get(group)
+        return None if done is None else Brought(specs=done, guide=self._guide(group))
+
     def retire(self, group: str) -> None:
         """Stop offering one group for the rest of the process.
 

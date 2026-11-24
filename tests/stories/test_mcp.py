@@ -68,11 +68,21 @@ _YES = Policy(away=True, away_danger=True)
 SLEEPY = """\
 import json, sys, time
 
+TOOLS = [{"name": "echo", "inputSchema": {"type": "object"}}]
+
 for line in sys.stdin:
     message = json.loads(line)
-    time.sleep(0.3)
-    said = {"jsonrpc": "2.0", "id": message["id"], "result": {"protocolVersion": "2025-06-18"}}
-    sys.stdout.write(json.dumps(said) + "\\n")
+    if "id" not in message:
+        continue
+    method, params = message.get("method"), message.get("params") or {}
+    time.sleep(0.1)
+    if method == "initialize":
+        answer = {"protocolVersion": params.get("protocolVersion")}
+    elif method == "tools/list":
+        answer = {"tools": TOOLS}
+    else:
+        answer = {"content": [{"type": "text", "text": "slowly said"}]}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": answer}) + "\\n")
     sys.stdout.flush()
 """
 
@@ -182,6 +192,41 @@ async def test_a_server_that_is_slow_to_start_does_not_hold_the_round(story_with
     assert "mcp:sleepy did not come up in its time" in failed[0]
 
     assert await story.stop() == 0, "a group that is still coming up is not a failed turn"
+
+
+async def test_a_group_that_arrives_after_the_round_stopped_waiting_is_said(
+    story_with: Started, tmp_path: Path
+) -> None:
+    """The group kept coming up behind the round that gave up on it, and the round after it arrives says so.
+
+    What is saved is a call: the model is handed the tools and the server's own words about them, so it
+    does not have to ask again to find out whether the thing it wanted is there (E182).
+    """
+    script = tmp_path / "sleepy.py"
+    _ = script.write_text(SLEEPY, encoding="utf-8")
+    settings = Settings(
+        journal=tmp_path / "journal.db",
+        mcp=Mcp(
+            wait_seconds=0.0,
+            servers=(McpLaunch(name="sleepy", argv=(sys.executable, str(script)), env=dict(os.environ), cwd=tmp_path),),
+        ),
+    )
+    story = await story_with(
+        calling("tool_require", {"group": "mcp:sleepy"}),
+        calling("execute", {"steps": [{"argv": ["sleep", "0.6"]}], "intention": "let the server come up"}),
+        text("now what?"),
+        config=settings,
+        policy=_YES,
+    )
+
+    await story.type("bring the slow one")
+    await story.finished()
+
+    last = story.requests()[-1]
+    said = "\n".join(message.text for message in last.messages)
+    assert "mcp:sleepy came up after the round that asked for it stopped waiting" in said
+    assert "1 tool in your table now" in said, "the count is the sentence's"
+    assert "mcp__sleepy__echo" in {tool.name for tool in last.tools}, "and the block carries it"
 
 
 async def test_a_server_that_dies_is_no_longer_a_group_the_model_can_call(story_with: Started, tmp_path: Path) -> None:

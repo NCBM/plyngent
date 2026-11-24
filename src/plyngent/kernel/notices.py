@@ -55,12 +55,17 @@ ELIDED = "elided"
 #: it should do next (E151).
 TERMINALS = "terminals"
 
+#: The late arrival's writer: a group that was still coming up when the round asking for it stopped
+#: waiting is in the table now. Before the groups that did not come back, because the two are one
+#: subject and the one that works is the one a model can act on at once (E182).
+BROUGHT = "brought"
+
 #: The tool providers' writer: the groups this conversation asked for did not all come back. After the
 #: terminals, because a terminal is a thing the model was holding and a group is a thing it may ask for
 #: again — and before the plan, because it changes which calls it may make (E176).
 PROVIDERS = "providers"
 
-DECLARED: tuple[str, ...] = (ELIDED, TERMINALS, PROVIDERS, PLAN, LIMIT)
+DECLARED: tuple[str, ...] = (ELIDED, TERMINALS, BROUGHT, PROVIDERS, PLAN, LIMIT)
 
 
 def marked(text: str) -> str:
@@ -130,6 +135,23 @@ def lost_terminals(gone: int) -> str:
 def lost_terminals_summary(gone: int) -> str:
     """The one line a person reads about the same act."""
     return f"{counted(gone, 'terminal session')} lost when the terminal broker was replaced"
+
+
+def brought(group: str, tools: int, guide: str = "") -> tuple[str, str]:
+    """What a model is told when a group it asked for came up after the round had stopped waiting (E182).
+
+    The round that asked was answered without the tools, so nothing in that conversation says they exist;
+    what this adds is that the asking is over — they are in the table and can be called by name. The
+    provider's words travel with it, because a model that has to ask again to learn how to use them has
+    spent the call this sentence was meant to save.
+    """
+    said = (
+        f"{group} came up after the round that asked for it stopped waiting: "
+        f"{counted(tools, 'tool')} in your table now."
+    )
+    if guide:
+        said += f"\n\n{guide}"
+    return said, f"{group} came up late"
 
 
 #: The three ways a group a conversation asked for did not come back, spelled as the words the sentence

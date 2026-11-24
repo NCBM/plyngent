@@ -271,6 +271,10 @@ class Session(Component):
     #: above is: a process that ends between the asking and the recording loses the request, and the item
     #: stays open, which is the direction that asks nobody to trust a promise nobody kept (E188).
     pause_asked: list[Pause]
+    #: The groups this conversation asked for while they were still coming up: what a round says when one
+    #: of them arrives. In memory, because the fact it stands for is one round's — a conversation that
+    #: ends between asking and arriving learns about it the next time it asks (E182).
+    arriving: set[str]
     _turns: dict[int, TurnCtx]
     _state: dict[str, str]
     _lock: asyncio.Lock
@@ -283,6 +287,7 @@ class Session(Component):
         self.calibration = None
         self.goals = 0
         self.pause_asked = []
+        self.arriving = set()
         self._turns = {}
         self._state = {}
         self._lock = asyncio.Lock()

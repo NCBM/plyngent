@@ -93,6 +93,10 @@ async def _arriving(env: Env, group: str) -> ToolResult:
     except Cancelled:
         raise
     except TimeoutError:
+        # The making is the process's and goes on without this round, so the group is one this
+        # conversation is still waiting for: a later round says it arrived, and the model spends no call
+        # finding out (E182).
+        env.session_state.arriving.add(group)
         return ToolResult.of(Failure.TIMEOUT, f"{group} did not come up in its time; ask again if you still need it")
     except Exception as exc:  # noqa: BLE001 — a provider that failed is a result, not a stopped turn
         return ToolResult.of(Failure.BUSY, f"{group} could not be brought up: {exc}. Ask again if you still need it")

@@ -9,10 +9,12 @@ first request of this one (E175, E176).
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration
 
+from plyngent.config import Mcp, Settings
 from plyngent.kernel.model import Call, Reply
 from plyngent.kernel.providing import ToolProvider, ToolSet
 from plyngent.kernel.toolresult import ToolResult
@@ -69,6 +71,7 @@ class ScriptedProvider(ToolProvider):
         guide: str = "acme_echo answers what you say to it.",
         timeout: float = 5.0,
         fails: bool = False,
+        slow: float = 0.0,
     ) -> None:
         self.calls = 0
         self._group = group
@@ -76,6 +79,7 @@ class ScriptedProvider(ToolProvider):
         self._guide = guide
         self._timeout = timeout
         self._fails = fails
+        self._slow = slow
 
     @property
     @override
@@ -100,6 +104,8 @@ class ScriptedProvider(ToolProvider):
     @override
     async def materialise(self) -> tuple[ToolSpec, ...]:
         self.calls += 1
+        if self._slow:
+            await asyncio.sleep(self._slow)
         if self._fails:
             msg = "no answer from the account's server"
             raise ConnectionError(msg)
@@ -263,6 +269,53 @@ async def test_what_a_conversation_asked_for_is_back_in_its_first_request(tmp_pa
             "and the first request of this process already has it"
         )
         assert "acme" not in _index(first_request)
+    finally:
+        await reopened.close()
+
+
+async def test_a_reopening_does_not_stand_still_for_a_group_that_is_slow(tmp_path: Path) -> None:
+    """The wait a reopening gives its groups is the number the file states, the same one a round gives
+    an ask of its own: a server slower than that costs the conversation one round of not having it.
+
+    What it buys is the difference between a slow server and a broken one, which a turn standing still
+    cannot make: the first request is made, the groups keep coming behind it, and they are in the block
+    of the round after they arrive (E182).
+    """
+    journal = tmp_path / "journal.db"
+    root = tmp_path / "workspace"
+
+    first = ScriptedProvider()
+    story = await Story.start(
+        root,
+        model=ScriptedModel([calling("tool_require", {"group": "acme"}), text("noted")]),
+        journal=journal,
+        components=_a_provider(first),
+    )
+    try:
+        await story.type("I will need the account")
+        await story.finished()
+    finally:
+        await story.close()
+
+    slow = ScriptedProvider(slow=0.3)
+    reopened = await Story.start(
+        root,
+        model=ScriptedModel([text("still here"), text("and now?")]),
+        config=Settings(journal=journal, mcp=Mcp(wait_seconds=0.0)),
+        components=_a_provider(slow),
+    )
+    try:
+        await reopened.type("what can you do?")
+
+        assert "acme_echo" not in {tool.name for tool in reopened.requests()[0].tools}, (
+            "the first request was not made to wait for a server that may never answer"
+        )
+        assert slow.calls == 1, "and it is still being brought"
+
+        await asyncio.sleep(0.4)
+        await reopened.type("anything new?")
+
+        assert "acme_echo" in {tool.name for tool in reopened.requests()[-1].tools}, "the round after it, it is here"
     finally:
         await reopened.close()
 

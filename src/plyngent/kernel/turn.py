@@ -38,9 +38,11 @@ from plyngent.kernel.documents import picture_media, refuses
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Assistant, Call, Delta, ModelFailed, Part, Picture, Reply, Request, Result, User
 from plyngent.kernel.notices import (
+    BROUGHT,
     ELIDED,
     LIMIT,
     TERMINALS,
+    brought,
     elided,
     elision_summary,
     lost_terminals,
@@ -84,6 +86,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.executor import ToolExecutor
     from plyngent.kernel.model import AnyMessage, ToolDecl
     from plyngent.kernel.notices import Pending
+    from plyngent.kernel.providing import Brought
     from plyngent.kernel.session import TurnCtx
     from plyngent.kernel.trail import AnyRecord, Entry
     from plyngent.wire.event import AnyEvent
@@ -207,8 +210,13 @@ class Giving(Protocol):
     with would be holding what the turn started with (E175).
 
     ``ready`` is the recovery this conversation was opened with. Awaiting it at the first round's head is
-    what makes "the groups it asked for in an earlier process are in the first request" a structural
-    fact: no extra round trip, and no call that has to discover they were missing (E176).
+    what puts the groups it asked for in an earlier process into the first request, as far as the file's
+    wait allows: a server slower than that arrives for a later round, which is one round of not having it
+    in place of a first request that waits for minutes (E176, E182).
+
+    ``brought`` and ``recovering`` are the two answers a round asks about a group the conversation asked
+    for while it was still coming up: it is here, or it is still on its way. Both are the table's to know
+    and not this turn's, so they are asked here on the way to it (E182).
     """
 
     def table(self) -> tuple[ToolTable, ToolExecutor]:
@@ -216,7 +224,15 @@ class Giving(Protocol):
         ...
 
     async def ready(self, session: str) -> None:
-        """Wait until what *session* asked for in an earlier process is back, or has failed to come."""
+        """Wait until what *session* asked for in an earlier process is back, or until the wait is over."""
+        ...
+
+    def brought(self, group: str) -> Brought | None:
+        """What one group brought if it is up right now, and ``None`` while it is not."""
+        ...
+
+    def recovering(self) -> frozenset[str]:
+        """The groups still being brought up, which is neither absent nor up."""
         ...
 
 
@@ -280,6 +296,7 @@ class TurnRunner:
                     await self._walled(state)
                     self._terminals_gone(state)
                     await self._recovered()
+                    await self._arrived(state)
                     state = await self._told(state)
                     state, request = await self.assemble(state)
                     reply = await self.call(state, request)
@@ -436,14 +453,41 @@ class TurnRunner:
         """Wait for what this conversation asked for in an earlier process, once at the round's head.
 
         A turn's first request is the whole reason this is here: the groups come back *before* the request
-        is assembled, so a conversation that asked for them yesterday asks nothing today. Later rounds
-        find the work finished and pay an await on a done task.
+        is assembled, so a conversation that asked for them yesterday asks nothing today. What was slower
+        than the file's wait arrives for a later round, and the sentence that says so is :meth:`_arrived`'s.
 
         Guarded by this round's scope like every other wait, so a turn stopped while the tools are still
         coming up ends there; the recovery itself was started by the tree, and another turn of another
         connection will find what it brought.
         """
         _ = await self._ctx.scope("tools").guard(self._giving.ready(self._ctx.session.session_id))
+
+    async def _arrived(self, state: TurnState) -> None:
+        """Say the groups that came up after the round asking for them had stopped waiting (E182).
+
+        Fired at the top of a round and written by :meth:`_told`, like every other sentence a boundary
+        owes: what a model needs before it chooses its next call. Nothing is said while a group is still
+        coming up, and nothing is said about one that stopped coming — the door it asked at refuses it by
+        name, and a sentence here would be a second voice for one answer.
+
+        The showing is not optional: the tools are in the process's table whether or not this session has
+        been shown the group, and a model told about tools it cannot call is a model sent to a refusal.
+        """
+        ctx = state.ctx
+        for group in sorted(ctx.session.arriving):
+            if group in self._giving.recovering():
+                continue
+            came = self._giving.brought(group)
+            ctx.session.arriving.discard(group)
+            if came is None:
+                continue
+            if not await ctx.session.disclose([group]):
+                # The group was shown in an earlier round or an earlier process, so there is no row to
+                # write — but the block moved just now, and the count is what says so (E175).
+                _ = await ctx.session.notice_tools()
+            _ = await ctx.host.trail.snapshot(ctx.session.session_id)
+            text, summary = brought(group, len(came.specs), came.guide)
+            ctx.session.notices.say(BROUGHT, text, summary=summary)
 
     async def _told(self, state: TurnState) -> TurnState:
         """Say the lines this session owes the model, at a boundary where nothing is being asked.

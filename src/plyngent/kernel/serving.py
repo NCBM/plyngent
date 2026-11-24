@@ -62,7 +62,7 @@ from plyngent.kernel.notices import (
     providers,
 )
 from plyngent.kernel.paths import display, normalize
-from plyngent.kernel.providing import Tools
+from plyngent.kernel.providing import Brought, Tools
 from plyngent.kernel.running import TooManyTurns
 from plyngent.kernel.session import Session
 from plyngent.kernel.trail import (
@@ -917,14 +917,35 @@ class Serving:
     # -- bringing back what a conversation asked for -------------------------------
 
     async def ready(self, session: str) -> None:
-        """Wait until *session*'s groups are back, or until they have failed to come.
+        """Wait until *session*'s groups are back, or until this program stops waiting for them.
 
         Shielded, because the wait is a turn's convenience and the work is the tree's: a turn stopped
         while its tools are still coming up stops waiting, and the groups arrive for whatever asks next.
+
+        The bound is the file's ``[mcp] wait_seconds``, the same number a round gives an ask of its own, and
+        it is a bound on the waiting here for the same reason: a conversation whose first request waited
+        for three minutes could not tell a slow server from a broken one. What did not come back keeps
+        coming, and the round after it arrives carries it (E182).
         """
         pending = self._recovering.get(session)
-        if pending is not None:
-            _ = await asyncio.gather(asyncio.shield(pending), return_exceptions=True)
+        tools = self._tools()
+        if pending is None or tools is None:
+            return
+        try:
+            async with asyncio.timeout(tools.wait):
+                _ = await asyncio.gather(asyncio.shield(pending), return_exceptions=True)
+        except TimeoutError:
+            return
+
+    def brought(self, group: str) -> Brought | None:
+        """What one group brought if this process has it up right now, or ``None`` while it does not."""
+        tools = self._tools()
+        return None if tools is None else tools.brought(group)
+
+    def recovering(self) -> frozenset[str]:
+        """The groups this process is bringing up right now."""
+        tools = self._tools()
+        return frozenset() if tools is None else tools.recovering()
 
     def _begin_recovery(self, session: str) -> None:
         """Start bringing back what this conversation asked for, without waiting for it.
