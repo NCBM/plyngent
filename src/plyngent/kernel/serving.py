@@ -76,7 +76,7 @@ from plyngent.kernel.trail import (
     transcript,
 )
 from plyngent.kernel.trail import Deleted as DeletedRecord
-from plyngent.kernel.turn import TurnEnd, TurnRunner
+from plyngent.kernel.turn import TurnEnd, TurnRunner, mend
 from plyngent.wire.command import (
     Cancel,
     Close,
@@ -689,7 +689,14 @@ class Serving:
         The opening answers with the route this session stands at, whether or not it was already
         served: a client that has just attached is told where it is, with no question to ask, and the
         answer is the same one ``SetRoute`` gives so a client reads both lines with one rule.
+
+        What a killed process left open is repaired first (:func:`~plyngent.kernel.turn.mend`). Opening
+        is the one place a conversation is picked up, and a repair that arrived after a turn had begun
+        would be a repair the request it was meant for had already gone out without.
         """
+        host = self._host()
+        if host is not None:
+            _ = await mend(host.trail, session)
         if seed_from is not None and not await self._seed(session, *seed_from):
             return
         declaration = self._declaration(session)

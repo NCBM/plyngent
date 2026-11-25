@@ -49,7 +49,7 @@ from plyngent.kernel.notices import (
     lost_terminals_summary,
 )
 from plyngent.kernel.render import render, render_part
-from plyngent.kernel.toolresult import OUTCOMES, Document, ToolResult
+from plyngent.kernel.toolresult import OUTCOMES, Document, Status, ToolResult
 from plyngent.kernel.trail import (
     BY_BUDGET,
     Attempt,
@@ -88,7 +88,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.notices import Pending
     from plyngent.kernel.providing import Brought
     from plyngent.kernel.session import TurnCtx
-    from plyngent.kernel.trail import AnyRecord, Entry
+    from plyngent.kernel.trail import AnyRecord, Entry, Trail
     from plyngent.wire.event import AnyEvent
 
 #: Why a turn that ended without being cancelled did not run to its own end.
@@ -168,6 +168,74 @@ def _rounds(
         else:
             rounds.append([(row, message)])
     return rounds
+
+
+#: What a result says for a call a killed process left open, in the two cases the log can tell apart: a
+#: tool it had handed the call to, and one it never got to.
+INTERRUPTED = "the process stopped while this call ran, so what it did is unknown"
+UNSTARTED = "the process stopped before this call was handed to a tool, so nothing ran"
+
+#: The reason a repaired turn's end row carries. It says what the log showed, which is the whole of what a
+#: repair knows: nothing here can say whether the process was killed or the machine lost power.
+UNENDED = "this turn never said it ended"
+
+
+async def mend(trail: Trail, session: str) -> tuple[Entry, ...]:
+    """Close every call a killed process left open, and say the turn it belonged to ended (E192).
+
+    A turn is one row per thing that happened, and the last of them — ``turn-ended`` — is written by the
+    turn itself when it finishes. A process that dies in the middle of a batch leaves a turn with rows and
+    no end row, and a history whose last answer has a call nothing answered: the next request carries it,
+    and a provider reads an unanswered call as a broken conversation.
+
+    Nothing is rewritten here, since nothing ever is. What the turn owed the history is appended: an error
+    result for each call the answer asked for and never got, and the end row over the top, so the chain
+    reads as a turn that was interrupted. Which of the two sentences a call gets is decided by the row the
+    dispatcher wrote before the tool ran (:class:`~plyngent.kernel.trail.Dispatched`).
+
+    It is a function of the log and it is idempotent: a turn with an end row is left alone, and so is a
+    call whose result is already there. Running it twice therefore repairs once, which is what lets it be
+    called wherever a conversation is picked up rather than exactly once.
+    """
+    rows = await trail.entries(session)
+    ended = {row.turn for row in rows if isinstance(row.payload, TurnEnded)}
+    mended: list[Entry] = []
+    for turn in sorted({row.turn for row in rows if row.turn} - ended):
+        mine = [row for row in rows if row.turn == turn]
+        mended.extend(await _closed(trail, session, mine, turn))
+    return tuple(mended)
+
+
+async def _closed(trail: Trail, session: str, rows: Sequence[Entry], turn: int) -> list[Entry]:
+    """Answer the calls one unfinished turn left open, and write the end row below its last one.
+
+    The rows go where the turn stopped, which is below its last entry — so a later message that continued
+    from that answer now reads the repaired history, and the repair is not a branch of its own.
+    """
+    began = {row.payload.call for row in rows if isinstance(row.payload, Dispatched)}
+    answered = {row.payload.call for row in rows if isinstance(row.payload, Result)}
+    turn_kind = next((row.payload.kind for row in rows if isinstance(row.payload, Dispatched)), "")
+    at = rows[-1].id
+    written: list[Entry] = []
+    for row in rows:
+        if not isinstance(row.payload, Assistant):
+            continue
+        for call in row.payload.calls:
+            if call.id in answered:
+                continue
+            result = Result(
+                call=call.id,
+                tool=call.tool,
+                status=Status.FAILED,
+                text=INTERRUPTED if call.id in began else UNSTARTED,
+            )
+            entry = await trail.append(session, result, begin_after=at, turn=turn)
+            at = entry.id
+            written.append(entry)
+    written.append(
+        await trail.append(session, TurnEnded(turn=turn, reason=UNENDED, kind=turn_kind), begin_after=at, turn=turn)
+    )
+    return written
 
 
 @dataclass(frozen=True, slots=True)
