@@ -10,8 +10,11 @@ travels in ``code``, and nothing about it arrives before the round that asked (ย
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from plyngent.kernel.cancel import CancelToken
+from plyngent.kernel.trail import Effect
 from plyngent.wire.ask import Severity
 from tests.stories.model import calling, text, told
 
@@ -172,3 +175,35 @@ async def test_a_step_that_failed_ends_the_program_and_what_it_printed_still_arr
     assert "after" not in answered, "and the program stopped where the step it did not catch failed"
     assert "missing.txt" in answered, answered
     assert any(line.startswith("run_toolscript failed:") for line in story.screen()), story.screen()
+
+
+async def test_each_step_of_a_program_leaves_its_own_row_and_the_call_adds_no_version(story_with: Scripted) -> None:
+    """A step has no result in the history to hang below, so its row is a root with its own address.
+
+    The call that ran the program changes no path of its own, so the sweep behind it compares the tree
+    with the version the last step left and finds nothing: two writes are two versions, and the third
+    thing in the conversation is one text (E190, ยง10.12).
+    """
+    code = 'write_file(path="first.txt", content="one")\nwrite_file(path="second.txt", content="two")\nprint("both")\n'
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": code, "tools": ["write_file"], "intention": "write two notes"}),
+        text("both"),
+    )
+
+    await story.type("write two notes in one program")
+    await story.answer("y")
+    await story.finished()
+
+    rows = [row.payload for row in await story.host.trail.entries(story.session)]
+    steps = [row for row in rows if isinstance(row, Effect)]
+    assert [(row.call, row.tool, tuple(Path(one).name for one in row.changed)) for row in steps] == [
+        ("tool-2/s1", "write_file", ("first.txt",)),
+        ("tool-2/s2", "write_file", ("second.txt",)),
+    ], "one row per step, under the call that ran the program, and nothing for the call itself"
+    assert all(row.revision for row in steps), "and each of them names the version its bytes are kept under"
+
+    store = story.host.history
+    assert store is not None, "this host keeps versions, or there would be nothing to compare"
+    head = await store.head(scope=CancelToken().at("story"))
+    assert head == steps[-1].revision, "the version in force after the call is the one its last step left"
