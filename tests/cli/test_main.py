@@ -8,6 +8,7 @@ of the test is that nothing else decides it.
 
 from __future__ import annotations
 
+import importlib.metadata
 import io
 from pathlib import Path
 
@@ -183,6 +184,19 @@ def test_a_daemon_cannot_be_told_which_tree_to_work_in() -> None:
 
     assert result.exit_code == 2
     assert "--serve opens no tree" in result.output
+
+
+def test_the_version_it_says_is_the_one_that_was_installed() -> None:
+    """One number, and it is the distribution's own — read when it is asked for, before anything else.
+
+    A constant in this module would be a second copy of a number that is written where the build reads it,
+    and the copy a person is told is the one that has to be right. Being eager, the answer arrives before a
+    file is read, which is what makes it usable on a build that cannot start.
+    """
+    result = CliRunner().invoke(main, ["--version"], prog_name="plyngent")
+
+    assert result.exit_code == 0
+    assert result.output == f"plyngent, version {importlib.metadata.version('plyngent')}\n"
 
 
 def test_a_plugin_named_where_there_is_no_kernel_is_a_usage_error() -> None:

@@ -146,6 +146,10 @@ _NOTHING = "nothing"
     is_flag=True,
     help="print the traceback behind a start-up failure, instead of one line about it",
 )
+# The number is the installed distribution's own, read when the option is given: a constant here would be a
+# second copy of it, and the one a person is told has to be the one that was built. Being eager, the answer
+# arrives before a file is read or an address is opened, so a build that cannot start still says what it is.
+@click.version_option(package_name="plyngent")
 def main(
     session: str,
     workspace: Path | None,
