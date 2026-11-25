@@ -11,10 +11,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import ScriptedModel, text
-from plyngent_creative.session import Run
 
-from plyngent.wire.event import AssistantText, Refusal, TurnFinished, TurnRefused, TurnStarted
+from plyngent.kernel.failure import Failure
+from plyngent.wire.event import AssistantDelta, AssistantText, Refusal, TurnFinished, TurnRefused, TurnStarted
+from plyngent_creative.model import Cut, ScriptedModel, text
+from plyngent_creative.session import Run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -65,3 +66,28 @@ async def test_a_turn_the_kernel_refused_is_not_a_turn_that_finished(tmp_path: P
         await run.close()
 
     assert [one.reason for one in said if isinstance(one, TurnRefused)] == [Refusal.NO_MODEL]
+
+
+async def test_a_reply_that_breaks_part_way_is_the_pieces_and_then_the_failure(tmp_path: Path) -> None:
+    """An endpoint that times out mid-answer says part of a sentence and then stops, and both are seen.
+
+    What a listener read is the fragments that arrived; what the turn stands behind is the failure, so the
+    turn ends with it and nothing claims the answer was whole (E145, E184).
+    """
+    run = await Run.open(
+        tmp_path / "workspace",
+        model=ScriptedModel(
+            [Cut(pieces=("half ", "an answer"), failure=Failure.TIMEOUT, says="the endpoint stopped")],
+        ),
+        journal=tmp_path / "journal.db",
+    )
+    try:
+        run.say("hi")
+        with pytest.raises(RuntimeError, match="did not finish"):
+            await run.finished(patience=WAIT)
+        said = run.events
+    finally:
+        await run.close()
+
+    assert [one.text for one in said if isinstance(one, AssistantDelta)] == ["half ", "an answer"]
+    assert [one.failure for one in said if isinstance(one, TurnFinished)] == [str(Failure.TIMEOUT)]

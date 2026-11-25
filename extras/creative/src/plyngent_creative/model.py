@@ -94,14 +94,29 @@ class Failing:
     says: str
 
 
-#: One step of a script: a reply, a reply that waits, a reply in pieces, a request that cannot be
-#: answered, or a reply chosen by what the model was told.
+@dataclass(frozen=True, slots=True)
+class Cut:
+    """A reply that is said in pieces and then breaks, with the failure that ended it.
+
+    A stream can stop part-way — an endpoint that times out after a paragraph, a connection that drops —
+    and a model that only ever answered whole replies could not say what that looks like: the pieces that
+    arrived, and then the failure, in the same stream somebody was reading (E145). ``says`` is the
+    sentence the failure carries, as it is on :class:`Failing`.
+    """
+
+    pieces: tuple[str, ...]
+    failure: Failure
+    says: str
+
+
+#: One step of a script: a reply, a reply that waits, a reply in pieces, a reply that breaks part-way, a
+#: request that cannot be answered, or a reply chosen by what the model was told.
 #:
 #: The last kind is there for the values a story cannot write down in advance. A call can hand back a
 #: name or a handle that the next call has to carry — a terminal's session, a document to continue — so
 #: the next reply is decided from the request the moment it arrives, which is the only place that value
 #: exists. The step answers a reply, so a decided reply can still be a :class:`Held` one.
-type Step = Reply | Held | Streamed | Failing | Callable[[Request], Reply | Held]
+type Step = Reply | Held | Streamed | Cut | Failing | Callable[[Request], Reply | Held]
 
 
 def told(request: Request) -> str:
@@ -144,8 +159,12 @@ class ScriptedModel(Model):
         """Answer the next step, in the pieces it is said in — one piece for a step that is not streamed."""
         return self._streamed(self._next(request))
 
-    async def _streamed(self, step: Reply | Held | Streamed | Failing) -> AsyncIterator[Delta | Reply]:
+    async def _streamed(self, step: Reply | Held | Streamed | Cut | Failing) -> AsyncIterator[Delta | Reply]:
         """The pieces of one step, and then the answer they add up to."""
+        if isinstance(step, Cut):
+            for piece in step.pieces:
+                yield Delta(text=piece)
+            raise ModelFailed(step.failure, step.says)
         if not isinstance(step, Streamed):
             yield await _settled(step)
             return
@@ -159,7 +178,7 @@ class ScriptedModel(Model):
                 _ = await step.ready.wait()
         yield step.reply
 
-    def _next(self, request: Request) -> Reply | Held | Streamed | Failing:
+    def _next(self, request: Request) -> Reply | Held | Streamed | Cut | Failing:
         """The next step of the script, with a decided one read: asking past its end is a failed story."""
         self._asked.append(request)
         if not self._script:
@@ -169,11 +188,13 @@ class ScriptedModel(Model):
         return step(request) if callable(step) else step
 
 
-async def _settled(step: Reply | Held | Failing) -> Reply:
+async def _settled(step: Reply | Held | Cut | Failing) -> Reply:
     """One step once it has arrived: a held one waits first, and one that failed raises what it said."""
     if isinstance(step, Held):
         _ = await step.ready.wait()
         step = step.reply
+    if isinstance(step, Cut):
+        raise ModelFailed(step.failure, step.says)
     if isinstance(step, Failing):
         raise ModelFailed(step.failure, step.says)
     return step
