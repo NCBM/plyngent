@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import ScriptedModel, calling, text
+
 from plyngent.kernel.model import Call, Note, Reply, Result
 from plyngent.kernel.trail import NOTICE_MARKER
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

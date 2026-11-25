@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from tests.stories.model import text
+from plyngent_creative.model import text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

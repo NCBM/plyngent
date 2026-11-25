@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import text
+
 from plyngent.wire.command import Submit
 from plyngent.wire.event import TurnFinished
-from tests.stories.model import text
 
 from .driver import SESSION
 

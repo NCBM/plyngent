@@ -13,6 +13,8 @@ import re
 import signal
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import Failing, Held, calling, text
+
 from plyngent.cli.policy import Policy
 from plyngent.kernel.catalog import RESIDENT
 from plyngent.kernel.failure import Failure
@@ -20,7 +22,6 @@ from plyngent.kernel.model import Assistant, Result, User
 from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Confirmation, Selection
 from plyngent.wire.command import Open, Submit
-from tests.stories.model import Failing, Held, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

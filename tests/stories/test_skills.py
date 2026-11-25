@@ -11,13 +11,14 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import ScriptedModel, calling, text, told
+
 from plyngent.kernel.model import Result
 from plyngent.kernel.resources import Root
 from plyngent.kernel.skills import SKILL_FILE, Skills
 from plyngent.kernel.toolresult import Status
 from plyngent.kernel.workspace import WorkspaceConfig
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping

@@ -20,13 +20,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, override
 
 import pytest
+from plyngent_creative.model import ScriptedModel, calling, text, told
 
 from plyngent.kernel.model import Result
 from plyngent.kernel.net.web import Engine, EngineFailed, Engines, Hit, Page
 from plyngent.kernel.toolresult import Status
 from plyngent.wire.ask import Grades, Severity
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import calling, text
+
 from plyngent.wire.command import Open
 from plyngent.wire.query import Grants, GrantTable, Reached
 
 from .driver import SESSION
-from .model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

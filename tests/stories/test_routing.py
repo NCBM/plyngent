@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import Failing, ScriptedModel, calling, text
+
 from plyngent.cli.profile import Profile, read, write
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.lm import Caps
@@ -25,7 +27,6 @@ from plyngent.kernel.model import Assistant, Note, Picture, Reply, Result, Usage
 from plyngent.kernel.trail import NOTICE_MARKER, Attempt, StateChange
 from plyngent.wire.command import SetModel
 from tests.stories.driver import Story
-from tests.stories.model import Failing, ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

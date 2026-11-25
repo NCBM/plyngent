@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import text
+
 from plyngent.kernel.model import Call, Reply
-from tests.stories.model import text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

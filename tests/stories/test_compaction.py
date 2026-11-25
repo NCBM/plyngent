@@ -14,10 +14,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import Held, ScriptedModel, text
+
 from plyngent.kernel.model import Assistant, User
 from plyngent.kernel.trail import Summary, as_message
 from tests.stories.driver import Story
-from tests.stories.model import Held, ScriptedModel, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

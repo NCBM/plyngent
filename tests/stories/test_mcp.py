@@ -14,12 +14,12 @@ import sys
 from typing import TYPE_CHECKING
 
 from composat import Declaration
+from plyngent_creative.model import calling, text, told
 
 from plyngent.cli.policy import Policy
 from plyngent.config import Mcp, McpLaunch, Settings
 from plyngent.kernel.mcp.server import McpServer
 from plyngent.kernel.providing import ToolSet
-from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

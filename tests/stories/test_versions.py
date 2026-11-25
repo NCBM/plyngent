@@ -11,11 +11,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from plyngent_creative.model import calling, text
 
 from plyngent.kernel.model import Result
 from tests import repositories
 from tests.stories.driver import Story
-from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

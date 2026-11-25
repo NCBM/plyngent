@@ -17,12 +17,13 @@ import io
 import os
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import Held, ScriptedModel, text
+
 from plyngent.boot import install
 from plyngent.cli.app import App
 from plyngent.cli.grammar import build
 from plyngent.cli.line import PlainEditor
 from tests.stories.driver import SETTLE_PAUSE, SETTLE_TRIES
-from tests.stories.model import Held, ScriptedModel, text
 
 if TYPE_CHECKING:
     from pathlib import Path

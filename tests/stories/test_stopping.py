@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 from composat import Declaration
+from plyngent_creative.model import Held, ScriptedModel, calling, text
 
 from plyngent.kernel.model import Note
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.trail import Notice
 from tests.stories.driver import Story
-from tests.stories.model import Held, ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -3,7 +3,7 @@
 The terminal is the one tool whose answer carries a value the call after it has to carry: the session the
 kernel hands out. A story cannot write that number down before the run, so these stories take it out of
 the last thing the model was read — which is the other half of a scripted model, a step decided by the
-request it answers (:data:`~tests.stories.model.Step`).
+request it answers (:data:`~plyngent_creative.model.Step`).
 
 The children here are a shell that reads one line and repeats it, and ``cat`` for the terminal that has
 to stay alive while something is written into it. Every story ends with the kernel going down, and that
@@ -18,18 +18,19 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from plyngent_creative.model import calling, text, told
 
 from plyngent.kernel.pty.registry import Limits
 from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Severity
-from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from plyngent_creative.model import Step
+
     from plyngent.kernel.model import Request
     from tests.stories.driver import Story
-    from tests.stories.model import Step
 
     type Scripted = Callable[..., Awaitable[Story]]
 

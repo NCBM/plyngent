@@ -14,12 +14,13 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import calling, text
+
 from plyngent.kernel.lm import Caps
 from plyngent.kernel.lm.route import ModelEntry, Route
 from plyngent.kernel.model import Reply
 from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import Usage as Spent
-from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

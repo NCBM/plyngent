@@ -13,6 +13,7 @@ import asyncio
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration
+from plyngent_creative.model import ScriptedModel, calling, text, told
 
 from plyngent.config import Mcp, Settings
 from plyngent.kernel.model import Call, Reply
@@ -20,7 +21,6 @@ from plyngent.kernel.providing import ToolProvider, ToolSet
 from plyngent.kernel.toolresult import ToolResult
 from plyngent.kernel.toolspec import Mutation, Res, ToolArgs, ToolSpec
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

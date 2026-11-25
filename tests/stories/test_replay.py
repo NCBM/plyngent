@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING
 
 import msgspec
 import pytest
+from plyngent_creative.model import ScriptedModel, text
 
 from plyngent.boot import connect, serve
 from plyngent.cli.app import Mark
 from plyngent.kernel.local import temporary_endpoint
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, text
 
 if TYPE_CHECKING:
     from pathlib import Path

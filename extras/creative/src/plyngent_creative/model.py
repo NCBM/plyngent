@@ -1,12 +1,15 @@
-"""A model a story can script, and the record of what it was asked.
+"""A model a script can schedule, and the record of what it was asked.
 
-A story's model has to be two things at once: the thing the kernel asks, and the thing the story reads
-back. So the replies are *scheduled*: the story says what the model answers and in
-what order, and a request past the end of the script is a failure, with no answer invented — apart
-from one kind of step, which is chosen by what the model was just read (:data:`Step`). That kind exists
-because a tool's answer can carry a value the story cannot know before the call runs, and the call after
-it has to take that value the way a model would: out of the request, not out of the test's bookkeeping.
-Every request is kept, because "what the model saw" is one of the four faces a story tests (§11).
+This module is the distribution's own model: it is what the suite drives a story with
+(``tests/stories/driver.py``) and what this distribution hands a plugin author, so one scripted model
+serves both and there is no second copy to fall behind. A scripted model has to be two things at once:
+the thing the kernel asks, and the thing the script reads back. So the replies are *scheduled*: the
+script says what the model answers and in what order, and a request past the end of the script is a
+failure, with no answer invented — apart from one kind of step, which is chosen by what the model was
+just read (:data:`Step`). That kind exists because a tool's answer can carry a value the script cannot
+know before the call runs, and the call after it has to take that value the way a model would: out of
+the request, not out of the test's bookkeeping. Every request is kept, because "what the model saw" is
+one of the four faces a story tests (§11).
 
 ``Held`` is the one kind of reply that does not answer at once. It exists so a story can have a request
 in flight while it does something else — press Ctrl+C, send a second message — which is otherwise a race
@@ -21,12 +24,12 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, override
 
-from plyngent.kernel.failure import Failure
 from plyngent.kernel.model import Call, Delta, Model, ModelFailed, Part, Reply
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterable
 
+    from plyngent.kernel.failure import Failure
     from plyngent.kernel.model import Request
 
 
@@ -149,11 +152,11 @@ class ScriptedModel(Model):
         for piece in step.thought:
             yield Delta(text=piece, part=Part.THOUGHT)
             if step.ready is not None:
-                await step.ready.wait()
+                _ = await step.ready.wait()
         for piece in step.pieces:
             yield Delta(text=piece)
             if step.ready is not None:
-                await step.ready.wait()
+                _ = await step.ready.wait()
         yield step.reply
 
     def _next(self, request: Request) -> Reply | Held | Streamed | Failing:
@@ -169,7 +172,7 @@ class ScriptedModel(Model):
 async def _settled(step: Reply | Held | Failing) -> Reply:
     """One step once it has arrived: a held one waits first, and one that failed raises what it said."""
     if isinstance(step, Held):
-        await step.ready.wait()
+        _ = await step.ready.wait()
         step = step.reply
     if isinstance(step, Failing):
         raise ModelFailed(step.failure, step.says)

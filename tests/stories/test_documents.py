@@ -10,10 +10,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import ScriptedModel, Step, calling, text, told
+
 from plyngent.kernel.documents import MAX_TEXT_CHARS
 from plyngent.kernel.model import Reply, Result
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, Step, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

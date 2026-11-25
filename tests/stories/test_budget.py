@@ -16,12 +16,13 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import text
+
 from plyngent.kernel.lm.caps import Caps
 from plyngent.kernel.lm.route import ModelEntry, Route
 from plyngent.kernel.model import Note, Reply, User
 from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import NOTICE_MARKER
-from tests.stories.model import text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -13,10 +13,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import calling, text, told
+
 from plyngent.kernel.cancel import CancelToken
 from plyngent.kernel.trail import Effect
 from plyngent.wire.ask import Severity
-from tests.stories.model import calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -12,19 +12,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import ScriptedModel, calling, text
+
 from plyngent.kernel.model import Result
 from plyngent.kernel.prompt import CORE, GROUP_PLAYBOOK, PERSONA, PromptPlan
 from plyngent.kernel.resources import Root
 from plyngent.kernel.skills import SKILL_FILE, Skills
 from plyngent.kernel.toolspec import Group
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from tests.stories.model import Step
+    from plyngent_creative.model import Step
 
     type Scripted = Callable[..., Awaitable[Story]]
 

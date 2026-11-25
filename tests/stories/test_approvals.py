@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import calling, text
+
 from plyngent.kernel.model import Result
 from plyngent.kernel.trail import Consent
 from plyngent.wire.command import Inherit, Open, Submit
-from tests.stories.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

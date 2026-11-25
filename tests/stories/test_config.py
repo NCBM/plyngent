@@ -17,11 +17,11 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from plyngent_creative.model import ScriptedModel, calling, text, told
 
 from plyngent.config import load
 from plyngent.kernel.prompt import CORE, PERSONA
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

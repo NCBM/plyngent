@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import ScriptedModel, calling, text
+
 from plyngent.cli.offers import ClientTools
 from plyngent.kernel.model import Call, Reply, Result
 from tests.stories.driver import Story
-from tests.stories.model import ScriptedModel, calling, text
 
 #: A client that can run nothing. An offer moves every conversation's tool set when it arrives, and a
 #: story about the number a journal left behind wants it to be nobody else's.

@@ -11,6 +11,8 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
+from plyngent_creative.model import calling, text, told
+
 from plyngent.cli.offers import TERMINAL, ClientTools
 from plyngent.kernel.resources import Root
 from plyngent.kernel.skills import Skills
@@ -18,7 +20,6 @@ from plyngent.wire.ask import Invocation, Returned
 from plyngent.wire.command import Offer, OfferedTool
 from plyngent.wire.event import OfferRefused, Refusal
 from plyngent.wire.manifest import CLIENT_OFFER
-from tests.stories.model import calling, text, told
 
 from .driver import Story
 

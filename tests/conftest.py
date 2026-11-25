@@ -18,17 +18,18 @@ from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from plyngent_creative.model import ScriptedModel
 
 from plyngent.cli.offers import TERMINAL
 from tests.loopback import Site, handler
 from tests.stories.driver import TRANSPORTS, Story
-from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
     from pathlib import Path
 
     from composat import Declaration
+    from plyngent_creative.model import Step
 
     from plyngent.cli.announce import Announcements
     from plyngent.cli.offers import ClientTools
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import Grades
     from tests.loopback import Site
-    from tests.stories.model import Step
 
 
 @pytest.fixture(autouse=True)

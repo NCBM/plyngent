@@ -5,7 +5,7 @@ a real connection, and the CLI's own loop — with two substitutions, and neithe
 
 * **the human** is a :class:`~plyngent.cli.line.LineEditor`, which is exactly the interface the loop
   is handed: replacing it is the same move as attaching a client (R2.4 C2);
-* **the model** is a :class:`~tests.stories.model.ScriptedModel`, installed through ``boot.install`` the
+* **the model** is a :class:`~plyngent_creative.model.ScriptedModel`, installed through ``boot.install`` the
   way a real one is: one step per request, and a request past the script fails the story, with no answer
   an invented answer.
 
@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration, ServiceNotUpError
+from plyngent_creative.model import ScriptedModel
 
 from plyngent import config as configured
 from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Daemon, Installed, install
@@ -42,7 +43,6 @@ from plyngent.cli.render import workspace_label
 from plyngent.kernel.host import Host
 from plyngent.kernel.session import Session
 from plyngent.wire.command import Offer, SetModel
-from tests.stories.model import ScriptedModel
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
