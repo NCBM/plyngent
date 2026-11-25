@@ -12,7 +12,6 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import Held, calling, text
 
 from plyngent.wire.command import CloseWorkspace, ListSessions, Open, Submit
 from plyngent.wire.event import (
@@ -24,6 +23,7 @@ from plyngent.wire.event import (
     WorkspaceRefused,
 )
 from plyngent.wire.query import Forest, Trajectory
+from plyngent_creative.model import Held, calling, text
 
 from .driver import SESSION
 

@@ -14,10 +14,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import text
-
 from plyngent.kernel.model import Note, User
 from plyngent.kernel.trail import NOTICE_MARKER
+from plyngent_creative.model import text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

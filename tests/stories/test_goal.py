@@ -13,11 +13,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import calling, text
-
 from plyngent.kernel.model import Call, Reply, Result, User
 from plyngent.wire.command import Submit
 from plyngent.wire.event import TurnKind
+from plyngent_creative.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -133,7 +132,6 @@ async def test_the_switch_and_its_floor_are_still_there_after_a_restart(tmp_path
     to ``/goal`` a number the kernel was not holding (E187).
     """
     from plyngent_creative.model import ScriptedModel
-
     from tests.stories.driver import Story
 
     journal = tmp_path / "journal.db"

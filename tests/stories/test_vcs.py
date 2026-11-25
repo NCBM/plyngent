@@ -11,8 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import calling, text, told
 
+from plyngent_creative.model import calling, text, told
 from tests import repositories
 
 if TYPE_CHECKING:

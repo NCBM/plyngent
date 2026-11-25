@@ -14,9 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import Streamed, text
-
 from plyngent.kernel.model import Assistant, Call, Reply, Thought
+from plyngent_creative.model import Streamed, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

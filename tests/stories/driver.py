@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration, ServiceNotUpError
-from plyngent_creative.model import ScriptedModel
 
 from plyngent import config as configured
 from plyngent.boot import DEFAULT_HOST, KERNEL_TRANSPORTS, Daemon, Installed, install
@@ -43,6 +42,7 @@ from plyngent.cli.render import workspace_label
 from plyngent.kernel.host import Host
 from plyngent.kernel.session import Session
 from plyngent.wire.command import Offer, SetModel
+from plyngent_creative.model import ScriptedModel
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable

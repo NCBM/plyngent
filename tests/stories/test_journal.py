@@ -12,12 +12,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import ScriptedModel, text
-
 from plyngent.kernel.journal import MEMORY_JOURNAL, journal_path
 from plyngent.kernel.model import Assistant, Reply, User
 from plyngent.kernel.model import Usage as Cost
 from plyngent.kernel.trail import Usage as Spent
+from plyngent_creative.model import ScriptedModel, text
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

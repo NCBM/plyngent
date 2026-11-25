@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import calling, text
-
 from plyngent.wire.ask import By, Confirmation, Grades, Severity, Written
+from plyngent_creative.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import Failing, text
-
 from plyngent.kernel.failure import Failure
+from plyngent_creative.model import Failing, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

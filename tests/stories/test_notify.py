@@ -13,10 +13,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import calling, text
-
 from plyngent.cli.announce import Announcements, Wording
 from plyngent.kernel.trail import Consent
+from plyngent_creative.model import calling, text
 from tests.stories.driver import SETTLE_PAUSE, SETTLE_TRIES
 
 if TYPE_CHECKING:

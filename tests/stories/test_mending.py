@@ -13,12 +13,11 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import ScriptedModel, text
-
 from plyngent.kernel.journal import SqliteTrail
 from plyngent.kernel.model import Assistant, Call, Reply, Result, User
 from plyngent.kernel.trail import Dispatched, TurnEnded, kind_of
 from plyngent.kernel.turn import INTERRUPTED, UNENDED, UNSTARTED, mend
+from plyngent_creative.model import ScriptedModel, text
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

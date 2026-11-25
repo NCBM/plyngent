@@ -18,9 +18,9 @@ from http.server import ThreadingHTTPServer
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from plyngent_creative.model import ScriptedModel
 
 from plyngent.cli.offers import TERMINAL
+from plyngent_creative.model import ScriptedModel
 from tests.loopback import Site, handler
 from tests.stories.driver import TRANSPORTS, Story
 
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from composat import Declaration
-    from plyngent_creative.model import Step
 
     from plyngent.cli.announce import Announcements
     from plyngent.cli.offers import ClientTools
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
     from plyngent.kernel.pty.registry import Limits
     from plyngent.kernel.skills import Skills
     from plyngent.wire.ask import Grades
+    from plyngent_creative.model import Step
     from tests.loopback import Site
 
 

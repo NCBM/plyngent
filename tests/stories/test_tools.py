@@ -12,11 +12,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import ScriptedModel, calling, text
-
 from plyngent.cli.policy import Policy
 from plyngent.kernel.model import Reply, Result
 from plyngent.kernel.trail import Dispatched, kind_of
+from plyngent_creative.model import ScriptedModel, calling, text
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

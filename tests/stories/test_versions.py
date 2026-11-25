@@ -11,9 +11,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import calling, text
 
 from plyngent.kernel.model import Result
+from plyngent_creative.model import calling, text
 from tests import repositories
 from tests.stories.driver import Story
 

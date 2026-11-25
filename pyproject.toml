@@ -89,6 +89,11 @@ target-version = "py314"
 [tool.ruff.format]
 line-ending = "lf"
 
+# The plugin distribution ships from this tree and the suite imports it, so its imports sort beside this
+# program's own: a build that is not a dependency of the lock is not a third party to the tree it lives in.
+[tool.ruff.lint.isort]
+known-first-party = ["plyngent", "plyngent_creative", "tests"]
+
 [tool.ruff.lint]
 # For more rules, see https://docs.astral.sh/ruff/rules/.
 select = [

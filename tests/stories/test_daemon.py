@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import ScriptedModel, calling, text
 
 from plyngent.boot import NoKernelError, connect, endpoint_for, serve
 from plyngent.kernel import local
@@ -26,6 +25,7 @@ from plyngent.wire.command import ListSessions, Open
 from plyngent.wire.event import SessionsListed
 from plyngent.wire.frame import Wire
 from plyngent.wire.manifest import PROTOCOL_VERSION, KernelManifest, WorkspaceRow
+from plyngent_creative.model import ScriptedModel, calling, text
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

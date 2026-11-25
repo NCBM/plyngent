@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import calling, text
-
 from plyngent.wire.command import Open
 from plyngent.wire.query import Grants, GrantTable, Reached
+from plyngent_creative.model import calling, text
 
 from .driver import SESSION
 

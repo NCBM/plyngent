@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from plyngent_creative.model import calling, text
-
 from plyngent.cli.policy import Policy
 from plyngent.kernel.trail import Consent
+from plyngent_creative.model import calling, text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from composat import Declaration
-from plyngent_creative.model import Held, ScriptedModel, calling, text
 
 from plyngent.kernel.model import Note
 from plyngent.kernel.pty.broker import PtyBroker
 from plyngent.kernel.trail import Notice
+from plyngent_creative.model import Held, ScriptedModel, calling, text
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

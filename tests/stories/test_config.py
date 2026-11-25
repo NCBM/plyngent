@@ -17,10 +17,10 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import ScriptedModel, calling, text, told
 
 from plyngent.config import load
 from plyngent.kernel.prompt import CORE, PERSONA
+from plyngent_creative.model import ScriptedModel, calling, text, told
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:

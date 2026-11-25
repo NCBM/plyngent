@@ -15,10 +15,10 @@ from dataclasses import replace
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-import plyngent_creative
 import pytest
 
 import plyngent
+import plyngent_creative
 from plyngent import admin, boot, cli, kernel, wire
 from plyngent.cli import offers
 from plyngent.cli.grammar import ALIASES, build

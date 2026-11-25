@@ -18,18 +18,17 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from plyngent_creative.model import calling, text, told
 
 from plyngent.kernel.pty.registry import Limits
 from plyngent.kernel.trail import Consent
 from plyngent.wire.ask import Severity
+from plyngent_creative.model import calling, text, told
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from plyngent_creative.model import Step
-
     from plyngent.kernel.model import Request
+    from plyngent_creative.model import Step
     from tests.stories.driver import Story
 
     type Scripted = Callable[..., Awaitable[Story]]

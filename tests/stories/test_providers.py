@@ -13,13 +13,13 @@ import asyncio
 from typing import TYPE_CHECKING, override
 
 from composat import Declaration
-from plyngent_creative.model import ScriptedModel, calling, text, told
 
 from plyngent.config import Mcp, Settings
 from plyngent.kernel.model import Call, Reply
 from plyngent.kernel.providing import ToolProvider, ToolSet
 from plyngent.kernel.toolresult import ToolResult
 from plyngent.kernel.toolspec import Mutation, Res, ToolArgs, ToolSpec
+from plyngent_creative.model import ScriptedModel, calling, text, told
 from tests.stories.driver import Story
 
 if TYPE_CHECKING:
