@@ -282,6 +282,52 @@ def test_only_the_loader_reads_the_environment() -> None:
     )
 
 
+def test_this_programs_own_directory_is_spelled_in_four_places_and_the_suite_knows_all_of_them() -> None:
+    """E185: one data directory, and the modules that spell it are listed so a leak cannot be silent.
+
+    A kernel brought up with no journal named keeps its history under the program's own data directory, which
+    is the directory the program is *run* from. That makes every reader of it a place a test can write into
+    somebody's home, so ``tests/conftest.py`` redirects each one before a test runs, and this is the list it
+    has to stay in step with: a module that reads the directory and is not here writes to the real one during
+    a suite run, which nobody notices because it succeeds.
+    """
+    readers = {
+        f"{path.relative_to(pathlib.Path(plyngent.__file__).parent).as_posix()}:{node.name}"
+        for path in _modules_of(plyngent)
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _names_the_directory(node)
+    }
+
+    assert readers == {
+        "kernel/journal.py:workspace_dir",
+        "config.py:default_path",
+        "cli/profile.py:default_path",
+        "cli/line.py:history_path",
+        "cli/line.py:mark_path",
+    }, "the four readers conftest.py redirects, and the third spelling of the client's own two files"
+    offline = next(
+        node
+        for node in ast.walk(ast.parse(pathlib.Path(admin.__file__).read_text(encoding="utf-8")))
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "DEFAULT_DATA" for target in node.targets)
+    )
+    assert isinstance(offline.value, ast.Call) and getattr(offline.value.func, "id", "") == "user_data_path", (
+        "the offline program spells it once at import, which conftest.py has to redirect as a value and not a call"
+    )
+
+
+def _names_the_directory(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether this function spells the program's own data directory itself."""
+    return any(
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Name)
+        and inner.func.id == "user_data_path"
+        and inner.args
+        and isinstance(inner.args[0], ast.Constant)
+        for inner in ast.walk(node)
+    )
+
+
 def _environment_readers(path: pathlib.Path) -> list[str]:
     """Every function in one file that reads the process's environment, as ``file.py:function``."""
     return [

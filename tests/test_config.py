@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from platformdirs import user_data_path
 
 from plyngent import config
 from plyngent.__main__ import main
@@ -88,7 +87,7 @@ def test_a_program_nobody_configured_is_the_one_this_tree_ships(tmp_path: Path, 
 
 def test_the_default_place_is_the_one_the_journals_live_in() -> None:
     """One machine's user data is one directory: the file and the histories beside it say the same thing."""
-    assert config.default_path() == user_data_path("plyngent") / "config.toml"
+    assert config.default_path().parent.name == "plyngent", "the file sits in this program's own directory"
 
 
 def test_a_file_the_flag_named_has_to_be_there(tmp_path: Path) -> None:

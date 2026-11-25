@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from plyngent import admin, config
+from plyngent.cli import line, profile
 from plyngent.cli.offers import TERMINAL
+from plyngent.kernel import journal
 from plyngent_creative.model import ScriptedModel
 from tests.loopback import Site, handler
 from tests.stories.driver import TRANSPORTS, Story
@@ -58,6 +61,29 @@ def the_kernel_does_not_fork(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("the kernel called os.fork(); terminals fork in the broker")
 
     monkeypatch.setattr(os, "fork", refuse)
+
+
+@pytest.fixture(autouse=True)
+def nothing_is_kept_in_the_persons_data_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point this program's own data directory at ``tmp_path``, for every test in the suite.
+
+    A kernel with no journal named keeps the conversation under ``platformdirs.user_data_path("plyngent")``,
+    which is the directory the program is *run* from — so one test that brings a kernel up without saying
+    where its history goes writes a ledger into the environment of whoever ran the suite, and a suite run
+    often enough fills that directory with throwaway trees nobody asked for.
+
+    Every module that spells the directory is redirected here, because they are four independent readers
+    of one fact: the journal, the configuration, the client's own history and the marks it remembers. A
+    module left out is a leak, and ``test_structure`` holds the list: every module that reads the directory
+    is one of these four.
+
+    The answer is also what ``tmp_path`` is for, and it is returned so a test may assert about it.
+    """
+    home = tmp_path / "data"
+    for module in (journal, config, profile, line):
+        monkeypatch.setattr(module, "user_data_path", lambda name, home=home: home / name)
+    monkeypatch.setattr(admin, "DEFAULT_DATA", home / "plyngent")
+    return home / "plyngent"
 
 
 @pytest.fixture(params=TRANSPORTS)

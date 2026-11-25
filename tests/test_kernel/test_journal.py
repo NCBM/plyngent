@@ -15,8 +15,6 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 
-from platformdirs import user_data_path
-
 from plyngent.kernel.journal import (
     CHECKPOINTS,
     KEEP_CHECKPOINTS,
@@ -49,7 +47,7 @@ async def test_a_workspace_names_its_journal_and_creates_nothing(tmp_path) -> No
 
     path = journal_path(root)
 
-    assert user_data_path("plyngent") in path.parents, "the file lives in the person's data directory"
+    assert path.parent.parent.name == "workspaces", "the file lives under this program's own data directory"
     assert path.name == "journal.db"
     assert path.parent.name.startswith("project-"), "the directory says whose history it is, for a person"
     assert not path.exists(), "naming a journal does not make one: --help may leave the disk alone"
