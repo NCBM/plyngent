@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from plyngent.kernel.failure import Failure
 from plyngent.kernel.toolresult import DenialKind, Hint, ToolResult
+from plyngent.kernel.tools.code.sandbox import MAX_CHARS
 from plyngent.kernel.words import counted
 
 if TYPE_CHECKING:
@@ -93,6 +94,10 @@ def reviewed(source: str, plan: dict[str, ToolSpec]) -> ToolResult | None:
     final — the same program with the same text is refused the same way — and the third names what would
     have worked, which is a hint and one call away.
     """
+    if len(source) > MAX_CHARS:
+        return ToolResult.of(
+            Failure.BUDGET, f"this program is {len(source)} characters long, and a program here gets {MAX_CHARS}"
+        )
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:

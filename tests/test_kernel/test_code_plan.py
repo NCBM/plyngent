@@ -13,8 +13,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from plyngent.kernel.catalog import ToolCatalog
+from plyngent.kernel.failure import Failure
 from plyngent.kernel.toolresult import DenialKind, Status, ToolResult
 from plyngent.kernel.tools.code.plan import planned, reviewed
+from plyngent.kernel.tools.code.sandbox import MAX_CHARS
 
 if TYPE_CHECKING:
     from plyngent.kernel.toolspec import ToolSpec
@@ -124,3 +126,10 @@ def test_the_scan_walks_the_whole_program_and_not_its_first_line() -> None:
     source = "for one in [1]:\n    if one:\n        print(one.__class__)\n"
     refused = reviewed(source, _plan("read"))
     assert refused is not None, "a dunder in a nested block is still a dunder"
+
+
+def test_a_program_past_the_text_a_program_may_be_is_refused_as_a_budget() -> None:
+    """The one end of the budget that is read here: nothing is started to find out that it is too big."""
+    refused = reviewed("#" * (MAX_CHARS + 1), _plan("read"))
+    assert refused is not None
+    assert refused.failure is Failure.BUDGET

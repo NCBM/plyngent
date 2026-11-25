@@ -114,7 +114,8 @@ all. A call answers a `Result`: `str(r)` is the text a person would read, `r.ok`
 raises `ToolFailed`, which is the moment to decide whether the rest is worth running. `print` is the only
 way back: nothing that is not printed reaches this conversation, and that is where a program saves its
 rounds. Write one when a task is a loop over calls — find, filter, read, print — and not when it is two
-calls in a row.""",
+calls in a row. A program gets two minutes, two hundred calls, and a megabyte of text each way; past any
+of those it stops and says `budget`.""",
     Group.DOCUMENT: """\
 The rest of a document: a body too long for an answer is kept rather than cut, and `documents` lists what
 is kept while `search` looks inside it. `read` takes a line window, so a big file is read in pieces.

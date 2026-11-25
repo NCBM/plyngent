@@ -37,6 +37,10 @@ class Failure(StrEnum):
     PERMISSION = "permission"
     BUSY = "busy"
     LIMIT = "limit"
+    #: The program ran past what a program here is given: its wall clock, its number of steps, or the text
+    #: going in and out of it. It is never retried, because the same program against the same plan reaches
+    #: the same wall, so the next move is a smaller program and not a second run (E190).
+    BUDGET = "budget"
     TIMEOUT = "timeout"
     PROTOCOL = "protocol"
     #: The call is the right one and it is not for now: the kernel does this itself at the next turn it

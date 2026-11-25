@@ -207,3 +207,38 @@ async def test_each_step_of_a_program_leaves_its_own_row_and_the_call_adds_no_ve
     assert store is not None, "this host keeps versions, or there would be nothing to compare"
     head = await store.head(scope=CancelToken().at("story"))
     assert head == steps[-1].revision, "the version in force after the call is the one its last step left"
+
+
+async def test_a_program_that_prints_past_its_budget_is_stopped_and_says_so(story_with: Scripted) -> None:
+    """What a program prints is held in a buffer, so the buffer is where the size of it is counted."""
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": 'print("x" * 2_000_000)', "tools": ["glob_paths"], "intention": "flood"}),
+        text("oh"),
+    )
+
+    await story.type("print more than a program may")
+    await story.answer("y")
+    await story.finished()
+
+    assert told(story.requests()[-1]) == "the program printed more than 1048576 characters"
+    assert any(line.startswith("run_toolscript failed: the program printed more than") for line in story.screen())
+
+
+async def test_a_program_that_calls_past_its_budget_is_stopped_and_says_so(story_with: Scripted) -> None:
+    """Two hundred steps is the wall: a loop that reads one file per line has no answer of its own."""
+    code = 'for _ in range(205):\n    glob_paths(pattern="*.txt")\nprint("done")\n'
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": code, "tools": ["glob_paths"], "intention": "one call too many"}),
+        text("oh"),
+    )
+    _file(story, "notes.txt")
+
+    await story.type("walk past the wall")
+    await story.answer("y")
+    await story.finished()
+
+    answered = told(story.requests()[-1])
+    assert "more than 200 calls" in answered, answered
+    assert "done" not in answered, "the line after the budget ran is not in the answer"

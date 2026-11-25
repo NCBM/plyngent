@@ -58,6 +58,20 @@ if TYPE_CHECKING:
 #: The one method a program may ask this end for: run one step of its plan, under the call that runs it.
 STEP = "call"
 
+#: How long one program may run, counted from the moment its process is asked to. The turn's own cancel is
+#: a different thing: it needs somebody to press something, and a loop nobody is watching has no such
+#: moment (E190).
+WALL_SECONDS = 120.0
+
+#: How many steps one program may take. Two hundred is far past any plan somebody wrote by hand and far
+#: short of a loop over a directory nothing told it the size of.
+MAX_CALLS = 200
+
+#: How much text one program may be, and how much it may print. One number for both ends, because it is
+#: one cost: what this end hands a child on its command line, and what the child holds in a buffer to hand
+#: back. The printed half is counted in the child, since a loop that prints is what the limit is for.
+MAX_CHARS = 1 << 20
+
 #: The program that runs the program: a JSON-RPC server on its own pipes, and the fence around the code.
 #:
 #: It is a string because it is not importable: the child is started with ``-I -S``, which is what keeps a
@@ -67,12 +81,33 @@ import builtins, io, json, keyword, sys
 
 _real_out = sys.stdout
 _real_in = sys.stdin
-_printed = io.StringIO()
 _number = 0
+
+
+class Exhausted(Exception):
+    """The program ran past what a program here is given: a step, or the text going in and out."""
 
 
 class Broken(Exception):
     """The conversation with the kernel ended, so nothing more can be called."""
+
+
+class _Buffer(io.StringIO):
+    """Where a program's prints go, and the one place the size of them is counted.
+
+    The limit is on the buffer and not on the answer, because a loop that prints a line forever is what it
+    is for: counting afterwards is counting after the buffer was filled.
+    """
+
+    def write(self, text):
+        if _MAX_CHARS and self.tell() + len(text) > _MAX_CHARS:
+            _over.append("the program printed more than %d characters" % _MAX_CHARS)
+            raise Exhausted(_over[-1])
+        return io.StringIO.write(self, text)
+
+
+_over = []
+_printed = _Buffer()
 
 
 def _say(message):
@@ -194,6 +229,10 @@ def _callable(name):
 
 def call(name, **kwargs):
     """Call one tool of this program's plan, and answer what it came back with."""
+    _calls[0] += 1
+    if _MAX_CALLS and _calls[0] > _MAX_CALLS:
+        _over.append("this program made more than %d calls" % _MAX_CALLS)
+        raise Exhausted(_over[-1])
     result = Result(_ask("call", {"name": name, "kwargs": kwargs}))
     if not result.ok:
         raise ToolFailed(result, name)
@@ -273,6 +312,10 @@ def _watch(event, args):
 _run = _hear()
 _params = _run.get("params") or {}
 _tools = _params.get("tools") or {}
+_limits = _params.get("limits") or {}
+_MAX_CALLS = int(_limits.get("calls") or 0)
+_MAX_CHARS = int(_limits.get("chars") or 0)
+_calls = [0]
 _TAKEN = {
     "call", "help", "print", "Result", "ToolFailed", "math", "json", "re", "itertools", "collections",
     "datetime", "textwrap",
@@ -329,6 +372,8 @@ if _program is not None:
     except Objection as _exc:
         _failure, _denial = "denied", "rule"
         _summary = "this program tried to %s, which it is not given" % _exc
+    except Exhausted as _exc:
+        _failure, _summary = "budget", str(_exc)
     except Broken as _exc:
         _failure, _summary = "protocol", str(_exc)
     except BaseException as _exc:
@@ -339,6 +384,8 @@ if _program is not None:
 if _stopped and not _failure:
     _failure, _denial = "denied", "rule"
     _summary = "this program tried to %s, which it is not given" % _stopped[0]
+if _over:
+    _failure, _summary = "budget", _over[0]
 _say(
     {
         "jsonrpc": "2.0",
@@ -355,6 +402,12 @@ async def played(env: Env, *, code: str, plan: Mapping[str, ToolSpec]) -> ToolRe
     The question that allowed the program was asked by the caller, so nothing here asks again: a program
     whose every step were put to a person is a wall of prompts in place of the one the plan is.
 
+    Three budgets are enforced and none of them is a number a caller passes: the wall clock is a deadline on
+    this call, and the other two are the child's own, because the child is what knows how many steps it has
+    taken and how much it has printed. Going past any of them is :attr:`~plyngent.kernel.failure.Failure.
+    BUDGET`, which is never retried — the same program reaches the same wall — and the ``stop`` on the way
+    out takes the whole process group with it.
+
     A child that never started is a result, a child that stopped speaking is a result, and a child that
     was stopped with the turn is the caller's cancellation — the three are all things the caller can read,
     which is why the ``stop`` happens on the way out either way.
@@ -370,7 +423,21 @@ async def played(env: Env, *, code: str, plan: Mapping[str, ToolSpec]) -> ToolRe
     except CannotStart as exc:
         return ToolResult.of(Failure.of(exc.caused), str(exc))
     try:
-        answer = await peer.call("run", {"code": code, "tools": {name: spec.schema() for name, spec in plan.items()}})
+        answer = await peer.call(
+            "run",
+            {
+                "code": code,
+                "tools": {name: spec.schema() for name, spec in plan.items()},
+                "limits": {"calls": MAX_CALLS, "chars": MAX_CHARS},
+            },
+            timeout_seconds=WALL_SECONDS,
+        )
+    except TimeoutError:
+        return ToolResult.of(
+            Failure.BUDGET,
+            f"the program ran for {WALL_SECONDS:g} seconds and was stopped; its process group is gone",
+            meta=Meta(elapsed_ms=_since(started)),
+        )
     except RpcError as exc:
         return ToolResult.of(Failure.PROTOCOL, str(exc), meta=Meta(elapsed_ms=_since(started)))
     except (PeerGone, ProtocolBroken) as exc:
