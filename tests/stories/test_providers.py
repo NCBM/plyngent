@@ -146,7 +146,7 @@ async def test_a_group_that_does_not_exist_yet_is_named_and_not_offered(story_wi
     first = story.requests()[0]
     assert "acme_echo" not in {tool.name for tool in first.tools}, "a group nothing has made is not offered"
     assert _index(first) == (
-        "6 more groups (21 tools): document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
+        "7 more groups (22 tools): code(1), document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n"
         "1 group can be brought in: acme (the account's own tools)"
     )

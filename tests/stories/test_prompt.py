@@ -82,7 +82,7 @@ async def test_the_prompt_is_five_sections_in_one_order(tmp_path: Path, transpor
                 PERSONA,
                 CORE,
                 SKILL_SECTION,
-                "7 more groups (26 tools): document(1), fs(7), net(1), process(6), session(1), "
+                "8 more groups (27 tools): code(1), document(1), fs(7), net(1), process(6), session(1), "
                 "skills(5), vcs(5) — use tool_require(group=…) to add one",
             )
         ), "a session that asked for nothing has four sections: the fifth arrives with a group"
@@ -92,7 +92,7 @@ async def test_the_prompt_is_five_sections_in_one_order(tmp_path: Path, transpor
                 CORE,
                 GROUP_PLAYBOOK[Group.SESSION],
                 SKILL_SECTION,
-                "6 more groups (25 tools): document(1), fs(7), net(1), process(6), skills(5), "
+                "7 more groups (26 tools): code(1), document(1), fs(7), net(1), process(6), skills(5), "
                 "vcs(5) — use tool_require(group=…) to add one",
             )
         ), "persona, playbook, the group that arrived, the catalog, and what is still missing"

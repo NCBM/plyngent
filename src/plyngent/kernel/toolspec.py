@@ -115,6 +115,8 @@ class Reach:
 class Group(StrEnum):
     """The disclosure unit: a group arrives together, with its own playbook section."""
 
+    #: The one group whose tool runs a program of the others: code-shaped tool calling (E190).
+    CODE = "code"
     DOCUMENT = "document"
     FS = "fs"
     #: The tool set talking about itself — "what else is there". Always available, so a hint that

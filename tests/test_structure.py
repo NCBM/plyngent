@@ -556,11 +556,11 @@ def test_a_session_starts_with_the_residents_and_is_told_what_is_missing() -> No
     assert everything_shown.index() == NOBODY, "a session with every group is told one thing: nobody to ask"
     assert not everything_shown.asks, "and the sentence is the group table's answer, not a second flag"
     assert nothing_shown.index() == (
-        "6 more groups (21 tools): document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
+        "7 more groups (22 tools): code(1), document(1), fs(7), net(1), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the index counts what *this* session cannot reach, and it is a function of the set"
     assert catalog.view({"document", "process", "session"}).index() == (
-        "3 more groups (13 tools): fs(7), net(1), vcs(5) — use tool_require(group=…) to add one\n" + NOBODY
+        "4 more groups (14 tools): code(1), fs(7), net(1), vcs(5) — use tool_require(group=…) to add one\n" + NOBODY
     ), "one group left reads as one group"
 
 
@@ -659,7 +659,7 @@ def test_a_tool_that_needs_a_backend_is_served_only_when_one_is_installed() -> N
     with_backend = ToolCatalog((*BUILTIN, *net_specs(Engines([every_verb]))))
 
     assert with_backend.view(()).index() == (
-        "6 more groups (23 tools): document(1), fs(7), net(3), process(6), session(1), vcs(5) — "
+        "7 more groups (24 tools): code(1), document(1), fs(7), net(3), process(6), session(1), vcs(5) — "
         "use tool_require(group=…) to add one\n" + NOBODY
     ), "the line counts what this kernel has, and it is a function of the set"
     assert {"client_fetch", "web_search", "web_fetch"} <= set(with_backend.names())

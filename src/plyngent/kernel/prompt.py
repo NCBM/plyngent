@@ -106,6 +106,15 @@ def _network(served: Collection[str], engines: Sequence[str]) -> str:
 #: and with the tools it describes, which is what keeps the standing prompt at one compressed block, and
 #: not 1.5k of instructions for calls a session cannot make yet (§10.4).
 GROUP_PLAYBOOK: Mapping[Group, str] = {
+    Group.CODE: """\
+Programs: `run_toolscript` runs one Python program in a process of its own, where every tool named in
+`tools` is a function whose fields are the schema's — `help("read")` prints one, and `help()` prints them
+all. A call answers a `Result`: `str(r)` is the text a person would read, `r.ok` says whether it worked,
+`r.failure` says how it did not, and `r.documents` holds handles a later call can read. A call that failed
+raises `ToolFailed`, which is the moment to decide whether the rest is worth running. `print` is the only
+way back: nothing that is not printed reaches this conversation, and that is where a program saves its
+rounds. Write one when a task is a loop over calls — find, filter, read, print — and not when it is two
+calls in a row.""",
     Group.DOCUMENT: """\
 The rest of a document: a body too long for an answer is kept rather than cut, and `documents` lists what
 is kept while `search` looks inside it. `read` takes a line window, so a big file is read in pieces.

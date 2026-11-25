@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.kernel.client import CLIENT
 from plyngent.kernel.model import ToolDecl
-from plyngent.kernel.tools import document, fs, meta, net, process, session, skills, vcs
+from plyngent.kernel.tools import code, document, fs, meta, net, process, session, skills, vcs
 from plyngent.kernel.toolspec import Mutation
 from plyngent.kernel.words import plural
 
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 #: may reach them; that is a fact about the set a kernel is serving, decided where the set is assembled
 #: (§0.9, E26), never by leaving a tool out of the table of what exists.
 BUILTIN: tuple[ToolSpec, ...] = (
+    *code.SPECS,
     *document.SPECS,
     *fs.SPECS,
     *meta.SPECS,

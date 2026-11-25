@@ -62,7 +62,7 @@ from plyngent.kernel.history import History, Unreadable
 from plyngent.kernel.listing import walk
 from plyngent.kernel.model import Call
 from plyngent.kernel.paths import display, key
-from plyngent.kernel.toolresult import Document, Effects, Hint, ToolResult
+from plyngent.kernel.toolresult import DenialKind, Document, Effects, Hint, ToolResult
 from plyngent.kernel.toolspec import ArgsError, Mutation, Posture, Remember, Res, Role, argument
 from plyngent.kernel.workspace import PathRefused
 from plyngent.wire.ask import By, Confirmation, as_agreed
@@ -233,6 +233,8 @@ class ToolExecutor:
         view = self._table.view(ctx.session.disclosed, reading=ctx.kind is TurnKind.ASIDE)
         inside = Call(id="/".join(segments), tool=name, arguments=arguments)
         (node,) = _prepared(ctx, self._table.catalog, view, [(segments, inside)])
+        if node.refusal is None:
+            node.refusal = _asking_every_time(node)
         node.planned = True
         result = await self._answer(ctx, node, view)
         row = ctx.effect(tool=name, call=segments, effects=result.effects)
@@ -595,9 +597,28 @@ def _reachable_part(part: Part, catalog: ToolCatalog, view: ToolView) -> Part:
     return Hint(tool=ASKING, given=(("group", group),), why=part.why)
 
 
+def _asking_every_time(node: _Call) -> ToolResult | None:
+    """The refusal for a step that would ask a person about itself, or ``None`` when it would not.
+
+    A plan is asked about once, for the program it runs, and that yes covers the steps: a question per
+    step would turn an ordinary loop into a wall of prompts (§10.13). So a step whose own declaration
+    would ask every time — a client's tool, or an ordinary call used at its heaviest — is refused, and the
+    sentence says where to make it. What stays allowed is the call that *is* a question: a tool that asks
+    somebody builds its own answer, and the plan does not answer for it.
+    """
+    spec, args = node.spec, node.args
+    if spec is None or spec.asking(args).posture is not Posture.ALWAYS:
+        return None
+    return ToolResult.denied(
+        DenialKind.RULE,
+        f"{spec.name} asks a person every time, and a step of a program cannot: make this call in the round",
+    )
+
+
 def _unreachable(catalog: ToolCatalog, name: str) -> ToolResult:
     """What to answer a call naming a tool this session cannot reach.
 
+    A tool that exists in another group is the interesting case: the model was told there are groups it
     A tool that exists in another group is the interesting case: the model was told there are groups it
     has not been shown, so the answer names the group and the one call that shows it. Naming
     :data:`ASKING` here is this layer's privilege and not a leak — the tool it names is the one whose

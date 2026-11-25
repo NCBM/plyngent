@@ -64,4 +64,4 @@ def test_an_empty_persona_and_playbook_are_sections_that_are_not_there() -> None
 
     assert CORE not in composed
     assert PERSONA not in composed
-    assert composed.startswith("6 more groups"), "the sections that are not empty close up behind them"
+    assert composed.startswith("7 more groups"), "the sections that are not empty close up behind them"
