@@ -68,6 +68,7 @@ from plyngent.kernel.trail import (
     Attempt,
     Consent,
     Deleted,
+    Dispatched,
     Effect,
     Notice,
     Promoted,
@@ -849,6 +850,7 @@ def test_every_record_arrives_as_who_actually_spoke() -> None:
         Withheld,
         Attempt,
         Effect,
+        Dispatched,
         Consent,
         Usage,
         TurnEnded,
@@ -862,20 +864,11 @@ def test_every_record_arrives_as_who_actually_spoke() -> None:
     )
     assert as_message(Notice()) is None, "a notice that stopped being true said nothing"
     assert [
-        as_message(record)
-        for record in (StateChange(), Withheld(), Attempt(), Effect(), Consent(), Usage(), TurnEnded())
-    ] == [
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ], (
-        "what a session knows, what it stopped showing, what became of a request, what a call left "
-        "different, what a person was asked, what a request cost and that a turn ended are not things a "
-        "model reads"
+        as_message(kind()) for kind in get_args(AnyRecord.__value__) if kind not in (AnyMessage, Summary, Notice)
+    ] == [None] * 10, (
+        "what a session knows, what it stopped showing, what became of a request, what one call left "
+        "different, what was handed to a tool, what a person was asked, what a request cost, that a turn "
+        "ended, a kept aside and a deletion are not things a model reads"
     )
     says = as_message(Summary(text="it was settled"))
 

@@ -53,6 +53,7 @@ from plyngent.kernel.toolresult import OUTCOMES, Document, ToolResult
 from plyngent.kernel.trail import (
     BY_BUDGET,
     Attempt,
+    Dispatched,
     Notice,
     Promoted,
     Summary,
@@ -1056,6 +1057,10 @@ class TurnRunner:
         if not reply.calls:
             return replace(said, more=False)
         asked = [(self._addressing(), call) for call in reply.calls]
+        # Written before anything is handed to a tool, so a process that dies mid-batch leaves a log
+        # that says which calls it had started (E192).
+        for call in reply.calls:
+            said = await self._append(said, Dispatched(turn=ctx.turn_id, call=call.id, kind=str(ctx.kind)))
         results = await self._executor.batch(ctx, asked)
         for call, result in zip(reply.calls, results, strict=True):
             said = await self._changed(said, call, result)

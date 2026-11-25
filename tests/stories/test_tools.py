@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from plyngent.cli.policy import Policy
 from plyngent.kernel.model import Reply, Result
+from plyngent.kernel.trail import Dispatched, kind_of
 from tests.stories.driver import Story
 from tests.stories.model import ScriptedModel, calling, text
 
@@ -28,6 +29,10 @@ if TYPE_CHECKING:
 #: A shell is a danger-level question here (§R12 乙), so a story that runs one says this, and does not
 #: interrupt its own subject with an answer at the terminal.
 _YES = Policy(away=True, away_danger=True)
+
+#: The rows one call writes, in the order it writes them: what the model answered, what it asked for,
+#: what came back. Nothing else sits between them for a call that changed no path.
+_ROWS = ("assistant", "dispatched", "tool-result")
 
 
 async def _told(story: Story) -> str:
@@ -271,6 +276,39 @@ async def test_a_copy_and_a_move_change_the_tree(story_with: Scripted) -> None:
     assert not (story.workspace / "copy.txt").exists()
     assert "copy_path ok: copied file notes.txt -> copy.txt" in story.screen(), "the person is told what each call did"
     assert "move_path ok: moved file copy.txt -> renamed.txt" in story.screen()
+
+
+async def test_a_call_is_written_down_before_the_tool_is_handed_it(story_with: Scripted) -> None:
+    """Read while the person is still being asked, which is the one moment the order shows from outside.
+
+    Nothing runs before that answer comes back, so a row in the log says the row is written first — and
+    it is what a journal left by a killed process needs to tell "this call was running" from "this call
+    was never handed over" (E192).
+    """
+    story = await story_with(
+        calling("delete_path", {"path": "notes.txt", "intention": "it is stale"}),
+        text("gone"),
+    )
+    _ = _file(story)
+
+    await story.require("fs")
+
+    await story.type("delete the note")
+
+    rows = await story.host.trail.entries(story.session)
+    handed = [row.payload for row in rows if isinstance(row.payload, Dispatched)]
+
+    assert [one.call for one in handed] == ["delete_path"], "the call is on the log before the tool is"
+    assert handed[0].kind == "chat", "and the row says which kind of turn sent it"
+    assert "tool-result" not in [kind_of(row.payload) for row in rows], "nothing has come back, because nothing has run"
+
+    await story.answer("y")
+    await story.finished()
+
+    rows = [kind_of(row.payload) for row in await story.host.trail.entries(story.session)]
+    told = [kind for kind in rows if kind in ("user", *_ROWS)]
+
+    assert told[:4] == ["user", *_ROWS], "one call's three rows are adjacent, in the order they happened"
 
 
 async def test_a_delete_takes_the_file_away(story_with: Scripted) -> None:

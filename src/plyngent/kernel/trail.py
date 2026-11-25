@@ -333,6 +333,33 @@ class Effect(Struct, tag=EFFECT_TAG, frozen=True, kw_only=True):
     unswept: int = 0
 
 
+#: The tag one call handed to a tool carries. Spelled here because it is half of the record's identity.
+DISPATCHED_TAG = "dispatched"
+
+
+class Dispatched(Struct, tag=DISPATCHED_TAG, frozen=True, kw_only=True):
+    """One call about to be run, written down before the handler is handed it (E192).
+
+    What it buys is the one question a journal left by a killed process cannot otherwise answer: a call
+    with no result of its own reads the same whether the tool was running when the process died or was
+    never started, and those two are different facts about the tree the call was pointed at. Only a row
+    written *first* separates them (:func:`~plyngent.kernel.turn.mend`).
+
+    It sits directly below the answer whose call it is, and directly above whatever the call leaves, so
+    the three rows of one call are adjacent and none of them names another. No model reads it: the answer
+    above says what was asked for and the result below says what came back.
+
+    ``kind`` says which kind of turn dispatched it, because a turn that is repaired after its process
+    died has no end row of its own to say so — and an aside whose kind is lost is an aside a model would
+    be shown (E163). A turn that dispatched nothing leaves no such row, so a killed turn of that shape is
+    repaired as a chat turn: the one fact that only the end row carries, and the bound this record has.
+    """
+
+    turn: int = 0
+    call: str = ""
+    kind: str = ""
+
+
 #: The tag one question put to a person carries. Its own record kind, and the fifth of them: a state change
 #: is what a session knows, a summary is what a conversation was compressed into, an attempt is what became
 #: of a request that was never answered, an effect is what one call left different, and a consent is what
@@ -414,8 +441,8 @@ class Usage(Struct, tag=USAGE_TAG, frozen=True, kw_only=True):
 
 #: Everything a row may carry: what a conversation says, what it knows about itself, what it was
 #: compressed into, what the harness told the model, what it has stopped showing, what became of a request
-#: that was never answered, what one call left different, what one person said when they were asked, and
-#: what one request cost.
+#: that was never answered, what was handed to a tool, what one call left different, what one person said
+#: when they were asked, and what one request cost.
 type AnyRecord = (
     AnyMessage
     | StateChange
@@ -424,6 +451,7 @@ type AnyRecord = (
     | Withheld
     | Attempt
     | Effect
+    | Dispatched
     | Consent
     | Usage
     | TurnEnded
@@ -441,13 +469,15 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
     said. A notice is read as the harness speaking — the marker is already in its text — and a notice with
     no text is not read at all: a row saying a reminder stopped being true did not say anything.
 
-    The other seven have a meaning of their own and none is a message. A state change is a fact about the
+    The other ten have a meaning of their own and none is a message. A state change is a fact about the
     session, and is dropped. An attempt is bookkeeping: the answer it stands for never arrived, and a model
     told about it would be reading a conversation that did not happen. A prune is bookkeeping of the other
     kind — it does not speak, it decides what of the rest is spoken
     (:meth:`~plyngent.kernel.trail.Trail.derive` applies it). An effect is bookkeeping a person reads:
     the result above it already told the model what happened, and what a path used to hold is not the
-    conversation. A consent is bookkeeping of the same sort, from the other side of the wire: the model is
+    conversation. A dispatch is the same sort of bookkeeping on the other side of the result: a call was
+    handed to a tool, which the result that came back already says. A consent is bookkeeping of the same
+    sort, from the other side of the wire: the model is
     not told what a person agreed to before its call ran, and a person reading the row is. A usage is the
     third kind of the same: what a turn says aloud about its own cost is a line on a screen, not a thing
     the model is told about itself. And a turn's end is the fourth: a model reading "turn 3 ended" as part
@@ -459,7 +489,10 @@ def as_message(record: AnyRecord) -> AnyMessage | None:
         return User(text=f"{SUMMARY_HEADING}\n\n{record.text}\n\n{SUMMARY_TAIL}")
     if isinstance(record, Notice):
         return Note(text=record.text) if record.text else None
-    if isinstance(record, StateChange | Attempt | Withheld | Effect | Consent | Usage | TurnEnded | Promoted | Deleted):
+    if isinstance(
+        record,
+        StateChange | Attempt | Withheld | Effect | Dispatched | Consent | Usage | TurnEnded | Promoted | Deleted,
+    ):
         return None
     return record
 
