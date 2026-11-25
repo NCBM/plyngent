@@ -35,6 +35,7 @@ from platformdirs import user_data_path
 
 from plyngent import boot
 from plyngent.kernel.journal import label, label_of, workspace_dir
+from plyngent.kernel.trail import DELETED_TAG
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,6 +52,9 @@ WEIGHED = 3
 #: The line beside a ledger that says what was let go of it, and what that gave back (E186).
 LOG = "gc.log"
 
+#: What a report adds to the line about a conversation somebody took out of the list (E166).
+OUT_OF_LIST = "  (deleted)"
+
 
 @dataclass(frozen=True, slots=True)
 class _Gone:
@@ -62,11 +66,12 @@ class _Gone:
     bytes: int
     tokens: int
     at: str
+    deleted: bool = False
 
     def line(self) -> str:
         """The line a person reads about it: what it is called, what it holds, and when it was last used."""
         said = f"{self.session}  {self.rows} rows  {self.documents} documents  {self.tokens} tokens"
-        return f"{said}  last written {self.at}"
+        return f"{said}  last written {self.at}{OUT_OF_LIST if self.deleted else ''}"
 
 
 class _Desk:
@@ -249,6 +254,7 @@ def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tupl
             return ()
         rows = dict(_counted(db, WEIGHED))
         documents = _documents_of(journal)
+        out = _taken_out(db)
         found: list[_Gone] = []
         for session, at, live, aside, room in _weights(db):
             when = _instant(at)
@@ -264,6 +270,7 @@ def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tupl
                     bytes=documents.get(session, (0, 0))[1],
                     tokens=carried,
                     at=at,
+                    deleted=session in out,
                 )
             )
         return tuple(found)
@@ -398,15 +405,20 @@ def _now() -> str:
 
 
 def _weighed(journal: Path) -> Iterator[str]:
-    """One line per conversation in this journal: its rows, and what it has carried (E186)."""
+    """One line per conversation in this journal: its rows, and what it has carried (E186).
+
+    A conversation somebody deleted is one this ledger still holds — every row of it is here, and its
+    tombstone is one of them — so it is reported, with the one word that says why no listing shows it (E166).
+    """
     with closing(_read_only(journal)) as db:
         version = _version(db)
+        out = _taken_out(db)
         for session, rows in _counted(db, version):
             if version < WEIGHED:
-                yield f"{session}  {rows} rows  (this ledger was written before this build can weigh one)"
-                continue
-            found = _weight_of(db, session)
-            yield f"{session}  {rows} rows  {found}"
+                said = f"{session}  {rows} rows  (this ledger was written before this build can weigh one)"
+            else:
+                said = f"{session}  {rows} rows  {_weight_of(db, session)}"
+            yield f"{said}{OUT_OF_LIST if session in out else ''}"
 
 
 def _weight_of(db: sqlite3.Connection, session: str) -> str:
@@ -441,6 +453,16 @@ def _counted(db: sqlite3.Connection, version: int) -> tuple[tuple[str, int], ...
             " ORDER BY MIN(e.id), s.session"
         ).fetchall()
     return tuple((str(row[0]), int(row[1])) for row in rows)
+
+
+def _taken_out(db: sqlite3.Connection) -> frozenset[str]:
+    """The conversations somebody took out of the list without un-saying a word of them (E166).
+
+    A delete is one more row in the conversation's own chain, so this is a read of the log and not of a
+    second table: the tombstone stays where the kernel left it, and a reader of the file sees what it says.
+    """
+    rows = db.execute("SELECT DISTINCT session FROM entry WHERE tag = ?", (DELETED_TAG,)).fetchall()
+    return frozenset(str(row[0]) for row in rows)
 
 
 def _read_only(journal: Path) -> sqlite3.Connection:

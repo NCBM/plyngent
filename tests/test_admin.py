@@ -21,11 +21,15 @@ from plyngent.admin import FAILED, main
 from plyngent.kernel.documents import Documents
 from plyngent.kernel.journal import MIGRATIONS, SqliteTrail, label, label_of, workspace_dir
 from plyngent.kernel.model import User
-from plyngent.kernel.trail import BY_BUDGET, Withheld
+from plyngent.kernel.trail import BY_BUDGET, Deleted, Withheld
 
 
-async def _ledger(data: Path, root: Path, *, weigh: bool = True, room: int = 8000) -> Path:
-    """A ledger for *root* under *data*, holding a conversation, as a kernel would have left one."""
+async def _ledger(data: Path, root: Path, *, weigh: bool = True, room: int = 8000, gone: str | None = None) -> Path:
+    """A ledger for *root* under *data*, holding a conversation, as a kernel would have left one.
+
+    *gone* is a conversation somebody took out of the list, which is one more row at the end of its chain
+    and nothing else (E166).
+    """
     root.mkdir(parents=True, exist_ok=True)
     journal = workspace_dir(root, data=data) / "journal.db"
     trail = SqliteTrail(journal)
@@ -36,6 +40,9 @@ async def _ledger(data: Path, root: Path, *, weigh: bool = True, room: int = 800
         await trail.admitted("s2")
         if weigh:
             await trail.weighed("s1", live=1200, room=room)
+        if gone is not None:
+            head = await trail.head(gone)
+            _ = await trail.append(gone, Deleted(), begin_after=None if head is None else head.id)
     finally:
         await trail.close()
     label(journal.parent, root)
@@ -144,6 +151,30 @@ async def test_a_conversation_says_what_it_has_carried(tmp_path: Path) -> None:
     assert any(re.match(r"s2  0 rows  0 tokens  last written \S+$", row) for row in rows), (
         "an open conversation nothing was said in is still one this ledger holds, and it carries nothing"
     )
+
+
+async def test_a_conversation_somebody_deleted_is_reported_as_one(tmp_path: Path) -> None:
+    """A deleted conversation is every row it ever held plus one that says so, and the report reads both.
+
+    The word is the half a kernel's listing cannot show: the conversation is gone from it, and a person
+    deciding what to let go has to be able to tell what they threw away from what they kept (E166/E186).
+    """
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    journal = await _ledger(data, tree, room=1000, gone="s1")
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+
+    code, said = _ran("--data-dir", str(data), "sessions", str(tree))
+
+    assert code == 0, said
+    rows = said.strip().splitlines()
+    assert any(row.startswith("s1  ") and row.endswith("(deleted)") for row in rows), said
+    assert any(row.startswith("s2  ") and not row.endswith("(deleted)") for row in rows), said
+
+    code, said = _ran("--data-dir", str(data), "gc")
+
+    assert code == 0, said
+    assert any(line.startswith(str(tree)) and "(deleted)" in line for line in said.splitlines()), said
 
 
 async def test_reading_a_ledger_leaves_it_exactly_as_it_was(tmp_path: Path) -> None:
