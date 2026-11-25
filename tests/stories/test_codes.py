@@ -242,3 +242,89 @@ async def test_a_program_that_calls_past_its_budget_is_stopped_and_says_so(story
     answered = told(story.requests()[-1])
     assert "more than 200 calls" in answered, answered
     assert "done" not in answered, "the line after the budget ran is not in the answer"
+
+
+async def test_a_result_can_be_read_as_a_value_and_its_handle_given_back(story_with: Scripted) -> None:
+    """What a step answers is an object, so a program asks it questions instead of scraping its text."""
+    code = """\
+big = read(path="big.txt", limit=100000)
+print(big.status, big.ok, big.failure == "", len(big.documents))
+first = read(document_id=big.documents[0], limit=1)
+print(str(first))
+"""
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": code, "tools": ["read"], "intention": "read a big file in pieces"}),
+        text("read it"),
+    )
+    _file(story, "big.txt", "needle\n" * 20_000)
+
+    await story.type("read the big file")
+    await story.answer("y")
+    await story.finished()
+
+    answered = told(story.requests()[-1]).splitlines()
+    assert "ok True True 1" in answered, answered
+    assert "needle" in answered, "the handle the first step handed back is what the second one read"
+
+
+async def test_a_step_that_would_ask_a_person_every_time_is_refused_inside_a_program(story_with: Scripted) -> None:
+    """One question allowed the program, and a step cannot put another one in front of somebody (E190)."""
+    code = 'write_file(path="notes.txt", content="new", overwrite=True)\nprint("wrote it")\n'
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": code, "tools": ["write_file"], "intention": "replace the note"}),
+        text("oh"),
+    )
+    _file(story, "notes.txt", "old")
+
+    await story.type("replace the note from inside a program")
+    await story.answer("y")
+    await story.finished()
+
+    answered = told(story.requests()[-1])
+    assert "asks a person every time" in answered, answered
+    assert "wrote it" not in answered, "the program stopped at the step that could not be agreed to"
+    assert (story.workspace / "notes.txt").read_text(encoding="utf-8") == "old", "and nothing was replaced"
+    assert len(story.questions()) == 1, "the one question was about the program"
+
+
+async def test_a_program_is_given_a_few_modules_and_no_way_to_reach_the_rest(story_with: Scripted) -> None:
+    """The namespace is the fence: a module nobody gave it is refused, and the names that reach past are not there.
+
+    The static scan says what it found and is evidence; this is what holds, which is why it is worth a story
+    of its own (E190).
+    """
+    code = """\
+import json
+print("json:", json.dumps([1]))
+try:
+    import os
+except Exception as exc:
+    print("os:", exc)
+try:
+    open("notes.txt")
+except NameError as exc:
+    print("open:", exc)
+try:
+    getattr(json, "dumps")
+except NameError as exc:
+    print("getattr:", exc)
+help("nope")
+"""
+    story = await story_with(
+        _GROUP,
+        calling("run_toolscript", {"code": code, "tools": ["read"], "intention": "ask what it was given"}),
+        text("told"),
+    )
+
+    await story.type("ask the program what it can reach")
+    await story.answer("y")
+    await story.finished()
+
+    answered = told(story.requests()[-1]).splitlines()
+    assert "json: [1]" in answered, answered
+    assert "os: import os" in answered, "a module it was not given is refused by the namespace's own import"
+    assert any(line.startswith("open: name 'open' is not defined") for line in answered), answered
+    assert any(line.startswith("getattr: name 'getattr' is not defined") for line in answered), answered
+    assert "not here: nope. this program may call: read" in answered, "a name it cannot call lists the ones it can"
