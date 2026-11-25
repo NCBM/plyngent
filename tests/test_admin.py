@@ -304,6 +304,36 @@ async def test_apply_lets_a_conversation_go_and_writes_down_what_it_did(tmp_path
     assert any("bytes given back" in line for line in lines), lines
 
 
+async def test_the_room_a_conversation_took_is_given_back(tmp_path: Path) -> None:
+    """``--apply`` shrinks the file, which is the half of the promise a person asks for (E186).
+
+    Deleting rows leaves the pages where they were, so what a run says it gave back is a measurement of
+    the file after the vacuum, and a vacuum that never ran reports the same number a person could see.
+    """
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    journal = workspace_dir(tree, data=data) / "journal.db"
+    trail = SqliteTrail(journal)
+    await trail.open()
+    try:
+        for index in range(200):
+            _ = await trail.append("s1", User(text=f"{index} " + "x" * 2000))
+        await trail.weighed("s1", live=400_000, room=1000)
+    finally:
+        await trail.close()
+    label(journal.parent, tree)
+    _aged(journal, "s1", "2020-01-01T00:00:00Z")
+    before = journal.stat().st_size
+
+    code, said = _ran("--data-dir", str(data), "gc", "--apply")
+
+    assert code == 0, said
+    assert "space is still on disk" not in said, said
+    assert journal.stat().st_size < before, "the pages the rows no longer need are gone from the file"
+    assert _rows(journal, "s1") == 0
+
+
 async def test_a_conversation_used_just_now_is_not_a_candidate(tmp_path: Path) -> None:
     """The clock is the one the kernel wrote, and what it says about the last week is the whole criterion."""
     data = tmp_path / "data"

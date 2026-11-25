@@ -328,11 +328,14 @@ def _reclaimed(journal: Path) -> None:
 
     ``VACUUM`` needs room the size of the database itself, and a machine without it says so: the rows are
     already gone, and this is the half that can fail without having broken anything.
+
+    The checkpoint's rows are read out before the next statement. A cursor nobody has emptied leaves its
+    statement open, and a connection with a statement in progress refuses to vacuum itself.
     """
     with closing(sqlite3.connect(journal)) as db:
         db.isolation_level = None
         try:
-            _ = db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            _ = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
             _ = db.execute("VACUUM")
         except sqlite3.OperationalError as exc:
             click.echo(f"the rows are gone, and the space is still on disk: {exc}", err=True)
