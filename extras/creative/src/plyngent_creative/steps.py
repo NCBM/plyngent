@@ -91,6 +91,26 @@ class Modelled:
             return Failing(failure=self.failure, says=self.says)
         return Cut(pieces=_said(self.text, self.cut), failure=self.failure, says=self.says)
 
+    def spelled(self) -> dict[str, object]:
+        """This answer as the object it was read from, which is the shape a child process reads.
+
+        The three shapes are told apart by which keys are there, exactly as a script tells them apart: no
+        second encoding of the same fact, and a step that travelled to a child is the step the author wrote.
+        """
+        held: dict[str, object] = {}
+        if self.text:
+            held["text"] = self.text
+        if self.calls:
+            held["calls"] = [{"tool": one.tool, "arguments": _arguments(one.arguments)} for one in self.calls]
+        if self.cut is None and self.failure is not None:
+            held["fail"] = self.failure.value
+        if self.cut is not None:
+            held["cut_after"] = self.cut
+            held["failure"] = "" if self.failure is None else self.failure.value
+        if self.says:
+            held["says"] = self.says
+        return held
+
 
 @dataclass(frozen=True, slots=True)
 class Expected:
@@ -285,6 +305,19 @@ def _said(text: str, pieces: int) -> tuple[str, ...]:
     stream stopped.
     """
     return tuple(f"{word} " for word in text.split(" ")[:pieces])
+
+
+def _arguments(spelled: str) -> object:
+    """One call's arguments as the object they are, or the text as written where they do not decode.
+
+    A script's ``arguments`` is an object, and a call may carry JSON that is not one — a story about a tool
+    receiving nonsense is a real story — so what does not decode travels as the text it was.
+    """
+    try:
+        found: object = json.loads(spelled)
+    except json.JSONDecodeError:
+        return spelled
+    return found
 
 
 def _contains(wanted: object, found: object) -> bool:

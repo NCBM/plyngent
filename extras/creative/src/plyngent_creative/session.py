@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from plyngent.kernel.model import Model
     from plyngent.wire.command import AnyCommand
     from plyngent.wire.event import AnyEvent
-
 #: The conversation a run opens when nobody says otherwise. It is a word a person could type and not a
 #: number, because the id is what a command names and nothing about this one is special (E184).
 SESSION = "debug"
@@ -52,17 +51,31 @@ class Run:
 
     root: Path
     session: str
+    #: What is told about every event as it arrives, and ``None`` is a run whose events are only kept. A
+    #: driver that is stepping through a turn says what happened while the turn is still running, which is
+    #: the difference between reading a transcript and watching one (E184).
+    on_event: Callable[[AnyEvent], None] | None
     _kernel: Installed
     _events: list[AnyEvent]
     _arrived: asyncio.Event
     _reading: asyncio.Task[None]
+    _cursor: int
 
-    def __init__(self, kernel: Installed, root: Path, session: str) -> None:
+    def __init__(
+        self,
+        kernel: Installed,
+        root: Path,
+        session: str,
+        *,
+        on_event: Callable[[AnyEvent], None] | None = None,
+    ) -> None:
         self.root = root
         self.session = session
+        self.on_event = on_event
         self._kernel = kernel
         self._events = []
         self._arrived = asyncio.Event()
+        self._cursor = 0
         self._reading = asyncio.create_task(self._read())
 
     @classmethod
@@ -74,6 +87,7 @@ class Run:
         journal: Path | str | None = None,
         session: str = SESSION,
         components: Iterable[Declaration] = (),
+        on_event: Callable[[AnyEvent], None] | None = None,
     ) -> Run:
         """Bring up a kernel in ``root`` and open one conversation in it.
 
@@ -84,7 +98,7 @@ class Run:
         path = Path(root)
         _ = await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
         started = await install(path, model=model, journal=journal, components=components)
-        run = cls(started, path, session)
+        run = cls(started, path, session, on_event=on_event)
         run.submit(Open(session=session))
         return run
 
@@ -100,6 +114,17 @@ class Run:
         """Say one thing in this conversation, as a person typing a line and pressing Enter."""
         self.submit(Submit(session=self.session, text=text))
 
+    def send(self, what: str | AnyCommand) -> None:
+        """Send what a step says: a line somebody types, or a command the contract already spells.
+
+        The two are one door because they are one thing to a script — "do this now" — and a line is the
+        shape a person's words have, which is why it needs no object around it.
+        """
+        if isinstance(what, str):
+            self.say(what)
+        else:
+            self.submit(what)
+
     # -- what the kernel said ------------------------------------------------------
 
     @property
@@ -110,6 +135,26 @@ class Run:
     def since(self, at: int) -> tuple[AnyEvent, ...]:
         """The events after the first ``at`` of them — what one step looks through."""
         return tuple(self._events[at:])
+
+    @property
+    def cursor(self) -> int:
+        """How far the steps have looked — the first event one may yet match.
+
+        A step looks forward from here and moves it past what it matched, so an event that arrived while no
+        step was waiting is still found by the next one. That is the difference between "after the previous
+        step" and "after the previous match", and only the first one is what a script means (E184).
+        """
+        return self._cursor
+
+    async def expect(self, wanted: Callable[[AnyEvent], bool], *, patience: float) -> int:
+        """Wait for something from the cursor on, and answer where it was found.
+
+        The cursor moves past the match, so two steps expecting two different events see them in the order
+        they arrived even when the first one was already over by the time the second step was sent.
+        """
+        at = await self.wait_for(wanted, at=self._cursor, patience=patience)
+        self._cursor = at + 1
+        return at
 
     async def wait_for(self, wanted: Callable[[AnyEvent], bool], *, at: int = 0, patience: float) -> int:
         """Wait until an event from ``at`` on satisfies ``wanted``, and answer where it is.
@@ -159,7 +204,9 @@ class Run:
             await self._reading
 
     async def _read(self) -> None:
-        """Keep every event, and wake whoever is waiting for one."""
+        """Keep every event, tell whoever asked about it, and wake whoever is waiting for one."""
         async for event in self._kernel.client.events():
             self._events.append(event)
+            if self.on_event is not None:
+                self.on_event(event)
             self._arrived.set()

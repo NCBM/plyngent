@@ -118,6 +118,10 @@ class Cut:
 #: exists. The step answers a reply, so a decided reply can still be a :class:`Held` one.
 type Step = Reply | Held | Streamed | Cut | Failing | Callable[[Request], Reply | Held]
 
+#: One answer a model gives, which is a step without the part that decides it: what a queued model is
+#: handed, because the deciding happened in the step that carried it out (E184).
+type Answer = Reply | Held | Streamed | Cut | Failing
+
 
 def told(request: Request) -> str:
     """What the model was read last: the newest message's text, or nothing where there is no history.
@@ -159,7 +163,7 @@ class ScriptedModel(Model):
         """Answer the next step, in the pieces it is said in — one piece for a step that is not streamed."""
         return self._streamed(self._next(request))
 
-    async def _streamed(self, step: Reply | Held | Streamed | Cut | Failing) -> AsyncIterator[Delta | Reply]:
+    async def _streamed(self, step: Answer) -> AsyncIterator[Delta | Reply]:
         """The pieces of one step, and then the answer they add up to."""
         if isinstance(step, Cut):
             for piece in step.pieces:
@@ -178,7 +182,7 @@ class ScriptedModel(Model):
                 _ = await step.ready.wait()
         yield step.reply
 
-    def _next(self, request: Request) -> Reply | Held | Streamed | Cut | Failing:
+    def _next(self, request: Request) -> Answer:
         """The next step of the script, with a decided one read: asking past its end is a failed story."""
         self._asked.append(request)
         if not self._script:
@@ -188,8 +192,64 @@ class ScriptedModel(Model):
         return step(request) if callable(step) else step
 
 
-async def _settled(step: Reply | Held | Cut | Failing) -> Reply:
-    """One step once it has arrived: a held one waits first, and one that failed raises what it said."""
+class QueueModel(Model):
+    """A model whose answers arrive as they are written, which is how a script drives a turn from outside.
+
+    ``ScriptedModel`` is given the whole script before the first request, because a test knows it. A run
+    somebody is stepping through does not: what the model answers this time is decided by the step being
+    carried out now, so the answers are queued and each request takes the next one. A request with nothing
+    queued never answers at all, and that is the honest answer — nobody scripted this one (E184).
+    """
+
+    _queue: asyncio.Queue[Answer]
+
+    def __init__(self) -> None:
+        self._queue = asyncio.Queue()
+
+    def schedule(self, answer: Answer) -> None:
+        """Put one answer in the queue, for the next request to take."""
+        self._queue.put_nowait(answer)
+
+    def pending(self) -> int:
+        """How many answers are waiting, which is how a check says the script was not spent."""
+        return self._queue.qsize()
+
+    @override
+    async def respond(self, request: Request) -> Reply:
+        """Take the next queued answer, and be still when nothing was scripted for this request."""
+        _ = request
+        answer = await self._queue.get()
+        if isinstance(answer, Streamed):
+            return answer.reply
+        return await _settled(answer)
+
+    @override
+    def stream(self, request: Request) -> AsyncIterator[Delta | Reply]:
+        """Take the next queued answer and say it, in the pieces it is said in."""
+        _ = request
+        return self._streamed()
+
+    async def _streamed(self) -> AsyncIterator[Delta | Reply]:
+        """The pieces of one answer once it has been taken, and then the answer they add up to."""
+        taken = await self._queue.get()
+        if isinstance(taken, Cut):
+            for piece in taken.pieces:
+                yield Delta(text=piece)
+            raise ModelFailed(taken.failure, taken.says)
+        if not isinstance(taken, Streamed):
+            yield await _settled(taken)
+            return
+        for piece in taken.pieces:
+            yield Delta(text=piece)
+        yield taken.reply
+
+
+async def _settled(step: Answer) -> Reply:
+    """One answer once it has arrived: a held one waits first, and one that failed raises what it said.
+
+    A streamed answer that got here is one somebody asked for as a whole, so what it answers with is what it
+    adds up to — the pieces were for a listener and there is none (E145).
+    """
     if isinstance(step, Held):
         _ = await step.ready.wait()
         step = step.reply
@@ -197,4 +257,4 @@ async def _settled(step: Reply | Held | Cut | Failing) -> Reply:
         raise ModelFailed(step.failure, step.says)
     if isinstance(step, Failing):
         raise ModelFailed(step.failure, step.says)
-    return step
+    return step.reply if isinstance(step, Streamed) else step
