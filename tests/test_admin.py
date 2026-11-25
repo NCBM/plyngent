@@ -335,6 +335,32 @@ async def test_a_conversation_whose_route_never_said_a_window_needs_a_number(tmp
     assert "s1  2 rows" in said, "and a number given here is the line it is measured by"
 
 
+async def test_a_conversation_somebody_deleted_is_let_go_on_the_clock_alone(tmp_path: Path) -> None:
+    """What was thrown away needs no size line: the person who threw it away said nobody wants it (E166).
+
+    A conversation opened and deleted without a word carries nothing for a token count to measure, and its
+    tombstone is the whole of what a ledger would keep. A number given on the command line is a question
+    about size, which this conversation has already stopped having to answer (E186).
+    """
+    data = tmp_path / "data"
+    tree = tmp_path / "tree"
+    journal = await _ledger(data, tree, weigh=False, gone="s2")
+    _aged(journal, "s2", "2020-01-01T00:00:00Z")
+
+    code, said = _ran("--data-dir", str(data), "gc")
+    assert code == 0, said
+    assert "s2  1 rows" in said and "(deleted)" in said, said
+    assert "nothing was deleted; say --apply to let 1 go" in said, said
+
+    code, said = _ran("--data-dir", str(data), "gc", "--bigger-than", "100000")
+    assert code == 0, said
+    assert "s2  1 rows" in said, said
+
+    code, said = _ran("--data-dir", str(data), "gc", "--apply")
+    assert code == 0, said
+    assert _rows(journal, "s2") == 0, "the tombstone goes with the rows it was written into"
+
+
 def test_a_length_of_time_that_is_not_one_is_a_usage_error(tmp_path: Path) -> None:
     """``--older-than 7`` is a question this program cannot turn into a moment, and click says so."""
     code, said = _ran("--data-dir", str(tmp_path), "gc", "--older-than", "7")

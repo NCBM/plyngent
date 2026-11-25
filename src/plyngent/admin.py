@@ -184,6 +184,9 @@ def gc(desk: _Desk, older_than: str, bigger_than: int | None, *, apply: bool) ->
     written to, and how much it has carried — the window a kernel prunes at, unless a number is given. A
     conversation nothing has ever written about is not a candidate, because nothing is known about it.
 
+    A conversation somebody deleted answers the clock alone. The size line asks whether anybody may still
+    want what is in here, and the person who threw it away has said they do not.
+
     Nothing is deleted without ``--apply``, and a deletion is not reversible: the rows and the documents go,
     the space is given back, and what was done is written down beside the ledger.
     """
@@ -248,7 +251,11 @@ def adopt(desk: _Desk, was: Path, now: Path) -> None:
 
 
 def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tuple[_Gone, ...]:
-    """The conversations of one ledger that are idle enough and large enough, with what each would free."""
+    """The conversations of one ledger that may be let go, with what each of them would free.
+
+    Two questions, and a conversation somebody deleted only has to answer the first: the size line asks
+    whether anybody may still want what is in here, and that was answered by the person who threw it away.
+    """
     with closing(_read_only(journal)) as db:
         if _version(db) < WEIGHED:
             return ()
@@ -260,7 +267,9 @@ def _candidates(journal: Path, *, horizon: datetime, bigger: int | None) -> tupl
             when = _instant(at)
             carried = live + aside
             line = room if bigger is None else bigger
-            if when is None or when > horizon or line <= 0 or carried < line:
+            if when is None or when > horizon:
+                continue
+            if session not in out and (line <= 0 or carried < line):
                 continue
             found.append(
                 _Gone(
