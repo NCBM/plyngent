@@ -5,7 +5,7 @@
 groups = ["default", "dev", "notify"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.1"
-content_hash = "sha256:0169531d77d4bc683d1c3767a710dbd5380f73452171edd5d0011ffd683d57b4"
+content_hash = "sha256:2c747942157dad47c220131bbc85233e66441bc64f0578ea4ff51e545e157225"
 
 [[metadata.targets]]
 requires_python = "~=3.14"
@@ -467,6 +467,18 @@ groups = ["dev"]
 files = [
     {file = "pluggy-1.7.0-py3-none-any.whl", hash = "sha256:7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec"},
     {file = "pluggy-1.7.0.tar.gz", hash = "sha256:d1eaa46ebb595891b860ab086b4d09c8588af65ebd4361b8e8f4bb8920b90ba8"},
+]
+
+[[package]]
+name = "plyngent-creative"
+version = "0.1.0"
+requires_python = ">=3.14,<4"
+editable = true
+path = "./extras/creative"
+summary = "Writing plugins for plyngent, and trying one out without restarting the program"
+groups = ["default"]
+dependencies = [
+    "plyngent>=1.0.0a1",
 ]
 
 [[package]]

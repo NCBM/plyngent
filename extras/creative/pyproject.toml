@@ -1,0 +1,20 @@
+[project]
+name = "plyngent-creative"
+version = "0.1.0"
+description = "Writing plugins for plyngent, and trying one out without restarting the program"
+authors = [
+    {name = "HivertMoZara",email = "worldmozara@163.com"},
+]
+dependencies = ["plyngent>=1.0.0a1"]
+requires-python = ">=3.14,<4"
+license = "MIT"
+
+[project.entry-points."plyngent.plugins"]
+creative = "plyngent_creative:enable"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true

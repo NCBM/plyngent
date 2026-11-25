@@ -37,6 +37,11 @@ build-backend = "pdm.backend"
 [tool.pdm]
 distribution = true
 
+# The plugin distribution this tree ships (E184): one workspace, so that ``pdm install`` brings it into the
+# same environment and the suite can load it by the name a person would type.
+[tool.pdm.workspace]
+members = ["extras/creative"]
+
 [dependency-groups]
 dev = [
     "basedpyright>=1.40.2",

@@ -13,9 +13,9 @@ a restatement is a bug in this file.
 pdm install                                    # first time; pdm sync after a pull
 pdm run pytest -q -o faulthandler_timeout=120  # the whole suite, about two minutes
 pdm run pytest -q tests/test_kernel            # one bucket while working
-pdm run ruff check src tests
-pdm run ruff format --check src tests
-pdm run basedpyright src tests
+pdm run ruff check src tests extras
+pdm run ruff format --check src tests extras
+pdm run basedpyright src tests extras
 ```
 
 `prek install` wires those three, and the message check below, as the commit gateway (`prek.toml`);
