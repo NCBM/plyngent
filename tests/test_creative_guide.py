@@ -29,8 +29,8 @@ async def test_the_page_is_a_file_the_distribution_ships() -> None:
     assert "uv run" in body, "the shortest way is one file that names what it needs"
 
 
-async def test_the_group_brings_two_tools_and_says_what_it_is() -> None:
-    """One provider, one group, and the tools it has once a session asks for it.
+async def test_the_group_brings_five_tools_and_says_what_it_is() -> None:
+    """One provider, one group, and the five tools it has once a session asks for it.
 
     ``plugin_guide`` arrives with the group because the group is the unit of disclosure: a model that has
     asked for the tools about writing a plugin has asked for the page about writing one (E175, E184).
@@ -40,6 +40,12 @@ async def test_the_group_brings_two_tools_and_says_what_it_is() -> None:
     assert (provider.group, provider.summary) == (GROUP, "writing and trying out a plugin")
     specs = await provider.materialise()
 
-    assert [spec.name for spec in specs] == ["plugin_check", "plugin_guide"]
+    assert [spec.name for spec in specs] == [
+        "plugin_check",
+        "plugin_test",
+        "plugin_debug",
+        "plugin_stop",
+        "plugin_guide",
+    ]
     assert all(str(spec.group) == GROUP for spec in specs), "every tool travels in this distribution's group"
     assert provider.guide.strip(), "a group that arrives with no words about its tools arrives unexplained"

@@ -1168,11 +1168,18 @@ def test_the_skill_group_is_three_readers_and_two_writers() -> None:
 
 # -- the plugin distribution: what it may name, and what it ships ---------------------------
 
-#: The kernel names the half of the plugin distribution that drives a kernel may use. Those three doors are
-#: what a client has — the composition root that hands out a link, the contract the link speaks, and the
-#: model it scripts — and a fourth would be a change to this program that breaks a distribution somebody
-#: installed (E184).
-PLUGIN_DOORS = ("plyngent.boot", "plyngent.wire", "plyngent.kernel.model", "plyngent.kernel.failure")
+#: The kernel names the half of the plugin distribution that drives a kernel may use. Those doors are what a
+#: client has — the composition root that hands out a link, the contract the link speaks, the model it
+#: scripts — plus ``plyngent.plugins``, which is the loader a driven run brings the plugin under test
+#: through: a driver is the program's own launcher for one file, and the loader is the one door for that
+#: (E174, E184). A fifth name would be a change to this program that breaks an installed distribution.
+PLUGIN_DOORS = (
+    "plyngent.boot",
+    "plyngent.wire",
+    "plyngent.kernel.model",
+    "plyngent.kernel.failure",
+    "plyngent.plugins",
+)
 
 
 def test_the_plugin_distribution_reaches_the_kernel_through_a_client_s_doors() -> None:
