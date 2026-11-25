@@ -158,6 +158,20 @@ def test_the_contract_depends_on_nothing_of_ours() -> None:
     assert offenders == [], "the contract is importable by anyone, including a client with no kernel"
 
 
+def test_the_package_says_it_carries_its_own_annotations() -> None:
+    """A second frontend reads this package's types, so the marker has to be in it, not only in the tree.
+
+    The file is what tells a checker that an installed ``plyngent`` answers in annotations rather than
+    ``Any``: without it every signature this build wrote is thrown away at the other end, and the contract
+    is the one thing that is read from a distance. It sits in the package rather than in the build's
+    configuration so that the source tree and a wheel cannot disagree about it.
+    """
+    marker = pathlib.Path(plyngent.__file__).parent / "py.typed"
+
+    assert marker.is_file(), "an installed package with no marker is a package a checker reads as Any"
+    assert marker.read_text(encoding="utf-8") == "", "the marker says one thing and it says it by existing"
+
+
 def test_the_kernel_names_no_dialect() -> None:
     """One dialect is one file and one row: a provider's name outside ``kernel/lm`` is a row that failed.
 
