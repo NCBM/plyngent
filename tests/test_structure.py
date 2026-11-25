@@ -15,6 +15,7 @@ from dataclasses import replace
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast, get_args
 
+import plyngent_creative
 import pytest
 
 import plyngent
@@ -1163,3 +1164,31 @@ def test_the_skill_group_is_three_readers_and_two_writers() -> None:
         "skill_create",
         "skill_edit",
     }
+
+
+# -- the plugin distribution: what it may name, and what it ships ---------------------------
+
+#: The kernel names the half of the plugin distribution that drives a kernel may use. Those three doors are
+#: what a client has — the composition root that hands out a link, the contract the link speaks, and the
+#: model it scripts — and a fourth would be a change to this program that breaks a distribution somebody
+#: installed (E184).
+PLUGIN_DOORS = ("plyngent.boot", "plyngent.wire", "plyngent.kernel.model", "plyngent.kernel.failure")
+
+
+def test_the_plugin_distribution_reaches_the_kernel_through_a_client_s_doors() -> None:
+    """The top of the distribution is what a plugin author imports, so it may name only what a client may.
+
+    The tools this distribution offers are its own half and reach further; they live in a subpackage, which
+    is why the rule can be the whole top of the package. A module that is not checked is a module whose
+    reach nobody decided, so the assertion below is also that there is one to check.
+    """
+    package = pathlib.Path(plyngent_creative.__file__).parent
+    checked = [one for one in _modules_of(plyngent_creative) if one.parent == package and one.name != "__init__.py"]
+
+    def beyond(name: str) -> bool:
+        if name != "plyngent" and not name.startswith("plyngent."):
+            return False
+        return not any(name == door or name.startswith(f"{door}.") for door in PLUGIN_DOORS)
+
+    assert checked, "the distribution has no module at the top of its package to check"
+    assert _offenders(checked, beyond) == []
