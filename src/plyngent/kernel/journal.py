@@ -64,6 +64,7 @@ from plyngent.kernel.trail import (
     Dispatched,
     Effect,
     Entry,
+    Member,
     Notice,
     Promoted,
     Shape,
@@ -235,7 +236,23 @@ SELECT session, strftime('%Y-%m-%dT%H:%M:%SZ', 'now') FROM entry GROUP BY sessio
 
 #: The schema versions, in order. Step *n* is the answer to "how does the log look at version *n*", and
 #: the list is append-only: a change to a released step is a new step.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2, _SCHEMA_3)
+#:
+#: Version 4 is one table of the trees a space has gathered: a root tree keeps the members it may reach, so
+#: the reachable set is read from the same file that holds the conversation (E193). The row is a verb and a
+#: path, and the fold is "the last verb per path wins" — an addition and a withdrawal are one word each, and
+#: nothing here rewrites or deletes a row: taking a tree out of a space is a second row, which is what let a
+#: person take it back and what a reader of the file can see happened.
+_SPACE_4 = """
+CREATE TABLE IF NOT EXISTS space (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    verb TEXT NOT NULL,
+    path TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS space_path ON space (path);
+"""
+
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_1, _SCHEMA_2, _SCHEMA_3, _SPACE_4)
 
 #: Which snapshot shape this build writes. It is stored in every checkpoint row, so raising it makes
 #: every stored snapshot unreachable at once — the same invalidation story as :data:`PROJECTOR`, and the
@@ -327,6 +344,18 @@ ON CONFLICT(session) DO UPDATE SET at = excluded.at, live = excluded.live, room 
 """
 _WEIGH = "SELECT at, live, aside, room FROM weight WHERE session = ?"
 _ASIDE_OF = "SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM entry WHERE session = ? AND id IN ({marks})"
+
+#: One row of a space: a tree added, or one taken out, with the word a frontend shows for it.
+#:
+#: Two verbs and no delete, because a space is a list of decisions and taking one back is another
+#: decision: the fold that answers "what is in this space now" is the last verb per path (E193).
+_ADD_MEMBER = "INSERT INTO space (verb, path, label) VALUES (:verb, :path, :label)"
+_MEMBERS = """
+SELECT path, label FROM space AS one
+ WHERE verb = 'add'
+   AND id = (SELECT MAX(id) FROM space AS later WHERE later.path = one.path)
+ ORDER BY (SELECT MIN(id) FROM space AS first WHERE first.path = one.path)
+"""
 
 #: One entry's chain, from the entry named down to its root.
 #:
@@ -539,6 +568,27 @@ class SqliteTrail(Trail):
         if found is None:
             return None
         return Weight(at=str(found[0]), live=int(found[1]), aside=int(found[2]), room=int(found[3]))
+
+    # -- the space this tree keeps --------------------------------------------------
+
+    @override
+    async def members(self) -> tuple[Member, ...]:
+        """The trees this space reaches now: the last word about each path, and only the additions."""
+        rows = await self._read_all(_MEMBERS, ())
+        return tuple(Member(path=str(path), label=str(label)) for path, label in rows)
+
+    @override
+    async def add_member(self, path: str, label: str) -> None:
+        """Gather one tree into this space; a path already in it is written again and nothing changes."""
+        _ = await self._execute(_ADD_MEMBER, {"verb": "add", "path": path, "label": label})
+
+    @override
+    async def drop_member(self, path: str) -> bool:
+        """Take one tree out of this space, and answer whether it was in it."""
+        if not any(one.path == path for one in await self.members()):
+            return False
+        _ = await self._execute(_ADD_MEMBER, {"verb": "drop", "path": path, "label": ""})
+        return True
 
     async def _kept(self, session: str, payload: AnyRecord) -> None:
         """Keep this conversation's weight in step with the row just written (E186).
@@ -967,6 +1017,21 @@ class Journal(Component, Trail):
     async def used(self, session: str) -> Weight | None:
         """When this conversation was last written to, and how much it has carried (E186)."""
         return await self._backend.used(session)
+
+    @override
+    async def members(self) -> tuple[Member, ...]:
+        """The trees this space reaches, as the root's own file says (E193)."""
+        return await self._backend.members()
+
+    @override
+    async def add_member(self, path: str, label: str) -> None:
+        """Gather one tree into this space, by one row of the root's own file (E193)."""
+        await self._backend.add_member(path, label)
+
+    @override
+    async def drop_member(self, path: str) -> bool:
+        """Take one tree out of this space, by one row of the root's own file (E193)."""
+        return await self._backend.drop_member(path)
 
 
 def _now() -> str:

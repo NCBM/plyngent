@@ -717,6 +717,48 @@ async def test_a_file_from_before_this_dates_what_is_already_in_it(tmp_path) -> 
         await trail.close()
 
 
+async def test_a_space_is_the_last_word_about_each_tree_it_gathered(tmp_path) -> None:
+    """A member added, added again and taken out is one row each, and the file says what happened.
+
+    No story reaches this: the rows are what a space *is*, and everything a story can see — a path under
+    a member resolving, a greeting naming one tree — is a reader of this answer (E193).
+    """
+    trail = SqliteTrail(tmp_path / "journal.db")
+    await trail.open()
+    try:
+        assert await trail.members() == (), "a tree nothing gathered reaches itself and nothing else"
+
+        await trail.add_member("/one", "one")
+        await trail.add_member("/two", "two")
+        assert [one.path for one in await trail.members()] == ["/one", "/two"], "in the order they were added"
+        assert [one.label for one in await trail.members()] == ["one", "two"]
+
+        await trail.add_member("/one", "first")
+        assert [one.label for one in await trail.members()] == ["first", "two"], "the last word about a tree wins"
+
+        assert await trail.drop_member("/one") is True
+        assert [one.path for one in await trail.members()] == ["/two"], "and a tree taken out is out"
+        assert await trail.drop_member("/one") is False, "taking out what is not in it says so"
+    finally:
+        await trail.close()
+
+
+async def test_a_space_keeps_what_it_used_to_reach(tmp_path) -> None:
+    """Withdrawing a tree is a row of its own, so a reader with no kernel still sees it was there."""
+    trail = SqliteTrail(tmp_path / "journal.db")
+    await trail.open()
+    try:
+        await trail.add_member("/one", "one")
+        _ = await trail.drop_member("/one")
+    finally:
+        await trail.close()
+
+    with closing(sqlite3.connect(tmp_path / "journal.db")) as db:
+        rows = [tuple(row) for row in db.execute("SELECT verb, path FROM space ORDER BY id")]
+
+    assert rows == [("add", "/one"), ("drop", "/one")], "two decisions, and neither rewritten"
+
+
 async def _folded_of(path) -> tuple[dict[str, str], Shape]:
     """The two folds a journal opened over *path* answers for this conversation."""
     trail = SqliteTrail(path)

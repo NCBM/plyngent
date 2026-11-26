@@ -596,6 +596,19 @@ class Shape:
 
 
 @dataclass(frozen=True, slots=True)
+class Member:
+    """One tree a space has gathered, and the word a frontend shows for it (E193).
+
+    ``path`` is the resolved root of that tree, which is what ``resolve`` compares against and what a
+    greeting names. ``label`` is the short word beside it: it is not an address, nothing resolves it, and
+    a client that needs the tree names the path.
+    """
+
+    path: str
+    label: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Weight:
     """What one conversation has carried, and when it was last written to (E186).
 
@@ -801,3 +814,30 @@ class Trail(ABC):
     @abstractmethod
     async def used(self, session: str) -> Weight | None:
         """When this conversation was last written to, and how much it has carried (E186)."""
+
+    @abstractmethod
+    async def members(self) -> tuple[Member, ...]:
+        """The trees this space has gathered, in the order each was first added (E193).
+
+        Read from the tree that keeps the space, which is the root: a member's own journal does not know
+        it belongs to anybody, and that asymmetry is the point — the reachable set is one table in one
+        file, so there is no second list to fall out of step with it. A tree that is gone from the disk is
+        still here, because "this space reaches it" and "it is there right now" are different facts.
+        """
+
+    @abstractmethod
+    async def add_member(self, path: str, label: str) -> None:
+        """Gather one tree into this space, saying nothing when it was already in it (E193).
+
+        One row, and the row is a decision a person made: this widens what every conversation of this
+        tree may reach, so it is written where a reader with no kernel can find it and taking it back is
+        another row.
+        """
+
+    @abstractmethod
+    async def drop_member(self, path: str) -> bool:
+        """Take one tree out of this space; ``False`` when it was not in it (E193).
+
+        The row is an addition of its own and not a deletion of the one before it, so what a space used to
+        reach stays readable in the file after nothing reaches it any more.
+        """
