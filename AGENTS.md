@@ -59,6 +59,7 @@ brought to the rewritten history in the same breath.
 | what the program does, and why that is the specification | `tests/stories/` — a story drives the real program through a real connection, and every story runs on each transport the platform can open (`KERNEL_TRANSPORTS`) |
 | the contract a second frontend speaks | `src/plyngent/wire/SPEC.md`, `wire/manifest.py` |
 | what no story can express — import rules, exhaustive unions, declared schemas, help text | `tests/test_structure.py`, `tests/cli/` |
+| what this program is allowed to write where | `user_data_path("plyngent")` and nothing inside a workspace: the journal, the versions, the documents, the marks, the profile, the config and the space pointers all live there, and `kernel/journal.py`'s `workspace_dir` is the one rule that names a place in it |
 | what landed, in order, and why | `git log` — the message is the record; this tree keeps no changelog |
 | the decisions and the refusals behind them, and what is still owed | `docs/rewrite-requirements.md` — a local working doc, excluded from git, so a fresh clone does not have it; §5 is the `E<n>` a code docstring cites |
 | how the program is assembled and started | `src/plyngent/__main__.py` (`run`), `src/plyngent/boot.py`, `config.py` |
