@@ -161,6 +161,17 @@ def _slug(name: str) -> str:
     return slug or "workspace"
 
 
+def slug(name: str) -> str:
+    """The word a directory of this program carries for a tree called ``name`` (E185, E193).
+
+    Public because two directories are named by it and the rule has to be one: a ledger's directory and a
+    space pointer's directory sit beside each other under the same data directory, and a person reads the
+    two the same way. One spelling of "this tree's name, as a directory" is also what keeps a listing of
+    either directory readable — two rules could disagree about which name a tree has.
+    """
+    return _slug(name)
+
+
 #: Schema version 1: one row per entry, one counter per session for turn ids, one cached projection.
 #:
 #: ``id`` is the row number and the only thing an entry id is made of (``'e' || id``); ``parent`` is a

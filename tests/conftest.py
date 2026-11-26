@@ -22,7 +22,7 @@ import pytest
 from plyngent import admin, config
 from plyngent.cli import line, profile
 from plyngent.cli.offers import TERMINAL
-from plyngent.kernel import journal
+from plyngent.kernel import journal, space
 from plyngent_creative.model import ScriptedModel
 from tests.loopback import Site, handler
 from tests.stories.driver import TRANSPORTS, Story
@@ -72,15 +72,15 @@ def nothing_is_kept_in_the_persons_data_directory(monkeypatch: pytest.MonkeyPatc
     where its history goes writes a ledger into the environment of whoever ran the suite, and a suite run
     often enough fills that directory with throwaway trees nobody asked for.
 
-    Every module that spells the directory is redirected here, because they are four independent readers
-    of one fact: the journal, the configuration, the client's own history and the marks it remembers. A
-    module left out is a leak, and ``test_structure`` holds the list: every module that reads the directory
-    is one of these four.
+    Every module that spells the directory is redirected here, because they are independent readers of one
+    fact: the journal, the space pointers, the configuration, the client's own history and the marks it
+    remembers. A module left out is a leak, and ``test_structure`` holds the list: every module that reads
+    the directory is one of these.
 
     The answer is also what ``tmp_path`` is for, and it is returned so a test may assert about it.
     """
     home = tmp_path / "data"
-    for module in (journal, config, profile, line):
+    for module in (journal, space, config, profile, line):
         monkeypatch.setattr(module, "user_data_path", lambda name, home=home: home / name)
     monkeypatch.setattr(admin, "DEFAULT_DATA", home / "plyngent")
     return home / "plyngent"

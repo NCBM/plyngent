@@ -296,8 +296,8 @@ def test_only_the_loader_reads_the_environment() -> None:
     )
 
 
-def test_this_programs_own_directory_is_spelled_in_four_places_and_the_suite_knows_all_of_them() -> None:
-    """E185: one data directory, and the modules that spell it are listed so a leak cannot be silent.
+def test_this_programs_own_directory_is_spelled_in_a_few_places_and_the_suite_knows_all_of_them() -> None:
+    """E185/E193: one data directory, and the modules that spell it are listed so a leak cannot be silent.
 
     A kernel brought up with no journal named keeps its history under the program's own data directory, which
     is the directory the program is *run* from. That makes every reader of it a place a test can write into
@@ -314,11 +314,12 @@ def test_this_programs_own_directory_is_spelled_in_four_places_and_the_suite_kno
 
     assert readers == {
         "kernel/journal.py:workspace_dir",
+        "kernel/space.py:pointer_path",
         "config.py:default_path",
         "cli/profile.py:default_path",
         "cli/line.py:history_path",
         "cli/line.py:mark_path",
-    }, "the four readers conftest.py redirects, and the third spelling of the client's own two files"
+    }, "the readers conftest.py redirects, one per kind of file this program keeps there"
     offline = next(
         node
         for node in ast.walk(ast.parse(pathlib.Path(admin.__file__).read_text(encoding="utf-8")))
