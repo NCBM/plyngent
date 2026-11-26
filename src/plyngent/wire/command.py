@@ -23,7 +23,7 @@ from typing import Annotated
 import msgspec
 from msgspec import Struct
 
-from plyngent.wire.event import GoalMode, TurnKind
+from plyngent.wire.event import GoalMode, SpaceVerb, TurnKind
 from plyngent.wire.scope import CancelReason
 
 
@@ -248,6 +248,26 @@ class CloseWorkspace(Command, tag="close-workspace", frozen=True, kw_only=True):
     """
 
 
+class Space(Command, tag="space", frozen=True, kw_only=True):
+    """Gather another tree into this one's space, take one out, or ask which trees it reaches.
+
+    A space is a root tree plus the trees it gathered, and every conversation of the root may reach a
+    member's directory exactly as it reaches its own (E193). That makes this the one command that widens
+    what a whole tree may touch, which is why it is a command a person spells and never a tool the model
+    can call: adding a member is a person widening the reach of work they are not watching.
+
+    ``verb`` is the whole vocabulary: ``add`` names a tree in ``path`` and a word to show for it in
+    ``label``, ``drop`` names a tree already in the space, and ``list`` answers the table. A tree that is
+    already a member is answered with "already there" and changes nothing, and the space itself is named
+    by the ``workspace`` every command has — the root is the tree that keeps the rows, so a member's
+    journal never learns it belongs to anybody.
+    """
+
+    verb: SpaceVerb = SpaceVerb.LIST
+    path: str = ""
+    label: str = ""
+
+
 class Export(Command, tag="export", frozen=True, kw_only=True):
     """Keep a conversation as a document you can read back.
 
@@ -351,5 +371,6 @@ type TreeCommand = (
     | Ungrant
     | Rename
     | Delete
+    | Space
 )
 type AnyCommand = TreeCommand | CloseWorkspace

@@ -65,6 +65,7 @@ from plyngent.kernel.paths import display, normalize
 from plyngent.kernel.providing import Brought, Tools
 from plyngent.kernel.running import TooManyTurns
 from plyngent.kernel.session import Session
+from plyngent.kernel.space import point, unpoint
 from plyngent.kernel.trail import (
     BY_PERSON,
     DELETED_TAG,
@@ -77,6 +78,7 @@ from plyngent.kernel.trail import (
 )
 from plyngent.kernel.trail import Deleted as DeletedRecord
 from plyngent.kernel.turn import TurnEnd, TurnRunner, mend
+from plyngent.kernel.workspace import MAX_TREES, Workspace
 from plyngent.wire.command import (
     Cancel,
     Close,
@@ -96,6 +98,7 @@ from plyngent.wire.command import (
     Rollback,
     SetModel,
     SetRoute,
+    Space,
     Submit,
     Ungrant,
 )
@@ -129,8 +132,12 @@ from plyngent.wire.event import (
     SeedRefused,
     SessionRefused,
     SessionsListed,
+    SpaceSet,
+    SpaceVerb,
+    TreeRow,
     TurnKind,
     TurnRefused,
+    WorkspaceRefused,
 )
 from plyngent.wire.manifest import CLIENT_OFFER
 from plyngent.wire.query import (
@@ -155,6 +162,7 @@ from plyngent.wire.scope import CancelReason, CancelScope
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from pathlib import Path
 
     from composat import Assembly
 
@@ -302,7 +310,7 @@ class Serving:
     async def handle(self, command: TreeCommand) -> None:
         """Do what one command asks of this tree, or say why it cannot be done yet."""
         match command:
-            case Open() | Close():
+            case Open() | Close() | Space():
                 await self._serving(command)
             case ListSessions():
                 self._say(SessionsListed(sessions=await self._served()))
@@ -478,13 +486,15 @@ class Serving:
 
     # -- what a command says about this tree ---------------------------------------
 
-    async def _serving(self, command: Open | Close) -> None:
-        """The two commands that say which conversations this kernel serves: admit one, or evict one."""
+    async def _serving(self, command: Open | Close | Space) -> None:
+        """The commands about this tree itself: admit a conversation, evict one, or change what it reaches."""
         match command:
             case Open(session=session, seed_from=seed, inherit=inherit):
                 await self._open(session, seed, inherit)
             case Close(session=session):
                 await self._close(session)
+            case Space():
+                await self._space(command)
 
     async def _setting(self, command: SetRoute | SetModel | PersistModels | Ungrant | Goal | Rename | Delete) -> None:
         """The commands that move or read what a session says about itself, and touch nothing outside it."""
@@ -611,6 +621,86 @@ class Serving:
                 store=store,
             )
         )
+
+    async def _space(self, command: Space) -> None:
+        """Read the trees this one reaches, gather another into them, or take one out (E193).
+
+        A space belongs to the tree that keeps the rows, so it is this tree's file that answers: a member
+        opened as a tree of its own has no members of its own, and nothing about whose space it is in is
+        written into it. What the command widens is what every conversation of this tree may reach, which
+        is why the act and the read are the same event: a client that asked for a table and one that
+        changed it both need the table that is true now.
+        """
+        found = self._host()
+        if found is None:
+            self._say(WorkspaceRefused(workspace="", reason=Refusal.NO_HOST))
+            return
+        space = found.workspace
+        match command.verb:
+            case SpaceVerb.LIST:
+                self._say(self._space_set(SpaceVerb.LIST, "", space.members))
+            case SpaceVerb.ADD:
+                await self._gathered(space, command.path, command.label)
+            case SpaceVerb.DROP:
+                await self._dropped(space, command.path)
+
+    def _space_set(self, verb: SpaceVerb, changed: str, members: tuple[Path, ...]) -> SpaceSet:
+        """One answer about the space, built from what the host holds rather than from a second table."""
+        return SpaceSet(
+            verb=verb,
+            changed=changed,
+            members=tuple(TreeRow(path=str(one), label=one.name) for one in members),
+        )
+
+    async def _gathered(self, workspace: Workspace, path: str, label: str) -> None:
+        """Gather one tree into this space, or say which of the four facts refused it.
+
+        The four are checked in the order they can be answered, and each is a fact about a different thing:
+        the path is a directory, it overlaps nothing the space already reaches, the space has room for one
+        more tree, and no other space in this person's data directory already holds it.
+        """
+        tree = normalize(path, base=workspace.root)
+        refused = self._may_gather(workspace, tree)
+        if refused is not None:
+            self._say(WorkspaceRefused(workspace=str(tree), reason=refused))
+            return
+        host = self._host()
+        assert host is not None
+        already = tree in workspace.members
+        await host.trail.add_member(str(tree), label or tree.name)
+        workspace.gather([*(one for one in workspace.members), tree] if not already else workspace.members)
+        _ = point(tree, workspace.root)
+        self._say(self._space_set(SpaceVerb.ADD, str(tree), workspace.members))
+
+    def _may_gather(self, workspace: Workspace, tree: Path) -> Refusal | None:
+        """Which structural rule says a tree may not join this space, or ``None`` when it may (E193).
+
+        The overlap rule is ``Open``'s, and for the same reason: two trees over one set of files would each
+        keep their own locks and their own versions. The ceiling is the same number, because a member costs
+        a broker subprocess the moment anything runs in it. The last one is a space's own: a tree belongs to
+        one space, and it is answered from this person's data directory — a space on another machine is not
+        something this program can see.
+        """
+        if not tree.is_dir():
+            return Refusal.NOT_A_WORKSPACE
+        reached = (workspace.root, *workspace.members)
+        if any(tree in one.parents or one in tree.parents for one in reached):
+            return Refusal.OVERLAPS_SPACE
+        if len(workspace.members) + 1 > MAX_TREES:
+            return Refusal.TOO_MANY_WORKSPACES
+        return None
+
+    async def _dropped(self, workspace: Workspace, path: str) -> None:
+        """Take one tree out of this space, and say nothing when it was not in it (E193)."""
+        tree = normalize(path, base=workspace.root)
+        host = self._host()
+        assert host is not None
+        if not await host.trail.drop_member(str(tree)):
+            self._say(WorkspaceRefused(workspace=str(tree), reason=Refusal.NOT_A_MEMBER))
+            return
+        workspace.gather([one for one in workspace.members if one != tree])
+        _ = unpoint(tree)
+        self._say(self._space_set(SpaceVerb.DROP, str(tree), workspace.members))
 
     async def _past(self, command: Resume | Rollback) -> None:
         """The two commands about what this session and its workspace already were.

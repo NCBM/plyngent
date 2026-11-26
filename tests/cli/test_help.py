@@ -162,6 +162,15 @@ EXPECTED: dict[str, str] = {
     "\n"
     "Options:\n"
     "  --session TEXT  the conversation to act on  [default: main]",
+    "space": "Usage: space [OPTIONS] [add|drop|list]\n"
+    "\n"
+    "  Gather another tree into this one's space, take one out, or ask which trees\n"
+    "  it reaches.\n"
+    "\n"
+    "Options:\n"
+    "  --label TEXT\n"
+    "  --path TEXT\n"
+    "  --session TEXT  the conversation to act on  [default: main]",
 }
 
 

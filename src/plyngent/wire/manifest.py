@@ -69,10 +69,15 @@ class WorkspaceRow(Struct, frozen=True, kw_only=True):
     frontend that has to pick one needs a word short enough to print beside an address. ``label`` is that
     word and nothing else: it is not an address, nothing resolves it, and a client that needs the tree
     names ``path``.
+
+    ``root`` names the space a tree belongs to, empty for one that is its own: a member is reached through
+    its root and is not a tree a client may address, so a frontend reads this to answer "which of the
+    trees I was told about may I open" (E193).
     """
 
     path: str = ""
     label: str = ""
+    root: str = ""
 
 
 class KernelManifest(Struct, frozen=True, kw_only=True):

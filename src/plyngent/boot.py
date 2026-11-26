@@ -48,6 +48,7 @@ from plyngent.kernel.running import DEFAULT_RUNNING
 from plyngent.kernel.tools.net import net_specs
 from plyngent.kernel.tools.skills import skill_specs
 from plyngent.kernel.turn import DEFAULT_DEPTH, DEFAULT_GOAL_DEPTH, DEFAULT_GOALS, DEFAULT_ROUNDS
+from plyngent.kernel.workspace import MAX_TREES
 from plyngent.wire.ask import DEFAULT_ASK_TIMEOUT_SECONDS, Grades
 from plyngent.wire.bind import Bind
 from plyngent.wire.event import Refusal
@@ -128,11 +129,6 @@ class StartupError(Exception):
 
 class NoKernelError(OSError):
     """Nobody is answering at that address, or whoever does is not this program."""
-
-
-#: The most trees one process will open. Every tree carries a journal, a version store and its share of
-#: terminals, so a number has to exist; it is a constant until §3 asks for a setting (E157).
-MAX_TREES = 8
 
 
 class _Tree(NamedTuple):
@@ -271,8 +267,25 @@ class _Kernel:
             queries=query_specs(),
             caps=(CLIENT_OFFER,),
             epoch=self.share.epoch,
-            workspaces=tuple(WorkspaceRow(path=str(tree.path), label=tree.path.name) for tree in self.trees.values()),
+            workspaces=self._rows(),
         )
+
+    def _rows(self) -> tuple[WorkspaceRow, ...]:
+        """Every tree this kernel serves, and every tree one of them reaches (E193).
+
+        A member is not a tree a client may address, and it is in the table anyway: a frontend that has to
+        ask a person which tree to work in must be able to show what a space reaches, and ``root`` is what
+        says a row is reached through another rather than served on its own.
+        """
+        rows = [WorkspaceRow(path=str(tree.path), label=tree.path.name) for tree in self.trees.values()]
+        for tree in self.trees.values():
+            host = self.assembly.instance(Declaration(Host, instance=tree.qualifier).key)
+            if not isinstance(host, Host):
+                continue
+            rows.extend(
+                WorkspaceRow(path=str(one), label=one.name, root=str(tree.path)) for one in host.workspace.members
+            )
+        return tuple(rows)
 
     async def open(self, root: Path | str) -> _Tree:
         """Bring one tree up, or answer the one already open at that path (E157).
@@ -378,19 +391,37 @@ class _Kernel:
         return TreeRef(str(opened.path), opened.qualifier)
 
     def _may_hold(self, path: Path) -> Refusal | None:
-        """Whether one more tree may be opened here, or which structural rule says no (E157).
+        """Whether one more tree may be opened here, or which structural rule says no (E157, E193).
 
-        The three are checked in the order they can be answered: a path that is not a directory is a fact
-        about the path, an overlap is a fact about the trees already open, and the ceiling is a fact about
-        the process — a refusal that named the third for a path that is not a directory would be true and
-        useless.
+        The four are checked in the order they can be answered: a path that is not a directory is a fact
+        about the path, a tree another space already gathered is a fact about that tree, an overlap is a
+        fact about the trees already open, and the ceiling is a fact about the process — a refusal that
+        named the last one for a path that is not a directory would be true and useless.
+
+        A member is refused here because it is already reached: a space reaches it through its root, and a
+        second address for one directory is the two sets of locks and two versions E193 exists to avoid.
         """
         if not path.is_dir():
             return Refusal.NOT_A_WORKSPACE
+        if self._held_by_a_space(path) is not None:
+            return Refusal.IN_ANOTHER_SPACE
         if any(path in other.parents or other in path.parents for other in self.trees):
             return Refusal.NESTED_WORKSPACE
         if len(self.trees) >= MAX_TREES:
             return Refusal.TOO_MANY_WORKSPACES
+        return None
+
+    def _held_by_a_space(self, path: Path) -> str | None:
+        """The tree whose space already reaches *path*, or ``None`` when no space does (E193).
+
+        Read from this process's own hosts, because that is what is true here: a space in another data
+        directory is not something this kernel can see, and pretending to check it would be a wrong
+        answer to a question about this machine.
+        """
+        for tree in self.trees.values():
+            host = self.assembly.instance(Declaration(Host, instance=tree.qualifier).key)
+            if isinstance(host, Host) and path in host.workspace.members:
+                return str(tree.path)
         return None
 
     def _sole(self) -> TreeRef | Refusal:

@@ -70,8 +70,11 @@ from plyngent.wire.event import (
     SeedRefused,
     SessionRefused,
     SessionsListed,
+    SpaceSet,
+    SpaceVerb,
     ToolCalled,
     ToolReturned,
+    TreeRow,
     TurnFinished,
     TurnRefused,
     TurnStarted,
@@ -157,6 +160,7 @@ type _Reported = (
     | Deleted
     | WorkspaceRefused
     | WorkspaceClosed
+    | SpaceSet
     | Compacted
     | Pruned
     | DocumentStored
@@ -864,7 +868,7 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
     own answers the empty session, which :func:`_named` reads as "nothing to name".
     """
     match event:
-        case KernelLeaving() | SessionsListed() | WorkspaceClosed():
+        case KernelLeaving() | SessionsListed() | WorkspaceClosed() | SpaceSet():
             return _connection(event)
         case (
             Compacted()
@@ -900,8 +904,12 @@ def _reported(event: _Reported) -> tuple[_Row, ...]:
             assert_never(never)
 
 
-def _connection(event: KernelLeaving | SessionsListed | WorkspaceClosed) -> tuple[_Row, ...]:
-    """The connection itself: the kernel going away, which conversations it serves, and a tree it closed."""
+def _connection(event: KernelLeaving | SessionsListed | WorkspaceClosed | SpaceSet) -> tuple[_Row, ...]:
+    """The connection itself: the kernel going away, which conversations it serves, and a tree it closed.
+
+    A space belongs here and not with a session's settings: what it says is what this whole tree reaches,
+    which is a fact about the connection's tree and true of every conversation in it (E193).
+    """
     match event:
         case KernelLeaving(reason=reason):
             return (("", Shown(f"the kernel is leaving{': ' + reason if reason else ''}", "notice")),)
@@ -911,8 +919,24 @@ def _connection(event: KernelLeaving | SessionsListed | WorkspaceClosed) -> tupl
         case WorkspaceClosed(workspace=workspace, sessions=sessions):
             held = f"; it held {', '.join(sessions)}" if sessions else ""
             return (("", Shown(f"closed {workspace}{held}", "notice")),)
+        case SpaceSet(verb=verb, changed=changed, members=members):
+            return (("", Shown(_space(verb, changed, members), "notice")),)
         case _ as never:
             assert_never(never)
+
+
+def _space(verb: SpaceVerb, changed: str, members: tuple[TreeRow, ...]) -> str:
+    """What a space reaches now, and which act made the table say so — one line either way.
+
+    The table is printed whatever the verb was, because the answer to a read and the answer to an act are
+    the same answer: a client that asked to gather a tree learns both that it happened and what the space
+    holds now, and one that asked for the table gets it (E193).
+    """
+    listed = ", ".join(f"{one.label} ({one.path})" for one in members) if members else "no other tree"
+    if verb is SpaceVerb.LIST:
+        return f"this space reaches: {listed}"
+    act = "gathered" if verb is SpaceVerb.ADD else "let go"
+    return f"{act} {changed}; this space reaches: {listed}"
 
 
 def _setting(event: _Settled) -> tuple[_Row, ...]:  # noqa: PLR0911, C901 — one line per kind of news, on purpose
@@ -1104,6 +1128,12 @@ _REFUSALS: Mapping[Refusal, str] = {
         "each other's work"
     ),
     Refusal.TOO_MANY_WORKSPACES: "this kernel already has as many trees open as it opens at once",
+    Refusal.OVERLAPS_SPACE: (
+        "{workspace} overlaps a tree this space already reaches: two trees over one set of files would "
+        "change each other's work"
+    ),
+    Refusal.IN_ANOTHER_SPACE: "{workspace} is already a member of another space, and a tree belongs to one",
+    Refusal.NOT_A_MEMBER: "{workspace} is not a tree this space reaches, so there is nothing to let go of",
 }
 
 

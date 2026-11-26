@@ -118,6 +118,7 @@ closing the one under its feet would leave it nothing to draw.
 | `ungrant` | take back one path a conversation was allowed to reach |
 | `rename` | name a conversation, or clear its name with an empty one |
 | `delete` | take a conversation out of the list, keeping every row it holds |
+| `space` | read the trees this one reaches, gather another tree into them, or take one out |
 
 `submit.kind` is a `TurnKind` — `chat`, `compact`, `aside`, `goal`, `retry` — and two of the five are not a
 client's to send: `goal` is started by the kernel when an unfinished plan says the work is not done

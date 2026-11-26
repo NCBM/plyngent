@@ -40,6 +40,13 @@ class PathRefused(Exception):  # noqa: N818 — a refusal is the workspace's ans
     """A path this workspace will not hand out. The subclasses say whether anything can lift it."""
 
 
+#: The most trees one process will work with: a tree carries a journal, a version store and its share of
+#: terminals, so a number has to exist. One number and not two, because opening a tree and gathering one
+#: into a space cost the same thing — a kernel at its ceiling is at its ceiling either way — and it is a
+#: constant until §3 asks for a setting (E157, E193).
+MAX_TREES = 8
+
+
 @dataclass(frozen=True, slots=True)
 class Lift:
     """A tool that would let a refused path through, and the arguments a refusal can fill in for it.

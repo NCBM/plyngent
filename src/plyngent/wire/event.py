@@ -43,6 +43,36 @@ class TurnKind(StrEnum):
     RETRY = "retry"
 
 
+class SpaceVerb(StrEnum):
+    """What one command about a space may say: it read the table, it widened it, or it narrowed it (E193).
+
+    One word per act, because the three are three different questions a person asks — what is in it, put
+    this tree in it, take that one out — and a single verb with an empty path would have made "list" a
+    special case of "drop", which is the shape that makes an empty name carry two meanings.
+
+    It lives here beside ``TurnKind`` and ``GoalMode`` because the command and the event that answers it
+    both spell it, and one of those two has to come first.
+    """
+
+    LIST = "list"
+    ADD = "add"
+    DROP = "drop"
+
+
+class TreeRow(Struct, frozen=True, kw_only=True):
+    """One tree a space gathered: where it is, the word to show for it, and which tree gathered it.
+
+    Three fields and one of them is the point: a member is reached *through* its root and is not a tree a
+    client may address, so the row that offers it says which tree it belongs to. A greeting uses the same
+    row for the trees it serves with an empty ``root``, and there an empty one means "this is a tree of
+    its own" (E193).
+    """
+
+    path: str = ""
+    label: str = ""
+    root: str = ""
+
+
 class GoalMode(StrEnum):
     """Whether an unfinished plan keeps this conversation going.
 
@@ -128,6 +158,13 @@ class Refusal(StrEnum):
     NESTED_WORKSPACE = "nested-workspace"
     #: This process already has as many trees open as it will open at once.
     TOO_MANY_WORKSPACES = "too-many-workspaces"
+    #: The tree a space was asked to gather is inside, or around, a tree the space already reaches: two
+    #: trees over one set of files would each keep their own locks and their own versions (E193).
+    OVERLAPS_SPACE = "overlaps-space"
+    #: The tree asked for is already a member of another space, and a tree belongs to one (E193).
+    IN_ANOTHER_SPACE = "in-another-space"
+    #: No tree of the space reaches the path a command named: there is nothing there to take out.
+    NOT_A_MEMBER = "not-a-member"
 
 
 class Event(Struct, frozen=True, kw_only=True, tag_field="event"):
@@ -327,6 +364,22 @@ class WorkspaceClosed(Event, tag="workspace-closed", frozen=True, kw_only=True):
 
     workspace: str = ""
     sessions: tuple[str, ...] = ()
+
+
+class SpaceSet(Event, tag="space-set", frozen=True, kw_only=True):
+    """What one tree's space reaches now, and which act made it so (E193).
+
+    The table itself and not a receipt, because the answer to ``list`` and the answer to ``add`` are the
+    same answer: a client that asked for a table and got one row would have to keep a second copy of what
+    a space contains, and the whole point of one table in one file is that nobody keeps a second copy.
+
+    ``changed`` is empty for a read and names the tree for an act, so a frontend can say what happened
+    without comparing two tables it did not keep.
+    """
+
+    verb: SpaceVerb = SpaceVerb.LIST
+    changed: str = ""
+    members: tuple[TreeRow, ...] = ()
 
 
 class Compacted(Event, tag="compacted", frozen=True, kw_only=True):
@@ -829,6 +882,7 @@ type AnyEvent = (
     | SessionRefused
     | WorkspaceRefused
     | WorkspaceClosed
+    | SpaceSet
     | Compacted
     | CompactRefused
     | Pruned
