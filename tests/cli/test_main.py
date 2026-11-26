@@ -104,6 +104,35 @@ def test_a_run_standing_in_a_served_tree_means_that_one(tmp_path: Path, monkeypa
     assert _tree_of(None, said=(WorkspaceRow(path=str(served)),), at=Path("somewhere.sock")) == str(served)
 
 
+def test_a_run_standing_in_a_member_means_the_tree_that_gathered_it(tmp_path: Path, monkeypatch) -> None:
+    """A member is not a tree a client may address, so standing in one means standing in its space.
+
+    The greeting is what says the two are related: a row with a root is reached through that root, and the
+    root is the only one of the two this run may name (E193).
+    """
+    root = tmp_path / "root"
+    member = tmp_path / "member"
+    inside = member / "inside"
+    inside.mkdir(parents=True)
+    root.mkdir()
+    monkeypatch.chdir(inside)
+    said = (WorkspaceRow(path=str(root)), WorkspaceRow(path=str(member), root=str(root)))
+
+    assert _tree_of(None, said=said, at=Path("somewhere.sock")) == str(root), "not the member, and not a question"
+
+
+def test_a_member_whose_space_is_not_here_is_not_a_tree_to_open(tmp_path: Path, monkeypatch) -> None:
+    """A stale row names a root nothing serves, so the member is not an address this run can use."""
+    member = tmp_path / "member"
+    member.mkdir()
+    monkeypatch.chdir(member)
+    monkeypatch.setattr("sys.stdin", _Terminal())
+    monkeypatch.setattr("plyngent.__main__.click.prompt", lambda *_a, **_k: str(member))
+    said = (WorkspaceRow(path=str(member), root=str(tmp_path / "gone")),)
+
+    assert _tree_of(None, said=said, at=Path("somewhere.sock")) == str(member), "this run's own choice, not the row"
+
+
 def test_a_run_with_nobody_to_ask_refuses_rather_than_waits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A pipe has no keyboard: a run that must choose says which trees there were (E154)."""
     elsewhere = tmp_path / "elsewhere"

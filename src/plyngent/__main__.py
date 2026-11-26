@@ -426,9 +426,22 @@ def _tree_of(asked: Path | None, *, said: tuple[WorkspaceRow, ...], at: Path) ->
 
 
 def _standing(here: Path, said: tuple[WorkspaceRow, ...]) -> str | None:
-    """The tree this run is standing in, when it is standing in one of the kernel's — the nearest one."""
+    """The tree this run is standing in, when it is standing in one of the kernel's — the nearest one.
+
+    A member is not one of the trees a client may address (E193), so standing in one means standing in the
+    space that gathered it: the pointer a member carries answers where to go, and the tree it names is
+    opened instead. A pointer that names a tree this kernel does not serve is the ordinary stale one — the
+    tree was moved, the space was dissolved — and it changes nothing here, so the run falls through to the
+    same question a person in an unknown directory is asked.
+    """
     nearest: tuple[int, str] | None = None
     found = here.resolve()
+    for one in said:
+        if not one.root:
+            continue
+        member = Path(one.path)
+        if (found == member or member in found.parents) and any(served.path == one.root for served in said):
+            return one.root
     for one in said:
         tree = Path(one.path)
         if found != tree and tree not in found.parents:
@@ -446,13 +459,14 @@ def _picked(said: tuple[WorkspaceRow, ...], *, at: Path) -> str:
     name the one it wants, and find out that it has to (E154).
     """
     here = str(_resolved(Path.cwd()))
+    roots = [one.path for one in said if not one.root]
     if _plain(sys.stdin):
-        listed = ", ".join(one.path for one in said) if said else "no tree at all"
+        listed = ", ".join(roots) if roots else "no tree at all"
         msg = f"{at} serves {listed}, and this run named no tree: say --workspace to pick one"
         raise click.ClickException(msg)
     chosen = click.prompt(
         f"which tree does this run mean at {at}",
-        type=click.Choice([here, *(one.path for one in said), _NOTHING]),
+        type=click.Choice([here, *roots, _NOTHING]),
         default=_NOTHING,
         show_default=True,
     )
