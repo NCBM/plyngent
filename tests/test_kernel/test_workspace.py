@@ -62,6 +62,30 @@ def test_a_grant_is_what_lifts_a_refusal_and_it_has_to_cover_the_need(tmp_path) 
         _ = workspace.resolve(shared / "a.txt", AccessMode.EXEC, grants={shared: AccessMode.WRITE})
 
 
+def test_a_member_tree_is_reachable_and_does_not_move_where_a_relative_path_lands(tmp_path) -> None:
+    """A gathered tree is as reachable as the root, and `src/x.py` still means the root's own file.
+
+    The two halves are one decision: folding a member's path to `<label>/…` would be a spelling `resolve`
+    cannot turn back into a path, so the root stays the only anchor and a member is reached by its own
+    absolute path (E193).
+    """
+    root = tmp_path / "ws"
+    root.mkdir()
+    member = tmp_path / "member"
+    member.mkdir()
+    workspace = Workspace(root)
+
+    with pytest.raises(OutsideWorkspace):
+        _ = workspace.resolve(member / "a.txt")
+
+    workspace.gather([member])
+
+    assert workspace.resolve(member / "a.txt") == member / "a.txt"
+    assert workspace.resolve(member / "a.txt", AccessMode.EXEC) == member / "a.txt", "as far as the root itself"
+    assert workspace.resolve("src/x.py") == root.resolve() / "src" / "x.py", "and the root is still the anchor"
+    assert str(workspace.root) == str(root.resolve()), "the root did not become the set"
+
+
 def test_the_widest_grant_wins(tmp_path) -> None:
     root = tmp_path / "ws"
     root.mkdir()

@@ -169,6 +169,17 @@ class Host(Component):
         self.writing = writing
 
     @override
+    async def load(self) -> None:
+        """Read which trees this space reaches, from the journal this host keeps (E193).
+
+        At load and not on first use, because the answer is a fact about the tree from the moment its host
+        is up: a path tool resolving a member's directory before anybody asked the space anything must get
+        the same answer it gets after. The journal is a requirement and is already open here — a host whose
+        journal is not up has nowhere to write a conversation either.
+        """
+        self.workspace.gather(one.path for one in await self.trail.members())
+
+    @override
     async def unload(self) -> None:
         """Give back what the workspace owns: its scratch directories, and nothing else yet."""
         self.workspace.close()

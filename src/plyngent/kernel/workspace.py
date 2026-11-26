@@ -33,7 +33,7 @@ from plyngent.kernel.paths import normalize
 from plyngent.kernel.temps import TempWorkspaces
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
 
 class PathRefused(Exception):  # noqa: N818 — a refusal is the workspace's answer, not a fault
@@ -127,6 +127,10 @@ class Workspace:
 
     It is a plain field of :class:`~plyngent.kernel.host.Host`, not a component: the root is the
     host's own identity, and a second declaration site would be a second place for it to be written.
+
+    ``root`` is the tree a relative path is resolved against, and it stays the only one even when the
+    space has gathered members (E193): a member is reachable, not addressable, so folding a path to
+    ``<label>/…`` would be a spelling this module could not resolve back.
     """
 
     root: Path
@@ -134,6 +138,8 @@ class Workspace:
     commands: CommandPolicy
     temps: TempWorkspaces
     listing: Rules
+    #: The other trees this space reaches, resolved, in the order they were added (E193).
+    members: tuple[Path, ...]
 
     def __init__(self, root: Path | str, config: WorkspaceConfig | None = None) -> None:
         self.root = Path(root).expanduser().resolve()
@@ -141,7 +147,16 @@ class Workspace:
         self.commands = CommandPolicy(self.config.command_denylist)
         self.temps = TempWorkspaces()
         self.listing = self.config.listing
+        self.members = ()
         self._apply(self.config)
+
+    def gather(self, members: Iterable[str | Path]) -> None:
+        """Take the set of trees this space reaches, as one value (E193).
+
+        A whole set and not one at a time, for the reason a config reload is: a caller that installed
+        half of it would have a reachable set that was true of no moment.
+        """
+        self.members = tuple(Path(one).expanduser().resolve() for one in members)
 
     def configure(self, config: WorkspaceConfig) -> None:
         """Install a whole new config value (a reload never lands field by field)."""
@@ -199,8 +214,17 @@ class Workspace:
         return resolved
 
     def under_roots(self, resolved: Path) -> bool:
-        """Whether *resolved* is under the root every conversation of this host works in."""
-        return resolved == self.root or resolved.is_relative_to(self.root)
+        """Whether *resolved* is under the root every conversation of this host works in.
+
+        The root and everything the space has gathered, which is what makes a member's directory the same
+        answer a root's directory is: a tool that may work in the root may work in a member, without a
+        second ``request_directory_access`` for a tree a person already put in the space by name (E193).
+        """
+        return resolved == self.root or resolved.is_relative_to(self.root) or self._in_member(resolved)
+
+    def _in_member(self, resolved: Path) -> bool:
+        """Whether *resolved* is under one of the trees the space has gathered."""
+        return any(resolved == one or resolved.is_relative_to(one) for one in self.members)
 
     def under_scratch(self, resolved: Path, owner: str | None) -> bool:
         """Whether *resolved* is under one of the temporary workspaces one conversation asked for.
