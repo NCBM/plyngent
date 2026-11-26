@@ -42,6 +42,7 @@ from plyngent.cli.line import PlainEditor, PromptEditor, history_path, mark_path
 from plyngent.cli.policy import Policy
 from plyngent.cli.profile import default_path as profile_path
 from plyngent.cli.render import workspace_label
+from plyngent.kernel import space
 from plyngent.wire.bind import Bind
 
 if TYPE_CHECKING:
@@ -410,39 +411,55 @@ async def _connected(
 def _tree_of(asked: Path | None, *, said: tuple[WorkspaceRow, ...], at: Path) -> str:
     """Which tree this connection means when a command names none, or a sentence saying there is none.
 
-    Three answers, in the order they can be *known*. A directory was named, so that is the answer — and
+    Four answers, in the order they can be *known*. A directory was named, so that is the answer — and
     it is a choice, and not a claim: a tree the kernel has not opened is opened by the ``Open`` this
     run sends first, which is why ``--workspace .`` and no ``--workspace`` are not the same thing (E154).
-    Otherwise, if this run is standing in one of the trees the kernel serves, it is that one — not a
-    guess, because a person already in a tree a kernel is working in has said which tree they mean.
-    Otherwise somebody is asked, and a run with nobody at the keyboard refuses instead (E157).
+    Otherwise, if this run is standing in a tree the kernel serves, it is that one — not a guess, because
+    a person already in a tree a kernel is working in has said which tree they mean. Otherwise, if this run
+    is standing in a member, the pointer that member carries names the space to open instead (E193), and
+    that is the one case where a tree nothing has opened yet is named: a person standing in a member is
+    asking for the space that gathered it. Otherwise somebody is asked, and a run with nobody at the
+    keyboard refuses instead (E157).
     """
     if asked is not None:
         return str(_resolved(asked))
     standing = _standing(Path.cwd(), said)
     if standing is not None:
         return standing
+    gathered = _pointed(Path.cwd())
+    if gathered is not None:
+        return gathered
     return _picked(said, at=at)
+
+
+def _pointed(here: Path) -> str | None:
+    """The space this run's directory was gathered into, when a pointer says which tree that is.
+
+    A pointer is where a member says which tree gathered it, and it is read here because the greeting
+    cannot answer: it is a snapshot of what is already open, and a run started inside a member is the case
+    where the space itself has not been opened yet (E193). What the greeting still decides is whether this
+    directory is a tree of its own — one it lists is one it answers for, and the pointer is not consulted.
+
+    The path comes back unresolved on purpose: opening it is the ``Open`` this run sends first, the same
+    way ``--workspace .`` opens a tree nothing has opened yet (E154). A pointer left behind by a space that
+    no longer exists costs one refusal by name, and never a wider reach.
+    """
+    root = space.root_of(here)
+    return None if root is None else str(root.resolve())
 
 
 def _standing(here: Path, said: tuple[WorkspaceRow, ...]) -> str | None:
     """The tree this run is standing in, when it is standing in one of the kernel's — the nearest one.
 
-    A member is not one of the trees a client may address (E193), so standing in one means standing in the
-    space that gathered it: the pointer a member carries answers where to go, and the tree it names is
-    opened instead. A pointer that names a tree this kernel does not serve is the ordinary stale one — the
-    tree was moved, the space was dissolved — and it changes nothing here, so the run falls through to the
-    same question a person in an unknown directory is asked.
+    Only the trees this kernel serves count, which is what ``root`` empty says: a member is reached through
+    its root and is not an address a client may name (E193), so standing in one is answered by the pointer a
+    member carries, one step later.
     """
     nearest: tuple[int, str] | None = None
     found = here.resolve()
     for one in said:
-        if not one.root:
+        if one.root:
             continue
-        member = Path(one.path)
-        if (found == member or member in found.parents) and any(served.path == one.root for served in said):
-            return one.root
-    for one in said:
         tree = Path(one.path)
         if found != tree and tree not in found.parents:
             continue

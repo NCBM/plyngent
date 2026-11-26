@@ -49,12 +49,24 @@ def pointer_path(member: Path | str, *, data: Path | str | None = None) -> Path:
 def root_of(member: Path | str, *, data: Path | str | None = None) -> Path | None:
     """The tree this one was gathered into, or ``None`` when nothing says so (E193).
 
-    ``None`` covers three states that a frontend answers the same way — no pointer, a pointer a person
+    Read from this directory and then from each of its parents, because a person starting a run is
+    wherever their shell left them: a member's subdirectory is inside the member, and a pointer is per
+    tree. ``None`` covers three states a frontend answers the same way — no pointer, a pointer a person
     removed, and a file this process may not read — because the answer it needs is "open this instead", and
-    a tree with no pointer is one this run opens as itself.
+    a tree with no pointer anywhere above it is one this run opens as itself.
     """
+    found = Path(member).expanduser().resolve()
+    for one in (found, *found.parents):
+        said = _read_point(one, data=data)
+        if said is not None:
+            return said
+    return None
+
+
+def _read_point(tree: Path, *, data: Path | str | None = None) -> Path | None:
+    """The root one pointer names, or ``None`` when there is no pointer for *tree*."""
     try:
-        said = pointer_path(member, data=data).read_text(encoding="utf-8").strip()
+        said = pointer_path(tree, data=data).read_text(encoding="utf-8").strip()
     except OSError:
         return None
     return Path(said) if said else None

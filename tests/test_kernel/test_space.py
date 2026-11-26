@@ -39,6 +39,19 @@ def test_a_member_says_which_tree_gathered_it(tmp_path) -> None:
     assert unpoint(member, data=data) is False, "forgetting what was never said says so"
 
 
+def test_a_pointer_is_read_from_a_subdirectory_of_the_member_too(tmp_path) -> None:
+    """A run starts wherever the shell left it, so the pointer is looked for up the tree (E193)."""
+    member = tmp_path / "member"
+    root = tmp_path / "root"
+    deep = member / "src" / "inner"
+    deep.mkdir(parents=True)
+    root.mkdir()
+    data = tmp_path / "data"
+
+    assert point(member, root, data=data) is True
+    assert root_of(deep, data=data) == root.resolve(), "the member's pointer answers for what is inside it"
+
+
 def test_a_pointer_a_person_removed_is_the_ordinary_answer(tmp_path) -> None:
     """A tree with no pointer is one this run opens as itself, and that is not a failure to report."""
     member = tmp_path / "member"

@@ -22,6 +22,7 @@ from plyngent.boot import endpoint_for
 from plyngent.cli.announce import Desktop
 from plyngent.cli.grammar import Catalog
 from plyngent.cli.line import PlainEditor, PromptEditor
+from plyngent.kernel import space
 from plyngent.kernel.providing import ToolSet
 from plyngent.wire.manifest import WorkspaceRow
 
@@ -108,7 +109,8 @@ def test_a_run_standing_in_a_member_means_the_tree_that_gathered_it(tmp_path: Pa
     """A member is not a tree a client may address, so standing in one means standing in its space.
 
     The greeting is what says the two are related: a row with a root is reached through that root, and the
-    root is the only one of the two this run may name (E193).
+    root is the only one of the two this run may name (E193). The pointer is the other way to the same
+    answer, and it is read when the greeting has no row for this directory at all.
     """
     root = tmp_path / "root"
     member = tmp_path / "member"
@@ -116,21 +118,53 @@ def test_a_run_standing_in_a_member_means_the_tree_that_gathered_it(tmp_path: Pa
     inside.mkdir(parents=True)
     root.mkdir()
     monkeypatch.chdir(inside)
+    monkeypatch.setattr(space, "user_data_path", lambda name: tmp_path / "data" / name)
+    assert space.point(member, root) is True
     said = (WorkspaceRow(path=str(root)), WorkspaceRow(path=str(member), root=str(root)))
 
     assert _tree_of(None, said=said, at=Path("somewhere.sock")) == str(root), "not the member, and not a question"
 
 
-def test_a_member_whose_space_is_not_here_is_not_a_tree_to_open(tmp_path: Path, monkeypatch) -> None:
-    """A stale row names a root nothing serves, so the member is not an address this run can use."""
+def test_a_pointer_names_the_space_even_before_anything_opened_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The greeting is a snapshot, so a member of a space nothing has opened is the case a pointer answers.
+
+    A pointer is read where the greeting has nothing to say, and what it names is opened by the ``Open``
+    this run sends first — the same way ``--workspace .`` names a tree nothing has opened yet (E193).
+    """
+    root = tmp_path / "root"
     member = tmp_path / "member"
     member.mkdir()
+    root.mkdir()
     monkeypatch.chdir(member)
-    monkeypatch.setattr("sys.stdin", _Terminal())
-    monkeypatch.setattr("plyngent.__main__.click.prompt", lambda *_a, **_k: str(member))
-    said = (WorkspaceRow(path=str(member), root=str(tmp_path / "gone")),)
+    monkeypatch.setattr(space, "user_data_path", lambda name: tmp_path / "data" / name)
+    assert space.point(member, root) is True
 
-    assert _tree_of(None, said=said, at=Path("somewhere.sock")) == str(member), "this run's own choice, not the row"
+    assert _tree_of(None, said=(), at=Path("somewhere.sock")) == str(root), "the space, not this directory"
+
+
+def test_a_pointer_to_a_tree_nothing_reports_is_still_the_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pointer names a tree; whether anything has opened it is the next step's question, not this one.
+
+    The greeting decides which directory is a tree of its own. A member row it carries is reached through
+    its root, and a row it does not carry leaves the pointer as the only thing that knows where to go: the
+    ``Open`` this run sends settles the rest, by opening the tree or refusing the path by name (E193).
+    """
+    root = tmp_path / "root"
+    member = tmp_path / "member"
+    member.mkdir()
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(member)
+    monkeypatch.setattr(space, "user_data_path", lambda name: tmp_path / "data" / name)
+    assert space.point(member, root) is True
+    said = (WorkspaceRow(path=str(member), root=str(elsewhere)),)
+
+    assert _tree_of(None, said=said, at=Path("somewhere.sock")) == str(root), "the pointer, and not the stale row"
 
 
 def test_a_run_with_nobody_to_ask_refuses_rather_than_waits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
